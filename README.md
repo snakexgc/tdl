@@ -1,48 +1,91 @@
-# tdl
 
-<img align="right" src="docs/assets/img/logo.png" height="280" alt="">
+## 快速开始
 
-> 📥 Telegram Downloader, but more than a downloader
+### 第 1 步：登录
 
-English | <a href="README_zh.md">简体中文</a>
+从官方桌面客户端导入会话：
 
-<p>
-<img src="https://img.shields.io/github/go-mod/go-version/iyear/tdl?style=flat-square" alt="">
-<img src="https://img.shields.io/github/license/iyear/tdl?style=flat-square" alt="">
-<img src="https://img.shields.io/github/actions/workflow/status/iyear/tdl/master.yml?branch=master&amp;style=flat-square" alt="">
-<img src="https://img.shields.io/github/v/release/iyear/tdl?color=red&amp;style=flat-square" alt="">
-<img src="https://img.shields.io/github/downloads/iyear/tdl/total?style=flat-square" alt="">
-</p>
+```bash
+tdl login -T desktop -d /path/to/Telegram/Desktop
+```
 
-#### Features:
-- Single file start-up
-- Low resource usage
-- Take up all your bandwidth
-- Faster than official clients
-- Download files from (protected) chats
-- Forward messages with automatic fallback and message routing
-- Upload files to Telegram
-- Export messages/members/subscribers to JSON
+或者用手机号 + 验证码登录：
 
-## Preview
+```bash
+tdl login -T code
+```
 
-It reaches my proxy's speed limit, and the **speed depends on whether you are a premium**
+登录成功后会话会保存在本地，只需操作一次。
 
-![](docs/assets/img/preview.gif)
+### 第 2 步：启动监听
 
-## Documentation
+```bash
+tdl watch -d /path/to/downloads
+```
 
-Please refer to the [documentation](https://docs.iyear.me/tdl/).
+tdl 会连接到 Telegram 并在后台等待，你会看到：
 
-## Sponsors
+```
+👀 Watching for reactions... Press Ctrl+C to stop
+   Download dir: /path/to/downloads
+   Max concurrent files: 2
+   Threads per file: 4
+```
 
-![](https://raw.githubusercontent.com/iyear/sponsor/master/sponsors.svg)
+### 第 3 步：回表情，自动下载
 
-## Contributors
-<a href="https://github.com/iyear/tdl/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=iyear/tdl&max=750&columns=20" alt="contributors"/>
-</a>
+打开任意 Telegram 客户端（桌面、手机、网页），找到一条带媒体的消息（图片、视频、文件等），**给它添加任意表情回应**。
 
-## LICENSE
+tdl 会立刻检测到这个回应，并自动开始下载该文件。终端会显示实时进度条：
+
+```
+[download] 45.2% ██████████░░░░░░░░░░░░ 12.3 MB/s | video.mp4 | ETA: 00:08
+```
+
+如果是相册（分组消息），回应其中任意一条，会自动下载**相册内的全部文件**。
+
+按 `Ctrl+C` 停止监听。已下载的文件不受影响。
+
+## 参数说明
+
+### watch 命令参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-d, --dir` | `downloads` | 下载目录 |
+| `--template` | `{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}` | 下载文件名模板 |
+| `--skip-same` | `false` | 跳过同名且同大小的文件 |
+| `--rewrite-ext` | `false` | 根据 MIME 类型重写文件扩展名 |
+
+### 全局参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-l, --limit` | `2` | 最大同时下载文件数 |
+| `-t, --threads` | `4` | 每个文件的下载线程数 |
+| `-n, --namespace` | `default` | Telegram 会话命名空间 |
+| `--proxy` | | 代理地址，格式：`protocol://user:pass@host:port` |
+| `--debug` | `false` | 开启调试模式 |
+
+### 示例
+
+```bash
+# 基本用法
+tdl watch
+
+# 5 个文件同时下载，每个文件 8 线程
+tdl watch -l 5 -t 8 
+
+# 跳过已下载的文件
+tdl watch --skip-same
+
+# 自定义文件名模板
+tdl watch --template "{{ .DialogID }}/{{ .FileName }}"
+
+# 使用代理
+tdl watch --proxy socks5://127.0.0.1:1080
+```
+
+## 协议
 
 AGPL-3.0 License
