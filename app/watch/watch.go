@@ -34,6 +34,7 @@ import (
 	pw "github.com/jedib0t/go-pretty/v6/progress"
 
 	"github.com/iyear/tdl/pkg/consts"
+	"github.com/iyear/tdl/pkg/filterMap"
 	"github.com/iyear/tdl/pkg/kv"
 	"github.com/iyear/tdl/pkg/prog"
 	pkgtclient "github.com/iyear/tdl/pkg/tclient"
@@ -49,6 +50,8 @@ type Options struct {
 	SkipSame   bool
 	RewriteExt bool
 	Threads    int
+	Include    []string
+	Exclude    []string
 }
 
 type fileTemplate struct {
@@ -86,6 +89,10 @@ type Watcher struct {
 	// dedup tracks already-processed peerID:msgID pairs
 	dedup sync.Map
 	jobCh chan downloadJob
+
+	// include/exclude filter maps (extension → struct{})
+	include map[string]struct{}
+	exclude map[string]struct{}
 
 	// eg controls file-level concurrency via errgroup
 	egCtx context.Context
@@ -130,6 +137,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		jobCh:    make(chan downloadJob, 100), // buffered queue for pending downloads
 		pw:       dlProgress,
 		progress: newWatchProgress(dlProgress),
+		include:  filterMap.New(opts.Include, fsutil.AddPrefixDot),
+		exclude:  filterMap.New(opts.Exclude, fsutil.AddPrefixDot),
 	}
 
 	// register reaction handler (UpdateMessageReactions — used in groups/channels
@@ -599,6 +608,10 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 				if !ok {
 					continue // skip messages without media in the group
 				}
+				if !w.matchFilter(media.Name) {
+					w.pw.Log(color.YellowString("⏭ Skipping filtered (album): %s", media.Name))
+					continue
+				}
 				files = append(files, fileTask{msg: m, media: media, peer: peer})
 			}
 		} else {
@@ -608,6 +621,10 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 				w.pw.Log(color.YellowString("⚠️ Message %d has no media, skipping", job.msgID))
 				logctx.From(ctx).Info("Message has no media, skipping",
 					zap.Int("msg_id", job.msgID))
+				continue
+			}
+			if !w.matchFilter(media.Name) {
+				w.pw.Log(color.YellowString("⏭ Skipping filtered: %s", media.Name))
 				continue
 			}
 			files = append(files, fileTask{msg: msg, media: media, peer: peer})
@@ -641,6 +658,24 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 			})
 		}
 	}
+}
+
+// matchFilter checks if a file name matches the include/exclude filter.
+// Returns true if the file should be downloaded, false if it should be skipped.
+// Logic matches dl command: include means "only these extensions", exclude means "not these extensions".
+func (w *Watcher) matchFilter(name string) bool {
+	ext := filepath.Ext(name)
+	if len(w.include) > 0 {
+		if _, ok := w.include[ext]; !ok {
+			return false
+		}
+	}
+	if len(w.exclude) > 0 {
+		if _, ok := w.exclude[ext]; ok {
+			return false
+		}
+	}
+	return true
 }
 
 // resolvePeer tries to resolve a peer ID to InputPeerClass via peers.Manager.
@@ -799,9 +834,4 @@ func (h *loggingUpdateHandler) Handle(ctx context.Context, updates tg.UpdatesCla
 	}
 
 	return h.inner.Handle(ctx, updates)
-}
-
-// inspectUpdate is reserved for future debugging. Currently unused —
-// all reaction detection is handled by OnEditMessage/OnMessageReactions handlers.
-func (h *loggingUpdateHandler) inspectUpdate(_ context.Context, _ tg.UpdateClass) {
 }

@@ -20,7 +20,7 @@ import (
 // threads controls the number of parallel download connections for this file.
 func downloadFile(ctx context.Context, client *tg.Client, media *tmedia.Media, to io.WriterAt, threads int) error {
 	_, err := gotddownloader.NewDownloader().
-		WithPartSize(1024 * 1024). // MaxPartSize
+		WithPartSize(1024*1024). // MaxPartSize
 		Download(client, media.InputFileLoc).
 		WithThreads(tutil.BestThreads(media.Size, threads)).
 		Parallel(ctx, to)
