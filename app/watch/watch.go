@@ -19,6 +19,7 @@ import (
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
+	"github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -31,8 +32,6 @@ import (
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/core/util/fsutil"
 	"github.com/iyear/tdl/core/util/tutil"
-	pw "github.com/jedib0t/go-pretty/v6/progress"
-
 	"github.com/iyear/tdl/pkg/consts"
 	"github.com/iyear/tdl/pkg/filterMap"
 	"github.com/iyear/tdl/pkg/kv"
@@ -99,7 +98,7 @@ type Watcher struct {
 	eg    *errgroup.Group
 
 	// progress bar
-	pw       pw.Writer
+	pw       progress.Writer
 	progress *watchProgress
 }
 
