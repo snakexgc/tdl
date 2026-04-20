@@ -22,7 +22,6 @@ jobs:
         directory:
           - .
           - core
-          - extension
     steps:
       - name: Checkout
         uses: actions/checkout@v6

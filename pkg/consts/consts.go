@@ -14,10 +14,8 @@ func init() {
 	HomeDir = dir
 	DataDir = filepath.Join(dir, ".tdl")
 	LogPath = filepath.Join(DataDir, "log")
-	ExtensionsPath = filepath.Join(DataDir, "extensions")
-	ExtensionsDataPath = filepath.Join(ExtensionsPath, "data")
 
-	for _, p := range []string{DataDir, ExtensionsPath, ExtensionsDataPath} {
+	for _, p := range []string{DataDir} {
 		if err = os.MkdirAll(p, 0o755); err != nil {
 			panic(err)
 		}

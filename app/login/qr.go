@@ -96,7 +96,15 @@ func QR(ctx context.Context) error {
 		}
 
 		fmt.Print(text.EraseLine.Sprint())
-		color.Green("Login successfully! ID: %d, Username: %s", user.ID, user.Username)
+		username := user.Username
+		if username == "" {
+			username = "(not set)"
+		}
+		name := user.FirstName
+		if user.LastName != "" {
+			name += " " + user.LastName
+		}
+		color.Green("Login successfully! ID: %d, Username: %s, Name: %s", user.ID, username, name)
 		return nil
 	})
 }
