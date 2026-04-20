@@ -22,6 +22,8 @@ type Config struct {
 	NTP              string            `json:"ntp"`
 	ReconnectTimeout int               `json:"reconnect_timeout"`
 	DownloadDir      string            `json:"download_dir"`
+	Include          []string          `json:"include"`
+	Exclude          []string          `json:"exclude"`
 }
 
 // DefaultConfig 返回默认配置
@@ -29,7 +31,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Storage: map[string]string{
 			"type": "bolt",
-			"path": ".tdl/data",
+			"path": "",
 		},
 		Namespace:        "default",
 		Debug:            false,
@@ -39,6 +41,8 @@ func DefaultConfig() *Config {
 		Delay:            0,
 		ReconnectTimeout: 300,
 		DownloadDir:      "downloads",
+		Include:          []string{},
+		Exclude:          []string{},
 	}
 }
 

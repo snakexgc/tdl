@@ -22,7 +22,7 @@ import (
 )
 
 var (
-	defaultBoltPath = filepath.Join(consts.DataDir, "data")
+	defaultBoltPath = consts.DataDir
 
 	DefaultLegacyStorage = map[string]string{
 		kv.DriverTypeKey: kv.DriverLegacy.String(),
