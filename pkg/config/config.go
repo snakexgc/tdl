@@ -89,7 +89,7 @@ func Save(path string, cfg *Config) error {
 		return errors.Wrap(err, "marshal config")
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return errors.Wrap(err, "write config file")
 	}
 
