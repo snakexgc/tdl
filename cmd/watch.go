@@ -2,10 +2,9 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/consts"
+	"github.com/iyear/tdl/pkg/config"
 )
 
 func NewWatch() *cobra.Command {
@@ -17,7 +16,7 @@ func NewWatch() *cobra.Command {
 		Long:    "Watch for message reactions in real-time. When you add a reaction to a message, its media will be downloaded automatically.",
 		GroupID: groupTools.ID,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Threads = viper.GetInt(consts.FlagThreads)
+			opts.Threads = config.Get().Threads
 			return watch.Run(cmd.Context(), opts)
 		},
 	}
@@ -27,7 +26,7 @@ func NewWatch() *cobra.Command {
 		exclude = "exclude"
 	)
 
-	cmd.Flags().StringVarP(&opts.Dir, "dir", "d", "downloads", "download directory")
+	cmd.Flags().StringVarP(&opts.Dir, "dir", "d", config.Get().DownloadDir, "download directory")
 	cmd.Flags().StringVar(&opts.Template, "template",
 		"{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}",
 		"download file name template")

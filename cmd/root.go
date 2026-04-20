@@ -1,28 +1,24 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
-	"github.com/gotd/td/telegram"
 	"github.com/ivanpirog/coloredcobra"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
 	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/storage"
-	tclientcore "github.com/iyear/tdl/core/tclient"
 	"github.com/iyear/tdl/core/util/fsutil"
 	"github.com/iyear/tdl/core/util/logutil"
+	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
 	"github.com/iyear/tdl/pkg/kv"
-	"github.com/iyear/tdl/pkg/tclient"
 )
 
 var (
@@ -54,6 +50,20 @@ func New() *cobra.Command {
 	// allow PersistentPreRun to be called for every command
 	cobra.EnableTraverseRunHooks = true
 
+	// 获取可执行文件所在目录
+	execPath, err := os.Executable()
+	if err != nil {
+		panic(errors.Wrap(err, "get executable path"))
+	}
+	execDir := filepath.Dir(execPath)
+
+	// 初始化 JSON 配置
+	if err := config.Init(execDir); err != nil {
+		panic(errors.Wrap(err, "init config"))
+	}
+
+	cfg := config.Get()
+
 	cmd := &cobra.Command{
 		Use:           "tdl",
 		Short:         "Telegram Downloader, but more than a downloader",
@@ -61,14 +71,14 @@ func New() *cobra.Command {
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// init logger
-			debug, level := viper.GetBool(consts.FlagDebug), zap.InfoLevel
+			debug, level := cfg.Debug, zap.InfoLevel
 			if debug {
 				level = zap.DebugLevel
 			}
 			cmd.SetContext(logctx.With(cmd.Context(),
 				logutil.New(level, filepath.Join(consts.LogPath, "latest.log"))))
 
-			ns := viper.GetString(consts.FlagNamespace)
+			ns := cfg.Namespace
 			if ns != "" {
 				logctx.From(cmd.Context()).Info("Namespace",
 					zap.String("namespace", ns))
@@ -81,14 +91,14 @@ func New() *cobra.Command {
 				}
 			}
 
-		stg, err := kv.NewWithMap(viper.GetStringMapString(consts.FlagStorage))
-		if err != nil {
-			return errors.Wrap(err, "create kv storage")
-		}
+			stg, err := kv.NewWithMap(getStorageConfig(cfg))
+			if err != nil {
+				return errors.Wrap(err, "create kv storage")
+			}
 
-		cmd.SetContext(kv.With(cmd.Context(), stg))
+			cmd.SetContext(kv.With(cmd.Context(), stg))
 
-		return nil
+			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
 			return multierr.Combine(
@@ -117,25 +127,26 @@ func New() *cobra.Command {
 
 	cmd.AddCommand(NewVersion(), NewLogin(), NewWatch())
 
+	// 从 JSON 配置设置默认值
 	cmd.PersistentFlags().StringToString(consts.FlagStorage,
-		DefaultBoltStorage,
+		getStorageConfig(cfg),
 		fmt.Sprintf("storage options, format: type=driver,key1=value1,key2=value2. Available drivers: [%s]",
 			strings.Join(kv.DriverNames(), ",")))
 
-	cmd.PersistentFlags().String(consts.FlagProxy, "", "proxy address, format: protocol://username:password@host:port")
-	cmd.PersistentFlags().StringP(consts.FlagNamespace, "n", "default", "namespace for Telegram session")
-	cmd.PersistentFlags().Bool(consts.FlagDebug, false, "enable debug mode")
+	cmd.PersistentFlags().String(consts.FlagProxy, cfg.Proxy, "proxy address, format: protocol://username:password@host:port")
+	cmd.PersistentFlags().StringP(consts.FlagNamespace, "n", cfg.Namespace, "namespace for Telegram session")
+	cmd.PersistentFlags().Bool(consts.FlagDebug, cfg.Debug, "enable debug mode")
 
 	cmd.PersistentFlags().IntP(consts.FlagPartSize, "s", 512*1024, "part size for transfer")
 	_ = cmd.PersistentFlags().MarkDeprecated(consts.FlagPartSize, "part size has been set to maximum by default, this flag will be removed in the future")
 
-	cmd.PersistentFlags().IntP(consts.FlagThreads, "t", 4, "max threads for transfer one item")
-	cmd.PersistentFlags().IntP(consts.FlagLimit, "l", 2, "max number of concurrent tasks")
-	cmd.PersistentFlags().Int(consts.FlagPoolSize, 8, "specify the size of the DC pool, zero means infinity")
-	cmd.PersistentFlags().Duration(consts.FlagDelay, 0, "delay between each task, zero means no delay")
+	cmd.PersistentFlags().IntP(consts.FlagThreads, "t", cfg.Threads, "max threads for transfer one item")
+	cmd.PersistentFlags().IntP(consts.FlagLimit, "l", cfg.Limit, "max number of concurrent tasks")
+	cmd.PersistentFlags().Int(consts.FlagPoolSize, cfg.PoolSize, "specify the size of the DC pool, zero means infinity")
+	cmd.PersistentFlags().Duration(consts.FlagDelay, time.Duration(cfg.Delay)*time.Second, "delay between each task, zero means no delay")
 
-	cmd.PersistentFlags().String(consts.FlagNTP, "", "ntp server host, if not set, use system time")
-	cmd.PersistentFlags().Duration(consts.FlagReconnectTimeout, 5*time.Minute, "Telegram client reconnection backoff timeout, infinite if set to 0") // #158
+	cmd.PersistentFlags().String(consts.FlagNTP, cfg.NTP, "ntp server host, if not set, use system time")
+	cmd.PersistentFlags().Duration(consts.FlagReconnectTimeout, time.Duration(cfg.ReconnectTimeout)*time.Second, "Telegram client reconnection backoff timeout, infinite if set to 0")
 
 	// completion
 	_ = cmd.RegisterFlagCompletionFunc(consts.FlagNamespace, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -147,48 +158,34 @@ func New() *cobra.Command {
 		return ns, cobra.ShellCompDirectiveNoFileComp
 	})
 
-	_ = viper.BindPFlags(cmd.PersistentFlags())
-
-	viper.SetEnvPrefix("tdl")
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	viper.AutomaticEnv()
-
 	return cmd
 }
 
-
-
-func tOptions(ctx context.Context) (tclient.Options, error) {
-	// init tclient kv
-	kvd, err := kv.From(ctx).Open(viper.GetString(consts.FlagNamespace))
-	if err != nil {
-		return tclient.Options{}, errors.Wrap(err, "open kv storage")
-	}
-	o := tclient.Options{
-		KV:               kvd,
-		Proxy:            viper.GetString(consts.FlagProxy),
-		NTP:              viper.GetString(consts.FlagNTP),
-		ReconnectTimeout: viper.GetDuration(consts.FlagReconnectTimeout),
-		UpdateHandler:    nil,
+// getStorageConfig 从配置获取存储配置
+func getStorageConfig(cfg *config.Config) map[string]string {
+	if cfg.Storage == nil {
+		return DefaultBoltStorage
 	}
 
-	return o, nil
-}
-
-func tRun(ctx context.Context, f func(ctx context.Context, c *telegram.Client, kvd storage.Storage) error, middlewares ...telegram.Middleware) error {
-	o, err := tOptions(ctx)
-	if err != nil {
-		return errors.Wrap(err, "build telegram options")
+	// 如果配置中指定了完整路径，使用它；否则相对于数据目录
+	path := cfg.Storage["path"]
+	if path == "" {
+		path = defaultBoltPath
+	} else if !filepath.IsAbs(path) {
+		// 相对路径，转换为绝对路径
+		path = filepath.Join(consts.DataDir, path)
 	}
 
-	client, err := tclient.New(ctx, o, false, middlewares...)
-	if err != nil {
-		return errors.Wrap(err, "create client")
+	// 确保存储类型有默认值
+	storageType := cfg.Storage["type"]
+	if storageType == "" {
+		storageType = "bolt"
 	}
 
-	return tclientcore.RunWithAuth(ctx, client, func(ctx context.Context) error {
-		return f(ctx, client, o.KV)
-	})
+	return map[string]string{
+		kv.DriverTypeKey: storageType,
+		"path":           path,
+	}
 }
 
 func migrateLegacyToBolt() (rerr error) {

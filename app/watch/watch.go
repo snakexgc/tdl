@@ -20,7 +20,6 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
 	"github.com/jedib0t/go-pretty/v6/progress"
-	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -32,7 +31,7 @@ import (
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/core/util/fsutil"
 	"github.com/iyear/tdl/core/util/tutil"
-	"github.com/iyear/tdl/pkg/consts"
+	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/filterMap"
 	"github.com/iyear/tdl/pkg/kv"
 	"github.com/iyear/tdl/pkg/prog"
@@ -103,6 +102,8 @@ type Watcher struct {
 }
 
 func Run(ctx context.Context, opts Options) (rerr error) {
+	cfg := config.Get()
+
 	// parse template
 	tpl, err := template.New("watch").
 		Funcs(tplfunc.FuncMap(tplfunc.All...)).
@@ -112,16 +113,16 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 
 	// create tOptions (same as tRun, but we need to set UpdateHandler)
-	kvd, err := kv.From(ctx).Open(viper.GetString(consts.FlagNamespace))
+	kvd, err := kv.From(ctx).Open(cfg.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "open kv storage")
 	}
 
 	o := pkgtclient.Options{
 		KV:               kvd,
-		Proxy:            viper.GetString(consts.FlagProxy),
-		NTP:              viper.GetString(consts.FlagNTP),
-		ReconnectTimeout: viper.GetDuration(consts.FlagReconnectTimeout),
+		Proxy:            cfg.Proxy,
+		NTP:              cfg.NTP,
+		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	}
 
 	// create update dispatcher for reaction events
@@ -182,8 +183,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 	return tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
 		pool := dcpool.NewPool(client,
-			int64(viper.GetInt(consts.FlagPoolSize)),
-			tclient.NewDefaultMiddlewares(ctx, viper.GetDuration(consts.FlagReconnectTimeout))...)
+			int64(cfg.PoolSize),
+			tclient.NewDefaultMiddlewares(ctx, time.Duration(cfg.ReconnectTimeout)*time.Second)...)
 		defer multierr.AppendInvoke(&rerr, multierr.Close(pool))
 
 		w.pool = pool
@@ -209,7 +210,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// Set up file-level concurrency control using errgroup.
 		// FlagLimit controls how many files can download simultaneously.
-		limit := viper.GetInt(consts.FlagLimit)
+		limit := cfg.Limit
 		eg, egCtx := errgroup.WithContext(ctx)
 		eg.SetLimit(limit)
 		w.eg = eg

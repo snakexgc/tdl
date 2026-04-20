@@ -3,22 +3,24 @@ package login
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
-	"github.com/spf13/viper"
 
-	"github.com/iyear/tdl/pkg/consts"
+	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/key"
 	"github.com/iyear/tdl/pkg/kv"
 	"github.com/iyear/tdl/pkg/tclient"
 )
 
 func Code(ctx context.Context) error {
-	kvd, err := kv.From(ctx).Open(viper.GetString(consts.FlagNamespace))
+	cfg := config.Get()
+
+	kvd, err := kv.From(ctx).Open(cfg.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "open kv")
 	}
@@ -29,9 +31,9 @@ func Code(ctx context.Context) error {
 
 	c, err := tclient.New(ctx, tclient.Options{
 		KV:               kvd,
-		Proxy:            viper.GetString(consts.FlagProxy),
-		NTP:              viper.GetString(consts.FlagNTP),
-		ReconnectTimeout: viper.GetDuration(consts.FlagReconnectTimeout),
+		Proxy:            cfg.Proxy,
+		NTP:              cfg.NTP,
+		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 		UpdateHandler:    nil,
 	}, true)
 	if err != nil {

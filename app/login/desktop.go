@@ -12,10 +12,10 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/session"
 	tdtdesktop "github.com/gotd/td/session/tdesktop"
-	"github.com/spf13/viper"
 
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/util/fsutil"
+	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
 	"github.com/iyear/tdl/pkg/key"
 	"github.com/iyear/tdl/pkg/kv"
@@ -27,7 +27,7 @@ import (
 const tdata = "tdata"
 
 func Desktop(ctx context.Context, opts Options) error {
-	ns := viper.GetString(consts.FlagNamespace)
+	ns := config.Get().Namespace
 
 	kvd, err := kv.From(ctx).Open(ns)
 	if err != nil {

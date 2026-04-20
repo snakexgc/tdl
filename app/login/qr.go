@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
@@ -13,16 +14,17 @@ import (
 	"github.com/gotd/td/tgerr"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/skip2/go-qrcode"
-	"github.com/spf13/viper"
 
-	"github.com/iyear/tdl/pkg/consts"
+	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/key"
 	"github.com/iyear/tdl/pkg/kv"
 	"github.com/iyear/tdl/pkg/tclient"
 )
 
 func QR(ctx context.Context) error {
-	kvd, err := kv.From(ctx).Open(viper.GetString(consts.FlagNamespace))
+	cfg := config.Get()
+
+	kvd, err := kv.From(ctx).Open(cfg.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "open kv")
 	}
@@ -35,9 +37,9 @@ func QR(ctx context.Context) error {
 
 	c, err := tclient.New(ctx, tclient.Options{
 		KV:               kvd,
-		Proxy:            viper.GetString(consts.FlagProxy),
-		NTP:              viper.GetString(consts.FlagNTP),
-		ReconnectTimeout: viper.GetDuration(consts.FlagReconnectTimeout),
+		Proxy:            cfg.Proxy,
+		NTP:              cfg.NTP,
+		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 		UpdateHandler:    d,
 	}, true)
 	if err != nil {
