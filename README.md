@@ -2,29 +2,24 @@
 ## 快速开始
 
 ### 第 1 步：登录
-
-从官方桌面客户端导入会话：
-
-```bash
-tdl login -T desktop -d /path/to/Telegram/Desktop
-```
-
-或者用手机号 + 验证码登录：
-
-```bash
-tdl login -T code
-```
-
-登录成功后会话会保存在本地，只需操作一次。
+参考官方文档进行登录即可
+https://docs.iyear.me/tdl/zh/getting-started/quick-start/#login
 
 ### 第 2 步：启动监听
-
+- 直接启动
 ```bash
-tdl watch -d /path/to/downloads
+tdl watch
 ```
 
-tdl 会连接到 Telegram 并在后台等待，你会看到：
+- 常用启动命令
+```
+.\tdl.exe watch --proxy http://127.0.0.1:10808 -e png,jpg
+```
+解释：
+1. 使用http://127.0.0.1:10808作为代理
+2. 排除png和jpg文件
 
+tdl 会连接到 Telegram 并在后台等待，你会看到：
 ```
 👀 Watching for reactions... Press Ctrl+C to stop
    Download dir: /path/to/downloads
