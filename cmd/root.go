@@ -125,7 +125,7 @@ func New() *cobra.Command {
 
 	cmd.AddGroup(groupAccount, groupTools)
 
-	cmd.AddCommand(NewVersion(), NewLogin(), NewWatch())
+	cmd.AddCommand(NewVersion(), NewLogin(), NewWatch(), NewBot())
 
 	// 从 JSON 配置设置默认值
 	cmd.PersistentFlags().StringToString(consts.FlagStorage,

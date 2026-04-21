@@ -101,7 +101,7 @@ type Watcher struct {
 	progress *watchProgress
 }
 
-func Run(ctx context.Context, opts Options) (rerr error) {
+func Run(ctx context.Context, opts Options) error {
 	cfg := config.Get()
 
 	// parse template
@@ -118,11 +118,50 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return errors.Wrap(err, "open kv storage")
 	}
 
+	// Wrap the outer context with signal handling so a single reconnect loop
+	// can be cancelled by Ctrl+C, while inner client.Run can restart cleanly.
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	reconnectDelay := time.Duration(cfg.ReconnectTimeout) * time.Second
+	if reconnectDelay <= 0 {
+		reconnectDelay = 5 * time.Second
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		err := runOnce(ctx, opts, tpl, kvd, reconnectDelay)
+		if err == nil {
+			return nil
+		}
+
+		// Don't reconnect on user cancellation.
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+
+		color.Yellow("⚠️ Watcher disconnected: %v", err)
+		color.Yellow("🔄 Reconnecting in %v...", reconnectDelay)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(reconnectDelay):
+		}
+	}
+}
+
+func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration) (rerr error) {
+	cfg := config.Get()
+
 	o := pkgtclient.Options{
 		KV:               kvd,
 		Proxy:            cfg.Proxy,
 		NTP:              cfg.NTP,
-		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
+		ReconnectTimeout: reconnectDelay,
 	}
 
 	// create update dispatcher for reaction events
@@ -184,7 +223,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	return tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
 		pool := dcpool.NewPool(client,
 			int64(cfg.PoolSize),
-			tclient.NewDefaultMiddlewares(ctx, time.Duration(cfg.ReconnectTimeout)*time.Second)...)
+			tclient.NewDefaultMiddlewares(ctx, reconnectDelay)...)
 		defer multierr.AppendInvoke(&rerr, multierr.Close(pool))
 
 		w.pool = pool
@@ -233,10 +272,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			return errors.Wrap(err, "create download dir")
 		}
 
-		// wait for context cancellation (Ctrl+C)
-		ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
+		// Block until the client connection drops or user presses Ctrl+C.
 		<-ctx.Done()
 		w.pw.Log(color.YellowString("⏹ Stopping watcher..."))
 

@@ -9,6 +9,12 @@ import (
 	"github.com/go-faster/errors"
 )
 
+// BotConfig Bot 配置
+type BotConfig struct {
+	Token        string  `json:"token"`
+	AllowedUsers []int64 `json:"allowed_users"`
+}
+
 // Config 全局配置结构
 type Config struct {
 	Storage          map[string]string `json:"storage"`
@@ -24,6 +30,7 @@ type Config struct {
 	DownloadDir      string            `json:"download_dir"`
 	Include          []string          `json:"include"`
 	Exclude          []string          `json:"exclude"`
+	Bot              BotConfig         `json:"bot"`
 }
 
 // DefaultConfig 返回默认配置
@@ -43,6 +50,10 @@ func DefaultConfig() *Config {
 		DownloadDir:      "downloads",
 		Include:          []string{},
 		Exclude:          []string{},
+		Bot: BotConfig{
+			Token:        "",
+			AllowedUsers: []int64{},
+		},
 	}
 }
 
