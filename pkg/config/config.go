@@ -15,6 +15,18 @@ type BotConfig struct {
 	AllowedUsers []int64 `json:"allowed_users"`
 }
 
+type HTTPConfig struct {
+	Listen        string `json:"listen"`
+	PublicBaseURL string `json:"public_base_url"`
+}
+
+type Aria2Config struct {
+	RPCURL         string `json:"rpc_url"`
+	Secret         string `json:"secret"`
+	Dir            string `json:"dir"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
 // Config 全局配置结构
 type Config struct {
 	Storage          map[string]string `json:"storage"`
@@ -30,6 +42,8 @@ type Config struct {
 	DownloadDir      string            `json:"download_dir"`
 	Include          []string          `json:"include"`
 	Exclude          []string          `json:"exclude"`
+	HTTP             HTTPConfig        `json:"http"`
+	Aria2            Aria2Config       `json:"aria2"`
 	Bot              BotConfig         `json:"bot"`
 }
 
@@ -50,6 +64,16 @@ func DefaultConfig() *Config {
 		DownloadDir:      "downloads",
 		Include:          []string{},
 		Exclude:          []string{},
+		HTTP: HTTPConfig{
+			Listen:        "0.0.0.0:8080",
+			PublicBaseURL: "",
+		},
+		Aria2: Aria2Config{
+			RPCURL:         "http://127.0.0.1:6800/jsonrpc",
+			Secret:         "",
+			Dir:            "",
+			TimeoutSeconds: 30,
+		},
 		Bot: BotConfig{
 			Token:        "",
 			AllowedUsers: []int64{},
@@ -89,7 +113,7 @@ func Load(path string) (*Config, error) {
 		return nil, errors.Wrap(err, "read config file")
 	}
 
-	cfg := &Config{}
+	cfg := DefaultConfig()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, errors.Wrap(err, "unmarshal config")
 	}
