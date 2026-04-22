@@ -65,6 +65,12 @@ type downloadJob struct {
 	peerID int64
 }
 
+const aria2ConnectRetryInterval = 10 * time.Second
+
+type aria2ConcurrentDownloadSetter interface {
+	SetMaxConcurrentDownloads(ctx context.Context, limit int) error
+}
+
 type fileTask struct {
 	msg    *tg.Message
 	media  *tmedia.Media
@@ -107,7 +113,10 @@ func Run(ctx context.Context, opts Options) error {
 	defer cancel()
 
 	runtime := newWatchRuntime(cfg, kvd, logctx.From(ctx))
-	if err := runtime.aria2.SetMaxConcurrentDownloads(ctx, cfg.Limit); err != nil {
+	if err := waitForAria2(ctx, runtime.aria2, cfg.Limit, aria2ConnectRetryInterval, logctx.From(ctx)); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return errors.Wrap(err, "configure aria2 max concurrent downloads")
 	}
 	logctx.From(ctx).Info("Configured aria2 max concurrent downloads",
@@ -252,6 +261,44 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 		return nil
 	})
+}
+
+func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, limit int, retryInterval time.Duration, logger *zap.Logger) error {
+	if retryInterval <= 0 {
+		retryInterval = aria2ConnectRetryInterval
+	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	for {
+		err := client.SetMaxConcurrentDownloads(ctx, limit)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, context.Canceled) || !isAria2ConnectionError(err) {
+			return err
+		}
+
+		logger.Warn("Cannot connect to aria2 RPC, retrying",
+			zap.Duration("retry_interval", retryInterval),
+			zap.Error(err))
+		color.Yellow("⚠️ Cannot connect to aria2 RPC: %v", err)
+		color.Yellow("🔄 Retrying in %v...", retryInterval)
+
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func validateWatchConfig(cfg *config.Config) error {

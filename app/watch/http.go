@@ -28,7 +28,10 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
-const downloadStreamPartSize = 256 * 1024
+const (
+	downloadStreamPartSize        = 256 * 1024
+	telegramGetFileLimitAlignment = 4 * 1024
+)
 
 const (
 	downloadTaskKeyPrefix = "watch.download."
@@ -816,10 +819,7 @@ func streamTelegramMedia(ctx context.Context, client *tg.Client, media *tmedia.M
 		default:
 		}
 
-		limit := downloadStreamPartSize
-		if remaining < int64(limit) {
-			limit = int(remaining)
-		}
+		limit := telegramGetFileLimit(remaining)
 
 		req := &tg.UploadGetFileRequest{
 			Location: media.InputFileLoc,
@@ -885,6 +885,26 @@ func streamTelegramMedia(ctx context.Context, client *tg.Client, media *tmedia.M
 	logger.Info("Telegram media stream completed",
 		zap.Int64("bytes_written", written))
 	return nil
+}
+
+func telegramGetFileLimit(remaining int64) int {
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining >= int64(downloadStreamPartSize) {
+		return downloadStreamPartSize
+	}
+
+	// upload.getFile rejects arbitrary tail sizes; keep limit 4KB-aligned and
+	// trim any extra bytes before writing to the HTTP response.
+	aligned := ((remaining + telegramGetFileLimitAlignment - 1) / telegramGetFileLimitAlignment) * telegramGetFileLimitAlignment
+	if aligned < telegramGetFileLimitAlignment {
+		return telegramGetFileLimitAlignment
+	}
+	if aligned > int64(downloadStreamPartSize) {
+		return downloadStreamPartSize
+	}
+	return int(aligned)
 }
 
 func parseDownloadRange(header string, size int64) (start, end int64, partial bool, err error) {

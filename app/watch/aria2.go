@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -60,6 +61,29 @@ type aria2RPCResponse struct {
 type aria2RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+func isAria2ConnectionError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 func (c *aria2Client) call(ctx context.Context, method string, params []any) (string, error) {

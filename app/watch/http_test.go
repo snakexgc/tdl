@@ -295,6 +295,31 @@ func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
 	require.Equal(t, payload[524288:], out.Bytes())
 	require.NotEmpty(t, invoker.offsets)
 	require.Equal(t, int64(524288), invoker.offsets[0])
+	require.Equal(t, telegramGetFileLimitAlignment, invoker.limits[0])
+}
+
+func TestStreamTelegramMediaAlignsFinalLimit(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, 186100)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{data: payload}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+	}
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), client, media, 0, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	require.Equal(t, payload, out.Bytes())
+	require.Equal(t, []int64{0}, invoker.offsets)
+	require.Equal(t, []int{188416}, invoker.limits)
+	require.Zero(t, invoker.limits[0]%telegramGetFileLimitAlignment)
 }
 
 type recordingUploadInvoker struct {
