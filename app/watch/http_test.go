@@ -1,12 +1,16 @@
 package watch
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gotd/td/bin"
+	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
 	"github.com/iyear/tdl/core/tmedia"
@@ -159,4 +163,67 @@ func TestDownloadHandlerHead(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
 	require.False(t, called)
 	require.Equal(t, "10", rec.Result().Header.Get("Content-Length"))
+}
+
+func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, 524288+13)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{data: payload}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+	}
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), client, media, 524288, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	require.Equal(t, payload[524288:], out.Bytes())
+	require.NotEmpty(t, invoker.offsets)
+	require.Equal(t, int64(524288), invoker.offsets[0])
+}
+
+type recordingUploadInvoker struct {
+	data    []byte
+	offsets []int64
+	limits  []int
+}
+
+func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	req, ok := input.(*tg.UploadGetFileRequest)
+	if !ok {
+		return fmt.Errorf("unexpected request type %T", input)
+	}
+	box, ok := output.(*tg.UploadFileBox)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", output)
+	}
+
+	i.offsets = append(i.offsets, req.Offset)
+	i.limits = append(i.limits, req.Limit)
+
+	start := int(req.Offset)
+	if start >= len(i.data) {
+		box.File = &tg.UploadFile{
+			Type:  &tg.StorageFileUnknown{},
+			Bytes: nil,
+		}
+		return nil
+	}
+
+	end := start + req.Limit
+	if end > len(i.data) {
+		end = len(i.data)
+	}
+
+	box.File = &tg.UploadFile{
+		Type:  &tg.StorageFileUnknown{},
+		Bytes: i.data[start:end],
+	}
+	return nil
 }

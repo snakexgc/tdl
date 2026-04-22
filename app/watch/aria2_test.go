@@ -47,7 +47,6 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 		"allow-overwrite":           "true",
 		"auto-file-renaming":        "false",
 		"user-agent":                "tdl-watch-aria2",
-		"header":                    []any{"Range: bytes=0-"},
 	}, reqBody.Params[1])
 }
 
@@ -81,7 +80,6 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 		"allow-overwrite":           "true",
 		"auto-file-renaming":        "false",
 		"user-agent":                "tdl-watch-aria2",
-		"header":                    []any{"Range: bytes=0-"},
 	}, reqBody.Params[2])
 }
 

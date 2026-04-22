@@ -84,7 +84,6 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	options["allow-overwrite"] = "true"
 	options["auto-file-renaming"] = "false"
 	options["user-agent"] = "tdl-watch-aria2"
-	options["header"] = []string{"Range: bytes=0-"}
 	if len(options) > 0 {
 		params = append(params, options)
 	}

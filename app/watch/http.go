@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
-	gotddownloader "github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
@@ -28,8 +27,6 @@ import (
 )
 
 const downloadStreamPartSize = 256 * 1024
-
-var errStreamRangeComplete = errors.New("stream range complete")
 
 type downloadTask struct {
 	ID        string
@@ -307,118 +304,96 @@ func streamTelegramMedia(ctx context.Context, client *tg.Client, media *tmedia.M
 		return errors.New("invalid byte range")
 	}
 
+	flusher, _ := w.(http.Flusher)
+	offset := start
+	remaining := end - start + 1
+	var written int64
+
 	logger.Info("Starting Telegram media stream",
 		zap.Int("dc", media.DC),
 		zap.Int64("media_size", media.Size),
 		zap.Int64("start", start),
 		zap.Int64("end", end))
 
-	streamWriter := newHTTPStreamWriter(w, logger, start, end-start+1)
-	_, err := gotddownloader.NewDownloader().
-		WithPartSize(downloadStreamPartSize).
-		Download(client, media.InputFileLoc).
-		Stream(ctx, streamWriter)
-	if err != nil {
-		if errors.Is(err, errStreamRangeComplete) {
-			logger.Info("Telegram media stream completed",
-				zap.Int64("bytes_written", streamWriter.Written()))
-			return nil
-		}
-		if errors.Is(err, context.Canceled) {
+	for remaining > 0 {
+		select {
+		case <-ctx.Done():
 			logger.Warn("Telegram media stream canceled",
-				zap.Int64("bytes_written", streamWriter.Written()),
-				zap.Error(err))
-			return err
+				zap.Int64("bytes_written", written),
+				zap.Error(ctx.Err()))
+			return ctx.Err()
+		default:
 		}
-		logger.Error("Telegram media stream failed",
-			zap.Int64("bytes_written", streamWriter.Written()),
-			zap.Error(err))
-		return errors.Wrap(err, "stream telegram media")
+
+		limit := downloadStreamPartSize
+		if remaining < int64(limit) {
+			limit = int(remaining)
+		}
+
+		req := &tg.UploadGetFileRequest{
+			Location: media.InputFileLoc,
+			Offset:   offset,
+			Limit:    limit,
+		}
+		req.SetPrecise(true)
+
+		resp, err := client.UploadGetFile(ctx, req)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				logger.Warn("Telegram media stream canceled",
+					zap.Int64("bytes_written", written),
+					zap.Error(err))
+				return err
+			}
+			logger.Error("Telegram media stream failed",
+				zap.Int64("offset", offset),
+				zap.Int("limit", limit),
+				zap.Int64("bytes_written", written),
+				zap.Error(err))
+			return errors.Wrap(err, "get telegram file chunk")
+		}
+
+		file, ok := resp.(*tg.UploadFile)
+		if !ok {
+			return fmt.Errorf("unexpected telegram file response %T", resp)
+		}
+		if len(file.Bytes) == 0 {
+			return io.ErrUnexpectedEOF
+		}
+
+		chunk := file.Bytes
+		if int64(len(chunk)) > remaining {
+			chunk = chunk[:remaining]
+		}
+
+		n, err := w.Write(chunk)
+		written += int64(n)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if err != nil {
+			logger.Error("Writing HTTP response body failed",
+				zap.Int("chunk_size", len(chunk)),
+				zap.Int("written", n),
+				zap.Int64("bytes_written", written),
+				zap.Error(err))
+			return errors.Wrap(err, "write http response")
+		}
+		if n != len(chunk) {
+			logger.Error("Short write while streaming HTTP response",
+				zap.Int("expected", len(chunk)),
+				zap.Int("actual", n),
+				zap.Int64("bytes_written", written))
+			return io.ErrShortWrite
+		}
+
+		offset += int64(n)
+		remaining -= int64(n)
 	}
 
 	logger.Info("Telegram media stream completed",
-		zap.Int64("bytes_written", streamWriter.Written()))
+		zap.Int64("bytes_written", written))
 	return nil
-}
-
-type httpStreamWriter struct {
-	dst       io.Writer
-	flusher   http.Flusher
-	logger    *zap.Logger
-	skip      int64
-	remaining int64
-	written   int64
-}
-
-func newHTTPStreamWriter(dst io.Writer, logger *zap.Logger, skip, remaining int64) *httpStreamWriter {
-	writer := &httpStreamWriter{
-		dst:       dst,
-		logger:    logger,
-		skip:      skip,
-		remaining: remaining,
-	}
-	if flusher, ok := dst.(http.Flusher); ok {
-		writer.flusher = flusher
-	}
-	return writer
-}
-
-func (w *httpStreamWriter) Write(p []byte) (int, error) {
-	originalLen := len(p)
-	if originalLen == 0 {
-		return 0, nil
-	}
-
-	if w.skip > 0 {
-		if int64(len(p)) <= w.skip {
-			w.skip -= int64(len(p))
-			return originalLen, nil
-		}
-		p = p[w.skip:]
-		w.skip = 0
-	}
-
-	if w.remaining <= 0 {
-		return originalLen, errStreamRangeComplete
-	}
-
-	done := false
-	if int64(len(p)) > w.remaining {
-		p = p[:w.remaining]
-		done = true
-	}
-
-	n, err := w.dst.Write(p)
-	w.written += int64(n)
-	if w.flusher != nil {
-		w.flusher.Flush()
-	}
-	if err != nil {
-		w.logger.Error("Writing HTTP response body failed",
-			zap.Int("chunk_size", len(p)),
-			zap.Int("written", n),
-			zap.Int64("bytes_written", w.written),
-			zap.Error(err))
-		return originalLen, errors.Wrap(err, "write http response")
-	}
-	if n != len(p) {
-		w.logger.Error("Short write while streaming HTTP response",
-			zap.Int("expected", len(p)),
-			zap.Int("actual", n),
-			zap.Int64("bytes_written", w.written))
-		return originalLen, io.ErrShortWrite
-	}
-
-	w.remaining -= int64(n)
-	if done || w.remaining <= 0 {
-		return originalLen, errStreamRangeComplete
-	}
-
-	return originalLen, nil
-}
-
-func (w *httpStreamWriter) Written() int64 {
-	return w.written
 }
 
 func parseDownloadRange(header string, size int64) (start, end int64, partial bool, err error) {
