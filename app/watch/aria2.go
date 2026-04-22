@@ -14,6 +14,8 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
+const aria2BoolTrue = "true"
+
 type aria2AddURIOptions struct {
 	Dir         string
 	Out         string
@@ -81,12 +83,12 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	connections := normalizeAria2Connections(opts.Connections)
 	options["split"] = strconv.Itoa(connections)
 	options["max-connection-per-server"] = strconv.Itoa(connections)
-	options["continue"] = "true"
+	options["continue"] = aria2BoolTrue
 	if connections > 1 {
 		options["min-split-size"] = "1M"
 	}
-	options["allow-piece-length-change"] = "true"
-	options["allow-overwrite"] = "true"
+	options["allow-piece-length-change"] = aria2BoolTrue
+	options["allow-overwrite"] = aria2BoolTrue
 	options["auto-file-renaming"] = "false"
 	options["user-agent"] = "tdl-watch-aria2"
 	if len(options) > 0 {
