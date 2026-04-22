@@ -36,10 +36,6 @@ var (
 
 // command groups
 var (
-	groupAccount = &cobra.Group{
-		ID:    "account",
-		Title: "Account related",
-	}
 	groupTools = &cobra.Group{
 		ID:    "tools",
 		Title: "Tools",
@@ -69,6 +65,9 @@ func New() *cobra.Command {
 		Short:         "Telegram Downloader, but more than a downloader",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBot(cmd)
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// init logger
 			debug, level := cfg.Debug, zap.InfoLevel
@@ -123,9 +122,9 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
-	cmd.AddGroup(groupAccount, groupTools)
+	cmd.AddGroup(groupTools)
 
-	cmd.AddCommand(NewVersion(), NewLogin(), NewWatch(), NewBot())
+	cmd.AddCommand(NewVersion(), NewWatch(), NewBot())
 
 	// 从 JSON 配置设置默认值
 	cmd.PersistentFlags().StringToString(consts.FlagStorage,

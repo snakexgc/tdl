@@ -8,7 +8,7 @@ import (
 )
 
 func NewWatch() *cobra.Command {
-	var opts watch.Options
+	opts := watch.DefaultOptions(config.Get())
 
 	cmd := &cobra.Command{
 		Use:     "watch",
@@ -28,7 +28,7 @@ func NewWatch() *cobra.Command {
 
 	cmd.Flags().StringVarP(&opts.Dir, "dir", "d", config.Get().DownloadDir, "download directory")
 	cmd.Flags().StringVar(&opts.Template, "template",
-		"{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}",
+		opts.Template,
 		"download file name template")
 	cmd.Flags().BoolVar(&opts.SkipSame, "skip-same", false, "skip files with same name and size")
 	cmd.Flags().StringSliceVarP(&opts.Include, include, "i", config.Get().Include, "include the specified file extensions, and only judge by file name, not file MIME. Example: -i mp4,mp3")

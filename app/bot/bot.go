@@ -6,22 +6,33 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
+	"github.com/gotd/td/tg"
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
+	"github.com/iyear/tdl/app/login"
+	"github.com/iyear/tdl/app/watch"
 	"github.com/iyear/tdl/core/util/netutil"
+	"github.com/iyear/tdl/pkg/consts"
+	"github.com/iyear/tdl/pkg/kv"
 )
 
 type Options struct {
-	Token        string
-	AllowedUsers []int64
-	Proxy        string
+	Token            string
+	AllowedUsers     []int64
+	Proxy            string
+	Namespace        string
+	NTP              string
+	ReconnectTimeout time.Duration
+	Watch            watch.Options
 }
 
 func Run(ctx context.Context, opts Options) (rerr error) {
@@ -30,7 +41,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 
 	// create telego bot with proxy
-	bot, err := newBot(opts.Token, opts.Proxy)
+	bot, botLogger, err := newBot(opts.Token, opts.Proxy)
 	if err != nil {
 		return errors.Wrap(err, "create bot")
 	}
@@ -41,6 +52,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return errors.Wrap(err, "get bot info")
 	}
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
+	notifier := newBotNotifier(bot, opts.AllowedUsers)
 
 	// build allowed users set
 	allowedSet := make(map[int64]bool, len(opts.AllowedUsers))
@@ -48,21 +60,37 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		allowedSet[uid] = true
 	}
 
-	// send startup notification to allowed users
-	for _, uid := range opts.AllowedUsers {
-		_, err := bot.SendMessage(ctx, tu.Message(
-			tu.ID(uid),
-			fmt.Sprintf("🤖 Bot @%s 已启动", botUser.Username),
-		))
-		if err != nil {
-			color.Yellow("⚠️ Failed to notify user %d: %v", uid, err)
-		} else {
-			color.Green("📩 Notified user %d", uid)
-		}
+	notifier.Notify(ctx, startupMessage(botUser))
+
+	if err := configureBotMenu(ctx, bot); err != nil {
+		return errors.Wrap(err, "create bot menu")
 	}
 
+	kvd, err := kv.From(ctx).Open(opts.Namespace)
+	if err != nil {
+		return errors.Wrap(err, "open kv storage")
+	}
+	sessionOpts := login.SessionOptions{
+		KV:               kvd,
+		Proxy:            opts.Proxy,
+		NTP:              opts.NTP,
+		ReconnectTimeout: opts.ReconnectTimeout,
+	}
+	watchCtrl := newWatchController(ctx, opts.Watch, notifier.Notify)
+	loginMgr := newLoginManager(ctx, bot, gotdLoginRunner{
+		opts: sessionOpts,
+	})
+	loginMgr.SetOnSuccess(func(user *tg.User) {
+		notifier.Notify(ctx, "MTProto session 已更新。\n"+login.UserSummary(user))
+		startWatch(ctx, notifier, watchCtrl)
+	})
+
+	checkSessionAndMaybeStartWatch(ctx, notifier, watchCtrl, sessionOpts)
+
 	// start long polling
-	updates, err := bot.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
+	pollingCtx, cancelPolling := context.WithCancel(context.Background())
+	defer cancelPolling()
+	updates, err := bot.UpdatesViaLongPolling(pollingCtx, &telego.GetUpdatesParams{
 		Timeout: 10,
 	})
 	if err != nil {
@@ -72,10 +100,11 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	// create bot handler
 	bh, err := th.NewBotHandler(bot, updates)
 	if err != nil {
+		botLogger.SetShuttingDown()
+		cancelPolling()
 		return errors.Wrap(err, "create bot handler")
 	}
 
-	// handle all text messages from unauthorized users
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
 		if update.Message == nil || update.Message.From == nil {
 			return nil
@@ -86,8 +115,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowedSet[fromID] {
-			color.Cyan("✅ Allowed user %d sent message", fromID)
-			return nil
+			return handleAllowedMessage(ctx, update.Message, loginMgr)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -106,31 +134,183 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 	color.Green("🔄 Bot is running... Press Ctrl+C to stop")
 
-	bh.Start()
+	go func() {
+		<-ctx.Done()
+		botLogger.SetShuttingDown()
+		watchCtrl.Stop()
 
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := bh.StopWithContext(stopCtx); err != nil && !errors.Is(err, context.Canceled) {
+			color.Yellow("⚠️ Stop bot handler: %v", err)
+		}
+		cancelPolling()
+	}()
+
+	err = bh.Start()
+	botLogger.SetShuttingDown()
+	cancelPolling()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
+func startupMessage(botUser *telego.User) string {
+	botName := "(unknown)"
+	if botUser != nil && botUser.Username != "" {
+		botName = "@" + botUser.Username
+	} else if botUser != nil {
+		botName = fmt.Sprintf("Bot %d", botUser.ID)
+	}
+
+	return fmt.Sprintf("%s 已启动。\n\n%s", botName, versionSummary())
+}
+
+func versionSummary() string {
+	return fmt.Sprintf("Version: %s\nCommit: %s\nDate: %s\nGo: %s\nPlatform: %s/%s",
+		consts.Version,
+		consts.Commit,
+		consts.CommitDate,
+		runtime.Version(),
+		runtime.GOOS,
+		runtime.GOARCH,
+	)
+}
+
+func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
+	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
+		Commands: []telego.BotCommand{
+			{Command: "login_code", Description: "使用验证码登录 MTProto"},
+			{Command: "login_qr", Description: "使用二维码登录 MTProto"},
+			{Command: "cancel_login", Description: "取消正在进行的登录"},
+		},
+	})
+}
+
+func checkSessionAndMaybeStartWatch(ctx context.Context, notifier *botNotifier, watchCtrl *watchController, opts login.SessionOptions) {
+	user, err := login.CheckSession(ctx, opts)
+	switch {
+	case err == nil:
+		notifier.Notify(ctx, "MTProto session 有效。\n"+login.UserSummary(user))
+		startWatch(ctx, notifier, watchCtrl)
+	case errors.Is(err, login.ErrSessionUnauthorized):
+		notifier.Notify(ctx, "MTProto session 已失效或不存在，请使用 /login_code 或 /login_qr 重新登录。")
+	default:
+		notifier.Notify(ctx, fmt.Sprintf("检查 MTProto session 失败：%v\n请稍后重试，或使用 /login_code 或 /login_qr 重新登录。", err))
+	}
+}
+
+func startWatch(ctx context.Context, notifier *botNotifier, watchCtrl *watchController) {
+	if watchCtrl.Start() {
+		notifier.Notify(ctx, "watch 流程已启动，正在监听表情触发。")
+		return
+	}
+	notifier.Notify(ctx, "watch 流程已在运行。")
+}
+
+func handleAllowedMessage(ctx *th.Context, msg *telego.Message, loginMgr *loginManager) error {
+	fromID := msg.From.ID
+	chatID := msg.Chat.ID
+	text := strings.TrimSpace(msg.Text)
+
+	if msg.Chat.Type != telego.ChatTypePrivate {
+		if isLoginCommand(text) {
+			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
+				tu.ID(chatID),
+				"请在私聊中发送登录命令。",
+			).WithReplyParameters(&telego.ReplyParameters{MessageID: msg.MessageID}))
+		}
+		return nil
+	}
+
+	switch commandName(text) {
+	case "/login_code":
+		if err := loginMgr.StartCode(fromID, chatID); err != nil {
+			if errors.Is(err, errLoginBusy) {
+				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
+					tu.ID(chatID),
+					"已有登录流程正在进行，请先完成或发送 /cancel_login 取消。",
+				))
+				return nil
+			}
+			return err
+		}
+		return nil
+	case "/login_qr":
+		if err := loginMgr.StartQR(fromID, chatID); err != nil {
+			if errors.Is(err, errLoginBusy) {
+				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
+					tu.ID(chatID),
+					"已有登录流程正在进行，请先完成或发送 /cancel_login 取消。",
+				))
+				return nil
+			}
+			return err
+		}
+		return nil
+	case "/cancel_login":
+		if loginMgr.Cancel(fromID, chatID) {
+			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在取消当前登录流程。"))
+			return nil
+		}
+		if loginMgr.Busy() {
+			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
+				tu.ID(chatID),
+				"已有登录流程正在进行，只能由发起会话取消。",
+			))
+			return nil
+		}
+		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "当前没有可取消的登录流程。"))
+		return nil
+	}
+
+	if loginMgr.HandleInput(fromID, chatID, text, msg.MessageID) {
+		return nil
+	}
+
+	color.Cyan("✅ Allowed user %d sent message", fromID)
 	return nil
 }
 
+func commandName(text string) string {
+	cmd, _, _ := tu.ParseCommand(text)
+	if cmd == "" {
+		return ""
+	}
+	return "/" + cmd
+}
+
+func isLoginCommand(text string) bool {
+	switch commandName(text) {
+	case "/login_code", "/login_qr", "/cancel_login":
+		return true
+	default:
+		return false
+	}
+}
+
 // newBot creates a telego Bot instance with optional proxy support.
-func newBot(token, proxyURL string) (*telego.Bot, error) {
+func newBot(token, proxyURL string) (*telego.Bot, *shutdownAwareTelegoLogger, error) {
+	logger := newShutdownAwareTelegoLogger(token)
 	opts := []telego.BotOption{
-		telego.WithDefaultLogger(false, true),
+		telego.WithLogger(logger),
 	}
 
 	if proxyURL != "" {
 		httpClient, err := newHTTPClientWithProxy(proxyURL)
 		if err != nil {
-			return nil, errors.Wrap(err, "create http client with proxy")
+			return nil, nil, errors.Wrap(err, "create http client with proxy")
 		}
 		opts = append(opts, telego.WithHTTPClient(httpClient))
 	}
 
 	bot, err := telego.NewBot(token, opts...)
 	if err != nil {
-		return nil, errors.Wrap(err, "create telego bot")
+		return nil, nil, errors.Wrap(err, "create telego bot")
 	}
 
-	return bot, nil
+	return bot, logger, nil
 }
 
 // newHTTPClientWithProxy creates an *http.Client with proxy configured.

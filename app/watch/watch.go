@@ -47,6 +47,25 @@ type Options struct {
 	Threads  int
 	Include  []string
 	Exclude  []string
+	Notify   NotifyFunc
+}
+
+type NotifyFunc func(ctx context.Context, text string)
+
+const defaultFileTemplate = "{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}"
+
+func DefaultOptions(cfg *config.Config) Options {
+	if cfg == nil {
+		cfg = config.Get()
+	}
+
+	return Options{
+		Dir:      cfg.DownloadDir,
+		Template: defaultFileTemplate,
+		Threads:  cfg.Threads,
+		Include:  append([]string(nil), cfg.Include...),
+		Exclude:  append([]string(nil), cfg.Exclude...),
+	}
 }
 
 type fileTemplate struct {
@@ -384,7 +403,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 		zap.Int("entities_chats", len(e.Chats)),
 		zap.Int("entities_channels", len(e.Channels)))
 
-	isMine := w.isMyReaction(ctx, update)
+	isMine := w.isMyMessageReactions(ctx, &update.Reactions, peerID, update.MsgID)
 	if !isMine {
 		logctx.From(ctx).Info("Reaction is not mine, skipping",
 			zap.Int64("peer_id", peerID),
@@ -413,11 +432,13 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 
 	select {
 	case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID}:
+		w.notify(ctx, "检测到你的表情触发。\n消息：%s\n状态：已加入下载队列。", msgLink)
 	default:
 		logctx.From(ctx).Warn("Submission queue full, dropping job",
 			zap.Int64("peer_id", peerID),
 			zap.Int("msg_id", update.MsgID))
 		w.dedup.Delete(key)
+		w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
 	}
 
 	return nil
@@ -455,6 +476,13 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 		zap.Int("results_count", len(msg.Reactions.Results)),
 		zap.String("reactions_json", string(reactionsJSON)))
 
+	if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
+		logctx.From(ctx).Info("Reaction via EditMessage is not mine, skipping",
+			zap.Int64("peer_id", peerID),
+			zap.Int("msg_id", msg.ID))
+		return nil
+	}
+
 	inputPeer := w.peerToInputPeer(msg.PeerID, e)
 	key := fmt.Sprintf("%d:%d", peerID, msg.ID)
 	if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
@@ -465,34 +493,41 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	}
 
 	msgLink := w.generateMessageLink(msg.PeerID, msg.ID)
-	logctx.From(ctx).Info("Reaction detected via EditMessage, queuing submission",
+	logctx.From(ctx).Info("My reaction detected via EditMessage, queuing submission",
 		zap.Int64("peer_id", peerID),
 		zap.Int("msg_id", msg.ID),
 		zap.Bool("input_peer_nil", inputPeer == nil),
 		zap.String("message_link", msgLink))
 
-	color.Cyan("📌 Reaction on %d/%d (via edit), queueing submission...", peerID, msg.ID)
+	color.Cyan("📌 My reaction on %d/%d (via edit), queueing submission...", peerID, msg.ID)
 	color.Green("🔗 Message link: %s", msgLink)
 
 	select {
 	case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID}:
+		w.notify(ctx, "检测到表情触发。\n消息：%s\n状态：已加入下载队列。", msgLink)
 	default:
 		logctx.From(ctx).Warn("Submission queue full, dropping job",
 			zap.Int64("peer_id", peerID),
 			zap.Int("msg_id", msg.ID))
 		w.dedup.Delete(key)
+		w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
 	}
 
 	return nil
 }
 
-func (w *Watcher) isMyReaction(ctx context.Context, update *tg.UpdateMessageReactions) bool {
-	if update.Reactions.Min {
-		logctx.From(ctx).Info("Reactions.Min=true, accepting as mine (cannot determine ownership)")
-		return true
+func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.MessageReactions, peerID int64, msgID int) bool {
+	if reactions == nil {
+		return false
+	}
+	if reactions.Min {
+		logctx.From(ctx).Info("Reactions.Min=true, cannot determine ownership, skipping",
+			zap.Int64("peer_id", peerID),
+			zap.Int("msg_id", msgID))
+		return false
 	}
 
-	if recent, ok := update.Reactions.GetRecentReactions(); ok {
+	if recent, ok := reactions.GetRecentReactions(); ok {
 		for _, r := range recent {
 			emoji := reactionEmoji(r.Reaction)
 			logctx.From(ctx).Debug("Checking RecentReaction",
@@ -501,13 +536,15 @@ func (w *Watcher) isMyReaction(ctx context.Context, update *tg.UpdateMessageReac
 				zap.Int64("peer_id", tutil.GetPeerID(r.PeerID)))
 			if r.My {
 				logctx.From(ctx).Info("Found my reaction via RecentReactions",
-					zap.String("emoji", emoji))
+					zap.String("emoji", emoji),
+					zap.Int64("peer_id", peerID),
+					zap.Int("msg_id", msgID))
 				return true
 			}
 		}
 	}
 
-	for _, rc := range update.Reactions.Results {
+	for _, rc := range reactions.Results {
 		emoji := reactionEmoji(rc.Reaction)
 		chosenOrder, ok := rc.GetChosenOrder()
 		logctx.From(ctx).Debug("Checking Result ChosenOrder",
@@ -518,13 +555,17 @@ func (w *Watcher) isMyReaction(ctx context.Context, update *tg.UpdateMessageReac
 		if ok {
 			logctx.From(ctx).Info("Found my reaction via ChosenOrder",
 				zap.String("emoji", emoji),
-				zap.Int("chosen_order", chosenOrder))
+				zap.Int("chosen_order", chosenOrder),
+				zap.Int64("peer_id", peerID),
+				zap.Int("msg_id", msgID))
 			return true
 		}
 	}
 
 	logctx.From(ctx).Info("Reaction is NOT mine (both methods failed)",
-		zap.Int("results_count", len(update.Reactions.Results)))
+		zap.Int("results_count", len(reactions.Results)),
+		zap.Int64("peer_id", peerID),
+		zap.Int("msg_id", msgID))
 	return false
 }
 
@@ -597,6 +638,7 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 					zap.Int64("peer_id", job.peerID),
 					zap.Error(err))
 				color.Red("❌ Cannot resolve peer %d: %v", job.peerID, err)
+				w.notify(ctx, "无法解析消息来源，下载任务未提交。\nPeer: %d\n错误：%v", job.peerID, err)
 				continue
 			}
 			peer = resolved
@@ -608,12 +650,18 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 				zap.Int("msg_id", job.msgID),
 				zap.Error(err))
 			color.Red("❌ Cannot get message %d: %v", job.msgID, err)
+			w.notify(ctx, "无法获取触发消息，下载任务未提交。\n消息 ID: %d\n错误：%v", job.msgID, err)
 			continue
 		}
 
 		files, err := w.collectFiles(ctx, msg, peer, job.peerID)
 		if err != nil {
 			color.Red("❌ Failed to collect files for msg %d: %v", job.msgID, err)
+			w.notify(ctx, "解析消息媒体失败，下载任务未提交。\n消息 ID: %d\n错误：%v", job.msgID, err)
+			continue
+		}
+		if len(files) == 0 {
+			w.notify(ctx, "触发消息没有可下载媒体，或已被过滤规则跳过。\n消息 ID: %d", job.msgID)
 			continue
 		}
 
@@ -627,6 +675,7 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 							zap.String("name", f.media.Name),
 							zap.Error(err))
 						color.Red("❌ Submission failed: msg %d (%s): %v", f.msg.ID, f.media.Name, err)
+						w.notify(ctx, "提交到 aria2 失败。\n文件：%s\n消息 ID: %d\n错误：%v", f.media.Name, f.msg.ID, err)
 					}
 				}
 				return nil
@@ -769,7 +818,18 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 	color.Green("   URL: %s", downloadURL)
 	color.Green("   GID: %s", gid)
 
+	w.notify(ctx, "已提交到 aria2。\n文件：%s\n目标：%s\nGID：%s", fileName, fullPath, gid)
+
 	return nil
+}
+
+func (w *Watcher) notify(ctx context.Context, format string, args ...interface{}) {
+	if w.opts.Notify == nil {
+		return
+	}
+
+	text := fmt.Sprintf(format, args...)
+	go w.opts.Notify(context.WithoutCancel(ctx), text)
 }
 
 func (w *Watcher) renderFileName(dialogID int64, msg *tg.Message, media *tmedia.Media) (string, error) {
