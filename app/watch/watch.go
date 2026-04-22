@@ -658,8 +658,9 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 	}
 
 	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, aria2AddURIOptions{
-		Dir: dir,
-		Out: out,
+		Dir:         dir,
+		Out:         out,
+		Connections: w.opts.Threads,
 	})
 	if err != nil {
 		return errors.Wrap(err, "submit to aria2")

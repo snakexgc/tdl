@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -14,8 +15,9 @@ import (
 )
 
 type aria2AddURIOptions struct {
-	Dir string
-	Out string
+	Dir         string
+	Out         string
+	Connections int
 }
 
 type aria2Client struct {
@@ -76,10 +78,13 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	if opts.Out != "" {
 		options["out"] = opts.Out
 	}
-	// tdl is already proxying Telegram chunks; keep aria2 from splitting the
-	// proxy URL into competing range requests that may cancel each other.
-	options["split"] = "1"
-	options["max-connection-per-server"] = "1"
+	connections := normalizeAria2Connections(opts.Connections)
+	options["split"] = strconv.Itoa(connections)
+	options["max-connection-per-server"] = strconv.Itoa(connections)
+	options["continue"] = "true"
+	if connections > 1 {
+		options["min-split-size"] = "1M"
+	}
 	options["allow-piece-length-change"] = "true"
 	options["allow-overwrite"] = "true"
 	options["auto-file-renaming"] = "false"
@@ -130,4 +135,11 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	}
 
 	return decoded.Result, nil
+}
+
+func normalizeAria2Connections(connections int) int {
+	if connections < 1 {
+		return 1
+	}
+	return connections
 }
