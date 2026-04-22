@@ -17,22 +17,30 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/tmedia"
+	"github.com/iyear/tdl/core/util/tutil"
 	"github.com/iyear/tdl/pkg/config"
 )
 
 const downloadStreamPartSize = 256 * 1024
-const downloadTaskKeyPrefix = "watch.download."
+
+const (
+	downloadTaskKeyPrefix = "watch.download."
+	downloadTaskIndexKey  = "watch.download.index"
+	downloadTaskTTL       = 24 * time.Hour
+)
 
 type downloadTask struct {
 	ID        string
 	PeerID    int64
 	MessageID int
+	Peer      tg.InputPeerClass
 	FileName  string
 	FileSize  int64
 	Media     *tmedia.Media
@@ -43,6 +51,7 @@ type persistentDownloadTask struct {
 	ID        string                  `json:"id"`
 	PeerID    int64                   `json:"peer_id"`
 	MessageID int                     `json:"message_id"`
+	Peer      persistentInputPeer     `json:"peer"`
 	FileName  string                  `json:"file_name"`
 	FileSize  int64                   `json:"file_size"`
 	Media     persistentDownloadMedia `json:"media"`
@@ -65,12 +74,32 @@ type persistentMediaLocation struct {
 	ThumbSize     string `json:"thumb_size,omitempty"`
 }
 
-func persistentDownloadTaskFromTask(task *downloadTask) persistentDownloadTask {
-	location, _ := persistentMediaLocationFromMedia(task.Media)
+type persistentInputPeer struct {
+	Kind       string `json:"kind,omitempty"`
+	ID         int64  `json:"id,omitempty"`
+	AccessHash int64  `json:"access_hash,omitempty"`
+}
+
+type persistentDownloadTaskIndex map[string]time.Time
+
+func persistentDownloadTaskFromTask(task *downloadTask) (persistentDownloadTask, error) {
+	if task == nil || task.Media == nil {
+		return persistentDownloadTask{}, errors.New("download task media is empty")
+	}
+	location, err := persistentMediaLocationFromMedia(task.Media)
+	if err != nil {
+		return persistentDownloadTask{}, err
+	}
+	peer, err := persistentInputPeerFromPeer(task.Peer)
+	if err != nil {
+		return persistentDownloadTask{}, err
+	}
+
 	return persistentDownloadTask{
 		ID:        task.ID,
 		PeerID:    task.PeerID,
 		MessageID: task.MessageID,
+		Peer:      peer,
 		FileName:  task.FileName,
 		FileSize:  task.FileSize,
 		Media: persistentDownloadMedia{
@@ -81,11 +110,15 @@ func persistentDownloadTaskFromTask(task *downloadTask) persistentDownloadTask {
 			Location: location,
 		},
 		CreatedAt: task.CreatedAt,
-	}
+	}, nil
 }
 
 func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
 	media, err := p.Media.ToMedia()
+	if err != nil {
+		return nil, err
+	}
+	peer, err := p.Peer.ToInputPeer()
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +127,7 @@ func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
 		ID:        p.ID,
 		PeerID:    p.PeerID,
 		MessageID: p.MessageID,
+		Peer:      peer,
 		FileName:  p.FileName,
 		FileSize:  p.FileSize,
 		Media:     media,
@@ -164,6 +198,36 @@ func (p persistentMediaLocation) ToInputFileLocation() (tg.InputFileLocationClas
 	}
 }
 
+func persistentInputPeerFromPeer(peer tg.InputPeerClass) (persistentInputPeer, error) {
+	switch p := peer.(type) {
+	case nil:
+		return persistentInputPeer{}, nil
+	case *tg.InputPeerUser:
+		return persistentInputPeer{Kind: "user", ID: p.UserID, AccessHash: p.AccessHash}, nil
+	case *tg.InputPeerChannel:
+		return persistentInputPeer{Kind: "channel", ID: p.ChannelID, AccessHash: p.AccessHash}, nil
+	case *tg.InputPeerChat:
+		return persistentInputPeer{Kind: "chat", ID: p.ChatID}, nil
+	default:
+		return persistentInputPeer{}, fmt.Errorf("unsupported input peer %T", peer)
+	}
+}
+
+func (p persistentInputPeer) ToInputPeer() (tg.InputPeerClass, error) {
+	switch p.Kind {
+	case "":
+		return nil, nil
+	case "user":
+		return &tg.InputPeerUser{UserID: p.ID, AccessHash: p.AccessHash}, nil
+	case "channel":
+		return &tg.InputPeerChannel{ChannelID: p.ID, AccessHash: p.AccessHash}, nil
+	case "chat":
+		return &tg.InputPeerChat{ChatID: p.ID}, nil
+	default:
+		return nil, fmt.Errorf("unsupported input peer kind %q", p.Kind)
+	}
+}
+
 type taskStore struct {
 	mu    sync.RWMutex
 	tasks map[string]*downloadTask
@@ -178,18 +242,29 @@ func newTaskStore(kv storage.Storage) *taskStore {
 }
 
 func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.kv != nil {
-		data, err := json.Marshal(persistentDownloadTaskFromTask(task))
+		if err := s.cleanupExpiredLocked(ctx, time.Now()); err != nil {
+			return errors.Wrap(err, "cleanup expired download tasks")
+		}
+
+		persisted, err := persistentDownloadTaskFromTask(task)
+		if err != nil {
+			return errors.Wrap(err, "create persistent download task")
+		}
+		data, err := json.Marshal(persisted)
 		if err != nil {
 			return errors.Wrap(err, "marshal persistent download task")
 		}
 		if err := s.kv.Set(ctx, downloadTaskStorageKey(task.ID), data); err != nil {
 			return errors.Wrap(err, "persist download task")
 		}
+		if err := s.addIndexEntryLocked(ctx, task.ID, task.CreatedAt); err != nil {
+			return errors.Wrap(err, "index persistent download task")
+		}
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.tasks[task.ID] = task
 	return nil
@@ -200,6 +275,12 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 	task, ok := s.tasks[id]
 	s.mu.RUnlock()
 	if ok {
+		if isDownloadTaskExpired(task.CreatedAt, time.Now()) {
+			if err := s.delete(ctx, id); err != nil {
+				return nil, false, err
+			}
+			return nil, false, nil
+		}
 		return task, true, nil
 	}
 
@@ -219,6 +300,12 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		return nil, false, errors.Wrap(err, "decode persistent download task")
 	}
+	if isDownloadTaskExpired(persisted.CreatedAt, time.Now()) {
+		if err := s.delete(ctx, id); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
 
 	task, err = persisted.ToTask()
 	if err != nil {
@@ -230,6 +317,113 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 	s.mu.Unlock()
 
 	return task, true, nil
+}
+
+func (s *taskStore) CleanupExpired(ctx context.Context, now time.Time) error {
+	if s.kv == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.cleanupExpiredLocked(ctx, now)
+}
+
+func (s *taskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {
+	index, err := s.loadIndex(ctx)
+	if err != nil {
+		return err
+	}
+
+	changed := false
+	for id, createdAt := range index {
+		if !isDownloadTaskExpired(createdAt, now) {
+			continue
+		}
+		if err := s.kv.Delete(ctx, downloadTaskStorageKey(id)); err != nil {
+			return errors.Wrap(err, "delete expired download task")
+		}
+		delete(index, id)
+		delete(s.tasks, id)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return s.saveIndex(ctx, index)
+}
+
+func (s *taskStore) addIndexEntryLocked(ctx context.Context, id string, createdAt time.Time) error {
+	index, err := s.loadIndex(ctx)
+	if err != nil {
+		return err
+	}
+	index[id] = createdAt
+	return s.saveIndex(ctx, index)
+}
+
+func (s *taskStore) delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.deleteLocked(ctx, id)
+}
+
+func (s *taskStore) deleteLocked(ctx context.Context, id string) error {
+	if s.kv != nil {
+		if err := s.kv.Delete(ctx, downloadTaskStorageKey(id)); err != nil {
+			return errors.Wrap(err, "delete persistent download task")
+		}
+		index, err := s.loadIndex(ctx)
+		if err != nil {
+			return err
+		}
+		delete(index, id)
+		if err := s.saveIndex(ctx, index); err != nil {
+			return err
+		}
+	}
+
+	delete(s.tasks, id)
+	return nil
+}
+
+func (s *taskStore) loadIndex(ctx context.Context) (persistentDownloadTaskIndex, error) {
+	data, err := s.kv.Get(ctx, downloadTaskIndexKey)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return persistentDownloadTaskIndex{}, nil
+		}
+		return nil, errors.Wrap(err, "load download task index")
+	}
+
+	var index persistentDownloadTaskIndex
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, errors.Wrap(err, "decode download task index")
+	}
+	if index == nil {
+		index = persistentDownloadTaskIndex{}
+	}
+	return index, nil
+}
+
+func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskIndex) error {
+	data, err := json.Marshal(index)
+	if err != nil {
+		return errors.Wrap(err, "marshal download task index")
+	}
+	if err := s.kv.Set(ctx, downloadTaskIndexKey, data); err != nil {
+		return errors.Wrap(err, "save download task index")
+	}
+	return nil
+}
+
+func isDownloadTaskExpired(createdAt, now time.Time) bool {
+	if createdAt.IsZero() {
+		return false
+	}
+	return !createdAt.Add(downloadTaskTTL).After(now)
 }
 
 type poolHolder struct {
@@ -288,6 +482,8 @@ func (p *downloadProxy) Start(ctx context.Context) error {
 		zap.String("listen", p.cfg.Listen),
 		zap.String("public_base_url", p.cfg.PublicBaseURL))
 
+	p.startCleanupLoop(ctx)
+
 	go func() {
 		<-ctx.Done()
 
@@ -299,7 +495,38 @@ func (p *downloadProxy) Start(ctx context.Context) error {
 	return p.server.ListenAndServe()
 }
 
-func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
+func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
+	return p.tasks.CleanupExpired(ctx, time.Now())
+}
+
+func (p *downloadProxy) startCleanupLoop(ctx context.Context) {
+	if p.tasks.kv == nil {
+		return
+	}
+
+	cleanup := func() {
+		if err := p.CleanupExpiredTasks(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			p.logger.Warn("Failed to clean expired download tasks", zap.Error(err))
+		}
+	}
+
+	cleanup()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cleanup()
+			}
+		}
+	}()
+}
+
+func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
 	id, err := downloadTaskID(media)
 	if err != nil {
 		return nil, errors.Wrap(err, "build persistent download task id")
@@ -309,6 +536,7 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, fi
 		ID:        id,
 		PeerID:    peerID,
 		MessageID: msgID,
+		Peer:      peer,
 		FileName:  fileName,
 		FileSize:  fileSize,
 		Media:     media,
@@ -450,7 +678,70 @@ func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, star
 		zap.Int64("range_end", end),
 	))
 
-	return streamTelegramMedia(streamCtx, pool.Client(streamCtx, task.Media.DC), task.Media, start, end, w)
+	err := streamTelegramMedia(streamCtx, pool.Client(streamCtx, task.Media.DC), task.Media, start, end, w)
+	if err == nil || !isRefreshableFileReferenceError(err) {
+		return err
+	}
+
+	p.logger.Warn("Refreshing expired Telegram file reference",
+		zap.String("task_id", task.ID),
+		zap.Int64("peer_id", task.PeerID),
+		zap.Int("msg_id", task.MessageID))
+	if refreshErr := p.refreshTaskMedia(streamCtx, task); refreshErr != nil {
+		return errors.Wrap(refreshErr, "refresh expired file reference")
+	}
+	refreshed, ok, getErr := p.tasks.Get(streamCtx, task.ID)
+	if getErr != nil {
+		return getErr
+	}
+	if !ok {
+		return errors.New("download task disappeared after media refresh")
+	}
+	return streamTelegramMedia(streamCtx, pool.Client(streamCtx, refreshed.Media.DC), refreshed.Media, start, end, w)
+}
+
+func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask) error {
+	if task.Peer == nil {
+		return errors.New("download task peer is empty")
+	}
+
+	pool := p.pools.Get()
+	if pool == nil {
+		return errors.New("telegram client unavailable")
+	}
+
+	msg, err := tutil.GetSingleMessage(ctx, pool.Default(ctx), task.Peer, task.MessageID)
+	if err != nil {
+		return errors.Wrap(err, "get message for media refresh")
+	}
+	media, ok := tmedia.GetMedia(msg)
+	if !ok {
+		return errors.New("message no longer has media")
+	}
+	id, err := downloadTaskID(media)
+	if err != nil {
+		return err
+	}
+	if id != task.ID {
+		return fmt.Errorf("refreshed media id changed from %q to %q", task.ID, id)
+	}
+
+	refreshed := *task
+	refreshed.Media = media
+	refreshed.FileSize = media.Size
+	if err := p.tasks.Add(ctx, &refreshed); err != nil {
+		return err
+	}
+	return nil
+}
+
+func isRefreshableFileReferenceError(err error) bool {
+	if tgerr.Is(err, "FILE_REFERENCE_EXPIRED", "FILE_REFERENCE_INVALID", "FILE_REFERENCE_EMPTY", "FILEREF_UPGRADE_NEEDED") {
+		return true
+	}
+
+	rpcErr, ok := tgerr.As(err)
+	return ok && strings.HasPrefix(rpcErr.Type, "FILE_REFERENCE_")
 }
 
 func downloadTaskID(media *tmedia.Media) (string, error) {

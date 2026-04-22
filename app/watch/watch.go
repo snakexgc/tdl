@@ -647,7 +647,7 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 		}
 	}
 
-	task, err := w.runtime.proxy.NewTask(ctx, peerID, msg.ID, fileName, media.Size, media)
+	task, err := w.runtime.proxy.NewTask(ctx, peerID, msg.ID, peer, fileName, media.Size, media)
 	if err != nil {
 		return errors.Wrap(err, "register download task")
 	}

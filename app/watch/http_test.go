@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
@@ -58,9 +59,10 @@ func TestDownloadTaskIDStableForMedia(t *testing.T) {
 		DC:   2,
 	}
 
-	first, err := proxy.NewTask(context.Background(), 1, 2, "first.bin", 10, media)
+	peer := &tg.InputPeerChannel{ChannelID: 1, AccessHash: 2}
+	first, err := proxy.NewTask(context.Background(), 1, 2, peer, "first.bin", 10, media)
 	require.NoError(t, err)
-	second, err := proxy.NewTask(context.Background(), 3, 4, "second.bin", 10, media)
+	second, err := proxy.NewTask(context.Background(), 3, 4, peer, "second.bin", 10, media)
 	require.NoError(t, err)
 
 	require.Equal(t, "document_12345", first.ID)
@@ -80,8 +82,10 @@ func TestTaskStoreRestoresPersistentTask(t *testing.T) {
 		ID:        "photo_42_y",
 		PeerID:    100,
 		MessageID: 200,
+		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
 		FileName:  "photo.jpg",
 		FileSize:  10,
+		CreatedAt: time.Now(),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputPhotoFileLocation{
 				ID:            42,
@@ -105,12 +109,54 @@ func TestTaskStoreRestoresPersistentTask(t *testing.T) {
 	require.Equal(t, task.FileName, restored.FileName)
 	require.Equal(t, task.FileSize, restored.FileSize)
 
+	peer, ok := restored.Peer.(*tg.InputPeerChannel)
+	require.True(t, ok)
+	require.Equal(t, int64(100), peer.ChannelID)
+	require.Equal(t, int64(101), peer.AccessHash)
+
 	loc, ok := restored.Media.InputFileLoc.(*tg.InputPhotoFileLocation)
 	require.True(t, ok)
 	require.Equal(t, int64(42), loc.ID)
 	require.Equal(t, int64(99), loc.AccessHash)
 	require.Equal(t, []byte("ref"), loc.FileReference)
 	require.Equal(t, "y", loc.ThumbSize)
+}
+
+func TestTaskStoreExpiresPersistentTask(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	original := newTaskStore(kvd)
+	task := &downloadTask{
+		ID:        "document_42",
+		PeerID:    100,
+		MessageID: 200,
+		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
+		FileName:  "file.bin",
+		FileSize:  10,
+		CreatedAt: time.Now().Add(-downloadTaskTTL - time.Second),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{
+				ID:            42,
+				AccessHash:    99,
+				FileReference: []byte("ref"),
+			},
+			Name: "file.bin",
+			Size: 10,
+			DC:   4,
+			Date: 123,
+		},
+	}
+	require.NoError(t, original.Add(context.Background(), task))
+
+	restoredStore := newTaskStore(kvd)
+	restored, ok, err := restoredStore.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, restored)
+
+	_, err = kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.ErrorIs(t, err, storage.ErrNotFound)
 }
 
 func TestDownloadHandlerSuccessAndRange(t *testing.T) {
