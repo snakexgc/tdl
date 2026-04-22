@@ -79,7 +79,7 @@ func isAria2ConnectionError(err error) bool {
 	}
 
 	var netErr net.Error
-	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 
