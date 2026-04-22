@@ -25,8 +25,10 @@ type SessionOptions struct {
 	ReconnectTimeout time.Duration
 }
 
-type QRShowFunc func(ctx context.Context, token qrlogin.Token) error
-type PasswordFunc func(ctx context.Context) (string, error)
+type (
+	QRShowFunc   func(ctx context.Context, token qrlogin.Token) error
+	PasswordFunc func(ctx context.Context) (string, error)
+)
 
 var ErrSessionUnauthorized = errors.New("telegram session is not authorized")
 
