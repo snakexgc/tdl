@@ -149,6 +149,7 @@ func Run(ctx context.Context, opts Options) error {
 	if reconnectDelay <= 0 {
 		reconnectDelay = 5 * time.Second
 	}
+	var pausedAria2GIDs []string
 
 	for {
 		select {
@@ -161,12 +162,26 @@ func Run(ctx context.Context, opts Options) error {
 			return nil
 		}
 
-		err := runOnce(ctx, opts, tpl, kvd, reconnectDelay, runtime)
+		resumed, err := runOnce(ctx, opts, tpl, kvd, reconnectDelay, runtime, pausedAria2GIDs)
+		if resumed {
+			pausedAria2GIDs = nil
+		}
 		if err == nil || errors.Is(err, context.Canceled) {
 			return nil
 		}
 
 		color.Yellow("⚠️ Watcher disconnected: %v", err)
+		newPausedGIDs, pauseErr := suspendTDLAria2TasksForReconnect(ctx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(ctx))
+		if pauseErr != nil {
+			if errors.Is(pauseErr, context.Canceled) {
+				return nil
+			}
+			return errors.Wrap(pauseErr, "pause aria2 tasks before reconnect")
+		}
+		pausedAria2GIDs = mergeUniqueGIDs(pausedAria2GIDs, newPausedGIDs)
+		if len(newPausedGIDs) > 0 {
+			color.Yellow("⏸ Paused %d tdl aria2 task(s) before reconnect", len(newPausedGIDs))
+		}
 		color.Yellow("🔄 Reconnecting in %v...", reconnectDelay)
 
 		select {
@@ -179,7 +194,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
-func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime) (rerr error) {
+func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime, pausedAria2GIDs []string) (resumed bool, rerr error) {
 	cfg := config.Get()
 
 	o := pkgtclient.Options{
@@ -220,10 +235,10 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 	client, err := pkgtclient.New(ctx, o, false)
 	if err != nil {
-		return errors.Wrap(err, "create client")
+		return false, errors.Wrap(err, "create client")
 	}
 
-	return tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
+	err = tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
 		pool := dcpool.NewPool(client,
 			int64(cfg.PoolSize),
 			tclient.NewDefaultMiddlewares(ctx, reconnectDelay)...)
@@ -238,6 +253,13 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		self, err := client.Self(ctx)
 		if err != nil {
 			return errors.Wrap(err, "get self user")
+		}
+		if len(pausedAria2GIDs) > 0 {
+			if err := resumeTDLAria2Tasks(ctx, runtime.aria2, pausedAria2GIDs, logctx.From(ctx)); err != nil {
+				return errors.Wrap(err, "resume paused aria2 tasks")
+			}
+			resumed = true
+			color.Green("▶ Resumed %d tdl aria2 task(s) after reconnect", len(uniqueGIDs(pausedAria2GIDs)))
 		}
 		go func() {
 			if err := updatesMgr.Run(ctx, pool.Default(ctx), self.ID, updates.AuthOptions{
@@ -261,6 +283,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 		return nil
 	})
+	return resumed, err
 }
 
 func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, limit int, retryInterval time.Duration, logger *zap.Logger) error {
@@ -720,6 +743,18 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 	})
 	if err != nil {
 		return errors.Wrap(err, "submit to aria2")
+	}
+	if err := w.runtime.aria2Tasks.Add(ctx, aria2TaskRecord{
+		GID:         gid,
+		TaskID:      task.ID,
+		DownloadURL: downloadURL,
+		CreatedAt:   time.Now(),
+	}); err != nil {
+		logctx.From(ctx).Warn("Failed to register aria2 task",
+			zap.String("gid", gid),
+			zap.String("task_id", task.ID),
+			zap.String("download_url", downloadURL),
+			zap.Error(err))
 	}
 
 	logctx.From(ctx).Info("Submitted aria2 task",

@@ -8,17 +8,19 @@ import (
 )
 
 type watchRuntime struct {
-	proxy *downloadProxy
-	aria2 *aria2Client
-	pools *poolHolder
+	proxy      *downloadProxy
+	aria2      *aria2Client
+	aria2Tasks *aria2TaskStore
+	pools      *poolHolder
 }
 
 func newWatchRuntime(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *watchRuntime {
 	pools := &poolHolder{}
 
 	return &watchRuntime{
-		proxy: newDownloadProxy(cfg.HTTP, pools, kvd, logger),
-		aria2: newAria2Client(cfg.Aria2),
-		pools: pools,
+		proxy:      newDownloadProxy(cfg.HTTP, pools, kvd, logger),
+		aria2:      newAria2Client(cfg.Aria2),
+		aria2Tasks: newAria2TaskStore(kvd),
+		pools:      pools,
 	}
 }

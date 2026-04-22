@@ -131,6 +131,65 @@ func TestAria2SetMaxConcurrentDownloadsInvalidLimit(t *testing.T) {
 	require.ErrorContains(t, err, "greater than 0")
 }
 
+func TestAria2TellAndPauseMethods(t *testing.T) {
+	t.Parallel()
+
+	var requests []aria2RPCRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req aria2RPCRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests = append(requests, req)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch req.Method {
+		case "aria2.tellActive":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"active-1","status":"active","files":[{"uris":[{"uri":"http://example.com/a"}]}]}]}`))
+		case "aria2.tellWaiting":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"waiting-1","status":"waiting","files":[{"uris":[{"uri":"http://example.com/b"}]}]}]}`))
+		case "aria2.forcePause":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+		case "aria2.unpause":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+		default:
+			t.Fatalf("unexpected method %s", req.Method)
+		}
+	}))
+	defer srv.Close()
+
+	client := newAria2Client(config.Aria2Config{
+		RPCURL:         srv.URL,
+		Secret:         "secret",
+		TimeoutSeconds: 5,
+	})
+
+	active, err := client.TellActive(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "active-1", active[0].GID)
+	require.Equal(t, "http://example.com/a", active[0].Files[0].URIs[0].URI)
+
+	waiting, err := client.TellWaiting(context.Background(), 5, 2)
+	require.NoError(t, err)
+	require.Equal(t, "waiting-1", waiting[0].GID)
+	require.Equal(t, "http://example.com/b", waiting[0].Files[0].URIs[0].URI)
+
+	require.NoError(t, client.ForcePause(context.Background(), "gid-1"))
+	require.NoError(t, client.Unpause(context.Background(), "gid-1"))
+
+	require.Len(t, requests, 4)
+	require.Equal(t, "aria2.tellActive", requests[0].Method)
+	require.Equal(t, "token:secret", requests[0].Params[0])
+	require.Equal(t, []any{"gid", "status", "files"}, requests[0].Params[1])
+	require.Equal(t, "aria2.tellWaiting", requests[1].Method)
+	require.Equal(t, "token:secret", requests[1].Params[0])
+	require.Equal(t, float64(5), requests[1].Params[1])
+	require.Equal(t, float64(2), requests[1].Params[2])
+	require.Equal(t, []any{"gid", "status", "files"}, requests[1].Params[3])
+	require.Equal(t, "aria2.forcePause", requests[2].Method)
+	require.Equal(t, []any{"token:secret", "gid-1"}, requests[2].Params)
+	require.Equal(t, "aria2.unpause", requests[3].Method)
+	require.Equal(t, []any{"token:secret", "gid-1"}, requests[3].Params)
+}
+
 func TestWaitForAria2RetriesConnectionErrors(t *testing.T) {
 	t.Parallel()
 

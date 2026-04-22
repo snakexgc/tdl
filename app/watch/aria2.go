@@ -52,7 +52,7 @@ type aria2RPCRequest struct {
 }
 
 type aria2RPCResponse struct {
-	Result string          `json:"result"`
+	Result json.RawMessage `json:"result"`
 	Error  *aria2RPCError  `json:"error"`
 	ID     string          `json:"id"`
 	Extra  json.RawMessage `json:"-"`
@@ -86,9 +86,9 @@ func isAria2ConnectionError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
 }
 
-func (c *aria2Client) call(ctx context.Context, method string, params []any) (string, error) {
+func (c *aria2Client) callRaw(ctx context.Context, method string, params []any) (json.RawMessage, error) {
 	if c.rpcURL == "" {
-		return "", errors.New("aria2 rpc_url is empty")
+		return nil, errors.New("aria2 rpc_url is empty")
 	}
 
 	if c.secret != "" {
@@ -102,38 +102,52 @@ func (c *aria2Client) call(ctx context.Context, method string, params []any) (st
 		Params:  params,
 	})
 	if err != nil {
-		return "", errors.Wrap(err, "marshal aria2 request")
+		return nil, errors.Wrap(err, "marshal aria2 request")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.rpcURL, bytes.NewReader(body))
 	if err != nil {
-		return "", errors.Wrap(err, "create aria2 request")
+		return nil, errors.Wrap(err, "create aria2 request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", errors.Wrap(err, "do aria2 request")
+		return nil, errors.Wrap(err, "do aria2 request")
 	}
 	defer resp.Body.Close()
 
 	var decoded aria2RPCResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return "", errors.Wrap(err, "decode aria2 response")
+		return nil, errors.Wrap(err, "decode aria2 response")
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if decoded.Error != nil {
-			return "", fmt.Errorf("aria2 rpc status %d: %s", resp.StatusCode, decoded.Error.Message)
+			return nil, fmt.Errorf("aria2 rpc status %d: %s", resp.StatusCode, decoded.Error.Message)
 		}
-		return "", fmt.Errorf("aria2 rpc status %d", resp.StatusCode)
+		return nil, fmt.Errorf("aria2 rpc status %d", resp.StatusCode)
 	}
 
 	if decoded.Error != nil {
-		return "", fmt.Errorf("aria2 rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
+		return nil, fmt.Errorf("aria2 rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
 	}
 
 	return decoded.Result, nil
+}
+
+func (c *aria2Client) callString(ctx context.Context, method string, params []any) (string, error) {
+	raw, err := c.callRaw(ctx, method, params)
+	if err != nil {
+		return "", err
+	}
+
+	var result string
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", errors.Wrap(err, "decode aria2 string result")
+	}
+
+	return result, nil
 }
 
 func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOptions) (string, error) {
@@ -162,7 +176,7 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 		params = append(params, options)
 	}
 
-	result, err := c.call(ctx, "aria2.addUri", params)
+	result, err := c.callString(ctx, "aria2.addUri", params)
 	if err != nil {
 		return "", err
 	}
@@ -178,7 +192,7 @@ func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) 
 		return errors.New("aria2 max concurrent downloads must be greater than 0")
 	}
 
-	result, err := c.call(ctx, "aria2.changeGlobalOption", []any{
+	result, err := c.callString(ctx, "aria2.changeGlobalOption", []any{
 		map[string]any{
 			"max-concurrent-downloads": strconv.Itoa(limit),
 		},
@@ -188,6 +202,70 @@ func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) 
 	}
 	if result != "OK" {
 		return fmt.Errorf("unexpected aria2 response %q", result)
+	}
+	return nil
+}
+
+type aria2DownloadStatus struct {
+	GID    string      `json:"gid"`
+	Status string      `json:"status"`
+	Files  []aria2File `json:"files"`
+}
+
+type aria2File struct {
+	URIs []aria2URI `json:"uris"`
+}
+
+type aria2URI struct {
+	URI string `json:"uri"`
+}
+
+var aria2StatusKeys = []string{"gid", "status", "files"}
+
+func (c *aria2Client) TellActive(ctx context.Context) ([]aria2DownloadStatus, error) {
+	raw, err := c.callRaw(ctx, "aria2.tellActive", []any{aria2StatusKeys})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []aria2DownloadStatus
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, errors.Wrap(err, "decode aria2 active tasks")
+	}
+	return result, nil
+}
+
+func (c *aria2Client) TellWaiting(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error) {
+	raw, err := c.callRaw(ctx, "aria2.tellWaiting", []any{offset, num, aria2StatusKeys})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []aria2DownloadStatus
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, errors.Wrap(err, "decode aria2 waiting tasks")
+	}
+	return result, nil
+}
+
+func (c *aria2Client) ForcePause(ctx context.Context, gid string) error {
+	result, err := c.callString(ctx, "aria2.forcePause", []any{gid})
+	if err != nil {
+		return err
+	}
+	if result != gid {
+		return fmt.Errorf("unexpected aria2 forcePause response %q", result)
+	}
+	return nil
+}
+
+func (c *aria2Client) Unpause(ctx context.Context, gid string) error {
+	result, err := c.callString(ctx, "aria2.unpause", []any{gid})
+	if err != nil {
+		return err
+	}
+	if result != gid {
+		return fmt.Errorf("unexpected aria2 unpause response %q", result)
 	}
 	return nil
 }
