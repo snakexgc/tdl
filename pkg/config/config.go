@@ -60,7 +60,7 @@ func DefaultConfig() *Config {
 		Limit:            2,
 		PoolSize:         8,
 		Delay:            0,
-		ReconnectTimeout: 300,
+		ReconnectTimeout: 10,
 		DownloadDir:      "downloads",
 		Include:          []string{},
 		Exclude:          []string{},
