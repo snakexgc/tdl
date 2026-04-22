@@ -46,7 +46,7 @@
 | `download_dir` | 默认下载目录 |
 | `include` | 只下载指定扩展名，如 `["mp4", "mp3"]` |
 | `exclude` | 排除指定扩展名，如 `["png", "jpg"]` |
-| `limit` | 最大同时提交任务数 |
+| `limit` | 最大同时下载文件数；启动 `tdl watch` 时会同步到 aria2 的 `max-concurrent-downloads` |
 | `http.public_base_url` | aria2 访问 tdl 下载代理时使用的基础地址 |
 | `aria2.rpc_url` | aria2 JSON-RPC 地址 |
 
@@ -68,7 +68,7 @@ tdl 会连接到 Telegram 并在后台等待，你会看到：
    Public base URL: http://192.168.1.10:8080
    aria2 RPC: http://127.0.0.1:6800/jsonrpc
    Output dir: (aria2 default)
-   Max concurrent submissions: 2
+   Max concurrent downloads: 2
 ```
 
 ### 第 4 步：回表情，自动提交到 aria2

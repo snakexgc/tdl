@@ -87,6 +87,46 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 	}, reqBody.Params[2])
 }
 
+func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
+	t.Parallel()
+
+	var reqBody aria2RPCRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"OK"}`))
+	}))
+	defer srv.Close()
+
+	client := newAria2Client(config.Aria2Config{
+		RPCURL:         srv.URL,
+		Secret:         "secret",
+		TimeoutSeconds: 5,
+	})
+
+	err := client.SetMaxConcurrentDownloads(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, "aria2.changeGlobalOption", reqBody.Method)
+	require.Len(t, reqBody.Params, 2)
+	require.Equal(t, "token:secret", reqBody.Params[0])
+	require.Equal(t, map[string]any{
+		"max-concurrent-downloads": "7",
+	}, reqBody.Params[1])
+}
+
+func TestAria2SetMaxConcurrentDownloadsInvalidLimit(t *testing.T) {
+	t.Parallel()
+
+	client := newAria2Client(config.Aria2Config{
+		RPCURL:         "http://127.0.0.1:6800/jsonrpc",
+		TimeoutSeconds: 5,
+	})
+
+	err := client.SetMaxConcurrentDownloads(context.Background(), 0)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "greater than 0")
+}
+
 func TestAria2AddURIErrorResponse(t *testing.T) {
 	t.Parallel()
 

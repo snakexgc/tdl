@@ -107,6 +107,12 @@ func Run(ctx context.Context, opts Options) error {
 	defer cancel()
 
 	runtime := newWatchRuntime(cfg, kvd, logctx.From(ctx))
+	if err := runtime.aria2.SetMaxConcurrentDownloads(ctx, cfg.Limit); err != nil {
+		return errors.Wrap(err, "configure aria2 max concurrent downloads")
+	}
+	logctx.From(ctx).Info("Configured aria2 max concurrent downloads",
+		zap.Int("limit", cfg.Limit))
+
 	proxyErrCh := make(chan error, 1)
 	go func() {
 		if err := runtime.proxy.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -127,7 +133,7 @@ func Run(ctx context.Context, opts Options) error {
 		outputDir = "(aria2 default)"
 	}
 	color.Green("   Output dir: %s", outputDir)
-	color.Green("   Max concurrent submissions: %d", cfg.Limit)
+	color.Green("   Max concurrent downloads: %d", cfg.Limit)
 	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 
 	reconnectDelay := time.Duration(cfg.ReconnectTimeout) * time.Second
@@ -257,6 +263,9 @@ func validateWatchConfig(cfg *config.Config) error {
 	}
 	if cfg.Aria2.RPCURL == "" {
 		return errors.New("aria2.rpc_url is empty, please set it in config.json")
+	}
+	if cfg.Limit < 1 {
+		return errors.New("limit must be greater than 0")
 	}
 	return nil
 }

@@ -62,42 +62,18 @@ type aria2RPCError struct {
 	Message string `json:"message"`
 }
 
-func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOptions) (string, error) {
+func (c *aria2Client) call(ctx context.Context, method string, params []any) (string, error) {
 	if c.rpcURL == "" {
 		return "", errors.New("aria2 rpc_url is empty")
 	}
 
-	params := make([]any, 0, 3)
 	if c.secret != "" {
-		params = append(params, "token:"+c.secret)
-	}
-	params = append(params, []string{uri})
-
-	options := map[string]any{}
-	if opts.Dir != "" {
-		options["dir"] = opts.Dir
-	}
-	if opts.Out != "" {
-		options["out"] = opts.Out
-	}
-	connections := normalizeAria2Connections(opts.Connections)
-	options["split"] = strconv.Itoa(connections)
-	options["max-connection-per-server"] = strconv.Itoa(connections)
-	options["continue"] = aria2BoolTrue
-	if connections > 1 {
-		options["min-split-size"] = "1M"
-	}
-	options["allow-piece-length-change"] = aria2BoolTrue
-	options["allow-overwrite"] = aria2BoolTrue
-	options["auto-file-renaming"] = "false"
-	options["user-agent"] = "tdl-watch-aria2"
-	if len(options) > 0 {
-		params = append(params, options)
+		params = append([]any{"token:" + c.secret}, params...)
 	}
 
 	body, err := json.Marshal(aria2RPCRequest{
 		JSONRPC: "2.0",
-		Method:  "aria2.addUri",
+		Method:  method,
 		ID:      "tdl-watch",
 		Params:  params,
 	})
@@ -132,11 +108,64 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	if decoded.Error != nil {
 		return "", fmt.Errorf("aria2 rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
 	}
-	if decoded.Result == "" {
+
+	return decoded.Result, nil
+}
+
+func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOptions) (string, error) {
+	params := make([]any, 0, 2)
+	params = append(params, []string{uri})
+
+	options := map[string]any{}
+	if opts.Dir != "" {
+		options["dir"] = opts.Dir
+	}
+	if opts.Out != "" {
+		options["out"] = opts.Out
+	}
+	connections := normalizeAria2Connections(opts.Connections)
+	options["split"] = strconv.Itoa(connections)
+	options["max-connection-per-server"] = strconv.Itoa(connections)
+	options["continue"] = aria2BoolTrue
+	if connections > 1 {
+		options["min-split-size"] = "1M"
+	}
+	options["allow-piece-length-change"] = aria2BoolTrue
+	options["allow-overwrite"] = aria2BoolTrue
+	options["auto-file-renaming"] = "false"
+	options["user-agent"] = "tdl-watch-aria2"
+	if len(options) > 0 {
+		params = append(params, options)
+	}
+
+	result, err := c.call(ctx, "aria2.addUri", params)
+	if err != nil {
+		return "", err
+	}
+	if result == "" {
 		return "", errors.New("aria2 rpc returned empty gid")
 	}
 
-	return decoded.Result, nil
+	return result, nil
+}
+
+func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) error {
+	if limit < 1 {
+		return errors.New("aria2 max concurrent downloads must be greater than 0")
+	}
+
+	result, err := c.call(ctx, "aria2.changeGlobalOption", []any{
+		map[string]any{
+			"max-concurrent-downloads": strconv.Itoa(limit),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if result != "OK" {
+		return fmt.Errorf("unexpected aria2 response %q", result)
+	}
+	return nil
 }
 
 func normalizeAria2Connections(connections int) int {
