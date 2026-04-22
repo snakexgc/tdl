@@ -2,8 +2,7 @@ package watch
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -22,11 +21,13 @@ import (
 
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
+	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/pkg/config"
 )
 
 const downloadStreamPartSize = 256 * 1024
+const downloadTaskKeyPrefix = "watch.download."
 
 type downloadTask struct {
 	ID        string
@@ -38,30 +39,197 @@ type downloadTask struct {
 	CreatedAt time.Time
 }
 
-type taskStore struct {
-	mu    sync.RWMutex
-	tasks map[string]*downloadTask
+type persistentDownloadTask struct {
+	ID        string                  `json:"id"`
+	PeerID    int64                   `json:"peer_id"`
+	MessageID int                     `json:"message_id"`
+	FileName  string                  `json:"file_name"`
+	FileSize  int64                   `json:"file_size"`
+	Media     persistentDownloadMedia `json:"media"`
+	CreatedAt time.Time               `json:"created_at"`
 }
 
-func newTaskStore() *taskStore {
-	return &taskStore{
-		tasks: make(map[string]*downloadTask),
+type persistentDownloadMedia struct {
+	Name     string                  `json:"name"`
+	Size     int64                   `json:"size"`
+	DC       int                     `json:"dc"`
+	Date     int64                   `json:"date"`
+	Location persistentMediaLocation `json:"location"`
+}
+
+type persistentMediaLocation struct {
+	Kind          string `json:"kind"`
+	ID            int64  `json:"id"`
+	AccessHash    int64  `json:"access_hash"`
+	FileReference []byte `json:"file_reference"`
+	ThumbSize     string `json:"thumb_size,omitempty"`
+}
+
+func persistentDownloadTaskFromTask(task *downloadTask) persistentDownloadTask {
+	location, _ := persistentMediaLocationFromMedia(task.Media)
+	return persistentDownloadTask{
+		ID:        task.ID,
+		PeerID:    task.PeerID,
+		MessageID: task.MessageID,
+		FileName:  task.FileName,
+		FileSize:  task.FileSize,
+		Media: persistentDownloadMedia{
+			Name:     task.Media.Name,
+			Size:     task.Media.Size,
+			DC:       task.Media.DC,
+			Date:     task.Media.Date,
+			Location: location,
+		},
+		CreatedAt: task.CreatedAt,
 	}
 }
 
-func (s *taskStore) Add(task *downloadTask) {
+func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
+	media, err := p.Media.ToMedia()
+	if err != nil {
+		return nil, err
+	}
+
+	return &downloadTask{
+		ID:        p.ID,
+		PeerID:    p.PeerID,
+		MessageID: p.MessageID,
+		FileName:  p.FileName,
+		FileSize:  p.FileSize,
+		Media:     media,
+		CreatedAt: p.CreatedAt,
+	}, nil
+}
+
+func (p persistentDownloadMedia) ToMedia() (*tmedia.Media, error) {
+	location, err := p.Location.ToInputFileLocation()
+	if err != nil {
+		return nil, err
+	}
+
+	return &tmedia.Media{
+		InputFileLoc: location,
+		Name:         p.Name,
+		Size:         p.Size,
+		DC:           p.DC,
+		Date:         p.Date,
+	}, nil
+}
+
+func persistentMediaLocationFromMedia(media *tmedia.Media) (persistentMediaLocation, error) {
+	if media == nil || media.InputFileLoc == nil {
+		return persistentMediaLocation{}, errors.New("media location is empty")
+	}
+
+	switch loc := media.InputFileLoc.(type) {
+	case *tg.InputDocumentFileLocation:
+		return persistentMediaLocation{
+			Kind:          "document",
+			ID:            loc.ID,
+			AccessHash:    loc.AccessHash,
+			FileReference: loc.FileReference,
+			ThumbSize:     loc.ThumbSize,
+		}, nil
+	case *tg.InputPhotoFileLocation:
+		return persistentMediaLocation{
+			Kind:          "photo",
+			ID:            loc.ID,
+			AccessHash:    loc.AccessHash,
+			FileReference: loc.FileReference,
+			ThumbSize:     loc.ThumbSize,
+		}, nil
+	default:
+		return persistentMediaLocation{}, fmt.Errorf("unsupported media location %T", media.InputFileLoc)
+	}
+}
+
+func (p persistentMediaLocation) ToInputFileLocation() (tg.InputFileLocationClass, error) {
+	switch p.Kind {
+	case "document":
+		return &tg.InputDocumentFileLocation{
+			ID:            p.ID,
+			AccessHash:    p.AccessHash,
+			FileReference: p.FileReference,
+			ThumbSize:     p.ThumbSize,
+		}, nil
+	case "photo":
+		return &tg.InputPhotoFileLocation{
+			ID:            p.ID,
+			AccessHash:    p.AccessHash,
+			FileReference: p.FileReference,
+			ThumbSize:     p.ThumbSize,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported media location kind %q", p.Kind)
+	}
+}
+
+type taskStore struct {
+	mu    sync.RWMutex
+	tasks map[string]*downloadTask
+	kv    storage.Storage
+}
+
+func newTaskStore(kv storage.Storage) *taskStore {
+	return &taskStore{
+		tasks: make(map[string]*downloadTask),
+		kv:    kv,
+	}
+}
+
+func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
+	if s.kv != nil {
+		data, err := json.Marshal(persistentDownloadTaskFromTask(task))
+		if err != nil {
+			return errors.Wrap(err, "marshal persistent download task")
+		}
+		if err := s.kv.Set(ctx, downloadTaskStorageKey(task.ID), data); err != nil {
+			return errors.Wrap(err, "persist download task")
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.tasks[task.ID] = task
+	return nil
 }
 
-func (s *taskStore) Get(id string) (*downloadTask, bool) {
+func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	task, ok := s.tasks[id]
-	return task, ok
+	s.mu.RUnlock()
+	if ok {
+		return task, true, nil
+	}
+
+	if s.kv == nil {
+		return nil, false, nil
+	}
+
+	data, err := s.kv.Get(ctx, downloadTaskStorageKey(id))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, errors.Wrap(err, "load persistent download task")
+	}
+
+	var persisted persistentDownloadTask
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		return nil, false, errors.Wrap(err, "decode persistent download task")
+	}
+
+	task, err = persisted.ToTask()
+	if err != nil {
+		return nil, false, errors.Wrap(err, "restore persistent download task")
+	}
+
+	s.mu.Lock()
+	s.tasks[id] = task
+	s.mu.Unlock()
+
+	return task, true, nil
 }
 
 type poolHolder struct {
@@ -94,14 +262,14 @@ type downloadProxy struct {
 	logger *zap.Logger
 }
 
-func newDownloadProxy(cfg config.HTTPConfig, pools *poolHolder, logger *zap.Logger) *downloadProxy {
+func newDownloadProxy(cfg config.HTTPConfig, pools *poolHolder, kv storage.Storage, logger *zap.Logger) *downloadProxy {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	p := &downloadProxy{
 		cfg:    cfg,
-		tasks:  newTaskStore(),
+		tasks:  newTaskStore(kv),
 		pools:  pools,
 		logger: logger.Named("watch-http"),
 	}
@@ -131,10 +299,10 @@ func (p *downloadProxy) Start(ctx context.Context) error {
 	return p.server.ListenAndServe()
 }
 
-func (p *downloadProxy) NewTask(peerID int64, msgID int, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
-	id, err := newTaskID()
+func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
+	id, err := downloadTaskID(media)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "build persistent download task id")
 	}
 
 	task := &downloadTask{
@@ -146,7 +314,9 @@ func (p *downloadProxy) NewTask(peerID int64, msgID int, fileName string, fileSi
 		Media:     media,
 		CreatedAt: time.Now(),
 	}
-	p.tasks.Add(task)
+	if err := p.tasks.Add(ctx, task); err != nil {
+		return nil, err
+	}
 
 	return task, nil
 }
@@ -180,7 +350,14 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		zap.String("remote_addr", r.RemoteAddr),
 		zap.String("user_agent", r.UserAgent()))
 
-	task, ok := p.tasks.Get(taskID)
+	task, ok, err := p.tasks.Get(r.Context(), taskID)
+	if err != nil {
+		p.logger.Error("Failed to load download task",
+			zap.String("task_id", taskID),
+			zap.Error(err))
+		http.Error(w, "failed to load download task", http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		p.logger.Warn("Download task not found",
 			zap.String("task_id", taskID))
@@ -276,12 +453,35 @@ func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, star
 	return streamTelegramMedia(streamCtx, pool.Client(streamCtx, task.Media.DC), task.Media, start, end, w)
 }
 
-func newTaskID() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", errors.Wrap(err, "generate task id")
+func downloadTaskID(media *tmedia.Media) (string, error) {
+	location, err := persistentMediaLocationFromMedia(media)
+	if err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(buf), nil
+
+	switch location.Kind {
+	case "document":
+		if location.ThumbSize != "" {
+			return fmt.Sprintf("document_%d_%s", location.ID, safeTaskIDPart(location.ThumbSize)), nil
+		}
+		return fmt.Sprintf("document_%d", location.ID), nil
+	case "photo":
+		if location.ThumbSize != "" {
+			return fmt.Sprintf("photo_%d_%s", location.ID, safeTaskIDPart(location.ThumbSize)), nil
+		}
+		return fmt.Sprintf("photo_%d", location.ID), nil
+	default:
+		return "", fmt.Errorf("unsupported media location kind %q", location.Kind)
+	}
+}
+
+func safeTaskIDPart(v string) string {
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_")
+	return replacer.Replace(v)
+}
+
+func downloadTaskStorageKey(id string) string {
+	return downloadTaskKeyPrefix + id
 }
 
 func buildDownloadURL(baseURL, taskID string) (string, error) {

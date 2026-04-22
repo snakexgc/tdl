@@ -106,7 +106,7 @@ func Run(ctx context.Context, opts Options) error {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	runtime := newWatchRuntime(cfg, logctx.From(ctx))
+	runtime := newWatchRuntime(cfg, kvd, logctx.From(ctx))
 	proxyErrCh := make(chan error, 1)
 	go func() {
 		if err := runtime.proxy.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -647,7 +647,7 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 		}
 	}
 
-	task, err := w.runtime.proxy.NewTask(peerID, msg.ID, fileName, media.Size, media)
+	task, err := w.runtime.proxy.NewTask(ctx, peerID, msg.ID, fileName, media.Size, media)
 	if err != nil {
 		return errors.Wrap(err, "register download task")
 	}

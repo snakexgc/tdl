@@ -7,12 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
+	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/pkg/config"
 )
@@ -28,26 +30,87 @@ func TestBuildDownloadURL(t *testing.T) {
 func TestTaskStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	store := newTaskStore()
+	store := newTaskStore(nil)
 	task := &downloadTask{ID: "task-1", FileName: "a.bin"}
-	store.Add(task)
+	require.NoError(t, store.Add(context.Background(), task))
 
-	got, ok := store.Get("task-1")
+	got, ok, err := store.Get(context.Background(), "task-1")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, task, got)
 }
 
-func TestTaskIDUnique(t *testing.T) {
+func TestDownloadTaskIDStableForMedia(t *testing.T) {
 	t.Parallel()
 
-	seen := map[string]struct{}{}
-	for i := 0; i < 10; i++ {
-		id, err := newTaskID()
-		require.NoError(t, err)
-		_, exists := seen[id]
-		require.False(t, exists)
-		seen[id] = struct{}{}
+	proxy := newDownloadProxy(config.HTTPConfig{
+		Listen:        "127.0.0.1:0",
+		PublicBaseURL: "http://127.0.0.1:8080",
+	}, &poolHolder{}, nil, nil)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{
+			ID:            12345,
+			AccessHash:    67890,
+			FileReference: []byte("ref"),
+		},
+		Name: "file.bin",
+		Size: 10,
+		DC:   2,
 	}
+
+	first, err := proxy.NewTask(context.Background(), 1, 2, "first.bin", 10, media)
+	require.NoError(t, err)
+	second, err := proxy.NewTask(context.Background(), 3, 4, "second.bin", 10, media)
+	require.NoError(t, err)
+
+	require.Equal(t, "document_12345", first.ID)
+	require.Equal(t, first.ID, second.ID)
+
+	u, err := proxy.BuildURL(first.ID)
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:8080/download/document_12345", u)
+}
+
+func TestTaskStoreRestoresPersistentTask(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	original := newTaskStore(kvd)
+	task := &downloadTask{
+		ID:        "photo_42_y",
+		PeerID:    100,
+		MessageID: 200,
+		FileName:  "photo.jpg",
+		FileSize:  10,
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputPhotoFileLocation{
+				ID:            42,
+				AccessHash:    99,
+				FileReference: []byte("ref"),
+				ThumbSize:     "y",
+			},
+			Name: "photo.jpg",
+			Size: 10,
+			DC:   4,
+			Date: 123,
+		},
+	}
+	require.NoError(t, original.Add(context.Background(), task))
+
+	restoredStore := newTaskStore(kvd)
+	restored, ok, err := restoredStore.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, task.ID, restored.ID)
+	require.Equal(t, task.FileName, restored.FileName)
+	require.Equal(t, task.FileSize, restored.FileSize)
+
+	loc, ok := restored.Media.InputFileLoc.(*tg.InputPhotoFileLocation)
+	require.True(t, ok)
+	require.Equal(t, int64(42), loc.ID)
+	require.Equal(t, int64(99), loc.AccessHash)
+	require.Equal(t, []byte("ref"), loc.FileReference)
+	require.Equal(t, "y", loc.ThumbSize)
 }
 
 func TestDownloadHandlerSuccessAndRange(t *testing.T) {
@@ -56,7 +119,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil)
+	}, &poolHolder{}, nil, nil)
 
 	payload := []byte("0123456789")
 	proxy.stream = func(ctx context.Context, task *downloadTask, start, end int64, w io.Writer) error {
@@ -70,7 +133,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 		FileSize: int64(len(payload)),
 		Media:    &tmedia.Media{Name: "file.bin", Size: int64(len(payload))},
 	}
-	proxy.tasks.Add(task)
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
 	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
 	rec := httptest.NewRecorder()
@@ -102,7 +165,7 @@ func TestDownloadHandlerMissingTask(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil)
+	}, &poolHolder{}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
 	rec := httptest.NewRecorder()
@@ -116,7 +179,7 @@ func TestDownloadHandlerInvalidRange(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil)
+	}, &poolHolder{}, nil, nil)
 
 	task := &downloadTask{
 		ID:       "task-1",
@@ -124,7 +187,7 @@ func TestDownloadHandlerInvalidRange(t *testing.T) {
 		FileSize: 10,
 		Media:    &tmedia.Media{Name: "file.bin", Size: 10},
 	}
-	proxy.tasks.Add(task)
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
 	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
 	req.Header.Set("Range", "bytes=20-30")
@@ -140,7 +203,7 @@ func TestDownloadHandlerHead(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil)
+	}, &poolHolder{}, nil, nil)
 
 	called := false
 	proxy.stream = func(ctx context.Context, task *downloadTask, start, end int64, w io.Writer) error {
@@ -154,7 +217,7 @@ func TestDownloadHandlerHead(t *testing.T) {
 		FileSize: 10,
 		Media:    &tmedia.Media{Name: "file.bin", Size: 10},
 	}
-	proxy.tasks.Add(task)
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
 	req := httptest.NewRequest(http.MethodHead, "/download/task-1", nil)
 	rec := httptest.NewRecorder()
@@ -225,5 +288,43 @@ func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, 
 		Type:  &tg.StorageFileUnknown{},
 		Bytes: i.data[start:end],
 	}
+	return nil
+}
+
+type memoryTaskStorage struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func newMemoryTaskStorage() *memoryTaskStorage {
+	return &memoryTaskStorage{
+		data: map[string][]byte{},
+	}
+}
+
+func (m *memoryTaskStorage) Get(ctx context.Context, key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	value, ok := m.data[key]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (m *memoryTaskStorage) Set(ctx context.Context, key string, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.data[key] = append([]byte(nil), value...)
+	return nil
+}
+
+func (m *memoryTaskStorage) Delete(ctx context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.data, key)
 	return nil
 }
