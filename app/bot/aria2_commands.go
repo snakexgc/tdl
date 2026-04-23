@@ -110,8 +110,8 @@ func formatAria2Overview(overview watch.Aria2Overview) string {
 	parts = append(parts,
 		"TDL aria2 任务总览：",
 		fmt.Sprintf("任务总数：%d", overview.TotalTasks),
-		fmt.Sprintf("还需下载任务：%d", overview.RemainingTasks),
-		fmt.Sprintf("剩余总量：%s", utils.Byte.FormatBinaryBytes(overview.RemainingBytes)),
+		fmt.Sprintf("下载中：%d", overview.RemainingTasks),
+		fmt.Sprintf("下载剩余：%s", utils.Byte.FormatBinaryBytes(overview.RemainingBytes)),
 	)
 	if len(overview.StatusCounts) > 0 {
 		parts = append(parts, "状态分布："+formatAria2StatusCounts(overview.StatusCounts))
