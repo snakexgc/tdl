@@ -22,6 +22,7 @@ import (
 
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/watch"
+	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/util/netutil"
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
@@ -68,7 +69,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return errors.Wrap(err, "create bot menu")
 	}
 
-	kvd, err := kv.From(ctx).Open(opts.Namespace)
+	kvEngine := kv.From(ctx)
+	kvd, err := kvEngine.Open(opts.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "open kv storage")
 	}
@@ -150,7 +152,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, aria2Factory)
+			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, aria2Factory, kvEngine, opts.Namespace, kvd)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -202,7 +204,7 @@ func startupMessage(botUser *telego.User, state startupState) string {
 	}
 
 	parts := []string{
-		fmt.Sprintf("您的TDL监听机器人 %s 已启动！", botName),
+		fmt.Sprintf("您的TDL机器人 %s 已启动！", botName),
 		"",
 		versionSummary(),
 		"",
@@ -229,17 +231,18 @@ func versionSummary() string {
 func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: []telego.BotCommand{
-			{Command: "login_code", Description: "使用验证码登录"},
+			{Command: "login_code", Description: "验证码登录"},
 			{Command: "login_qr", Description: "扫描二维码登录"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
-			{Command: "config", Description: "查看机器人配置命令"},
-			{Command: "config_get", Description: "查看配置"},
-			{Command: "config_set", Description: "保存配置"},
-			{Command: "reboot", Description: "重启并重载配置"},
-			{Command: "aria2_overview", Description: "查看 TDL aria2 任务总览"},
-			{Command: "aria2_pause_all", Description: "暂停全部 TDL aria2 任务"},
-			{Command: "aria2_start_all", Description: "开始全部 TDL aria2 任务"},
-			{Command: "aria2_retry", Description: "重试已停止的 TDL aria2 任务"},
+			{Command: "aria2_overview", Description: "查看下载任务概况"},
+			{Command: "aria2_pause_all", Description: "暂停全部下载任务"},
+			{Command: "aria2_start_all", Description: "开始全部下载任务"},
+			{Command: "aria2_retry", Description: "重试已停止的下载任务"},
+			{Command: "config", Description: "查看配置命令"},
+			{Command: "config_get", Description: "查看全部配置"},
+			{Command: "config_set", Description: "修改配置"},
+			{Command: "reboot", Description: "重启(不推荐)"},
+			{Command: "clean_kv", Description: "清空KV缓存(危险)"},
 		},
 	})
 }
@@ -287,6 +290,9 @@ func handleAllowedMessage(
 	afterConfigSave func(*config.Config),
 	requestReboot func(),
 	aria2Factory aria2ControllerFactory,
+	kvEngine kv.Storage,
+	namespace string,
+	namespaceKV storage.Storage,
 ) error {
 	fromID := msg.From.ID
 	chatID := msg.Chat.ID
@@ -306,6 +312,9 @@ func handleAllowedMessage(
 		return err
 	}
 	if handled, err := handleAria2Command(ctx, msg, text, aria2Factory); handled || err != nil {
+		return err
+	}
+	if handled, err := handleKVCommand(ctx, msg, text, kvEngine, namespace, namespaceKV); handled || err != nil {
 		return err
 	}
 
@@ -375,7 +384,8 @@ func commandName(text string) string {
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
 	case "/login_code", "/login_qr", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
-		"/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry":
+		"/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
+		"/clean_kv":
 		return true
 	default:
 		return false

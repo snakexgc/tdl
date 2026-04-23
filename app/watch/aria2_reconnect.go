@@ -14,6 +14,8 @@ import (
 
 const aria2TellWaitingBatchSize = 1000
 
+const aria2StatusActive = "active"
+
 type aria2ReconnectClient interface {
 	TellActive(ctx context.Context) ([]aria2DownloadStatus, error)
 	TellWaiting(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error)
@@ -122,7 +124,7 @@ func listTDLAria2ReconnectTasks(ctx context.Context, client aria2ReconnectClient
 	}
 
 	for _, task := range active {
-		if task.Status == "" || task.Status == "active" {
+		if task.Status == "" || task.Status == aria2StatusActive {
 			appendOwned(task)
 		}
 	}

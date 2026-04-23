@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/utils"
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
+
+	"github.com/iyear/tdl/app/watch"
+	"github.com/iyear/tdl/pkg/utils"
 )
 
 const aria2CommandTimeout = 30 * time.Second
