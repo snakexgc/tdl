@@ -115,7 +115,7 @@ func configHelpMessage() string {
 	paths := append([]string(nil), configurablePaths...)
 	sort.Strings(paths)
 
-	return fmt.Sprintf("配置命令：\n/config_get 查看全部配置\n/config_get 配置项 查看单项配置\n/config_set 配置项 值 保存配置\n/reboot 重启程序并重新加载配置\n\n值支持 JSON；字符串也可以直接写。\n配置文件：%s\n\n可设置配置项：\n%s", config.GetPath(), strings.Join(paths, "\n"))
+	return fmt.Sprintf("配置命令：\n/config_get 查看全部配置\n/config_get 配置项 查看单项配置\n/config_set 配置项 值 保存配置\n/reboot 重启程序并重新加载配置\n\n值支持 JSON；字符串也可以直接写。\ndownload_dir 支持 G/I/Y/M/D，/ 或 \\ 分层，& 连接同层，例如 Y&M/I/G。\n配置文件：%s\n\n可设置配置项：\n%s", config.GetPath(), strings.Join(paths, "\n"))
 }
 
 func isProtectedConfigPath(path string) bool {

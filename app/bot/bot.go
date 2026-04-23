@@ -161,7 +161,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 			tu.ID(chatID),
-			fmt.Sprintf("您的用户 ID 为：\n`%s`\n\n点击 ID 即可复制", userIDStr),
+			fmt.Sprintf("您的用户 ID 为：\n`%s`", userIDStr),
 		).WithParseMode(telego.ModeMarkdownV2).WithReplyParameters(&telego.ReplyParameters{
 			MessageID: update.Message.MessageID,
 		}))

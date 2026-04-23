@@ -155,6 +155,15 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	logctx.From(ctx).Info("Configured aria2 max concurrent downloads",
 		zap.Int("limit", cfg.Limit))
+	outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(ctx, runtime.aria2, cfg)
+	if err != nil {
+		if opts.Notify != nil {
+			opts.Notify(ctx, fmt.Sprintf("aria2 下载目录异常：%v", err))
+		}
+		return errors.Wrap(err, "prepare aria2 output root")
+	}
+	runtime.outputRoot = outputRoot
+	runtime.ensureOutputDirs = ensureOutputDirs
 
 	proxyErrCh := make(chan error, 1)
 	go func() {
@@ -171,11 +180,8 @@ func Run(ctx context.Context, opts Options) error {
 	color.Green("   HTTP listen: %s", cfg.HTTP.Listen)
 	color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
 	color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
-	outputDir := effectiveOutputDir(cfg, opts)
-	if outputDir == "" {
-		outputDir = "(aria2 default)"
-	}
-	color.Green("   Output dir: %s", outputDir)
+	color.Green("   Output root: %s", runtime.outputRoot)
+	color.Green("   Download dir template: %s", opts.Dir)
 	color.Green("   Max concurrent downloads: %d", cfg.Limit)
 	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 
@@ -602,7 +608,7 @@ func (w *Watcher) generateMessageLink(peer tg.PeerClass, msgID int) string {
 	case *tg.PeerChat:
 		return fmt.Sprintf("https://t.me/c/%d/%d", p.ChatID, msgID)
 	case *tg.PeerUser:
-		return fmt.Sprintf("(private chat user_id=%d msg_id=%d)", p.UserID, msgID)
+		return fmt.Sprintf("tg://openmessage?user_id=%d&message_id=%d", p.UserID, msgID)
 	default:
 		return fmt.Sprintf("(unknown peer type: %T, msg_id=%d)", peer, msgID)
 	}
@@ -800,7 +806,14 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 		return preparedFileTask{}, false, err
 	}
 
-	dir, out, fullPath := resolveTargetPath(effectiveOutputDir(config.Get(), w.opts), fileName)
+	data := w.downloadDirData(ctx, file)
+	baseDir := joinTargetPath(w.runtime.outputRoot, renderDownloadDir(w.opts.Dir, data)...)
+	dir, out, fullPath := resolveTargetPath(baseDir, fileName)
+	if w.runtime.ensureOutputDirs && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return preparedFileTask{}, false, errors.Wrap(err, "create target directory")
+		}
+	}
 	if w.opts.SkipSame && dir != "" {
 		if stat, statErr := os.Stat(fullPath); statErr == nil && stat.Size() == file.media.Size {
 			color.Yellow("⏭ Skipping existing: %s", fullPath)
@@ -891,33 +904,6 @@ func (w *Watcher) renderFileName(dialogID int64, msg *tg.Message, media *tmedia.
 		return "", errors.Wrap(err, "execute template")
 	}
 	return toName.String(), nil
-}
-
-func resolveTargetPath(baseDir, renderedName string) (dir, out, fullPath string) {
-	cleanName := filepath.Clean(renderedName)
-	dir = baseDir
-
-	if subDir := filepath.Dir(cleanName); subDir != "." {
-		if dir == "" {
-			dir = subDir
-		} else {
-			dir = filepath.Join(dir, subDir)
-		}
-	}
-
-	out = filepath.Base(cleanName)
-	if dir == "" || dir == "." {
-		fullPath = out
-		return dir, out, fullPath
-	}
-
-	fullPath = filepath.Join(dir, out)
-	return dir, out, fullPath
-}
-
-func effectiveOutputDir(cfg *config.Config, opts Options) string {
-	_ = opts
-	return cfg.Aria2.Dir
 }
 
 func addPrefixDot(v string) string {

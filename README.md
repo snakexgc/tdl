@@ -43,7 +43,7 @@
 | 配置项 | 说明 |
 |-------|------|
 | `proxy` | 代理地址，如 `http://127.0.0.1:10808` |
-| `download_dir` | 默认下载目录 |
+| `download_dir` | 下载目录模板，会拼接在 aria2 下载根目录后；支持 `G` 名称、`I` ID、`Y` 年、`M` 月、`D` 日，`/` 或 `\` 分层，`&` 连接同层 |
 | `include` | 只下载指定扩展名，如 `["mp4", "mp3"]` |
 | `exclude` | 排除指定扩展名，如 `["png", "jpg"]` |
 | `limit` | 最大同时下载文件数；启动 `tdl watch` 时会同步到 aria2 的 `max-concurrent-downloads` |
@@ -51,6 +51,8 @@
 | `aria2.rpc_url` | aria2 JSON-RPC 地址 |
 
 如果 aria2 运行在 Docker、NAS、WSL 或另一台机器上，`http.public_base_url` 不能写 `127.0.0.1`，需要写 aria2 所在环境能访问到 tdl 的局域网地址。
+
+`download_dir` 会和 aria2 下载根目录组合使用。若设置了 `aria2.dir`，tdl 会先尝试创建并校验该目录；若未设置，tdl 会从 aria2 的全局配置读取默认下载目录。例如 `download_dir` 为 `Y&M/I/G` 时，Windows 下可能得到 `D:\Download\202604\12345\群组名`，Linux 下可能得到 `/root/download/202604/12345/群组名`。
 
 ### 第 3 步：启动监听
 

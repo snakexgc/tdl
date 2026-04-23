@@ -64,6 +64,14 @@ func TestEditMessageReactionQueuesWhenMine(t *testing.T) {
 	require.Len(t, w.jobCh, 1)
 }
 
+func TestGenerateMessageLinkForPrivateChatUsesTelegramDeepLink(t *testing.T) {
+	w := &Watcher{}
+
+	link := w.generateMessageLink(&tg.PeerUser{UserID: 8789880052}, 2247)
+
+	require.Equal(t, "tg://openmessage?user_id=8789880052&message_id=2247", link)
+}
+
 func testReactionCount(chosen bool) tg.ReactionCount {
 	count := tg.ReactionCount{
 		Reaction: &tg.ReactionEmoji{Emoticon: "👍"},

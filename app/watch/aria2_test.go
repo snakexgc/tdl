@@ -142,6 +142,8 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch req.Method {
+		case "aria2.getGlobalOption":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":{"dir":"/root/download"}}`))
 		case "aria2.tellActive":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"active-1","status":"active","totalLength":"100","completedLength":"40","files":[{"uris":[{"uri":"http://example.com/a"}]}]}]}`))
 		case "aria2.tellWaiting":
@@ -166,6 +168,10 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 		TimeoutSeconds: 5,
 	})
 
+	dir, err := client.GetGlobalDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "/root/download", dir)
+
 	active, err := client.TellActive(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "active-1", active[0].GID)
@@ -187,26 +193,28 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 	require.NoError(t, client.Unpause(context.Background(), "gid-1"))
 	require.NoError(t, client.RemoveDownloadResult(context.Background(), "gid-1"))
 
-	require.Len(t, requests, 6)
-	require.Equal(t, "aria2.tellActive", requests[0].Method)
-	require.Equal(t, "token:secret", requests[0].Params[0])
-	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[0].Params[1])
-	require.Equal(t, "aria2.tellWaiting", requests[1].Method)
+	require.Len(t, requests, 7)
+	require.Equal(t, "aria2.getGlobalOption", requests[0].Method)
+	require.Equal(t, []any{"token:secret"}, requests[0].Params)
+	require.Equal(t, "aria2.tellActive", requests[1].Method)
 	require.Equal(t, "token:secret", requests[1].Params[0])
-	require.Equal(t, float64(5), requests[1].Params[1])
-	require.Equal(t, float64(2), requests[1].Params[2])
-	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[1].Params[3])
-	require.Equal(t, "aria2.tellStopped", requests[2].Method)
+	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[1].Params[1])
+	require.Equal(t, "aria2.tellWaiting", requests[2].Method)
 	require.Equal(t, "token:secret", requests[2].Params[0])
-	require.Equal(t, float64(7), requests[2].Params[1])
-	require.Equal(t, float64(3), requests[2].Params[2])
+	require.Equal(t, float64(5), requests[2].Params[1])
+	require.Equal(t, float64(2), requests[2].Params[2])
 	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[2].Params[3])
-	require.Equal(t, "aria2.forcePause", requests[3].Method)
-	require.Equal(t, []any{"token:secret", "gid-1"}, requests[3].Params)
-	require.Equal(t, "aria2.unpause", requests[4].Method)
+	require.Equal(t, "aria2.tellStopped", requests[3].Method)
+	require.Equal(t, "token:secret", requests[3].Params[0])
+	require.Equal(t, float64(7), requests[3].Params[1])
+	require.Equal(t, float64(3), requests[3].Params[2])
+	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[3].Params[3])
+	require.Equal(t, "aria2.forcePause", requests[4].Method)
 	require.Equal(t, []any{"token:secret", "gid-1"}, requests[4].Params)
-	require.Equal(t, "aria2.removeDownloadResult", requests[5].Method)
+	require.Equal(t, "aria2.unpause", requests[5].Method)
 	require.Equal(t, []any{"token:secret", "gid-1"}, requests[5].Params)
+	require.Equal(t, "aria2.removeDownloadResult", requests[6].Method)
+	require.Equal(t, []any{"token:secret", "gid-1"}, requests[6].Params)
 }
 
 func TestWaitForAria2RetriesConnectionErrors(t *testing.T) {

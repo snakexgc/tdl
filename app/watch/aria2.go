@@ -206,6 +206,19 @@ func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) 
 	return nil
 }
 
+func (c *aria2Client) GetGlobalDir(ctx context.Context) (string, error) {
+	raw, err := c.callRaw(ctx, "aria2.getGlobalOption", []any{})
+	if err != nil {
+		return "", err
+	}
+
+	var options map[string]string
+	if err := json.Unmarshal(raw, &options); err != nil {
+		return "", errors.Wrap(err, "decode aria2 global options")
+	}
+	return options["dir"], nil
+}
+
 type aria2DownloadStatus struct {
 	GID             string      `json:"gid"`
 	Status          string      `json:"status"`
