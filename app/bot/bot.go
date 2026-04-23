@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fatih/color"
@@ -21,9 +23,12 @@ import (
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/watch"
 	"github.com/iyear/tdl/core/util/netutil"
+	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
 	"github.com/iyear/tdl/pkg/kv"
 )
+
+var processRebootRequested atomic.Bool
 
 type Options struct {
 	Token            string
@@ -33,6 +38,10 @@ type Options struct {
 	NTP              string
 	ReconnectTimeout time.Duration
 	Watch            watch.Options
+}
+
+func RebootRequested() bool {
+	return processRebootRequested.Load()
 }
 
 func Run(ctx context.Context, opts Options) (rerr error) {
@@ -53,14 +62,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
 	notifier := newBotNotifier(bot, opts.AllowedUsers)
-
-	// build allowed users set
-	allowedSet := make(map[int64]bool, len(opts.AllowedUsers))
-	for _, uid := range opts.AllowedUsers {
-		allowedSet[uid] = true
-	}
-
-	notifier.Notify(ctx, startupMessage(botUser))
+	allowed := newAllowedUsers(opts.AllowedUsers)
 
 	if err := configureBotMenu(ctx, bot); err != nil {
 		return errors.Wrap(err, "create bot menu")
@@ -80,12 +82,12 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	loginMgr := newLoginManager(ctx, bot, gotdLoginRunner{
 		opts: sessionOpts,
 	})
-	loginMgr.SetOnSuccess(func(user *tg.User) {
-		notifier.Notify(ctx, "MTProto session 已更新。\n"+login.UserSummary(user))
-		startWatch(ctx, notifier, watchCtrl)
+	loginMgr.SetOnSuccess(func(_ *tg.User) {
+		notifyWatchAfterLogin(ctx, notifier, watchCtrl)
 	})
 
-	checkSessionAndMaybeStartWatch(ctx, notifier, watchCtrl, sessionOpts)
+	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts)
+	notifier.Notify(ctx, startupMessage(botUser, startup))
 
 	// start long polling
 	pollingCtx, cancelPolling := context.WithCancel(context.Background())
@@ -105,6 +107,32 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return errors.Wrap(err, "create bot handler")
 	}
 
+	var rebootRequested atomic.Bool
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			botLogger.SetShuttingDown()
+			watchCtrl.Stop()
+
+			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := bh.StopWithContext(stopCtx); err != nil && !errors.Is(err, context.Canceled) {
+				color.Yellow("⚠️ Stop bot handler: %v", err)
+			}
+			cancelPolling()
+		})
+	}
+	requestReboot := func() {
+		rebootRequested.Store(true)
+		processRebootRequested.Store(true)
+		go shutdown()
+	}
+	afterConfigSave := func(cfg *config.Config) {
+		allowed.Replace(cfg.Bot.AllowedUsers)
+		notifier.UpdateChatIDs(cfg.Bot.AllowedUsers)
+		watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
+	}
+
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
 		if update.Message == nil || update.Message.From == nil {
 			return nil
@@ -114,8 +142,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		chatID := update.Message.Chat.ID
 
 		// check if user is allowed
-		if allowedSet[fromID] {
-			return handleAllowedMessage(ctx, update.Message, loginMgr)
+		if allowed.Contains(fromID) {
+			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -136,27 +164,28 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 	go func() {
 		<-ctx.Done()
-		botLogger.SetShuttingDown()
-		watchCtrl.Stop()
-
-		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := bh.StopWithContext(stopCtx); err != nil && !errors.Is(err, context.Canceled) {
-			color.Yellow("⚠️ Stop bot handler: %v", err)
-		}
-		cancelPolling()
+		shutdown()
 	}()
 
 	err = bh.Start()
 	botLogger.SetShuttingDown()
 	cancelPolling()
+	if rebootRequested.Load() {
+		return nil
+	}
 	if ctx.Err() != nil {
 		return nil
 	}
 	return err
 }
 
-func startupMessage(botUser *telego.User) string {
+type startupState struct {
+	Session string
+	Watch   string
+	Hint    string
+}
+
+func startupMessage(botUser *telego.User, state startupState) string {
 	botName := "(unknown)"
 	if botUser != nil && botUser.Username != "" {
 		botName = "@" + botUser.Username
@@ -164,7 +193,18 @@ func startupMessage(botUser *telego.User) string {
 		botName = fmt.Sprintf("Bot %d", botUser.ID)
 	}
 
-	return fmt.Sprintf("%s 已启动。\n\n%s", botName, versionSummary())
+	parts := []string{
+		fmt.Sprintf("您的TDL监听机器人 %s 已启动！", botName),
+		"",
+		versionSummary(),
+		"",
+		"MTProto session: " + state.Session,
+		"watch: " + state.Watch,
+	}
+	if state.Hint != "" {
+		parts = append(parts, "", state.Hint)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func versionSummary() string {
@@ -181,47 +221,75 @@ func versionSummary() string {
 func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: []telego.BotCommand{
-			{Command: "login_code", Description: "使用验证码登录 MTProto"},
-			{Command: "login_qr", Description: "使用二维码登录 MTProto"},
+			{Command: "login_code", Description: "使用验证码登录"},
+			{Command: "login_qr", Description: "扫描二维码登录"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
+			{Command: "config", Description: "查看机器人配置命令"},
+			{Command: "config_get", Description: "查看配置"},
+			{Command: "config_set", Description: "保存配置"},
+			{Command: "reboot", Description: "重启并重载配置"},
 		},
 	})
 }
 
-func checkSessionAndMaybeStartWatch(ctx context.Context, notifier *botNotifier, watchCtrl *watchController, opts login.SessionOptions) {
+func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl *watchController, opts login.SessionOptions) startupState {
 	user, err := login.CheckSession(ctx, opts)
 	switch {
 	case err == nil:
-		notifier.Notify(ctx, "MTProto session 有效。\n"+login.UserSummary(user))
-		startWatch(ctx, notifier, watchCtrl)
+		watchStatus := "已进入监听，正在等待表情触发。"
+		if !watchCtrl.Start() {
+			watchStatus = "已在运行。"
+		}
+		return startupState{
+			Session: "有效。" + login.UserSummary(user),
+			Watch:   watchStatus,
+		}
 	case errors.Is(err, login.ErrSessionUnauthorized):
-		notifier.Notify(ctx, "MTProto session 已失效或不存在，请使用 /login_code 或 /login_qr 重新登录。")
+		return startupState{
+			Session: "无效或不存在。",
+			Watch:   "未启动。",
+			Hint:    "请使用 /login_code 或 /login_qr 登录；登录成功后会自动重新启动 watch。",
+		}
 	default:
-		notifier.Notify(ctx, fmt.Sprintf("检查 MTProto session 失败：%v\n请稍后重试，或使用 /login_code 或 /login_qr 重新登录。", err))
+		return startupState{
+			Session: fmt.Sprintf("检查失败：%v", err),
+			Watch:   "未启动。",
+			Hint:    "请稍后重试，或使用 /login_code 或 /login_qr 重新登录；登录成功后会自动重新启动 watch。",
+		}
 	}
 }
 
-func startWatch(ctx context.Context, notifier *botNotifier, watchCtrl *watchController) {
+func notifyWatchAfterLogin(ctx context.Context, notifier *botNotifier, watchCtrl *watchController) {
 	if watchCtrl.Start() {
-		notifier.Notify(ctx, "watch 流程已启动，正在监听表情触发。")
+		notifier.Notify(ctx, "登录完成，watch 已重新启动，正在监听表情触发。")
 		return
 	}
-	notifier.Notify(ctx, "watch 流程已在运行。")
+	notifier.Notify(ctx, "登录完成，watch 已在运行。")
 }
 
-func handleAllowedMessage(ctx *th.Context, msg *telego.Message, loginMgr *loginManager) error {
+func handleAllowedMessage(
+	ctx *th.Context,
+	msg *telego.Message,
+	loginMgr *loginManager,
+	afterConfigSave func(*config.Config),
+	requestReboot func(),
+) error {
 	fromID := msg.From.ID
 	chatID := msg.Chat.ID
 	text := strings.TrimSpace(msg.Text)
 
 	if msg.Chat.Type != telego.ChatTypePrivate {
-		if isLoginCommand(text) {
+		if isPrivateCommand(text) {
 			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 				tu.ID(chatID),
-				"请在私聊中发送登录命令。",
+				"请在私聊中发送控制命令。",
 			).WithReplyParameters(&telego.ReplyParameters{MessageID: msg.MessageID}))
 		}
 		return nil
+	}
+
+	if handled, err := handleConfigCommand(ctx, msg, text, afterConfigSave); handled || err != nil {
+		return err
 	}
 
 	switch commandName(text) {
@@ -263,6 +331,12 @@ func handleAllowedMessage(ctx *th.Context, msg *telego.Message, loginMgr *loginM
 		}
 		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "当前没有可取消的登录流程。"))
 		return nil
+	case "/reboot":
+		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在重启程序，稍后会收到新的启动状态。"))
+		if requestReboot != nil {
+			requestReboot()
+		}
+		return nil
 	}
 
 	if loginMgr.HandleInput(fromID, chatID, text, msg.MessageID) {
@@ -281,9 +355,9 @@ func commandName(text string) string {
 	return "/" + cmd
 }
 
-func isLoginCommand(text string) bool {
+func isPrivateCommand(text string) bool {
 	switch commandName(text) {
-	case "/login_code", "/login_qr", "/cancel_login":
+	case "/login_code", "/login_qr", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot":
 		return true
 	default:
 		return false

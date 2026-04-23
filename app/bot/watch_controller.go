@@ -74,6 +74,16 @@ func (c *watchController) Stop() {
 	}
 }
 
+func (c *watchController) UpdateOptions(opts watch.Options) {
+	if opts.Template == "" {
+		opts = watch.DefaultOptions(nil)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.opts = opts
+}
+
 func (c *watchController) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

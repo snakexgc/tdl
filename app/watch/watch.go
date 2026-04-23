@@ -82,6 +82,7 @@ type downloadJob struct {
 	peer   tg.InputPeerClass
 	msgID  int
 	peerID int64
+	link   string
 }
 
 const aria2ConnectRetryInterval = 10 * time.Second
@@ -95,6 +96,20 @@ type fileTask struct {
 	media  *tmedia.Media
 	peer   tg.InputPeerClass
 	peerID int64
+}
+
+type fileCollection struct {
+	files   []fileTask
+	total   int
+	skipped int
+}
+
+type preparedFileTask struct {
+	file     fileTask
+	fileName string
+	dir      string
+	out      string
+	fullPath string
 }
 
 type Watcher struct {
@@ -431,8 +446,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 	color.Green("🔗 Message link: %s", msgLink)
 
 	select {
-	case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID}:
-		w.notify(ctx, "检测到你的表情触发。\n消息：%s\n状态：已加入下载队列。", msgLink)
+	case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink}:
 	default:
 		logctx.From(ctx).Warn("Submission queue full, dropping job",
 			zap.Int64("peer_id", peerID),
@@ -503,8 +517,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	color.Green("🔗 Message link: %s", msgLink)
 
 	select {
-	case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID}:
-		w.notify(ctx, "检测到表情触发。\n消息：%s\n状态：已加入下载队列。", msgLink)
+	case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink}:
 	default:
 		logctx.From(ctx).Warn("Submission queue full, dropping job",
 			zap.Int64("peer_id", peerID),
@@ -638,7 +651,7 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 					zap.Int64("peer_id", job.peerID),
 					zap.Error(err))
 				color.Red("❌ Cannot resolve peer %d: %v", job.peerID, err)
-				w.notify(ctx, "无法解析消息来源，下载任务未提交。\nPeer: %d\n错误：%v", job.peerID, err)
+				w.notify(ctx, "无法解析消息来源，下载任务未提交。\n消息：%s\nPeer: %d\n错误：%v", job.link, job.peerID, err)
 				continue
 			}
 			peer = resolved
@@ -650,32 +663,48 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 				zap.Int("msg_id", job.msgID),
 				zap.Error(err))
 			color.Red("❌ Cannot get message %d: %v", job.msgID, err)
-			w.notify(ctx, "无法获取触发消息，下载任务未提交。\n消息 ID: %d\n错误：%v", job.msgID, err)
+			w.notify(ctx, "无法获取触发消息，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, job.msgID, err)
 			continue
 		}
 
-		files, err := w.collectFiles(ctx, msg, peer, job.peerID)
+		collection, err := w.collectFiles(ctx, msg, peer, job.peerID)
 		if err != nil {
 			color.Red("❌ Failed to collect files for msg %d: %v", job.msgID, err)
-			w.notify(ctx, "解析消息媒体失败，下载任务未提交。\n消息 ID: %d\n错误：%v", job.msgID, err)
-			continue
-		}
-		if len(files) == 0 {
-			w.notify(ctx, "触发消息没有可下载媒体，或已被过滤规则跳过。\n消息 ID: %d", job.msgID)
+			w.notify(ctx, "解析消息媒体失败，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, job.msgID, err)
 			continue
 		}
 
-		for _, f := range files {
+		prepared := make([]preparedFileTask, 0, len(collection.files))
+		for _, f := range collection.files {
+			task, skip, err := w.prepareSingle(ctx, f)
+			if err != nil {
+				color.Red("❌ Failed to prepare file for msg %d: %v", f.msg.ID, err)
+				w.notify(ctx, "准备下载任务失败，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, f.msg.ID, err)
+				continue
+			}
+			if skip {
+				collection.skipped++
+				continue
+			}
+			prepared = append(prepared, task)
+		}
+
+		w.notify(ctx, "监听到了新增回应触发。\n链接：%s\n文件总数：%d\n需要下载：%d\n跳过：%d", job.link, collection.total, len(prepared), collection.skipped)
+		if len(prepared) == 0 {
+			continue
+		}
+
+		for _, f := range prepared {
 			f := f
 			eg.Go(func() error {
-				if err := w.submitSingle(ctx, f.msg, f.media, f.peer, f.peerID); err != nil {
+				if err := w.submitSingle(ctx, f); err != nil {
 					if !errors.Is(err, context.Canceled) {
 						logctx.From(ctx).Error("Submission failed",
-							zap.Int("msg_id", f.msg.ID),
-							zap.String("name", f.media.Name),
+							zap.Int("msg_id", f.file.msg.ID),
+							zap.String("name", f.file.media.Name),
 							zap.Error(err))
-						color.Red("❌ Submission failed: msg %d (%s): %v", f.msg.ID, f.media.Name, err)
-						w.notify(ctx, "提交到 aria2 失败。\n文件：%s\n消息 ID: %d\n错误：%v", f.media.Name, f.msg.ID, err)
+						color.Red("❌ Submission failed: msg %d (%s): %v", f.file.msg.ID, f.file.media.Name, err)
+						w.notify(ctx, "提交到 aria2 失败。\n文件：%s\n消息 ID: %d\n错误：%v", f.file.media.Name, f.file.msg.ID, err)
 					}
 				}
 				return nil
@@ -684,8 +713,8 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 	}
 }
 
-func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.InputPeerClass, peerID int64) ([]fileTask, error) {
-	var files []fileTask
+func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.InputPeerClass, peerID int64) (fileCollection, error) {
+	var collection fileCollection
 
 	if groupedID, ok := msg.GetGroupedID(); ok {
 		logctx.From(ctx).Info("Grouped message detected",
@@ -694,12 +723,12 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 
 		from, err := w.manager.FromInputPeer(ctx, peer)
 		if err != nil {
-			return nil, errors.Wrap(err, "resolve input peer")
+			return fileCollection{}, errors.Wrap(err, "resolve input peer")
 		}
 
 		grouped, err := tutil.GetGroupedMessages(ctx, w.pool.Default(ctx), from.InputPeer(), msg)
 		if err != nil {
-			return nil, errors.Wrap(err, "get grouped messages")
+			return fileCollection{}, errors.Wrap(err, "get grouped messages")
 		}
 
 		color.Cyan("📁 Album detected: %d items, queueing all...", len(grouped))
@@ -708,28 +737,32 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 			if !ok {
 				continue
 			}
+			collection.total++
 			if !w.matchFilter(media.Name) {
 				color.Yellow("⏭ Skipping filtered (album): %s", media.Name)
+				collection.skipped++
 				continue
 			}
-			files = append(files, fileTask{msg: m, media: media, peer: peer, peerID: peerID})
+			collection.files = append(collection.files, fileTask{msg: m, media: media, peer: peer, peerID: peerID})
 		}
 
-		return files, nil
+		return collection, nil
 	}
 
 	media, ok := tmedia.GetMedia(msg)
 	if !ok {
 		color.Yellow("⚠️ Message %d has no media, skipping", msg.ID)
-		return nil, nil
+		return collection, nil
 	}
+	collection.total++
 	if !w.matchFilter(media.Name) {
 		color.Yellow("⏭ Skipping filtered: %s", media.Name)
-		return nil, nil
+		collection.skipped++
+		return collection, nil
 	}
 
-	files = append(files, fileTask{msg: msg, media: media, peer: peer, peerID: peerID})
-	return files, nil
+	collection.files = append(collection.files, fileTask{msg: msg, media: media, peer: peer, peerID: peerID})
+	return collection, nil
 }
 
 func (w *Watcher) matchFilter(name string) bool {
@@ -760,22 +793,33 @@ func (w *Watcher) resolvePeer(ctx context.Context, peerID int64) (tg.InputPeerCl
 	return nil, fmt.Errorf("cannot resolve peer %d via manager", peerID)
 }
 
-func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmedia.Media, peer tg.InputPeerClass, peerID int64) error {
-	dialogID := tutil.GetInputPeerID(peer)
-	fileName, err := w.renderFileName(dialogID, msg, media)
+func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFileTask, bool, error) {
+	dialogID := tutil.GetInputPeerID(file.peer)
+	fileName, err := w.renderFileName(dialogID, file.msg, file.media)
 	if err != nil {
-		return err
+		return preparedFileTask{}, false, err
 	}
 
 	dir, out, fullPath := resolveTargetPath(effectiveOutputDir(config.Get(), w.opts), fileName)
 	if w.opts.SkipSame && dir != "" {
-		if stat, statErr := os.Stat(fullPath); statErr == nil && stat.Size() == media.Size {
+		if stat, statErr := os.Stat(fullPath); statErr == nil && stat.Size() == file.media.Size {
 			color.Yellow("⏭ Skipping existing: %s", fullPath)
-			return nil
+			return preparedFileTask{}, true, nil
 		}
 	}
 
-	task, err := w.runtime.proxy.NewTask(ctx, peerID, msg.ID, peer, fileName, media.Size, media)
+	return preparedFileTask{
+		file:     file,
+		fileName: fileName,
+		dir:      dir,
+		out:      out,
+		fullPath: fullPath,
+	}, false, nil
+}
+
+func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) error {
+	file := prepared.file
+	task, err := w.runtime.proxy.NewTask(ctx, file.peerID, file.msg.ID, file.peer, prepared.fileName, file.media.Size, file.media)
 	if err != nil {
 		return errors.Wrap(err, "register download task")
 	}
@@ -786,8 +830,8 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 	}
 
 	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, aria2AddURIOptions{
-		Dir:         dir,
-		Out:         out,
+		Dir:         prepared.dir,
+		Out:         prepared.out,
 		Connections: w.opts.Threads,
 	})
 	if err != nil {
@@ -807,18 +851,16 @@ func (w *Watcher) submitSingle(ctx context.Context, msg *tg.Message, media *tmed
 	}
 
 	logctx.From(ctx).Info("Submitted aria2 task",
-		zap.Int64("peer_id", peerID),
-		zap.Int("msg_id", msg.ID),
-		zap.String("file_name", fileName),
-		zap.String("target_path", fullPath),
+		zap.Int64("peer_id", file.peerID),
+		zap.Int("msg_id", file.msg.ID),
+		zap.String("file_name", prepared.fileName),
+		zap.String("target_path", prepared.fullPath),
 		zap.String("download_url", downloadURL),
 		zap.String("gid", gid))
 
-	color.Green("🚀 Submitted to aria2: msg %d -> %s", msg.ID, fullPath)
+	color.Green("🚀 Submitted to aria2: msg %d -> %s", file.msg.ID, prepared.fullPath)
 	color.Green("   URL: %s", downloadURL)
 	color.Green("   GID: %s", gid)
-
-	w.notify(ctx, "已提交到 aria2。\n文件：%s\n目标：%s\nGID：%s", fileName, fullPath, gid)
 
 	return nil
 }

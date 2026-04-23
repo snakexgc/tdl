@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"sync"
 
 	"github.com/fatih/color"
 	"github.com/mymmrac/telego"
@@ -13,6 +14,7 @@ type botMessageSender interface {
 }
 
 type botNotifier struct {
+	mu      sync.RWMutex
 	bot     botMessageSender
 	chatIDs []int64
 }
@@ -33,11 +35,25 @@ func (n *botNotifier) Notify(ctx context.Context, text string) {
 	}
 	ctx = context.WithoutCancel(ctx)
 
-	for _, chatID := range n.chatIDs {
+	n.mu.RLock()
+	chatIDs := append([]int64(nil), n.chatIDs...)
+	n.mu.RUnlock()
+
+	for _, chatID := range chatIDs {
 		if _, err := n.bot.SendMessage(ctx, tu.Message(tu.ID(chatID), text)); err != nil {
 			color.Yellow("Failed to notify user %d: %v", chatID, err)
 		}
 	}
+}
+
+func (n *botNotifier) UpdateChatIDs(chatIDs []int64) {
+	if n == nil {
+		return
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.chatIDs = uniqueInt64s(chatIDs)
 }
 
 func uniqueInt64s(values []int64) []int64 {
