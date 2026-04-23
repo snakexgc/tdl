@@ -1,6 +1,7 @@
 package kv
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"sync"
@@ -67,7 +68,7 @@ func (b *bolt) MigrateTo() (Meta, error) {
 
 		return db.db.View(func(tx *bbolt.Tx) error {
 			return tx.Bucket(db.ns).ForEach(func(k, v []byte) error {
-				meta[ns][string(k)] = v
+				meta[ns][string(k)] = bytes.Clone(v)
 				return nil
 			})
 		})

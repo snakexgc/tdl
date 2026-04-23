@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/bbolt"
 )
 
 func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
@@ -26,6 +30,45 @@ func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
 		})
 		assert.NoError(t, storage.Close())
 	}
+}
+
+func forEachBoltBackedStorage(t *testing.T, fn func(driver Driver, e Storage, t *testing.T)) {
+	storages := map[Driver]map[string]any{
+		DriverBolt:   {"path": t.TempDir()},
+		DriverLegacy: {"path": filepath.Join(t.TempDir(), "test.db")},
+	}
+
+	for driver, opts := range storages {
+		storage, err := New(driver, opts)
+		require.NoError(t, err)
+
+		t.Run(driver.String(), func(t *testing.T) {
+			fn(driver, storage, t)
+		})
+		assert.NoError(t, storage.Close())
+	}
+}
+
+func rawBoltValuePointer(t *testing.T, kv *legacyKV, key string) uintptr {
+	t.Helper()
+
+	var ptr uintptr
+	err := kv.db.View(func(tx *bbolt.Tx) error {
+		val := tx.Bucket(kv.ns).Get([]byte(key))
+		require.NotNil(t, val)
+		ptr = bytePointer(val)
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotZero(t, ptr)
+	return ptr
+}
+
+func bytePointer(v []byte) uintptr {
+	if len(v) == 0 {
+		return 0
+	}
+	return uintptr(unsafe.Pointer(unsafe.SliceData(v)))
 }
 
 func TestNew(t *testing.T) {
@@ -153,4 +196,92 @@ func TestStorage_MigrateFrom(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestBoltBackedStorage_GetReturnsOwnedBytes(t *testing.T) {
+	forEachBoltBackedStorage(t, func(_ Driver, e Storage, t *testing.T) {
+		kv, err := e.Open("foo")
+		require.NoError(t, err)
+
+		legacyKV, ok := kv.(*legacyKV)
+		require.True(t, ok)
+
+		value := []byte(`{"task":"watch.download.index"}`)
+		require.NoError(t, legacyKV.Set(context.TODO(), "key", value))
+
+		rawPtr := rawBoltValuePointer(t, legacyKV, "key")
+
+		got, err := legacyKV.Get(context.TODO(), "key")
+		require.NoError(t, err)
+		require.Equal(t, value, got)
+		require.NotZero(t, bytePointer(got))
+		require.NotEqual(t, rawPtr, bytePointer(got))
+	})
+}
+
+func TestBoltBackedStorage_MigrateToReturnsOwnedBytes(t *testing.T) {
+	forEachBoltBackedStorage(t, func(_ Driver, e Storage, t *testing.T) {
+		kv, err := e.Open("foo")
+		require.NoError(t, err)
+
+		legacyKV, ok := kv.(*legacyKV)
+		require.True(t, ok)
+
+		value := []byte(`{"hello":"world"}`)
+		require.NoError(t, legacyKV.Set(context.TODO(), "key", value))
+
+		rawPtr := rawBoltValuePointer(t, legacyKV, "key")
+
+		meta, err := e.MigrateTo()
+		require.NoError(t, err)
+		require.Equal(t, value, meta["foo"]["key"])
+		require.NotZero(t, bytePointer(meta["foo"]["key"]))
+		require.NotEqual(t, rawPtr, bytePointer(meta["foo"]["key"]))
+	})
+}
+
+func TestFileStorageConcurrentSetKeepsAllKeys(t *testing.T) {
+	storage, err := New(DriverFile, map[string]any{
+		"path": filepath.Join(t.TempDir(), "test.json"),
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, storage.Close())
+	}()
+
+	kv, err := storage.Open("ns")
+	require.NoError(t, err)
+
+	const workers = 64
+	start := make(chan struct{})
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			key := fmt.Sprintf("key-%d", i)
+			value := []byte(strconv.Itoa(i))
+			errCh <- kv.Set(context.Background(), key, value)
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	for i := 0; i < workers; i++ {
+		key := fmt.Sprintf("key-%d", i)
+		value := []byte(strconv.Itoa(i))
+		got, err := kv.Get(context.Background(), key)
+		require.NoError(t, err)
+		require.Equal(t, value, got)
+	}
 }

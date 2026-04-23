@@ -15,6 +15,8 @@ import (
 
 var testMode = false
 
+var takeoutInit = takeout.Takeout
+
 // EnableTestMode enables test mode, which disables takeout and pooling and directly returns original client.
 func EnableTestMode() {
 	testMode = true
@@ -116,11 +118,11 @@ func (p *pool) Takeout(ctx context.Context, dc int) *tg.Client {
 
 	// lazy init
 	if p.takeout == 0 {
-		sid, err := takeout.Takeout(ctx, p.api)
+		sid, err := takeoutInit(ctx, p.api)
 		if err != nil {
 			logctx.From(ctx).Warn("takeout error", zap.Error(err))
 			// ignore init delay error and return non-takeout client
-			return p.Client(ctx, dc)
+			return tg.NewClient(p.invoker(ctx, dc))
 		}
 		p.takeout = sid
 		logctx.From(ctx).Info("get takeout id", zap.Int64("id", sid))

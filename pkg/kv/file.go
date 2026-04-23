@@ -91,16 +91,13 @@ func (f *file) Open(ns string) (storage.Storage, error) {
 		return nil, errors.New("namespace is required")
 	}
 
-	read, err := f.read()
-	if err != nil {
-		return nil, errors.Wrap(err, "read")
-	}
-
-	if _, ok := read[ns]; !ok {
-		read[ns] = make(map[string][]byte)
-		if err = f.write(read); err != nil {
-			return nil, errors.Wrap(err, "write")
+	if err := f.mutate(func(m map[string]map[string][]byte) error {
+		if _, ok := m[ns]; !ok {
+			m[ns] = make(map[string][]byte)
 		}
+		return nil
+	}); err != nil {
+		return nil, errors.Wrap(err, "ensure namespace")
 	}
 
 	return &fileKV{f: f, ns: ns}, nil
@@ -114,6 +111,10 @@ func (f *file) read() (map[string]map[string][]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	return f.readUnlocked()
+}
+
+func (f *file) readUnlocked() (map[string]map[string][]byte, error) {
 	bytes, err := os.ReadFile(f.path)
 	if err != nil {
 		return nil, err
@@ -131,12 +132,30 @@ func (f *file) write(m map[string]map[string][]byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	return f.writeUnlocked(m)
+}
+
+func (f *file) writeUnlocked(m map[string]map[string][]byte) error {
 	bytes, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
 
 	return os.WriteFile(f.path, bytes, 0o644)
+}
+
+func (f *file) mutate(fn func(map[string]map[string][]byte) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	m, err := f.readUnlocked()
+	if err != nil {
+		return err
+	}
+	if err := fn(m); err != nil {
+		return err
+	}
+	return f.writeUnlocked(m)
 }
 
 type fileKV struct {
@@ -151,29 +170,33 @@ func (f *fileKV) Get(_ context.Context, key string) ([]byte, error) {
 	}
 
 	if v, ok := m[f.ns][key]; ok {
-		return v, nil
+		return append([]byte(nil), v...), nil
 	}
 	return nil, storage.ErrNotFound
 }
 
 func (f *fileKV) Set(_ context.Context, key string, value []byte) error {
-	m, err := f.f.read()
-	if err != nil {
-		return errors.Wrap(err, "read")
+	if err := f.f.mutate(func(m map[string]map[string][]byte) error {
+		if _, ok := m[f.ns]; !ok {
+			m[f.ns] = make(map[string][]byte)
+		}
+		m[f.ns][key] = append([]byte(nil), value...)
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "mutate")
 	}
-
-	m[f.ns][key] = value
-
-	return f.f.write(m)
+	return nil
 }
 
 func (f *fileKV) Delete(_ context.Context, key string) error {
-	m, err := f.f.read()
-	if err != nil {
-		return errors.Wrap(err, "read")
+	if err := f.f.mutate(func(m map[string]map[string][]byte) error {
+		if _, ok := m[f.ns]; !ok {
+			return nil
+		}
+		delete(m[f.ns], key)
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "mutate")
 	}
-
-	delete(m[f.ns], key)
-
-	return f.f.write(m)
+	return nil
 }

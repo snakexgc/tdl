@@ -64,6 +64,23 @@ func TestEditMessageReactionQueuesWhenMine(t *testing.T) {
 	require.Len(t, w.jobCh, 1)
 }
 
+func TestEditMessageReactionSkipsQueueWhenContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	w := &Watcher{jobCh: make(chan downloadJob, 1)}
+	msg := &tg.Message{
+		ID:     116103,
+		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
+		Reactions: tg.MessageReactions{
+			Results: []tg.ReactionCount{testReactionCount(true)},
+		},
+	}
+
+	require.NoError(t, w.onEditMessageReaction(ctx, tg.Entities{}, msg))
+	require.Empty(t, w.jobCh)
+}
+
 func TestGenerateMessageLinkForPrivateChatUsesTelegramDeepLink(t *testing.T) {
 	w := &Watcher{}
 
