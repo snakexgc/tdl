@@ -207,20 +207,27 @@ func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) 
 }
 
 type aria2DownloadStatus struct {
-	GID    string      `json:"gid"`
-	Status string      `json:"status"`
-	Files  []aria2File `json:"files"`
+	GID             string      `json:"gid"`
+	Status          string      `json:"status"`
+	TotalLength     string      `json:"totalLength"`
+	CompletedLength string      `json:"completedLength"`
+	ErrorCode       string      `json:"errorCode"`
+	ErrorMessage    string      `json:"errorMessage"`
+	Files           []aria2File `json:"files"`
 }
 
 type aria2File struct {
-	URIs []aria2URI `json:"uris"`
+	Path            string     `json:"path"`
+	Length          string     `json:"length"`
+	CompletedLength string     `json:"completedLength"`
+	URIs            []aria2URI `json:"uris"`
 }
 
 type aria2URI struct {
 	URI string `json:"uri"`
 }
 
-var aria2StatusKeys = []string{"gid", "status", "files"}
+var aria2StatusKeys = []string{"gid", "status", "totalLength", "completedLength", "errorCode", "errorMessage", "files"}
 
 func (c *aria2Client) TellActive(ctx context.Context) ([]aria2DownloadStatus, error) {
 	raw, err := c.callRaw(ctx, "aria2.tellActive", []any{aria2StatusKeys})
@@ -248,6 +255,19 @@ func (c *aria2Client) TellWaiting(ctx context.Context, offset, num int) ([]aria2
 	return result, nil
 }
 
+func (c *aria2Client) TellStopped(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error) {
+	raw, err := c.callRaw(ctx, "aria2.tellStopped", []any{offset, num, aria2StatusKeys})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []aria2DownloadStatus
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, errors.Wrap(err, "decode aria2 stopped tasks")
+	}
+	return result, nil
+}
+
 func (c *aria2Client) ForcePause(ctx context.Context, gid string) error {
 	result, err := c.callString(ctx, "aria2.forcePause", []any{gid})
 	if err != nil {
@@ -266,6 +286,17 @@ func (c *aria2Client) Unpause(ctx context.Context, gid string) error {
 	}
 	if result != gid {
 		return fmt.Errorf("unexpected aria2 unpause response %q", result)
+	}
+	return nil
+}
+
+func (c *aria2Client) RemoveDownloadResult(ctx context.Context, gid string) error {
+	result, err := c.callString(ctx, "aria2.removeDownloadResult", []any{gid})
+	if err != nil {
+		return err
+	}
+	if result != "OK" {
+		return fmt.Errorf("unexpected aria2 removeDownloadResult response %q", result)
 	}
 	return nil
 }

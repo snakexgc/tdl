@@ -841,6 +841,9 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		GID:         gid,
 		TaskID:      task.ID,
 		DownloadURL: downloadURL,
+		Dir:         prepared.dir,
+		Out:         prepared.out,
+		Connections: w.opts.Threads,
 		CreatedAt:   time.Now(),
 	}); err != nil {
 		logctx.From(ctx).Warn("Failed to register aria2 task",

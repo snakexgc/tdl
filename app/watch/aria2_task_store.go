@@ -20,6 +20,9 @@ type aria2TaskRecord struct {
 	GID         string    `json:"gid"`
 	TaskID      string    `json:"task_id"`
 	DownloadURL string    `json:"download_url"`
+	Dir         string    `json:"dir"`
+	Out         string    `json:"out"`
+	Connections int       `json:"connections"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -89,6 +92,74 @@ func (s *aria2TaskStore) GIDs(ctx context.Context) (map[string]struct{}, error) 
 		result[gid] = struct{}{}
 	}
 	return result, nil
+}
+
+func (s *aria2TaskStore) Records(ctx context.Context) (map[string]aria2TaskRecord, error) {
+	result := map[string]aria2TaskRecord{}
+	if s == nil || s.kv == nil {
+		return result, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.cleanupExpiredLocked(ctx, time.Now()); err != nil {
+		return nil, err
+	}
+
+	index, err := s.loadIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	changed := false
+	for gid := range index {
+		data, err := s.kv.Get(ctx, aria2TaskStorageKey(gid))
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				delete(index, gid)
+				changed = true
+				continue
+			}
+			return nil, errors.Wrap(err, "load aria2 task record")
+		}
+
+		var record aria2TaskRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			return nil, errors.Wrap(err, "decode aria2 task record")
+		}
+		if record.GID == "" {
+			record.GID = gid
+		}
+		result[record.GID] = record
+	}
+
+	if changed {
+		if err := s.saveIndex(ctx, index); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (s *aria2TaskStore) Remove(ctx context.Context, gid string) error {
+	if s == nil || s.kv == nil || gid == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.kv.Delete(ctx, aria2TaskStorageKey(gid)); err != nil {
+		return errors.Wrap(err, "delete aria2 task record")
+	}
+
+	index, err := s.loadIndex(ctx)
+	if err != nil {
+		return err
+	}
+	delete(index, gid)
+	return s.saveIndex(ctx, index)
 }
 
 func (s *aria2TaskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {

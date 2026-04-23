@@ -82,12 +82,19 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	loginMgr := newLoginManager(ctx, bot, gotdLoginRunner{
 		opts: sessionOpts,
 	})
+	aria2Factory := func() *watch.Aria2Controller {
+		return watch.NewAria2Controller(config.Get(), kvd, nil)
+	}
 	loginMgr.SetOnSuccess(func(_ *tg.User) {
 		notifyWatchAfterLogin(ctx, notifier, watchCtrl)
+		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
 	})
 
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
+	if startup.WatchStarted {
+		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+	}
 
 	// start long polling
 	pollingCtx, cancelPolling := context.WithCancel(context.Background())
@@ -143,7 +150,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot)
+			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, aria2Factory)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -180,9 +187,10 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 }
 
 type startupState struct {
-	Session string
-	Watch   string
-	Hint    string
+	Session      string
+	Watch        string
+	Hint         string
+	WatchStarted bool
 }
 
 func startupMessage(botUser *telego.User, state startupState) string {
@@ -228,6 +236,10 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 			{Command: "config_get", Description: "查看配置"},
 			{Command: "config_set", Description: "保存配置"},
 			{Command: "reboot", Description: "重启并重载配置"},
+			{Command: "aria2_overview", Description: "查看 TDL aria2 任务总览"},
+			{Command: "aria2_pause_all", Description: "暂停全部 TDL aria2 任务"},
+			{Command: "aria2_start_all", Description: "开始全部 TDL aria2 任务"},
+			{Command: "aria2_retry", Description: "重试已停止的 TDL aria2 任务"},
 		},
 	})
 }
@@ -241,8 +253,9 @@ func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl *watchControl
 			watchStatus = "已在运行。"
 		}
 		return startupState{
-			Session: "有效。" + login.UserSummary(user),
-			Watch:   watchStatus,
+			Session:      "有效。" + login.UserSummary(user),
+			Watch:        watchStatus,
+			WatchStarted: true,
 		}
 	case errors.Is(err, login.ErrSessionUnauthorized):
 		return startupState{
@@ -273,6 +286,7 @@ func handleAllowedMessage(
 	loginMgr *loginManager,
 	afterConfigSave func(*config.Config),
 	requestReboot func(),
+	aria2Factory aria2ControllerFactory,
 ) error {
 	fromID := msg.From.ID
 	chatID := msg.Chat.ID
@@ -289,6 +303,9 @@ func handleAllowedMessage(
 	}
 
 	if handled, err := handleConfigCommand(ctx, msg, text, afterConfigSave); handled || err != nil {
+		return err
+	}
+	if handled, err := handleAria2Command(ctx, msg, text, aria2Factory); handled || err != nil {
 		return err
 	}
 
@@ -357,7 +374,8 @@ func commandName(text string) string {
 
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
-	case "/login_code", "/login_qr", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot":
+	case "/login_code", "/login_qr", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
+		"/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry":
 		return true
 	default:
 		return false

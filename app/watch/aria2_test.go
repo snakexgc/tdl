@@ -143,13 +143,17 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 
 		switch req.Method {
 		case "aria2.tellActive":
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"active-1","status":"active","files":[{"uris":[{"uri":"http://example.com/a"}]}]}]}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"active-1","status":"active","totalLength":"100","completedLength":"40","files":[{"uris":[{"uri":"http://example.com/a"}]}]}]}`))
 		case "aria2.tellWaiting":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"waiting-1","status":"waiting","files":[{"uris":[{"uri":"http://example.com/b"}]}]}]}`))
+		case "aria2.tellStopped":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"stopped-1","status":"error","errorMessage":"gone","files":[{"uris":[{"uri":"http://example.com/c"}]}]}]}`))
 		case "aria2.forcePause":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
 		case "aria2.unpause":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+		case "aria2.removeDownloadResult":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"OK"}`))
 		default:
 			t.Fatalf("unexpected method %s", req.Method)
 		}
@@ -165,6 +169,8 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 	active, err := client.TellActive(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "active-1", active[0].GID)
+	require.Equal(t, "100", active[0].TotalLength)
+	require.Equal(t, "40", active[0].CompletedLength)
 	require.Equal(t, "http://example.com/a", active[0].Files[0].URIs[0].URI)
 
 	waiting, err := client.TellWaiting(context.Background(), 5, 2)
@@ -172,22 +178,35 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 	require.Equal(t, "waiting-1", waiting[0].GID)
 	require.Equal(t, "http://example.com/b", waiting[0].Files[0].URIs[0].URI)
 
+	stopped, err := client.TellStopped(context.Background(), 7, 3)
+	require.NoError(t, err)
+	require.Equal(t, "stopped-1", stopped[0].GID)
+	require.Equal(t, "gone", stopped[0].ErrorMessage)
+
 	require.NoError(t, client.ForcePause(context.Background(), "gid-1"))
 	require.NoError(t, client.Unpause(context.Background(), "gid-1"))
+	require.NoError(t, client.RemoveDownloadResult(context.Background(), "gid-1"))
 
-	require.Len(t, requests, 4)
+	require.Len(t, requests, 6)
 	require.Equal(t, "aria2.tellActive", requests[0].Method)
 	require.Equal(t, "token:secret", requests[0].Params[0])
-	require.Equal(t, []any{"gid", "status", "files"}, requests[0].Params[1])
+	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[0].Params[1])
 	require.Equal(t, "aria2.tellWaiting", requests[1].Method)
 	require.Equal(t, "token:secret", requests[1].Params[0])
 	require.Equal(t, float64(5), requests[1].Params[1])
 	require.Equal(t, float64(2), requests[1].Params[2])
-	require.Equal(t, []any{"gid", "status", "files"}, requests[1].Params[3])
-	require.Equal(t, "aria2.forcePause", requests[2].Method)
-	require.Equal(t, []any{"token:secret", "gid-1"}, requests[2].Params)
-	require.Equal(t, "aria2.unpause", requests[3].Method)
+	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[1].Params[3])
+	require.Equal(t, "aria2.tellStopped", requests[2].Method)
+	require.Equal(t, "token:secret", requests[2].Params[0])
+	require.Equal(t, float64(7), requests[2].Params[1])
+	require.Equal(t, float64(3), requests[2].Params[2])
+	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[2].Params[3])
+	require.Equal(t, "aria2.forcePause", requests[3].Method)
 	require.Equal(t, []any{"token:secret", "gid-1"}, requests[3].Params)
+	require.Equal(t, "aria2.unpause", requests[4].Method)
+	require.Equal(t, []any{"token:secret", "gid-1"}, requests[4].Params)
+	require.Equal(t, "aria2.removeDownloadResult", requests[5].Method)
+	require.Equal(t, []any{"token:secret", "gid-1"}, requests[5].Params)
 }
 
 func TestWaitForAria2RetriesConnectionErrors(t *testing.T) {
@@ -287,4 +306,12 @@ func fakeAria2ConnectionError() error {
 			Err: gferrors.New("connection refused"),
 		},
 	}, "do aria2 request")
+}
+
+func stringSliceToAny(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	return out
 }
