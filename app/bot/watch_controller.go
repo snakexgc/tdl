@@ -5,9 +5,14 @@ import (
 	stderrors "errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/iyear/tdl/app/watch"
 )
+
+const watchControllerStopTimeout = 10 * time.Second
+
+var runWatch = watch.Run
 
 type watchController struct {
 	parent context.Context
@@ -16,6 +21,7 @@ type watchController struct {
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
+	done    chan struct{}
 	running bool
 }
 
@@ -41,24 +47,31 @@ func (c *watchController) Start() bool {
 	}
 
 	ctx, cancel := context.WithCancel(c.parent)
+	done := make(chan struct{})
 	opts := c.opts
 	opts.Notify = c.notify
 	c.running = true
 	c.cancel = cancel
+	c.done = done
 	c.mu.Unlock()
 
 	go func() {
-		err := watch.Run(ctx, opts)
+		err := runWatch(ctx, opts)
 		cancel()
-
-		c.mu.Lock()
-		c.running = false
-		c.cancel = nil
-		c.mu.Unlock()
 
 		if err != nil && !stderrors.Is(err, context.Canceled) && c.notify != nil {
 			c.notify(context.Background(), fmt.Sprintf("watch 流程已停止：%v\n请检查配置或重新登录。", err))
 		}
+
+		c.mu.Lock()
+		if c.done == done {
+			c.running = false
+			c.cancel = nil
+			c.done = nil
+		}
+		c.mu.Unlock()
+
+		close(done)
 	}()
 
 	return true
@@ -67,10 +80,22 @@ func (c *watchController) Start() bool {
 func (c *watchController) Stop() {
 	c.mu.Lock()
 	cancel := c.cancel
+	done := c.done
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
+	}
+	if done == nil {
+		return
+	}
+
+	timer := time.NewTimer(watchControllerStopTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+	case <-timer.C:
 	}
 }
 

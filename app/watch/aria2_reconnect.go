@@ -12,9 +12,12 @@ import (
 	"go.uber.org/zap"
 )
 
-const aria2TellWaitingBatchSize = 1000
-
-const aria2StatusActive = "active"
+const (
+	aria2TellWaitingBatchSize  = 1000
+	aria2StatusActive          = "active"
+	aria2ShutdownPauseTimeout  = 5 * time.Second
+	aria2ShutdownRetryInterval = time.Second
+)
 
 type aria2ReconnectClient interface {
 	TellActive(ctx context.Context) ([]aria2DownloadStatus, error)
@@ -95,6 +98,58 @@ func resumeTDLAria2Tasks(ctx context.Context, client aria2ReconnectClient, gids 
 			zap.String("gid", gid))
 	}
 	return nil
+}
+
+func pauseTDLAria2TasksForShutdown(ctx context.Context, client aria2ReconnectClient, store *aria2TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2ShutdownPauseTimeout)
+	defer cancel()
+
+	registeredGIDs, err := store.GIDs(shutdownCtx)
+	if err != nil {
+		return nil, errors.Wrap(err, "load tdl aria2 task registry")
+	}
+	downloadPrefix, err := aria2DownloadURLPrefix(publicBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates, err := listTDLAria2ReconnectTasks(shutdownCtx, client, registeredGIDs, downloadPrefix, logger)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		logger.Info("No tdl aria2 tasks need pausing before shutdown")
+		return nil, nil
+	}
+
+	paused := make([]string, 0, len(candidates))
+	for _, task := range candidates {
+		gid := task.GID
+		err := retryAria2ConnectionWithInterval(shutdownCtx, logger, "force pause aria2 task before shutdown", aria2ShutdownRetryInterval, func() error {
+			return client.ForcePause(shutdownCtx, gid)
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return paused, err
+			}
+			logger.Warn("Skipping aria2 task that could not be paused before shutdown",
+				zap.String("gid", gid),
+				zap.String("status", task.Status),
+				zap.Error(err))
+			continue
+		}
+
+		logger.Info("Paused tdl aria2 task before shutdown",
+			zap.String("gid", gid),
+			zap.String("status", task.Status))
+		paused = append(paused, gid)
+	}
+
+	return paused, nil
 }
 
 func listTDLAria2ReconnectTasks(ctx context.Context, client aria2ReconnectClient, registeredGIDs map[string]struct{}, downloadPrefix string, logger *zap.Logger) ([]aria2DownloadStatus, error) {

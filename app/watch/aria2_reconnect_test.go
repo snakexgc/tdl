@@ -51,6 +51,33 @@ func TestResumeTDLAria2TasksOnlyResumesUniquePausedGIDs(t *testing.T) {
 	require.Equal(t, []string{"gid-1", "gid-2"}, client.unpaused)
 }
 
+func TestPauseTDLAria2TasksForShutdownUsesNonCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	kvd := newMemoryTaskStorage()
+	store := newAria2TaskStore(kvd)
+	require.NoError(t, store.Add(context.Background(), aria2TaskRecord{
+		GID:         "registered-active",
+		TaskID:      "document_1",
+		DownloadURL: "http://127.0.0.1:8080/base/download/document_1",
+		CreatedAt:   time.Now(),
+	}))
+
+	client := &fakeAria2ReconnectClient{
+		active: []aria2DownloadStatus{
+			{GID: "registered-active", Status: "active"},
+		},
+	}
+
+	paused, err := pauseTDLAria2TasksForShutdown(parent, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
+	require.NoError(t, err)
+	require.Equal(t, []string{"registered-active"}, paused)
+	require.Equal(t, paused, client.forcePaused)
+}
+
 func TestRetryAria2ConnectionRetriesConnectionErrorOnly(t *testing.T) {
 	t.Parallel()
 

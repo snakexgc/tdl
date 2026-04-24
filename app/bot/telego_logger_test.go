@@ -7,6 +7,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestShutdownAwareTelegoLoggerSuppressesTransientGetUpdatesNoise(t *testing.T) {
+	var out bytes.Buffer
+	logger := newShutdownAwareTelegoLogger("secret-token")
+	logger.out = &out
+
+	logger.Errorf("Execution error getUpdates: request call: %s", `http do request: Post "https://api.telegram.org/botsecret-token/getUpdates": EOF`)
+	logger.Errorf("Getting updates: telego: getUpdates: internal execution: %s", `request call: http do request: Post "https://api.telegram.org/botsecret-token/getUpdates": EOF`)
+	logger.Errorf("Retrying getting updates in 8s...")
+	require.Empty(t, out.String())
+
+	logger.Errorf("Execution error getUpdates: %s", "invalid bot token")
+	require.Contains(t, out.String(), "invalid bot token")
+	require.NotContains(t, out.String(), "secret-token")
+}
+
 func TestShutdownAwareTelegoLoggerFiltersOnlyShutdownNoise(t *testing.T) {
 	var out bytes.Buffer
 	logger := newShutdownAwareTelegoLogger("secret-token")

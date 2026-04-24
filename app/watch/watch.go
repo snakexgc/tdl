@@ -143,22 +143,53 @@ func Run(ctx context.Context, opts Options) error {
 		return errors.Wrap(err, "open kv storage")
 	}
 
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	parentCtx := ctx
+	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(parentCtx))
+	defer cancelRun()
 
-	runtime := newWatchRuntime(cfg, kvd, logctx.From(ctx))
-	if err := waitForAria2(ctx, runtime.aria2, cfg.Limit, aria2ConnectRetryInterval, logctx.From(ctx)); err != nil {
+	signalCtx, stopSignalNotify := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignalNotify()
+
+	runtime := newWatchRuntime(cfg, kvd, logctx.From(runCtx))
+	var pauseOnShutdownOnce sync.Once
+	pauseOnShutdown := func() {
+		pauseOnShutdownOnce.Do(func() {
+			color.Yellow("⏹ Stopping watcher...")
+			paused, err := pauseTDLAria2TasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			if err != nil {
+				color.Yellow("⚠️ Failed to pause tdl aria2 tasks before shutdown: %v", err)
+				return
+			}
+			if len(paused) > 0 {
+				color.Yellow("⏸ Paused %d tdl aria2 task(s) before shutdown", len(paused))
+			}
+		})
+	}
+
+	go func() {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-parentCtx.Done():
+		case <-signalCtx.Done():
+		}
+
+		pauseOnShutdown()
+		cancelRun()
+	}()
+
+	if err := waitForAria2(runCtx, runtime.aria2, cfg.Limit, aria2ConnectRetryInterval, logctx.From(runCtx)); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return errors.Wrap(err, "configure aria2 max concurrent downloads")
 	}
-	logctx.From(ctx).Info("Configured aria2 max concurrent downloads",
+	logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
 		zap.Int("limit", cfg.Limit))
-	outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(ctx, runtime.aria2, cfg)
+	outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
 	if err != nil {
 		if opts.Notify != nil {
-			opts.Notify(ctx, fmt.Sprintf("aria2 下载目录异常：%v", err))
+			opts.Notify(runCtx, fmt.Sprintf("aria2 下载目录异常：%v", err))
 		}
 		return errors.Wrap(err, "prepare aria2 output root")
 	}
@@ -167,12 +198,12 @@ func Run(ctx context.Context, opts Options) error {
 
 	proxyErrCh := make(chan error, 1)
 	go func() {
-		if err := runtime.proxy.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			select {
 			case proxyErrCh <- err:
 			default:
 			}
-			cancel()
+			cancelRun()
 		}
 	}()
 
@@ -191,6 +222,14 @@ func Run(ctx context.Context, opts Options) error {
 		reconnectDelay = 5 * time.Second
 	}
 	var pausedAria2GIDs []string
+	takeProxyErr := func() error {
+		select {
+		case err := <-proxyErrCh:
+			return err
+		default:
+			return nil
+		}
+	}
 
 	for {
 		select {
@@ -199,22 +238,31 @@ func Run(ctx context.Context, opts Options) error {
 		default:
 		}
 
-		if ctx.Err() != nil {
+		if runCtx.Err() != nil {
+			if err := takeProxyErr(); err != nil {
+				return errors.Wrap(err, "start http proxy")
+			}
 			return nil
 		}
 
-		resumed, err := runOnce(ctx, opts, tpl, kvd, reconnectDelay, runtime, pausedAria2GIDs)
+		resumed, err := runOnce(runCtx, opts, tpl, kvd, reconnectDelay, runtime, pausedAria2GIDs)
 		if resumed {
 			pausedAria2GIDs = nil
 		}
 		if err == nil || errors.Is(err, context.Canceled) {
+			if proxyErr := takeProxyErr(); proxyErr != nil {
+				return errors.Wrap(proxyErr, "start http proxy")
+			}
 			return nil
 		}
 
 		color.Yellow("⚠️ Watcher disconnected: %v", err)
-		newPausedGIDs, pauseErr := suspendTDLAria2TasksForReconnect(ctx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(ctx))
+		newPausedGIDs, pauseErr := suspendTDLAria2TasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 		if pauseErr != nil {
 			if errors.Is(pauseErr, context.Canceled) {
+				if proxyErr := takeProxyErr(); proxyErr != nil {
+					return errors.Wrap(proxyErr, "start http proxy")
+				}
 				return nil
 			}
 			return errors.Wrap(pauseErr, "pause aria2 tasks before reconnect")
@@ -228,7 +276,10 @@ func Run(ctx context.Context, opts Options) error {
 		select {
 		case err := <-proxyErrCh:
 			return errors.Wrap(err, "start http proxy")
-		case <-ctx.Done():
+		case <-runCtx.Done():
+			if proxyErr := takeProxyErr(); proxyErr != nil {
+				return errors.Wrap(proxyErr, "start http proxy")
+			}
 			return nil
 		case <-time.After(reconnectDelay):
 		}
@@ -317,7 +368,6 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		go w.dispatcher(egCtx, eg)
 
 		<-ctx.Done()
-		color.Yellow("⏹ Stopping watcher...")
 
 		if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 			logctx.From(ctx).Error("Submission goroutine error", zap.Error(err))
