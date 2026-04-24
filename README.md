@@ -20,8 +20,8 @@
   "proxy": "http://127.0.0.1:10808", // 代理地址，如 http://127.0.0.1:10808
   "namespace": "default", // 默认命名空间，不要修改
   "debug": false, // 是否开启调试模式
-  "threads": 4, // 单文件下载线程数
-  "limit": 2, // 最大同时下载文件数
+  "threads": 4, // 服务端限制：单个文件的总并发预算；Range 请求和服务端后台抓取都会共享这 n 个线程
+  "limit": 2, // 服务端限制：同一时间最多同时对外提供 n 个文件下载
   "pool_size": 8, // DC 下载池大小
   "delay": 0, // DC 下载延迟，单位秒
   "ntp": "", // NTP 服务器地址，如 "pool.ntp.org"
@@ -54,13 +54,19 @@
 | `download_dir`         | 下载目录模板，会拼接在 aria2 下载根目录后；支持 `G` 名称、`I` ID、`Y` 年、`M` 月、`D` 日，`/` 或 `\` 分层，`&` 连接同层 |
 | `include`              | 只下载指定扩展名，如 `["mp4", "mp3"]`                                                       |
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
-| `limit`                | 最大同时下载文件数；启动 `tdl watch` 时会同步到 aria2 的 `max-concurrent-downloads`                 |
+| `threads`              | 服务端限制单个文件的总并发预算；同文件的 Range 请求和 tdl 后台抓取 worker 会共享这份预算，aria2 提交任务时也会同步把这个值作为单文件连接数提示 |
+| `limit`                | 服务端限制最大同时下载文件数；启动 `tdl watch` 时也会同步到 aria2 的 `max-concurrent-downloads`            |
 | `http.public_base_url` | aria2 访问 tdl 下载代理时使用的基础地址                                                         |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
 
 如果 aria2 运行在 Docker、NAS、WSL 或另一台机器上，`http.public_base_url` 不能写 `127.0.0.1`，需要写 aria2 所在环境能访问到 tdl 的局域网地址。
 
 `download_dir` 会和 aria2 下载根目录组合使用。若设置了 `aria2.dir`，tdl 会先尝试创建并校验该目录；若未设置，tdl 会从 aria2 的全局配置读取默认下载目录。例如 `download_dir` 为 `Y&M/I/G` 时，Windows 下可能得到 `D:\Download\202604\12345\群组名`，Linux 下可能得到 `/root/download/202604/12345/群组名`。
+
+`threads` 和 `limit` 现在由 tdl 的 HTTP 服务端强制执行，而不只是“建议下载器这么做”。例如设置 `threads=4`、`limit=2` 时：
+
+- 任意客户端同时请求 3 个不同文件时，服务端最多只会真正放行其中 2 个文件开始下载
+- 任意客户端对同一个文件发起 64 个 Range 请求时，服务端最多只会同时给这个文件分配 4 个并发 worker；多余请求会在服务端排队等待
 
 ### 第 2 步：启动机器人
 
@@ -76,6 +82,7 @@ tdl 会连接到 Telegram 并在后台等待，你会看到：
    aria2 RPC: http://127.0.0.1:6800/jsonrpc
    Output root: D:\downloads
    Download dir template: G/Y&M
+   Per-file HTTP streams: 4
    Max concurrent downloads: 2
 ⚠️ http.public_base_url uses loopback address 127.0.0.1; this only works when aria2 runs on the same machine and network namespace
 🔄 Bot is running... Press Ctrl+C to stop

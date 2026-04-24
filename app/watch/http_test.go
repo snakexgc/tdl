@@ -15,6 +15,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
+	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/pkg/config"
@@ -47,7 +48,7 @@ func TestDownloadTaskIDStableForMedia(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil, nil)
+	}, 2, 4, &poolHolder{}, nil, nil)
 	media := &tmedia.Media{
 		InputFileLoc: &tg.InputDocumentFileLocation{
 			ID:            12345,
@@ -165,10 +166,10 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil, nil)
+	}, 2, 4, &poolHolder{}, nil, nil)
 
 	payload := []byte("0123456789")
-	proxy.stream = func(ctx context.Context, task *downloadTask, start, end int64, w io.Writer) error {
+	proxy.stream = func(ctx context.Context, task *downloadTask, lease *downloadLease, start, end int64, w io.Writer) error {
 		_, err := w.Write(payload[start : end+1])
 		return err
 	}
@@ -211,7 +212,7 @@ func TestDownloadHandlerMissingTask(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil, nil)
+	}, 2, 4, &poolHolder{}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
 	rec := httptest.NewRecorder()
@@ -225,7 +226,7 @@ func TestDownloadHandlerInvalidRange(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil, nil)
+	}, 2, 4, &poolHolder{}, nil, nil)
 
 	task := &downloadTask{
 		ID:       "task-1",
@@ -249,10 +250,10 @@ func TestDownloadHandlerHead(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        "127.0.0.1:0",
 		PublicBaseURL: "http://127.0.0.1:8080",
-	}, &poolHolder{}, nil, nil)
+	}, 2, 4, &poolHolder{}, nil, nil)
 
 	called := false
-	proxy.stream = func(ctx context.Context, task *downloadTask, start, end int64, w io.Writer) error {
+	proxy.stream = func(ctx context.Context, task *downloadTask, lease *downloadLease, start, end int64, w io.Writer) error {
 		called = true
 		return nil
 	}
@@ -287,10 +288,14 @@ func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
 	media := &tmedia.Media{
 		InputFileLoc: &tg.InputDocumentFileLocation{},
 		Size:         int64(len(payload)),
+		DC:           2,
 	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 4)
+	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), client, media, 524288, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 524288, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload[524288:], out.Bytes())
 	require.NotEmpty(t, invoker.offsets)
@@ -311,10 +316,14 @@ func TestStreamTelegramMediaAlignsFinalLimit(t *testing.T) {
 	media := &tmedia.Media{
 		InputFileLoc: &tg.InputDocumentFileLocation{},
 		Size:         int64(len(payload)),
+		DC:           2,
 	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 4)
+	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), client, media, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.Equal(t, []int64{0}, invoker.offsets)
@@ -322,10 +331,43 @@ func TestStreamTelegramMediaAlignsFinalLimit(t *testing.T) {
 	require.Zero(t, invoker.limits[0]%telegramGetFileLimitAlignment)
 }
 
+func TestStreamTelegramMediaParallelUsesMultipleWorkers(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize*3)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:  payload,
+		delay: 50 * time.Millisecond,
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 4)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	require.Equal(t, payload, out.Bytes())
+	require.GreaterOrEqual(t, invoker.maxConcurrent(), 2)
+}
+
 type recordingUploadInvoker struct {
-	data    []byte
-	offsets []int64
-	limits  []int
+	mu          sync.Mutex
+	data        []byte
+	offsets     []int64
+	limits      []int
+	delay       time.Duration
+	inFlight    int
+	maxInFlight int
 }
 
 func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -338,8 +380,24 @@ func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, 
 		return fmt.Errorf("unexpected response type %T", output)
 	}
 
+	i.mu.Lock()
 	i.offsets = append(i.offsets, req.Offset)
 	i.limits = append(i.limits, req.Limit)
+	i.inFlight++
+	if i.inFlight > i.maxInFlight {
+		i.maxInFlight = i.inFlight
+	}
+	delay := i.delay
+	i.mu.Unlock()
+	defer func() {
+		i.mu.Lock()
+		i.inFlight--
+		i.mu.Unlock()
+	}()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 
 	start := int(req.Offset)
 	if start >= len(i.data) {
@@ -360,6 +418,43 @@ func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, 
 		Bytes: i.data[start:end],
 	}
 	return nil
+}
+
+func (i *recordingUploadInvoker) maxConcurrent() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	return i.maxInFlight
+}
+
+type testDownloadPool struct {
+	client *tg.Client
+}
+
+func (p testDownloadPool) Client(ctx context.Context, dc int) *tg.Client {
+	return p.client
+}
+
+func (p testDownloadPool) Takeout(ctx context.Context, dc int) *tg.Client {
+	return p.client
+}
+
+func (p testDownloadPool) Default(ctx context.Context) *tg.Client {
+	return p.client
+}
+
+func (p testDownloadPool) Close() error {
+	return nil
+}
+
+var _ dcpool.Pool = testDownloadPool{}
+
+func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *downloadLease {
+	t.Helper()
+
+	lease, err := newDownloadLimiter(1, maxWorkers).Acquire(context.Background(), "task-1")
+	require.NoError(t, err)
+	return lease
 }
 
 type memoryTaskStorage struct {

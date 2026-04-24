@@ -182,6 +182,7 @@ func Run(ctx context.Context, opts Options) error {
 	color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
 	color.Green("   Output root: %s", runtime.outputRoot)
 	color.Green("   Download dir template: %s", opts.Dir)
+	color.Green("   Per-file HTTP streams: %d", cfg.Threads)
 	color.Green("   Max concurrent downloads: %d", cfg.Limit)
 	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 

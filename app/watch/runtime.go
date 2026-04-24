@@ -20,7 +20,7 @@ func newWatchRuntime(cfg *config.Config, kvd storage.Storage, logger *zap.Logger
 	pools := &poolHolder{}
 
 	return &watchRuntime{
-		proxy:      newDownloadProxy(cfg.HTTP, pools, kvd, logger),
+		proxy:      newDownloadProxy(cfg.HTTP, cfg.Limit, cfg.Threads, pools, kvd, logger),
 		aria2:      newAria2Client(cfg.Aria2),
 		aria2Tasks: newAria2TaskStore(kvd),
 		pools:      pools,
