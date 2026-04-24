@@ -30,8 +30,9 @@ import (
 )
 
 const (
-	downloadStreamPartSize        = 1024 * 1024
-	telegramGetFileLimitAlignment = 4 * 1024
+	downloadStreamPartSize            = 1024 * 1024
+	telegramGetFilePreciseAlignment   = 1024
+	telegramGetFileFragmentWindowSize = 1024 * 1024
 )
 
 const (
@@ -892,9 +893,13 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 						return nil
 					}
 
-					data, err := source.FetchChunk(gctx, pool, lease, job.offset, job.size)
+					data, err := source.FetchChunk(gctx, pool, lease, job.req)
 					if err != nil {
 						return err
+					}
+					data, err = sliceTelegramChunk(data, job.skip, job.take)
+					if err != nil {
+						return errors.Wrap(err, "slice telegram file chunk")
 					}
 
 					select {
@@ -988,9 +993,10 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 }
 
 type downloadChunkJob struct {
-	index  int
-	offset int64
-	size   int64
+	index int
+	req   telegramChunkRequest
+	skip  int
+	take  int
 }
 
 type downloadChunkResult struct {
@@ -1004,18 +1010,33 @@ func buildDownloadChunkJobs(start, end int64) []downloadChunkJob {
 	}
 
 	remaining := end - start + 1
-	offset := start
+	next := start
 	index := 0
-	jobs := make([]downloadChunkJob, 0, int((remaining+int64(downloadStreamPartSize)-1)/int64(downloadStreamPartSize)))
-	for remaining > 0 {
-		size := min(int64(downloadStreamPartSize), remaining)
+	jobs := make([]downloadChunkJob, 0, int((remaining+int64(telegramGetFileFragmentWindowSize)-1)/int64(telegramGetFileFragmentWindowSize)))
+	for next <= end {
+		fragmentStart := (next / int64(telegramGetFileFragmentWindowSize)) * int64(telegramGetFileFragmentWindowSize)
+		fragmentEnd := fragmentStart + int64(telegramGetFileFragmentWindowSize) - 1
+		needStart := next
+		needEnd := min(end, fragmentEnd)
+
+		reqOffset := alignDown(needStart, telegramGetFilePreciseAlignment)
+		reqEnd := alignUp(needEnd+1, telegramGetFilePreciseAlignment)
+		fragmentLimit := fragmentStart + int64(telegramGetFileFragmentWindowSize)
+		if reqEnd > fragmentLimit {
+			reqEnd = fragmentLimit
+		}
+
 		jobs = append(jobs, downloadChunkJob{
-			index:  index,
-			offset: offset,
-			size:   size,
+			index: index,
+			req: telegramChunkRequest{
+				offset: reqOffset,
+				limit:  int(reqEnd - reqOffset),
+			},
+			skip: int(needStart - reqOffset),
+			take: int(needEnd - needStart + 1),
 		})
-		offset += size
-		remaining -= size
+
+		next = needEnd + 1
 		index++
 	}
 
@@ -1029,7 +1050,7 @@ func (s *telegramMediaSource) Media() *tmedia.Media {
 	return s.media
 }
 
-func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *downloadLease, offset, size int64) ([]byte, error) {
+func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *downloadLease, req telegramChunkRequest) ([]byte, error) {
 	for {
 		media := s.Media()
 		if media == nil {
@@ -1040,7 +1061,7 @@ func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, 
 			return nil, err
 		}
 		client := pool.Client(ctx, media.DC)
-		data, err := fetchTelegramMediaChunk(ctx, client, media, offset, size)
+		data, err := fetchTelegramMediaChunk(ctx, client, media, req)
 		lease.ReleaseWorker()
 		if err == nil {
 			return data, nil
@@ -1073,53 +1094,73 @@ func (s *telegramMediaSource) refreshMedia(ctx context.Context, current *tmedia.
 	return nil
 }
 
-func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmedia.Media, offset, size int64) ([]byte, error) {
-	limit := telegramGetFileLimit(size)
-	req := &tg.UploadGetFileRequest{
-		Location: media.InputFileLoc,
-		Offset:   offset,
-		Limit:    limit,
-	}
-	req.SetPrecise(true)
-
-	resp, err := client.UploadGetFile(ctx, req)
-	if err != nil {
-		return nil, errors.Wrap(err, "get telegram file chunk")
-	}
-
-	file, ok := resp.(*tg.UploadFile)
-	if !ok {
-		return nil, fmt.Errorf("unexpected telegram file response %T", resp)
-	}
-	if len(file.Bytes) == 0 {
-		return nil, io.ErrUnexpectedEOF
-	}
-
-	chunk := append([]byte(nil), file.Bytes...)
-	if int64(len(chunk)) > size {
-		chunk = chunk[:size]
-	}
-	return chunk, nil
+type telegramChunkRequest struct {
+	offset int64
+	limit  int
 }
 
-func telegramGetFileLimit(remaining int64) int {
-	if remaining <= 0 {
-		return 0
-	}
-	if remaining >= int64(downloadStreamPartSize) {
-		return downloadStreamPartSize
-	}
+func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmedia.Media, chunkReq telegramChunkRequest) ([]byte, error) {
+	logger := logctx.From(ctx)
 
-	// upload.getFile rejects arbitrary tail sizes; keep limit 4KB-aligned and
-	// trim any extra bytes before writing to the HTTP response.
-	aligned := ((remaining + telegramGetFileLimitAlignment - 1) / telegramGetFileLimitAlignment) * telegramGetFileLimitAlignment
-	if aligned < telegramGetFileLimitAlignment {
-		return telegramGetFileLimitAlignment
+	for attempt := 0; ; attempt++ {
+		req := &tg.UploadGetFileRequest{
+			Location: media.InputFileLoc,
+			Offset:   chunkReq.offset,
+			Limit:    chunkReq.limit,
+		}
+		req.SetPrecise(true)
+
+		resp, err := client.UploadGetFile(ctx, req)
+		if flood, waitErr := tgerr.FloodWait(ctx, err); waitErr != nil {
+			if flood || tgerr.Is(waitErr, tg.ErrTimeout) {
+				logger.Debug("Retrying telegram file chunk",
+					zap.Int64("offset", chunkReq.offset),
+					zap.Int("limit", chunkReq.limit),
+					zap.Int("attempt", attempt+1),
+					zap.Error(waitErr))
+				continue
+			}
+			return nil, errors.Wrap(waitErr, "get telegram file chunk")
+		}
+
+		file, ok := resp.(*tg.UploadFile)
+		if !ok {
+			return nil, fmt.Errorf("unexpected telegram file response %T", resp)
+		}
+		if len(file.Bytes) == 0 {
+			return nil, io.ErrUnexpectedEOF
+		}
+
+		return append([]byte(nil), file.Bytes...), nil
 	}
-	if aligned > int64(downloadStreamPartSize) {
-		return downloadStreamPartSize
+}
+
+func sliceTelegramChunk(data []byte, skip, take int) ([]byte, error) {
+	if skip < 0 || take < 0 {
+		return nil, errors.New("invalid telegram chunk slice")
 	}
-	return int(aligned)
+	end := skip + take
+	if end > len(data) {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return data[skip:end], nil
+}
+
+func alignDown(value int64, alignment int64) int64 {
+	if alignment <= 0 {
+		return value
+	}
+	return value - value%alignment
+}
+
+func alignUp(value int64, alignment int64) int64 {
+	if alignment <= 0 {
+		return value
+	}
+	if value%alignment == 0 {
+		return value
+	}
+	return value + alignment - value%alignment
 }
 
 func parseDownloadRange(header string, size int64) (start, end int64, partial bool, err error) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
 	"github.com/iyear/tdl/core/dcpool"
@@ -300,7 +301,7 @@ func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
 	require.Equal(t, payload[524288:], out.Bytes())
 	require.NotEmpty(t, invoker.offsets)
 	require.Equal(t, int64(524288), invoker.offsets[0])
-	require.Equal(t, telegramGetFileLimitAlignment, invoker.limits[0])
+	require.Equal(t, telegramGetFilePreciseAlignment, invoker.limits[0])
 }
 
 func TestStreamTelegramMediaAlignsFinalLimit(t *testing.T) {
@@ -327,8 +328,39 @@ func TestStreamTelegramMediaAlignsFinalLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.Equal(t, []int64{0}, invoker.offsets)
-	require.Equal(t, []int{188416}, invoker.limits)
-	require.Zero(t, invoker.limits[0]%telegramGetFileLimitAlignment)
+	require.Equal(t, []int{186368}, invoker.limits)
+	require.Zero(t, invoker.limits[0]%telegramGetFilePreciseAlignment)
+}
+
+func TestStreamTelegramMediaSplitsRangeByTelegramFragment(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize*2+3000)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{data: payload}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 4)
+	defer lease.Release()
+
+	start := int64(100)
+	end := int64(downloadStreamPartSize) + 1500
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, start, end, &out)
+	require.NoError(t, err)
+	require.Equal(t, payload[start:end+1], out.Bytes())
+	require.Equal(t, []int64{0, downloadStreamPartSize}, invoker.offsets)
+	require.Equal(t, []int{downloadStreamPartSize, 2048}, invoker.limits)
+	require.True(t, invoker.allRequestsStayWithinTelegramFragment())
 }
 
 func TestStreamTelegramMediaParallelUsesMultipleWorkers(t *testing.T) {
@@ -360,6 +392,38 @@ func TestStreamTelegramMediaParallelUsesMultipleWorkers(t *testing.T) {
 	require.GreaterOrEqual(t, invoker.maxConcurrent(), 2)
 }
 
+func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize+128)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data: payload,
+		failures: map[int64]int{
+			0: 1,
+		},
+		failErr: tgerr.New(500, tg.ErrTimeout),
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 2)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	require.Equal(t, payload, out.Bytes())
+	require.GreaterOrEqual(t, invoker.callCount(0), 2)
+}
+
 type recordingUploadInvoker struct {
 	mu          sync.Mutex
 	data        []byte
@@ -368,6 +432,9 @@ type recordingUploadInvoker struct {
 	delay       time.Duration
 	inFlight    int
 	maxInFlight int
+	failures    map[int64]int
+	failErr     error
+	calls       map[int64]int
 }
 
 func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -386,6 +453,16 @@ func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, 
 	i.inFlight++
 	if i.inFlight > i.maxInFlight {
 		i.maxInFlight = i.inFlight
+	}
+	if i.calls == nil {
+		i.calls = map[int64]int{}
+	}
+	i.calls[req.Offset]++
+	if remaining := i.failures[req.Offset]; remaining > 0 {
+		i.failures[req.Offset] = remaining - 1
+		i.inFlight--
+		i.mu.Unlock()
+		return i.failErr
 	}
 	delay := i.delay
 	i.mu.Unlock()
@@ -425,6 +502,37 @@ func (i *recordingUploadInvoker) maxConcurrent() int {
 	defer i.mu.Unlock()
 
 	return i.maxInFlight
+}
+
+func (i *recordingUploadInvoker) callCount(offset int64) int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	return i.calls[offset]
+}
+
+func (i *recordingUploadInvoker) allRequestsStayWithinTelegramFragment() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	for idx := range i.offsets {
+		offset := i.offsets[idx]
+		limit := i.limits[idx]
+		if offset%telegramGetFilePreciseAlignment != 0 {
+			return false
+		}
+		if limit%telegramGetFilePreciseAlignment != 0 {
+			return false
+		}
+		if limit > telegramGetFileFragmentWindowSize {
+			return false
+		}
+		if offset/int64(telegramGetFileFragmentWindowSize) != (offset+int64(limit)-1)/int64(telegramGetFileFragmentWindowSize) {
+			return false
+		}
+	}
+
+	return true
 }
 
 type testDownloadPool struct {
