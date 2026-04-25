@@ -31,7 +31,11 @@
   "exclude": ["png","jpg"], // 排除指定扩展名，如 `["png", "jpg"]`与include互斥
   "http": {
     "listen": "0.0.0.0:22334", // HTTP 监听地址，如 0.0.0.0:22334
-    "public_base_url": "http://127.0.0.1:22334" // aria2 访问 tdl 下载代理时使用的基础地址
+    "public_base_url": "http://127.0.0.1:22334", // aria2 访问 tdl 下载代理时使用的基础地址
+    "buffer": {
+      "mode": "memory", // HTTP 下载缓冲模式：memory 或 off
+      "size_mb": 64 // 每个活跃文件的内存缓冲上限，单位 MiB
+    }
   },
   "aria2": {
     "rpc_url": "http://127.0.0.1:6800/jsonrpc", // aria2 JSON-RPC 地址
@@ -57,6 +61,8 @@
 | `threads`              | 服务端限制单个文件的总并发预算；同文件的 Range 请求和 tdl 后台抓取 worker 会共享这份预算，aria2 提交任务时也会同步把这个值作为单文件连接数提示 |
 | `limit`                | 服务端限制最大同时下载文件数；启动 `tdl watch` 时也会同步到 aria2 的 `max-concurrent-downloads`            |
 | `http.public_base_url` | aria2 访问 tdl 下载代理时使用的基础地址                                                         |
+| `http.buffer.mode`     | HTTP 下载缓冲模式；`memory` 会在 tdl 内存中预读分片，`off` 保持旧的顺序流式行为                           |
+| `http.buffer.size_mb`  | `memory` 模式下每个活跃文件的共享缓冲上限；默认 64，内存紧张可设 32，高带宽可设 128                         |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
 
 如果 aria2 运行在 Docker、NAS、WSL 或另一台机器上，`http.public_base_url` 不能写 `127.0.0.1`，需要写 aria2 所在环境能访问到 tdl 的局域网地址。
@@ -67,6 +73,8 @@
 
 - 任意客户端同时请求 3 个不同文件时，服务端最多只会真正放行其中 2 个文件开始下载
 - 任意客户端对同一个文件发起 64 个 Range 请求时，服务端最多只会同时给这个文件分配 4 个并发 worker；多余请求会在服务端排队等待
+
+`http.buffer.mode=memory` 会让同一个活跃文件共享一块有上限的内存预读缓冲，用来降低 HTTP 顺序写出对 Telegram 分片抓取的反压。默认 `http.buffer.size_mb=64`，总内存预算约为 `limit * size_mb`，再加少量正在抓取的分片内存；如果机器内存较小可设为 32，高带宽或 aria2 与 tdl 同机时可尝试 128。设置为 `off` 可回到旧的顺序流式行为。
 
 ### 第 2 步：启动机器人
 
@@ -83,6 +91,7 @@ tdl 会连接到 Telegram 并在后台等待，你会看到：
    Output root: D:\downloads
    Download dir template: G/Y&M
    Per-file HTTP streams: 4
+   HTTP buffer: memory (64 MiB per active file)
    Max concurrent downloads: 2
 ⚠️ http.public_base_url uses loopback address 127.0.0.1; this only works when aria2 runs on the same machine and network namespace
 🔄 Bot is running... Press Ctrl+C to stop

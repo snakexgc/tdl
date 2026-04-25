@@ -6,8 +6,9 @@ import (
 )
 
 type downloadLimiter struct {
-	fileTokens chan struct{}
-	perFileMax int
+	fileTokens  chan struct{}
+	perFileMax  int
+	bufferSlots int
 
 	mu    sync.Mutex
 	files map[string]*downloadLimitState
@@ -19,6 +20,7 @@ type downloadLimitState struct {
 	ready         chan struct{}
 	requestTokens chan struct{}
 	workerTokens  chan struct{}
+	bufferTokens  chan struct{}
 }
 
 type downloadLease struct {
@@ -27,14 +29,19 @@ type downloadLease struct {
 	state   *downloadLimitState
 }
 
-func newDownloadLimiter(maxFiles, perFileMax int) *downloadLimiter {
+func newDownloadLimiter(maxFiles, perFileMax int, bufferSlots ...int) *downloadLimiter {
 	maxFiles = normalizeDownloadLimit(maxFiles)
 	perFileMax = normalizeDownloadLimit(perFileMax)
+	normalizedBufferSlots := 0
+	if len(bufferSlots) > 0 {
+		normalizedBufferSlots = normalizeDownloadBufferSlots(bufferSlots[0])
+	}
 
 	l := &downloadLimiter{
-		fileTokens: make(chan struct{}, maxFiles),
-		perFileMax: perFileMax,
-		files:      make(map[string]*downloadLimitState),
+		fileTokens:  make(chan struct{}, maxFiles),
+		perFileMax:  perFileMax,
+		bufferSlots: normalizedBufferSlots,
+		files:       make(map[string]*downloadLimitState),
 	}
 	for i := 0; i < maxFiles; i++ {
 		l.fileTokens <- struct{}{}
@@ -46,6 +53,13 @@ func newDownloadLimiter(maxFiles, perFileMax int) *downloadLimiter {
 func normalizeDownloadLimit(v int) int {
 	if v < 1 {
 		return 1
+	}
+	return v
+}
+
+func normalizeDownloadBufferSlots(v int) int {
+	if v < 0 {
+		return 0
 	}
 	return v
 }
@@ -98,6 +112,29 @@ func (l *downloadLease) MaxWorkers() int {
 	return cap(l.state.workerTokens)
 }
 
+func (l *downloadLease) BufferSlots() int {
+	if l == nil || l.state == nil || l.state.bufferTokens == nil {
+		return 0
+	}
+	return cap(l.state.bufferTokens)
+}
+
+func (l *downloadLease) AcquireBuffer(ctx context.Context) (func(), error) {
+	if l == nil || l.state == nil || l.state.bufferTokens == nil {
+		return nil, nil
+	}
+	if err := acquireDownloadToken(ctx, l.state.bufferTokens); err != nil {
+		return nil, err
+	}
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			releaseDownloadToken(l.state.bufferTokens)
+		})
+	}, nil
+}
+
 func (l *downloadLimiter) acquireFile(ctx context.Context, taskID string) (*downloadLimitState, error) {
 	registered := false
 
@@ -105,7 +142,7 @@ func (l *downloadLimiter) acquireFile(ctx context.Context, taskID string) (*down
 		l.mu.Lock()
 		state := l.files[taskID]
 		if state == nil {
-			state = newDownloadLimitState(l.perFileMax)
+			state = newDownloadLimitState(l.perFileMax, l.bufferSlots)
 			l.files[taskID] = state
 		}
 		if !registered {
@@ -191,7 +228,7 @@ func (l *downloadLimiter) releaseInterest(taskID string) {
 	}
 }
 
-func newDownloadLimitState(perFileMax int) *downloadLimitState {
+func newDownloadLimitState(perFileMax, bufferSlots int) *downloadLimitState {
 	state := &downloadLimitState{
 		requestTokens: make(chan struct{}, perFileMax),
 		workerTokens:  make(chan struct{}, perFileMax),
@@ -199,6 +236,12 @@ func newDownloadLimitState(perFileMax int) *downloadLimitState {
 	for i := 0; i < perFileMax; i++ {
 		state.requestTokens <- struct{}{}
 		state.workerTokens <- struct{}{}
+	}
+	if bufferSlots > 0 {
+		state.bufferTokens = make(chan struct{}, bufferSlots)
+		for i := 0; i < bufferSlots; i++ {
+			state.bufferTokens <- struct{}{}
+		}
 	}
 
 	return state

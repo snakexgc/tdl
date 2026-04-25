@@ -18,6 +18,12 @@ type BotConfig struct {
 type HTTPConfig struct {
 	Listen        string `json:"listen"`
 	PublicBaseURL string `json:"public_base_url"`
+	Buffer        HTTPBufferConfig `json:"buffer"`
+}
+
+type HTTPBufferConfig struct {
+	Mode   string `json:"mode"`
+	SizeMB int    `json:"size_mb"`
 }
 
 type Aria2Config struct {
@@ -67,6 +73,10 @@ func DefaultConfig() *Config {
 		HTTP: HTTPConfig{
 			Listen:        "0.0.0.0:8080",
 			PublicBaseURL: "",
+			Buffer: HTTPBufferConfig{
+				Mode:   "memory",
+				SizeMB: 64,
+			},
 		},
 		Aria2: Aria2Config{
 			RPCURL:         "http://127.0.0.1:6800/jsonrpc",

@@ -214,6 +214,11 @@ func Run(ctx context.Context, opts Options) error {
 	color.Green("   Output root: %s", runtime.outputRoot)
 	color.Green("   Download dir template: %s", opts.Dir)
 	color.Green("   Per-file HTTP streams: %d", cfg.Threads)
+	if normalizeHTTPBufferMode(cfg.HTTP.Buffer.Mode) == httpBufferModeMemory {
+		color.Green("   HTTP buffer: memory (%d MiB per active file)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
+	} else {
+		color.Green("   HTTP buffer: off")
+	}
 	color.Green("   Max concurrent downloads: %d", cfg.Limit)
 	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 
@@ -433,6 +438,9 @@ func validateWatchConfig(cfg *config.Config) error {
 	}
 	if cfg.Limit < 1 {
 		return errors.New("limit must be greater than 0")
+	}
+	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
+		return err
 	}
 	return nil
 }

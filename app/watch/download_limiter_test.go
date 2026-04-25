@@ -145,3 +145,39 @@ func TestDownloadLeaseLimitsConcurrentWorkers(t *testing.T) {
 
 	lease.ReleaseWorker()
 }
+
+func TestDownloadLeaseBufferSharedPerFile(t *testing.T) {
+	t.Parallel()
+
+	limiter := newDownloadLimiter(1, 4, 2)
+
+	leaseOne, err := limiter.Acquire(context.Background(), "file-a")
+	require.NoError(t, err)
+	defer leaseOne.Release()
+
+	leaseTwo, err := limiter.Acquire(context.Background(), "file-a")
+	require.NoError(t, err)
+	defer leaseTwo.Release()
+
+	releaseOne, err := leaseOne.AcquireBuffer(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, releaseOne)
+	defer releaseOne()
+
+	releaseTwo, err := leaseOne.AcquireBuffer(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, releaseTwo)
+	defer releaseTwo()
+
+	blockedCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	blockedRelease, err := leaseTwo.AcquireBuffer(blockedCtx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, blockedRelease)
+
+	releaseOne()
+	releaseThree, err := leaseTwo.AcquireBuffer(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, releaseThree)
+	releaseThree()
+}

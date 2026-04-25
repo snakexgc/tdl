@@ -32,6 +32,8 @@ var configurablePaths = []string{
 	"exclude",
 	"http.listen",
 	"http.public_base_url",
+	"http.buffer.mode",
+	"http.buffer.size_mb",
 	"aria2.rpc_url",
 	"aria2.secret",
 	"aria2.dir",

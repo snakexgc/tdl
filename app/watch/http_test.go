@@ -276,6 +276,18 @@ func TestDownloadHandlerHead(t *testing.T) {
 	require.Equal(t, "10", rec.Result().Header.Get("Content-Length"))
 }
 
+func TestValidateWatchConfigRejectsInvalidBufferMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:8080"
+	cfg.HTTP.Buffer.Mode = "disk"
+
+	err := validateWatchConfig(cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "http.buffer.mode")
+}
+
 func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
 	t.Parallel()
 
@@ -392,6 +404,55 @@ func TestStreamTelegramMediaParallelUsesMultipleWorkers(t *testing.T) {
 	require.GreaterOrEqual(t, invoker.maxConcurrent(), 2)
 }
 
+func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T) {
+	t.Parallel()
+
+	const bufferSlots = 8
+	payload := make([]byte, downloadStreamPartSize*12)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{data: payload}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease, err := newDownloadLimiter(1, 2, bufferSlots).Acquire(context.Background(), "task-1")
+	require.NoError(t, err)
+	defer lease.Release()
+
+	out := newBlockingFirstWriteBuffer()
+	defer out.Unblock()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), out)
+	}()
+
+	select {
+	case <-out.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first write")
+	}
+
+	require.Eventually(t, func() bool {
+		return invoker.totalCalls() >= bufferSlots-1
+	}, time.Second, 10*time.Millisecond)
+
+	out.Unblock()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream completion")
+	}
+	require.Equal(t, payload, out.Bytes())
+}
+
 func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
 	t.Parallel()
 
@@ -435,6 +496,36 @@ type recordingUploadInvoker struct {
 	failures    map[int64]int
 	failErr     error
 	calls       map[int64]int
+}
+
+type blockingFirstWriteBuffer struct {
+	bytes.Buffer
+
+	started     chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingFirstWriteBuffer() *blockingFirstWriteBuffer {
+	return &blockingFirstWriteBuffer{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (b *blockingFirstWriteBuffer) Write(p []byte) (int, error) {
+	b.startOnce.Do(func() {
+		close(b.started)
+		<-b.release
+	})
+	return b.Buffer.Write(p)
+}
+
+func (b *blockingFirstWriteBuffer) Unblock() {
+	b.releaseOnce.Do(func() {
+		close(b.release)
+	})
 }
 
 func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -509,6 +600,13 @@ func (i *recordingUploadInvoker) callCount(offset int64) int {
 	defer i.mu.Unlock()
 
 	return i.calls[offset]
+}
+
+func (i *recordingUploadInvoker) totalCalls() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	return len(i.offsets)
 }
 
 func (i *recordingUploadInvoker) allRequestsStayWithinTelegramFragment() bool {
