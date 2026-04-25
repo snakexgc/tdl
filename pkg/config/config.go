@@ -16,8 +16,8 @@ type BotConfig struct {
 }
 
 type HTTPConfig struct {
-	Listen        string `json:"listen"`
-	PublicBaseURL string `json:"public_base_url"`
+	Listen        string           `json:"listen"`
+	PublicBaseURL string           `json:"public_base_url"`
 	Buffer        HTTPBufferConfig `json:"buffer"`
 }
 
