@@ -36,6 +36,41 @@ func TestIsMyMessageReactionsRequiresExplicitCurrentUser(t *testing.T) {
 	require.True(t, w.isMyMessageReactions(ctx, &reactions, 100, 1))
 }
 
+func TestIsMyMessageReactionsRequiresConfiguredTrigger(t *testing.T) {
+	w := &Watcher{triggerReactions: newTriggerReactionSet([]string{"🔥"})}
+	ctx := context.Background()
+
+	require.False(t, w.isMyMessageReactions(ctx, &tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("👍", true)},
+	}, 100, 1))
+
+	require.True(t, w.isMyMessageReactions(ctx, &tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
+	}, 100, 1))
+}
+
+func TestIsMyRecentMessageReactionRequiresConfiguredTrigger(t *testing.T) {
+	w := &Watcher{triggerReactions: newTriggerReactionSet([]string{"🔥"})}
+	ctx := context.Background()
+
+	reactions := tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCount(false)},
+	}
+	reactions.SetRecentReactions([]tg.MessagePeerReaction{{
+		My:       true,
+		PeerID:   &tg.PeerUser{UserID: 42},
+		Reaction: &tg.ReactionEmoji{Emoticon: "👍"},
+	}})
+	require.False(t, w.isMyMessageReactions(ctx, &reactions, 100, 1))
+
+	reactions.SetRecentReactions([]tg.MessagePeerReaction{{
+		My:       true,
+		PeerID:   &tg.PeerUser{UserID: 42},
+		Reaction: &tg.ReactionEmoji{Emoticon: "🔥"},
+	}})
+	require.True(t, w.isMyMessageReactions(ctx, &reactions, 100, 1))
+}
+
 func TestEditMessageReactionSkipsWhenNotMine(t *testing.T) {
 	w := &Watcher{jobCh: make(chan downloadJob, 1)}
 	msg := &tg.Message{
@@ -64,6 +99,23 @@ func TestEditMessageReactionQueuesWhenMine(t *testing.T) {
 	require.Len(t, w.jobCh, 1)
 }
 
+func TestEditMessageReactionSkipsWhenTriggerNotConfigured(t *testing.T) {
+	w := &Watcher{
+		jobCh:            make(chan downloadJob, 1),
+		triggerReactions: newTriggerReactionSet([]string{"🔥"}),
+	}
+	msg := &tg.Message{
+		ID:     116103,
+		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
+		Reactions: tg.MessageReactions{
+			Results: []tg.ReactionCount{testReactionCount(true)},
+		},
+	}
+
+	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
+	require.Empty(t, w.jobCh)
+}
+
 func TestEditMessageReactionSkipsQueueWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -90,8 +142,12 @@ func TestGenerateMessageLinkForPrivateChatUsesTelegramDeepLink(t *testing.T) {
 }
 
 func testReactionCount(chosen bool) tg.ReactionCount {
+	return testReactionCountWithEmoji("👍", chosen)
+}
+
+func testReactionCountWithEmoji(emoji string, chosen bool) tg.ReactionCount {
 	count := tg.ReactionCount{
-		Reaction: &tg.ReactionEmoji{Emoticon: "👍"},
+		Reaction: &tg.ReactionEmoji{Emoticon: emoji},
 		Count:    1,
 	}
 	if chosen {

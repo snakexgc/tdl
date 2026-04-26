@@ -24,6 +24,7 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, 64, cfg.HTTP.Buffer.SizeMB)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
+	require.Empty(t, cfg.TriggerReactions)
 }
 
 func TestLoadHTTPBufferConfig(t *testing.T) {

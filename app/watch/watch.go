@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"text/template"
@@ -41,13 +42,14 @@ import (
 )
 
 type Options struct {
-	Dir      string
-	Template string
-	SkipSame bool
-	Threads  int
-	Include  []string
-	Exclude  []string
-	Notify   NotifyFunc
+	Dir              string
+	Template         string
+	SkipSame         bool
+	Threads          int
+	TriggerReactions []string
+	Include          []string
+	Exclude          []string
+	Notify           NotifyFunc
 }
 
 type NotifyFunc func(ctx context.Context, text string)
@@ -60,11 +62,12 @@ func DefaultOptions(cfg *config.Config) Options {
 	}
 
 	return Options{
-		Dir:      cfg.DownloadDir,
-		Template: defaultFileTemplate,
-		Threads:  cfg.Threads,
-		Include:  append([]string(nil), cfg.Include...),
-		Exclude:  append([]string(nil), cfg.Exclude...),
+		Dir:              cfg.DownloadDir,
+		Template:         defaultFileTemplate,
+		Threads:          cfg.Threads,
+		TriggerReactions: append([]string(nil), cfg.TriggerReactions...),
+		Include:          append([]string(nil), cfg.Include...),
+		Exclude:          append([]string(nil), cfg.Exclude...),
 	}
 }
 
@@ -119,10 +122,11 @@ type Watcher struct {
 	tpl     *template.Template
 	runtime *watchRuntime
 
-	dedup   sync.Map
-	jobCh   chan downloadJob
-	include map[string]struct{}
-	exclude map[string]struct{}
+	dedup            sync.Map
+	jobCh            chan downloadJob
+	triggerReactions map[string]struct{}
+	include          map[string]struct{}
+	exclude          map[string]struct{}
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -220,6 +224,7 @@ func Run(ctx context.Context, opts Options) error {
 		color.Green("   HTTP buffer: off")
 	}
 	color.Green("   Max concurrent downloads: %d", cfg.Limit)
+	color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
 	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 
 	reconnectDelay := time.Duration(cfg.ReconnectTimeout) * time.Second
@@ -303,12 +308,13 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 	d := tg.NewUpdateDispatcher()
 	w := &Watcher{
-		opts:    opts,
-		tpl:     tpl,
-		runtime: runtime,
-		jobCh:   make(chan downloadJob, 100),
-		include: filterMap.New(opts.Include, addPrefixDot),
-		exclude: filterMap.New(opts.Exclude, addPrefixDot),
+		opts:             opts,
+		tpl:              tpl,
+		runtime:          runtime,
+		jobCh:            make(chan downloadJob, 100),
+		triggerReactions: newTriggerReactionSet(opts.TriggerReactions),
+		include:          filterMap.New(opts.Include, addPrefixDot),
+		exclude:          filterMap.New(opts.Exclude, addPrefixDot),
 	}
 
 	d.OnMessageReactions(w.onReaction)
@@ -629,6 +635,7 @@ func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.Messag
 		return false
 	}
 
+	myReactionSeen := false
 	if recent, ok := reactions.GetRecentReactions(); ok {
 		for _, r := range recent {
 			emoji := reactionEmoji(r.Reaction)
@@ -637,6 +644,14 @@ func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.Messag
 				zap.String("emoji", emoji),
 				zap.Int64("peer_id", tutil.GetPeerID(r.PeerID)))
 			if r.My {
+				myReactionSeen = true
+				if !w.matchesTriggerReaction(emoji) {
+					logctx.From(ctx).Info("My reaction does not match configured trigger, skipping",
+						zap.String("emoji", emoji),
+						zap.Int64("peer_id", peerID),
+						zap.Int("msg_id", msgID))
+					continue
+				}
 				logctx.From(ctx).Info("Found my reaction via RecentReactions",
 					zap.String("emoji", emoji),
 					zap.Int64("peer_id", peerID),
@@ -655,6 +670,14 @@ func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.Messag
 			zap.Bool("chosen", ok),
 			zap.Int("chosen_order", chosenOrder))
 		if ok {
+			myReactionSeen = true
+			if !w.matchesTriggerReaction(emoji) {
+				logctx.From(ctx).Info("My reaction via ChosenOrder does not match configured trigger, skipping",
+					zap.String("emoji", emoji),
+					zap.Int64("peer_id", peerID),
+					zap.Int("msg_id", msgID))
+				continue
+			}
 			logctx.From(ctx).Info("Found my reaction via ChosenOrder",
 				zap.String("emoji", emoji),
 				zap.Int("chosen_order", chosenOrder),
@@ -664,11 +687,63 @@ func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.Messag
 		}
 	}
 
+	if myReactionSeen {
+		logctx.From(ctx).Info("My reaction did not match any configured trigger",
+			zap.Int("results_count", len(reactions.Results)),
+			zap.Int64("peer_id", peerID),
+			zap.Int("msg_id", msgID))
+		return false
+	}
+
 	logctx.From(ctx).Info("Reaction is NOT mine (both methods failed)",
 		zap.Int("results_count", len(reactions.Results)),
 		zap.Int64("peer_id", peerID),
 		zap.Int("msg_id", msgID))
 	return false
+}
+
+func (w *Watcher) matchesTriggerReaction(emoji string) bool {
+	if len(w.triggerReactions) == 0 {
+		return true
+	}
+	_, ok := w.triggerReactions[normalizeTriggerReaction(emoji)]
+	return ok
+}
+
+func newTriggerReactionSet(values []string) map[string]struct{} {
+	m := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = normalizeTriggerReaction(value)
+		if value == "" {
+			continue
+		}
+		m[value] = struct{}{}
+	}
+	return m
+}
+
+func normalizeTriggerReaction(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func formatTriggerReactions(values []string) string {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = normalizeTriggerReaction(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return "any"
+	}
+	return strings.Join(normalized, ", ")
 }
 
 func reactionEmoji(r tg.ReactionClass) string {

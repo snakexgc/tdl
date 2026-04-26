@@ -46,6 +46,7 @@ type Config struct {
 	NTP              string            `json:"ntp"`
 	ReconnectTimeout int               `json:"reconnect_timeout"`
 	DownloadDir      string            `json:"download_dir"`
+	TriggerReactions []string          `json:"trigger_reactions"`
 	Include          []string          `json:"include"`
 	Exclude          []string          `json:"exclude"`
 	HTTP             HTTPConfig        `json:"http"`
@@ -68,6 +69,7 @@ func DefaultConfig() *Config {
 		Delay:            0,
 		ReconnectTimeout: 10,
 		DownloadDir:      "downloads",
+		TriggerReactions: []string{},
 		Include:          []string{},
 		Exclude:          []string{},
 		HTTP: HTTPConfig{

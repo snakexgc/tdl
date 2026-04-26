@@ -28,6 +28,7 @@ var configurablePaths = []string{
 	"ntp",
 	"reconnect_timeout",
 	"download_dir",
+	"trigger_reactions",
 	"include",
 	"exclude",
 	"http.listen",
