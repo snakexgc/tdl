@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -84,14 +82,14 @@ func New() *cobra.Command {
 					zap.String("namespace", ns))
 			}
 
-			// v0.14.0: default storage changed from legacy to bolt, so we need to auto migrate to keep compatibility
-			if !cmd.Flags().Lookup(consts.FlagStorage).Changed && !fsutil.PathExists(defaultBoltPath) {
+			// v0.14.0: default storage changed from legacy to bolt, so we need to auto migrate to keep compatibility.
+			if shouldMigrateLegacyToBolt() {
 				if err := migrateLegacyToBolt(); err != nil {
 					return errors.Wrap(err, "migrate legacy to bolt")
 				}
 			}
 
-			stg, err := kv.NewWithMap(getStorageConfig(cfg))
+			stg, err := kv.NewWithMap(DefaultBoltStorage)
 			if err != nil {
 				return errors.Wrap(err, "create kv storage")
 			}
@@ -127,12 +125,6 @@ func New() *cobra.Command {
 
 	cmd.AddCommand(NewVersion(), NewWatch(), NewBot())
 
-	// 从 JSON 配置设置默认值
-	cmd.PersistentFlags().StringToString(consts.FlagStorage,
-		getStorageConfig(cfg),
-		fmt.Sprintf("storage options, format: type=driver,key1=value1,key2=value2. Available drivers: [%s]",
-			strings.Join(kv.DriverNames(), ",")))
-
 	cmd.PersistentFlags().String(consts.FlagProxy, cfg.Proxy, "proxy address, format: protocol://username:password@host:port")
 	cmd.PersistentFlags().StringP(consts.FlagNamespace, "n", cfg.Namespace, "namespace for Telegram session")
 	cmd.PersistentFlags().Bool(consts.FlagDebug, cfg.Debug, "enable debug mode")
@@ -161,31 +153,23 @@ func New() *cobra.Command {
 	return cmd
 }
 
-// getStorageConfig 从配置获取存储配置
-func getStorageConfig(cfg *config.Config) map[string]string {
-	if cfg.Storage == nil {
-		return DefaultBoltStorage
+func shouldMigrateLegacyToBolt() bool {
+	legacyPath := DefaultLegacyStorage["path"]
+	if legacyPath == "" || !fsutil.PathExists(legacyPath) {
+		return false
 	}
 
-	// 如果配置中指定了完整路径，使用它；否则相对于数据目录
-	path := cfg.Storage["path"]
-	if path == "" {
-		path = defaultBoltPath
-	} else if !filepath.IsAbs(path) {
-		// 相对路径，转换为绝对路径
-		path = filepath.Join(consts.DataDir, path)
+	entries, err := os.ReadDir(defaultBoltPath)
+	if err != nil {
+		return false
 	}
-
-	// 确保存储类型有默认值
-	storageType := cfg.Storage["type"]
-	if storageType == "" {
-		storageType = "bolt"
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == filepath.Base(legacyPath) {
+			continue
+		}
+		return false
 	}
-
-	return map[string]string{
-		kv.DriverTypeKey: storageType,
-		"path":           path,
-	}
+	return true
 }
 
 func migrateLegacyToBolt() (rerr error) {

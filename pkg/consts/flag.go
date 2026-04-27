@@ -1,7 +1,6 @@
 package consts
 
 const (
-	FlagStorage          = "storage"
 	FlagProxy            = "proxy"
 	FlagNamespace        = "ns"
 	FlagDebug            = "debug"

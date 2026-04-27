@@ -35,11 +35,10 @@ func TestConfigProtectedPathRejectsBotToken(t *testing.T) {
 	require.False(t, isProtectedConfigPath("bot.allowed_users"))
 }
 
-func TestConfigGetValueReadsMapKey(t *testing.T) {
+func TestConfigStoragePathIsNotConfigurable(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Storage["path"] = "custom"
 
-	value, err := getConfigValue(cfg, "storage.path")
-	require.NoError(t, err)
-	require.Equal(t, "custom", value)
+	_, err := getConfigValue(cfg, "storage.path")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "未知配置项")
 }

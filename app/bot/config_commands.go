@@ -18,8 +18,6 @@ import (
 const maskedStr = "(hidden)"
 
 var configurablePaths = []string{
-	"storage.type",
-	"storage.path",
 	"proxy",
 	"namespace",
 	"debug",

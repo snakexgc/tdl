@@ -42,33 +42,28 @@ type Aria2Config struct {
 
 // Config 全局配置结构
 type Config struct {
-	Storage          map[string]string `json:"storage"`
-	Proxy            string            `json:"proxy"`
-	Namespace        string            `json:"namespace"`
-	Debug            bool              `json:"debug"`
-	Threads          int               `json:"threads"`
-	Limit            int               `json:"limit"`
-	PoolSize         int               `json:"pool_size"`
-	Delay            int               `json:"delay"`
-	NTP              string            `json:"ntp"`
-	ReconnectTimeout int               `json:"reconnect_timeout"`
-	DownloadDir      string            `json:"download_dir"`
-	TriggerReactions []string          `json:"trigger_reactions"`
-	Include          []string          `json:"include"`
-	Exclude          []string          `json:"exclude"`
-	HTTP             HTTPConfig        `json:"http"`
-	WebUI            WebUIConfig       `json:"webui"`
-	Aria2            Aria2Config       `json:"aria2"`
-	Bot              BotConfig         `json:"bot"`
+	Proxy            string      `json:"proxy"`
+	Namespace        string      `json:"namespace"`
+	Debug            bool        `json:"debug"`
+	Threads          int         `json:"threads"`
+	Limit            int         `json:"limit"`
+	PoolSize         int         `json:"pool_size"`
+	Delay            int         `json:"delay"`
+	NTP              string      `json:"ntp"`
+	ReconnectTimeout int         `json:"reconnect_timeout"`
+	DownloadDir      string      `json:"download_dir"`
+	TriggerReactions []string    `json:"trigger_reactions"`
+	Include          []string    `json:"include"`
+	Exclude          []string    `json:"exclude"`
+	HTTP             HTTPConfig  `json:"http"`
+	WebUI            WebUIConfig `json:"webui"`
+	Aria2            Aria2Config `json:"aria2"`
+	Bot              BotConfig   `json:"bot"`
 }
 
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		Storage: map[string]string{
-			"type": "bolt",
-			"path": "",
-		},
 		Namespace:        "default",
 		Debug:            false,
 		Threads:          4,

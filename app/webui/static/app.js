@@ -17,8 +17,6 @@ const sections = [
   {
     title: "基础",
     fields: [
-      ["storage.type", "KV 存储类型", "select", "bolt/file/legacy。通常保持 bolt。", ["bolt", "file", "legacy"]],
-      ["storage.path", "KV 存储路径", "text", "为空时使用默认 .tdl 数据目录。修改后建议重启。"],
       ["proxy", "代理地址", "text", "Telegram 连接代理，例如 http://127.0.0.1:10808。"],
       ["namespace", "命名空间", "text", "隔离登录态、链接和状态数据。修改后需要重启。"],
       ["debug", "调试日志", "bool", "开启更详细日志。"],
