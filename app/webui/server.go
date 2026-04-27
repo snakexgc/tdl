@@ -31,21 +31,25 @@ var assets embed.FS
 
 const (
 	downloadTaskKeyPrefix = "watch.download."
+	downloadTaskIndexKey  = "watch.download.index"
 	aria2TaskKeyPrefix    = "watch.aria2.task."
 	aria2TaskIndexKey     = "watch.aria2.index"
 )
 
 type Options struct {
+	Context         context.Context
 	KVEngine        kv.Storage
 	Namespace       string
 	NamespaceKV     storage.Storage
 	AfterConfigSave func(*config.Config)
+	OnLoginSuccess  func(*tg.User)
 	RequestReboot   func()
 	WatchRunning    func() bool
 }
 
 type Server struct {
-	opts Options
+	opts  Options
+	login *webLoginManager
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -55,6 +59,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if strings.TrimSpace(cfg.WebUI.Username) == "" || cfg.WebUI.Password == "" {
 		return nil
+	}
+	if opts.Context == nil {
+		opts.Context = ctx
 	}
 
 	server := NewServer(opts)
@@ -74,7 +81,10 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func NewServer(opts Options) *Server {
-	return &Server{opts: opts}
+	return &Server{
+		opts:  opts,
+		login: newWebLoginManager(opts),
+	}
 }
 
 func (s *Server) routes() http.Handler {
@@ -86,8 +96,15 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/aria2/jsonrpc", s.authFunc(s.handleAria2Proxy))
 	mux.HandleFunc("/api/status", s.authFunc(s.handleStatus))
 	mux.HandleFunc("/api/kv/links", s.authFunc(s.handleKVLinks))
+	mux.HandleFunc("/api/kv/links/actions", s.authFunc(s.handleKVActions))
 	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))
 	mux.HandleFunc("/api/user", s.authFunc(s.handleUser))
+	mux.HandleFunc("/api/login/status", s.authFunc(s.handleLoginStatus))
+	mux.HandleFunc("/api/login/qr/start", s.authFunc(s.handleLoginQRStart))
+	mux.HandleFunc("/api/login/phone/start", s.authFunc(s.handleLoginPhoneStart))
+	mux.HandleFunc("/api/login/code", s.authFunc(s.handleLoginCode))
+	mux.HandleFunc("/api/login/password", s.authFunc(s.handleLoginPassword))
+	mux.HandleFunc("/api/login/cancel", s.authFunc(s.handleLoginCancel))
 	mux.HandleFunc("/api/config", s.authFunc(s.handleConfig))
 	mux.HandleFunc("/api/system/reboot", s.authFunc(s.handleReboot))
 	mux.HandleFunc("/", s.authFunc(s.handleAsset("index.html", "text/html; charset=utf-8")))
@@ -205,28 +222,57 @@ func (s *Server) handleKVLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleted := 0
-	if err := s.opts.NamespaceKV.Delete(r.Context(), downloadTaskKeyPrefix+id); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.Wrap(err, "delete download task"))
+	deleted, err := s.deleteDownloadLink(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
 		return
-	}
-	deleted++
-
-	records, _, err := s.loadAria2Records()
-	if err == nil {
-		for key, record := range records {
-			if record.TaskID != id {
-				continue
-			}
-			if err := s.opts.NamespaceKV.Delete(r.Context(), key); err != nil {
-				writeError(w, http.StatusInternalServerError, errors.Wrap(err, "delete aria2 task record"))
-				return
-			}
-			deleted++
-		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
+}
+
+func (s *Server) handleKVActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Action string   `json:"action"`
+		IDs    []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	req.Action = strings.TrimSpace(strings.ToLower(req.Action))
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("no links selected"))
+		return
+	}
+
+	switch req.Action {
+	case "delete":
+		var deleted int
+		var itemErrors []string
+		for _, id := range req.IDs {
+			n, err := s.deleteDownloadLink(r.Context(), id)
+			if err != nil {
+				itemErrors = append(itemErrors, fmt.Sprintf("%s: %v", id, err))
+				continue
+			}
+			deleted += n
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      len(itemErrors) == 0,
+			"deleted": deleted,
+			"errors":  itemErrors,
+		})
+	case "download":
+		result := s.downloadLinks(r.Context(), req.IDs)
+		writeJSON(w, http.StatusOK, result)
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported action %q", req.Action))
+	}
 }
 
 type downloadLinkItem struct {
@@ -318,7 +364,7 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 
 	keys := make([]string, 0, len(pairs))
 	for key := range pairs {
-		if strings.HasPrefix(key, downloadTaskKeyPrefix) {
+		if isDownloadTaskRecordKey(key) {
 			keys = append(keys, key)
 		}
 	}
@@ -420,6 +466,178 @@ func (s *Server) parseAria2Records(pairs map[string][]byte) (map[string]aria2Tas
 	return records, byTask, nil
 }
 
+func (s *Server) deleteDownloadLink(ctx context.Context, id string) (int, error) {
+	if s.opts.NamespaceKV == nil {
+		return 0, errors.New("namespace kv storage is not configured")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || strings.Contains(id, "/") || !isDownloadTaskRecordKey(downloadTaskKeyPrefix+id) {
+		return 0, errors.New("invalid download link id")
+	}
+
+	deleted := 0
+	if err := s.opts.NamespaceKV.Delete(ctx, downloadTaskKeyPrefix+id); err != nil {
+		return deleted, errors.Wrap(err, "delete download task")
+	}
+	deleted++
+
+	records, _, err := s.loadAria2Records()
+	if err != nil {
+		return deleted, nil
+	}
+	for key, record := range records {
+		if record.TaskID != id {
+			continue
+		}
+		if err := s.opts.NamespaceKV.Delete(ctx, key); err != nil {
+			return deleted, errors.Wrap(err, "delete aria2 task record")
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+type kvDownloadActionResult struct {
+	OK      bool     `json:"ok"`
+	Added   int      `json:"added"`
+	Skipped int      `json:"skipped"`
+	Errors  []string `json:"errors"`
+}
+
+func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActionResult {
+	result := kvDownloadActionResult{OK: true}
+	if s.opts.NamespaceKV == nil || s.opts.KVEngine == nil {
+		result.OK = false
+		result.Errors = append(result.Errors, "kv storage is not configured")
+		return result
+	}
+
+	meta, err := s.opts.KVEngine.MigrateTo()
+	if err != nil {
+		result.OK = false
+		result.Errors = append(result.Errors, err.Error())
+		return result
+	}
+	pairs := meta[s.namespace()]
+	cfg := config.Get()
+
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !isDownloadTaskRecordKey(downloadTaskKeyPrefix + id) {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: reserved download metadata key", id))
+			continue
+		}
+		var task persistentDownloadTask
+		data, ok := pairs[downloadTaskKeyPrefix+id]
+		if !ok {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: link record not found", id))
+			continue
+		}
+		if err := json.Unmarshal(data, &task); err != nil {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
+			continue
+		}
+		if task.ID == "" {
+			task.ID = id
+		}
+		link := downloadURL(cfg.HTTP.PublicBaseURL, task.ID)
+		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName, cfg.Threads)
+		if err != nil {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
+			continue
+		}
+		if err := s.saveAria2Record(ctx, aria2TaskRecord{
+			GID:         gid,
+			TaskID:      task.ID,
+			DownloadURL: link,
+			Dir:         cfg.Aria2.Dir,
+			Out:         task.FileName,
+			Connections: cfg.Threads,
+			CreatedAt:   time.Now(),
+		}); err != nil {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: persist aria2 record: %v", id, err))
+			continue
+		}
+		result.Added++
+	}
+	result.OK = len(result.Errors) == 0
+	return result
+}
+
+func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string, connections int) (string, error) {
+	normalizedConnections := connections
+	if normalizedConnections < 1 {
+		normalizedConnections = 1
+	}
+	options := map[string]any{
+		"continue":                  "true",
+		"allow-piece-length-change": "true",
+		"allow-overwrite":           "true",
+		"auto-file-renaming":        "false",
+		"split":                     strconv.Itoa(normalizedConnections),
+		"max-connection-per-server": strconv.Itoa(normalizedConnections),
+		"user-agent":                "tdl-webui-aria2",
+	}
+	if cfg.Dir != "" {
+		options["dir"] = cfg.Dir
+	}
+	if out != "" {
+		options["out"] = out
+	}
+	if normalizedConnections > 1 {
+		options["min-split-size"] = "1M"
+	}
+	var gid string
+	if err := callAria2(ctx, cfg, "aria2.addUri", []any{[]string{uri}, options}, &gid); err != nil {
+		return "", err
+	}
+	if gid == "" {
+		return "", errors.New("aria2 returned empty gid")
+	}
+	return gid, nil
+}
+
+func (s *Server) saveAria2Record(ctx context.Context, record aria2TaskRecord) error {
+	if s.opts.NamespaceKV == nil {
+		return errors.New("namespace kv storage is not configured")
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return errors.Wrap(err, "marshal aria2 task record")
+	}
+	if err := s.opts.NamespaceKV.Set(ctx, aria2TaskKeyPrefix+record.GID, data); err != nil {
+		return errors.Wrap(err, "save aria2 task record")
+	}
+
+	index := map[string]time.Time{}
+	indexData, err := s.opts.NamespaceKV.Get(ctx, aria2TaskIndexKey)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return errors.Wrap(err, "load aria2 task index")
+	}
+	if len(indexData) > 0 {
+		if err := json.Unmarshal(indexData, &index); err != nil {
+			return errors.Wrap(err, "decode aria2 task index")
+		}
+	}
+	index[record.GID] = record.CreatedAt
+	next, err := json.Marshal(index)
+	if err != nil {
+		return errors.Wrap(err, "marshal aria2 task index")
+	}
+	if err := s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, next); err != nil {
+		return errors.Wrap(err, "save aria2 task index")
+	}
+	return nil
+}
+
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, "GET")
@@ -474,6 +692,92 @@ func telegramUserInfo(user *tg.User) map[string]any {
 		"restricted": user.Restricted,
 		"verified":   user.Verified,
 	}
+}
+
+func (s *Server) handleLoginStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.login.status())
+}
+
+func (s *Server) handleLoginQRStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	if err := s.login.startQR(r.Context()); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.login.status())
+}
+
+func (s *Server) handleLoginPhoneStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Phone string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	if err := s.login.startPhone(r.Context(), req.Phone); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.login.status())
+}
+
+func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	if err := s.login.submitCode(req.Code); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.login.status())
+}
+
+func (s *Server) handleLoginPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	if err := s.login.submitPassword(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.login.status())
+}
+
+func (s *Server) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	s.login.cancel()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -856,6 +1160,10 @@ func downloadURL(baseURL, taskID string) string {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/download/" + url.PathEscape(taskID)
 	return u.String()
+}
+
+func isDownloadTaskRecordKey(key string) bool {
+	return strings.HasPrefix(key, downloadTaskKeyPrefix) && key != downloadTaskIndexKey
 }
 
 func (s *Server) namespace() string {

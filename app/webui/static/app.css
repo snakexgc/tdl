@@ -173,6 +173,12 @@ p {
   background: #ffffff;
 }
 
+.btn.compact {
+  min-height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 .frame-wrap {
   height: calc(100vh - 112px);
   min-height: 560px;
@@ -194,6 +200,7 @@ p {
   min-height: 0;
   margin-bottom: 12px;
   color: var(--muted);
+  white-space: pre-line;
 }
 
 .notice.error {
@@ -217,6 +224,11 @@ table {
   min-width: 980px;
 }
 
+#kv-table {
+  table-layout: fixed;
+  min-width: 1544px;
+}
+
 th,
 td {
   padding: 11px 12px;
@@ -224,6 +236,7 @@ td {
   text-align: left;
   vertical-align: top;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 th {
@@ -233,6 +246,25 @@ th {
   color: #405057;
   font-weight: 650;
   z-index: 1;
+}
+
+th .col-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+th .col-resizer:hover {
+  background: rgba(22, 122, 114, 0.18);
+}
+
+.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 td {
@@ -249,9 +281,71 @@ tr:last-child td {
   padding: 28px;
 }
 
+.compact-empty {
+  padding: 16px;
+}
+
 .mono {
   font-family: Consolas, "SFMono-Regular", Menlo, monospace;
   overflow-wrap: anywhere;
+}
+
+.subtle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bad-text {
+  color: var(--danger);
+}
+
+.select-col {
+  text-align: center;
+}
+
+.select-col input {
+  width: 17px;
+  height: 17px;
+}
+
+.sort-button {
+  border: 0;
+  padding: 0 16px 0 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sort-button::after {
+  content: attr(data-symbol);
+  margin-left: 5px;
+  color: var(--primary-dark);
+}
+
+.sort-button:hover,
+.sort-button.active {
+  color: var(--primary-dark);
+}
+
+.aria2-entry + .aria2-entry {
+  margin-top: 8px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.row-expired {
+  background: #fffdf9;
+}
+
+.time-cell {
+  white-space: normal;
 }
 
 .pill {
@@ -297,6 +391,103 @@ tr:last-child td {
 .info-value {
   font-size: 15px;
   overflow-wrap: anywhere;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab-button {
+  min-height: 40px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tab-button:hover,
+.tab-button.active {
+  color: var(--primary-dark);
+  border-bottom-color: var(--primary);
+}
+
+.user-tab {
+  display: none;
+}
+
+.user-tab.active {
+  display: block;
+}
+
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.login-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.login-card h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.login-card p {
+  min-height: 42px;
+  margin-bottom: 12px;
+}
+
+.field-inline {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.field-inline span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field-inline input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #cbd6d9;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  background: #ffffff;
+}
+
+.qr-box {
+  margin-top: 14px;
+  min-height: 0;
+}
+
+.qr-box img {
+  display: block;
+  width: min(100%, 260px);
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .config-form {
@@ -396,11 +587,16 @@ tr:last-child td {
   }
 
   .field-grid,
-  .info-grid {
+  .info-grid,
+  .login-grid {
     grid-template-columns: 1fr;
   }
 
   .field:nth-child(odd) {
     border-right: 0;
+  }
+
+  .tabs {
+    overflow-x: auto;
   }
 }

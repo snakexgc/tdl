@@ -88,10 +88,11 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	aria2Factory := func() *watch.Aria2Controller {
 		return watch.NewAria2Controller(config.Get(), kvd, nil)
 	}
-	loginMgr.SetOnSuccess(func(_ *tg.User) {
+	onLoginSuccess := func(_ *tg.User) {
 		notifyWatchAfterLogin(ctx, notifier, watchCtrl)
 		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
-	})
+	}
+	loginMgr.SetOnSuccess(onLoginSuccess)
 
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
@@ -149,6 +150,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 				Namespace:       opts.Namespace,
 				NamespaceKV:     kvd,
 				AfterConfigSave: afterConfigSave,
+				OnLoginSuccess:  onLoginSuccess,
 				RequestReboot:   requestReboot,
 				WatchRunning:    watchCtrl.Running,
 			})

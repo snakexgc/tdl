@@ -1,7 +1,16 @@
 const state = {
   config: null,
   aria2Loaded: false,
+  kvItems: [],
+  selectedKV: new Set(),
+  kvSort: { field: "created_at", dir: "desc" },
+  loginPoll: null,
 };
+
+const collator = new Intl.Collator("zh-Hans-CN", {
+  numeric: true,
+  sensitivity: "base",
+});
 
 const sections = [
   {
@@ -63,10 +72,15 @@ const sections = [
 document.addEventListener("DOMContentLoaded", () => {
   bindNavigation();
   bindActions();
+  bindKVTable();
+  bindColumnResizing();
+  bindUserTabs();
+  bindLoginActions();
   loadStatus();
   loadAria2();
   loadKV();
   loadUser();
+  loadLoginStatus();
   loadConfig();
 });
 
@@ -78,7 +92,10 @@ function bindNavigation() {
       document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
       if (view === "downloads") loadAria2();
       if (view === "kv") loadKV();
-      if (view === "user") loadUser();
+      if (view === "user") {
+        loadUser();
+        loadLoginStatus();
+      }
       if (view === "config") loadConfig();
     });
   });
@@ -93,6 +110,122 @@ function bindActions() {
   document.getElementById("reboot").addEventListener("click", reboot);
 }
 
+function bindKVTable() {
+  document.getElementById("select-all-kv").addEventListener("change", (event) => {
+    if (event.target.checked) {
+      sortedKVItems().forEach((item) => state.selectedKV.add(item.id));
+    } else {
+      state.selectedKV.clear();
+    }
+    renderKVTable();
+  });
+
+  document.getElementById("select-undownloaded").addEventListener("click", () => {
+    state.selectedKV.clear();
+    state.kvItems.forEach((item) => {
+      if (!item.downloaded) {
+        state.selectedKV.add(item.id);
+      }
+    });
+    renderKVTable();
+    setKVStatus(`已选中 ${state.selectedKV.size} 个未下载条目。`);
+  });
+
+  document.getElementById("download-selected").addEventListener("click", () => {
+    runKVAction("download", Array.from(state.selectedKV));
+  });
+  document.getElementById("delete-selected").addEventListener("click", () => {
+    runKVAction("delete", Array.from(state.selectedKV));
+  });
+
+  document.querySelectorAll("#kv-table .sort-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      setKVSort(button.dataset.sort);
+    });
+  });
+
+  document.getElementById("kv-body").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-kv-check]");
+    if (!checkbox) return;
+    if (checkbox.checked) {
+      state.selectedKV.add(checkbox.dataset.kvCheck);
+    } else {
+      state.selectedKV.delete(checkbox.dataset.kvCheck);
+    }
+    updateKVSelectionState();
+  });
+
+  document.getElementById("kv-body").addEventListener("click", async (event) => {
+    const downloadButton = event.target.closest("[data-download-link]");
+    if (downloadButton) {
+      await runKVAction("download", [downloadButton.dataset.downloadLink], { confirm: false });
+      return;
+    }
+
+    const deleteButton = event.target.closest("[data-delete-link]");
+    if (deleteButton) {
+      const id = deleteButton.dataset.deleteLink;
+      if (!confirm(`删除链接记录 ${id}？此操作只清理 KV 记录，不会删除 aria2 中已存在的下载任务。`)) return;
+      await api(`/api/kv/links/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.selectedKV.delete(id);
+      await loadKV();
+    }
+  });
+
+  renderSortButtons();
+}
+
+function bindColumnResizing() {
+  const table = document.getElementById("kv-table");
+  const cols = Array.from(table.querySelectorAll("colgroup col"));
+  table.querySelectorAll("thead th").forEach((th, index) => {
+    const resizer = th.querySelector(".col-resizer");
+    if (!resizer || !cols[index]) return;
+
+    resizer.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = th.offsetWidth;
+      const minWidth = index === 0 ? 44 : 96;
+
+      document.body.classList.add("is-resizing");
+      const move = (moveEvent) => {
+        const next = Math.max(minWidth, startWidth + moveEvent.clientX - startX);
+        cols[index].style.width = `${next}px`;
+      };
+      const stop = () => {
+        document.body.classList.remove("is-resizing");
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", stop);
+      };
+
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", stop);
+    });
+  });
+}
+
+function bindUserTabs() {
+  document.querySelectorAll("[data-user-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.userTab;
+      document.querySelectorAll("[data-user-tab]").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelectorAll(".user-tab").forEach((item) => item.classList.toggle("active", item.id === `user-tab-${tab}`));
+      if (tab === "current") loadUser();
+      if (tab === "login") loadLoginStatus();
+    });
+  });
+}
+
+function bindLoginActions() {
+  document.getElementById("start-qr-login").addEventListener("click", startQRLogin);
+  document.getElementById("start-phone-login").addEventListener("click", startPhoneLogin);
+  document.getElementById("submit-login-code").addEventListener("click", submitLoginCode);
+  document.getElementById("submit-login-password").addEventListener("click", submitLoginPassword);
+  document.getElementById("cancel-login").addEventListener("click", cancelLogin);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     credentials: "same-origin",
@@ -103,7 +236,14 @@ async function api(path, options = {}) {
     ...options,
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text.trim() };
+    }
+  }
   if (!response.ok) {
     throw new Error(data.error || data.message || response.statusText);
   }
@@ -136,59 +276,224 @@ function loadAria2(force = false) {
 
 async function loadKV() {
   const body = document.getElementById("kv-body");
-  const status = document.getElementById("kv-status");
-  status.className = "notice";
-  status.textContent = "";
-  body.innerHTML = `<tr><td colspan="7" class="empty">正在加载...</td></tr>`;
+  setKVStatus("");
+  body.innerHTML = `<tr><td colspan="8" class="empty">正在加载...</td></tr>`;
   try {
     const data = await api("/api/kv/links");
     if (data.status_error) {
-      status.className = "notice error";
-      status.textContent = `aria2 状态查询失败：${data.status_error}`;
+      setKVStatus(`aria2 状态查询失败：${data.status_error}`, "error");
     }
-    const items = data.items || [];
-    if (!items.length) {
-      body.innerHTML = `<tr><td colspan="7" class="empty">没有下载链接记录</td></tr>`;
-      return;
-    }
-    body.innerHTML = items.map(renderKVRow).join("");
-    body.querySelectorAll("[data-delete-link]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const id = button.dataset.deleteLink;
-        if (!confirm(`删除链接记录 ${id}？aria2 里的任务不会被删除。`)) return;
-        await api(`/api/kv/links/${encodeURIComponent(id)}`, { method: "DELETE" });
-        loadKV();
-      });
-    });
+    state.kvItems = data.items || [];
+    const ids = new Set(state.kvItems.map((item) => item.id));
+    state.selectedKV = new Set(Array.from(state.selectedKV).filter((id) => ids.has(id)));
+    renderKVTable();
   } catch (error) {
-    status.className = "notice error";
-    status.textContent = error.message;
-    body.innerHTML = `<tr><td colspan="7" class="empty">加载失败</td></tr>`;
+    state.kvItems = [];
+    setKVStatus(error.message, "error");
+    body.innerHTML = `<tr><td colspan="8" class="empty">加载失败</td></tr>`;
+    updateKVSelectionState();
   }
 }
 
+function renderKVTable() {
+  const body = document.getElementById("kv-body");
+  renderSortButtons();
+  if (!state.kvItems.length) {
+    body.innerHTML = `<tr><td colspan="8" class="empty">没有下载链接记录</td></tr>`;
+    updateKVSelectionState();
+    return;
+  }
+
+  body.innerHTML = sortedKVItems().map(renderKVRow).join("");
+  updateKVSelectionState();
+}
+
 function renderKVRow(item) {
-  const aria2 = (item.aria2 || []).map((entry) => {
-    const progress = entry.total ? ` ${formatBytes(entry.completed)} / ${formatBytes(entry.total)}` : "";
-    return `<div class="mono">${escapeHTML(entry.gid || "-")} <span class="pill">${escapeHTML(entry.status || "registered")}</span>${escapeHTML(progress)}</div>`;
-  }).join("") || `<span class="pill warn">未提交</span>`;
   const expires = item.permanent ? "永久" : item.expires_at ? formatTime(item.expires_at) : "-";
-  const expiredClass = item.expired ? "bad" : "warn";
+  const selected = state.selectedKV.has(item.id) ? "checked" : "";
   return `
-    <tr>
+    <tr class="${item.expired ? "row-expired" : ""}">
+      <td class="select-col">
+        <input type="checkbox" data-kv-check="${escapeAttr(item.id)}" aria-label="选择 ${escapeAttr(item.file_name || item.id)}" ${selected}>
+      </td>
       <td>
         <strong>${escapeHTML(item.file_name || item.id)}</strong>
-        <div class="mono">${escapeHTML(item.id)}</div>
-        <div>${formatBytes(item.file_size || 0)}</div>
+        <div class="mono subtle">${escapeHTML(item.id)}</div>
+        <div class="subtle">${formatBytes(item.file_size || 0)}</div>
       </td>
       <td class="mono"><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">${escapeHTML(item.url)}</a></td>
-      <td>${aria2}</td>
-      <td>${item.downloaded ? `<span class="pill">是</span>` : `<span class="pill ${expiredClass}">否</span>`}</td>
-      <td>${formatTime(item.created_at)}</td>
-      <td>${escapeHTML(expires)}</td>
-      <td><button class="btn danger" data-delete-link="${escapeAttr(item.id)}">删除</button></td>
+      <td>${renderAria2Entries(item)}</td>
+      <td>${renderDownloadedState(item)}</td>
+      <td class="time-cell">${formatTime(item.created_at)}</td>
+      <td class="time-cell">${escapeHTML(expires)}</td>
+      <td>
+        <div class="row-actions">
+          <button class="btn primary compact" data-download-link="${escapeAttr(item.id)}">发送到 aria2</button>
+          <button class="btn danger compact" data-delete-link="${escapeAttr(item.id)}">删除</button>
+        </div>
+      </td>
     </tr>
   `;
+}
+
+function renderAria2Entries(item) {
+  const entries = item.aria2 || [];
+  if (!entries.length) {
+    return `<span class="pill warn">尚未发送</span>`;
+  }
+  return entries.map((entry) => {
+    const status = entry.status || "registered";
+    const progress = entry.total ? ` ${formatBytes(entry.completed)} / ${formatBytes(entry.total)}` : "";
+    const error = entry.error ? `<div class="subtle bad-text">${escapeHTML(entry.error)}</div>` : "";
+    return `
+      <div class="aria2-entry">
+        <div class="mono">${escapeHTML(entry.gid || "-")} <span class="pill ${aria2StatusClass(status)}">${escapeHTML(status)}</span></div>
+        <div class="subtle">${escapeHTML(progress)}</div>
+        ${error}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderDownloadedState(item) {
+  if (item.downloaded) {
+    return `<span class="pill">已下载</span>`;
+  }
+  if (item.expired) {
+    return `<span class="pill bad">已过期</span>`;
+  }
+  return `<span class="pill warn">未下载</span>`;
+}
+
+function aria2StatusClass(status) {
+  switch (status) {
+    case "complete":
+      return "";
+    case "error":
+    case "removed":
+      return "bad";
+    default:
+      return "warn";
+  }
+}
+
+function setKVSort(field) {
+  if (state.kvSort.field === field) {
+    state.kvSort.dir = state.kvSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    state.kvSort.field = field;
+    state.kvSort.dir = isTimeField(field) ? "desc" : "asc";
+  }
+  renderKVTable();
+}
+
+function renderSortButtons() {
+  document.querySelectorAll("#kv-table .sort-button").forEach((button) => {
+    const active = button.dataset.sort === state.kvSort.field;
+    button.classList.toggle("active", active);
+    button.dataset.symbol = active ? (state.kvSort.dir === "asc" ? "↑" : "↓") : "";
+  });
+}
+
+function sortedKVItems() {
+  const items = [...state.kvItems];
+  const direction = state.kvSort.dir === "asc" ? 1 : -1;
+  items.sort((a, b) => compareKV(a, b, state.kvSort.field) * direction);
+  return items;
+}
+
+function compareKV(a, b, field) {
+  if (isTimeField(field)) {
+    const av = timeValue(a, field);
+    const bv = timeValue(b, field);
+    if (av === bv) return 0;
+    return av < bv ? -1 : 1;
+  }
+  if (field === "downloaded") {
+    return Number(Boolean(a.downloaded)) - Number(Boolean(b.downloaded));
+  }
+  return collator.compare(String(sortValue(a, field) || ""), String(sortValue(b, field) || ""));
+}
+
+function sortValue(item, field) {
+  switch (field) {
+    case "name":
+      return item.file_name || item.id;
+    case "url":
+      return item.url;
+    case "status":
+      return item.status || "";
+    default:
+      return item[field];
+  }
+}
+
+function isTimeField(field) {
+  return field === "created_at" || field === "expires_at";
+}
+
+function timeValue(item, field) {
+  if (field === "expires_at" && item.permanent) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const value = item[field];
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function updateKVSelectionState() {
+  const visible = sortedKVItems();
+  const selectedVisible = visible.filter((item) => state.selectedKV.has(item.id)).length;
+  const selectAll = document.getElementById("select-all-kv");
+  selectAll.checked = visible.length > 0 && selectedVisible === visible.length;
+  selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+
+  const count = state.selectedKV.size;
+  document.getElementById("download-selected").textContent = count ? `发送到 aria2 (${count})` : "发送到 aria2";
+  document.getElementById("delete-selected").textContent = count ? `批量删除 (${count})` : "批量删除";
+}
+
+async function runKVAction(action, ids, options = {}) {
+  const uniqueIDs = Array.from(new Set(ids)).filter(Boolean);
+  if (!uniqueIDs.length) {
+    setKVStatus("请先选择需要处理的链接。", "error");
+    return;
+  }
+  if (action === "delete" && options.confirm !== false) {
+    if (!confirm(`确认删除 ${uniqueIDs.length} 条链接记录？此操作不会删除 aria2 中已存在的下载任务。`)) return;
+  }
+
+  setKVStatus(action === "download" ? "正在将链接提交到 aria2..." : "正在删除链接记录...");
+  try {
+    const data = await api("/api/kv/links/actions", {
+      method: "POST",
+      body: JSON.stringify({ action, ids: uniqueIDs }),
+    });
+    const message = kvActionMessage(action, data);
+    const kind = data.errors && data.errors.length ? "error" : "success";
+    if (action === "delete") {
+      uniqueIDs.forEach((id) => state.selectedKV.delete(id));
+    }
+    await loadKV();
+    setKVStatus(message, kind);
+  } catch (error) {
+    setKVStatus(error.message, "error");
+  }
+}
+
+function kvActionMessage(action, data) {
+  const errors = data.errors && data.errors.length ? `；失败 ${data.errors.length} 项：${data.errors.join("；")}` : "";
+  if (action === "download") {
+    return `已将 ${data.added || 0} 条链接提交到 aria2 下载队列，跳过 ${data.skipped || 0} 条${errors}`;
+  }
+  return `已删除 ${data.deleted || 0} 条 KV 记录${errors}`;
+}
+
+function setKVStatus(message, kind = "") {
+  const status = document.getElementById("kv-status");
+  status.className = `notice ${kind}`.trim();
+  status.textContent = message || "";
 }
 
 async function loadUser() {
@@ -221,6 +526,141 @@ function infoItem(label, value) {
       <div class="info-value">${escapeHTML(String(value))}</div>
     </div>
   `;
+}
+
+async function loadLoginStatus() {
+  try {
+    const data = await api("/api/login/status");
+    renderLoginStatus(data);
+    if (data.active) {
+      startLoginPolling();
+    } else {
+      stopLoginPolling();
+    }
+  } catch (error) {
+    renderLoginError(error.message);
+  }
+}
+
+async function startQRLogin() {
+  await loginRequest("/api/login/qr/start", {});
+}
+
+async function startPhoneLogin() {
+  const phone = document.getElementById("login-phone").value.trim();
+  if (!phone) {
+    renderLoginError("请输入手机号。");
+    return;
+  }
+  await loginRequest("/api/login/phone/start", { phone });
+}
+
+async function submitLoginCode() {
+  const code = document.getElementById("login-code").value.trim();
+  if (!code) {
+    renderLoginError("请输入 Telegram 收到的原始验证码。");
+    return;
+  }
+  await loginRequest("/api/login/code", { code });
+}
+
+async function submitLoginPassword() {
+  const password = document.getElementById("login-password").value;
+  if (!password) {
+    renderLoginError("请输入 Telegram 2FA 密码。");
+    return;
+  }
+  await loginRequest("/api/login/password", { password });
+}
+
+async function cancelLogin() {
+  try {
+    await api("/api/login/cancel", { method: "POST", body: "{}" });
+    stopLoginPolling();
+    await loadLoginStatus();
+  } catch (error) {
+    renderLoginError(error.message);
+  }
+}
+
+async function loginRequest(path, body) {
+  setLoginStatus("正在处理登录请求...");
+  try {
+    const data = await api(path, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    });
+    renderLoginStatus(data);
+    if (data.active) {
+      startLoginPolling();
+    } else {
+      stopLoginPolling();
+    }
+  } catch (error) {
+    renderLoginError(error.message);
+  }
+}
+
+function startLoginPolling() {
+  if (state.loginPoll) return;
+  state.loginPoll = window.setInterval(async () => {
+    try {
+      const data = await api("/api/login/status");
+      renderLoginStatus(data);
+      if (!data.active) {
+        stopLoginPolling();
+        if (data.stage === "done") {
+          loadUser();
+          loadStatus();
+        }
+      }
+    } catch (error) {
+      renderLoginError(error.message);
+      stopLoginPolling();
+    }
+  }, 2000);
+}
+
+function stopLoginPolling() {
+  if (!state.loginPoll) return;
+  window.clearInterval(state.loginPoll);
+  state.loginPoll = null;
+}
+
+function renderLoginStatus(data) {
+  const parts = [];
+  if (data.kind) parts.push(`方式：${data.kind === "qr" ? "二维码登录" : "手机号登录"}`);
+  if (data.phone) parts.push(`手机号：${data.phone}`);
+  if (data.status) parts.push(data.status);
+  if (data.error) parts.push(`错误：${data.error}`);
+  if (data.user) parts.push(`用户：${data.user.name || data.user.username || data.user.id || "-"}`);
+
+  const kind = data.error || data.stage === "failed" ? "error" : data.stage === "done" ? "success" : "";
+  setLoginStatus(parts.join("\n") || "当前没有登录流程。", kind);
+  renderQRCode(data);
+}
+
+function renderLoginError(message) {
+  setLoginStatus(message, "error");
+}
+
+function setLoginStatus(message, kind = "") {
+  const status = document.getElementById("login-status");
+  status.className = `notice ${kind}`.trim();
+  status.textContent = message || "";
+}
+
+function renderQRCode(data) {
+  const box = document.getElementById("qr-box");
+  if (data.qr_image) {
+    box.innerHTML = `<img src="${escapeAttr(data.qr_image)}" alt="Telegram 登录二维码">`;
+    return;
+  }
+  if (data.kind === "qr" && data.active) {
+    box.innerHTML = `<div class="empty compact-empty">正在等待二维码...</div>`;
+    return;
+  }
+  box.innerHTML = "";
 }
 
 async function loadConfig() {

@@ -29,7 +29,7 @@
       <header class="page-head">
         <div>
           <h1>下载管理</h1>
-          <p>内置 AriaNg，RPC 会自动通过当前 TDL 配置连接。</p>
+          <p>内置 AriaNg，RPC 会自动通过当前的 TDL 配置自动连接。</p>
         </div>
         <button class="btn secondary" id="reload-aria2">重新载入</button>
       </header>
@@ -42,26 +42,42 @@
       <header class="page-head">
         <div>
           <h1>KV 管理</h1>
-          <p>查看下载链接和 aria2 GID 的关系，必要时手动删除链接记录。</p>
+          <p>查看下载链接和 aria2 GID 的关系，支持发送到 aria2、批量删除、按列排序和手动调整列宽。</p>
         </div>
-        <button class="btn secondary" id="refresh-kv">刷新</button>
+        <div class="actions">
+          <button class="btn secondary" id="refresh-kv">刷新</button>
+          <button class="btn secondary" id="select-undownloaded">选中未下载</button>
+          <button class="btn primary" id="download-selected">发送到 aria2</button>
+          <button class="btn danger" id="delete-selected">批量删除</button>
+        </div>
       </header>
       <div class="notice" id="kv-status"></div>
       <div class="table-shell">
-        <table>
+        <table id="kv-table">
+          <colgroup>
+            <col style="width:44px">
+            <col style="width:260px">
+            <col style="width:360px">
+            <col style="width:240px">
+            <col style="width:110px">
+            <col style="width:180px">
+            <col style="width:180px">
+            <col style="width:170px">
+          </colgroup>
           <thead>
             <tr>
-              <th>文件</th>
-              <th>链接</th>
-              <th>aria2</th>
-              <th>下载过</th>
-              <th>创建时间</th>
-              <th>过期时间</th>
-              <th></th>
+              <th><input id="select-all-kv" type="checkbox" aria-label="全选当前列表"></th>
+              <th><button class="sort-button" data-sort="name">文件</button><span class="col-resizer"></span></th>
+              <th><button class="sort-button" data-sort="url">链接</button><span class="col-resizer"></span></th>
+              <th><button class="sort-button" data-sort="status">aria2</button><span class="col-resizer"></span></th>
+              <th><button class="sort-button" data-sort="downloaded">下载状态</button><span class="col-resizer"></span></th>
+              <th><button class="sort-button" data-sort="created_at">创建时间</button><span class="col-resizer"></span></th>
+              <th><button class="sort-button" data-sort="expires_at">过期时间</button><span class="col-resizer"></span></th>
+              <th>操作<span class="col-resizer"></span></th>
             </tr>
           </thead>
           <tbody id="kv-body">
-            <tr><td colspan="7" class="empty">正在加载...</td></tr>
+            <tr><td colspan="8" class="empty">正在加载...</td></tr>
           </tbody>
         </table>
       </div>
@@ -71,11 +87,54 @@
       <header class="page-head">
         <div>
           <h1>用户管理</h1>
-          <p>检查当前 Telegram MTProto 登录态和允许使用机器人的用户。</p>
+          <p>查看当前 Telegram 登录态，或在 Web 面板中重新登录。</p>
         </div>
-        <button class="btn secondary" id="refresh-user">重新检查</button>
       </header>
-      <div class="info-grid" id="user-info"></div>
+      <div class="tabs">
+        <button class="tab-button active" data-user-tab="current">当前用户</button>
+        <button class="tab-button" data-user-tab="login">用户登录</button>
+      </div>
+      <div class="user-tab active" id="user-tab-current">
+        <div class="section-actions">
+          <button class="btn secondary" id="refresh-user">重新检查</button>
+        </div>
+        <div class="info-grid" id="user-info"></div>
+      </div>
+      <div class="user-tab" id="user-tab-login">
+        <div class="login-grid">
+          <section class="login-card">
+            <h2>二维码登录</h2>
+            <p>使用 Telegram 客户端扫描二维码完成登录。</p>
+            <button class="btn primary" id="start-qr-login">生成二维码</button>
+            <div id="qr-box" class="qr-box"></div>
+          </section>
+          <section class="login-card">
+            <h2>手机号登录</h2>
+            <p>参照示例输入手机号后，发送验证码并请输入 Telegram 收到的验证码。</p>
+            <label class="field-inline">
+              <span>手机号</span>
+              <input id="login-phone" type="text" placeholder="+8613800000000">
+            </label>
+            <button class="btn primary" id="start-phone-login">发送验证码</button>
+            <label class="field-inline">
+              <span>验证码</span>
+              <input id="login-code" type="text" inputmode="numeric" placeholder="Telegram验证码">
+            </label>
+            <button class="btn secondary" id="submit-login-code">提交验证码</button>
+          </section>
+          <section class="login-card">
+            <h2>2FA 密码</h2>
+            <p>如果账号开启了两步验证，请在这里输入2FA验证码。</p>
+            <label class="field-inline">
+              <span>密码</span>
+              <input id="login-password" type="password" placeholder="Telegram 2FA 密码">
+            </label>
+            <button class="btn secondary" id="submit-login-password">提交密码</button>
+          </section>
+        </div>
+        <div class="notice" id="login-status"></div>
+        <button class="btn danger" id="cancel-login">取消当前登录</button>
+      </div>
     </section>
 
     <section class="view" id="view-config">
