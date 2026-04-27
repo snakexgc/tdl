@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TDL 管理面板</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-title">TDL</div>
+      <div class="brand-subtitle">管理面板</div>
+    </div>
+    <nav class="nav" aria-label="主菜单">
+      <button class="nav-item active" data-view="downloads">下载管理</button>
+      <button class="nav-item" data-view="kv">KV 管理</button>
+      <button class="nav-item" data-view="user">用户管理</button>
+      <button class="nav-item" data-view="config">配置设置</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="runtime-namespace">namespace: -</div>
+      <div id="runtime-watch">watch: -</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="view active" id="view-downloads">
+      <header class="page-head">
+        <div>
+          <h1>下载管理</h1>
+          <p>内置 AriaNg，RPC 会自动通过当前 TDL 配置连接。</p>
+        </div>
+        <button class="btn secondary" id="reload-aria2">重新载入</button>
+      </header>
+      <div class="frame-wrap">
+        <iframe id="aria2-frame" title="AriaNg 下载管理"></iframe>
+      </div>
+    </section>
+
+    <section class="view" id="view-kv">
+      <header class="page-head">
+        <div>
+          <h1>KV 管理</h1>
+          <p>查看下载链接和 aria2 GID 的关系，必要时手动删除链接记录。</p>
+        </div>
+        <button class="btn secondary" id="refresh-kv">刷新</button>
+      </header>
+      <div class="notice" id="kv-status"></div>
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th>文件</th>
+              <th>链接</th>
+              <th>aria2</th>
+              <th>下载过</th>
+              <th>创建时间</th>
+              <th>过期时间</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="kv-body">
+            <tr><td colspan="7" class="empty">正在加载...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="view" id="view-user">
+      <header class="page-head">
+        <div>
+          <h1>用户管理</h1>
+          <p>检查当前 Telegram MTProto 登录态和允许使用机器人的用户。</p>
+        </div>
+        <button class="btn secondary" id="refresh-user">重新检查</button>
+      </header>
+      <div class="info-grid" id="user-info"></div>
+    </section>
+
+    <section class="view" id="view-config">
+      <header class="page-head">
+        <div>
+          <h1>配置设置</h1>
+          <p>按字段修改配置。敏感项留空表示保持原值。</p>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" id="reload-config">重新读取</button>
+          <button class="btn danger" id="reboot">重启生效</button>
+          <button class="btn primary" id="save-config">保存配置</button>
+        </div>
+      </header>
+      <div class="notice" id="config-status"></div>
+      <form id="config-form" class="config-form"></form>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

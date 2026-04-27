@@ -15,6 +15,8 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
+const maskedStr = "(hidden)"
+
 var configurablePaths = []string{
 	"storage.type",
 	"storage.path",
@@ -36,6 +38,9 @@ var configurablePaths = []string{
 	"http.download_link_ttl_hours",
 	"http.buffer.mode",
 	"http.buffer.size_mb",
+	"webui.listen",
+	"webui.username",
+	"webui.password",
 	"aria2.rpc_url",
 	"aria2.secret",
 	"aria2.dir",
@@ -63,6 +68,10 @@ func handleConfigGet(ctx *th.Context, chatID int64, path string) error {
 	}
 	if isProtectedConfigPath(path) {
 		return sendMessage(ctx, chatID, "bot.token 不能通过机器人查看或修改。")
+	}
+
+	if isSensitiveConfigPath(path) {
+		return sendMessage(ctx, chatID, fmt.Sprintf("%s = %s", path, formatJSON(maskedStr)))
 	}
 
 	value, err := getConfigValue(config.Get(), path)
@@ -127,6 +136,11 @@ func isProtectedConfigPath(path string) bool {
 	return path == "bot" || path == "bot.token" || strings.HasPrefix(path, "bot.token.")
 }
 
+func isSensitiveConfigPath(path string) bool {
+	path = strings.ToLower(strings.TrimSpace(path))
+	return path == "aria2.secret" || path == "webui.password"
+}
+
 func cloneConfig(cfg *config.Config) (*config.Config, error) {
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -146,7 +160,13 @@ func maskedConfig(cfg *config.Config) *config.Config {
 		return config.DefaultConfig()
 	}
 	if next.Bot.Token != "" {
-		next.Bot.Token = "(hidden)"
+		next.Bot.Token = maskedStr
+	}
+	if next.Aria2.Secret != "" {
+		next.Aria2.Secret = maskedStr
+	}
+	if next.WebUI.Password != "" {
+		next.WebUI.Password = maskedStr
 	}
 	return next
 }

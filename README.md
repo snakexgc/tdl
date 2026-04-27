@@ -41,6 +41,11 @@
       "size_mb": 64 // 每个活跃文件的内存缓冲上限，单位 MiB
     }
   },
+  "webui": {
+    "listen": "127.0.0.1:22335", // Web 管理面板监听地址；设置 password 后随 bot 启动
+    "username": "admin", // Web 管理面板用户名
+    "password": "" // Web 管理面板密码；为空时不启动管理面板
+  },
   "aria2": {
     "rpc_url": "http://127.0.0.1:6800/jsonrpc", // aria2 JSON-RPC 地址
     "secret": "123", // aria2 密钥
@@ -69,6 +74,9 @@
 | `http.download_link_ttl_hours` | 下载链接有效期，单位小时；默认 24，设置为 0 时永久有效且不自动清理                                       |
 | `http.buffer.mode`     | HTTP 下载缓冲模式；`memory` 会在 tdl 内存中预读分片，`off` 保持旧的顺序流式行为                           |
 | `http.buffer.size_mb`  | `memory` 模式下每个活跃文件的共享缓冲上限；默认 64，内存紧张可设 32，高带宽可设 128                         |
+| `webui.listen`         | Web 管理面板监听地址；设置 `webui.password` 后随 `tdl bot` 启动                                  |
+| `webui.username`       | Web 管理面板 Basic Auth 用户名                                                               |
+| `webui.password`       | Web 管理面板 Basic Auth 密码；为空时不启动管理面板                                                |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
 
 如果 aria2 运行在 Docker、NAS、WSL 或另一台机器上，`http.public_base_url` 不能写 `127.0.0.1`，需要写 aria2 所在环境能访问到 tdl 的局域网地址。
@@ -81,6 +89,8 @@
 - 任意客户端对同一个文件发起 64 个 Range 请求时，服务端最多只会同时给这个文件分配 4 个并发 worker；多余请求会在服务端排队等待
 
 `http.buffer.mode=memory` 会让同一个活跃文件共享一块有上限的内存预读缓冲，用来降低 HTTP 顺序写出对 Telegram 分片抓取的反压。默认 `http.buffer.size_mb=64`，总内存预算约为 `limit * size_mb`，再加少量正在抓取的分片内存；如果机器内存较小可设为 32，高带宽或 aria2 与 tdl 同机时可尝试 128。设置为 `off` 可回到旧的顺序流式行为。
+
+`webui.password` 设置后，`tdl bot` 会启动 Web 管理面板，例如访问 `http://127.0.0.1:22335`。面板使用 Basic Auth 鉴权，包含下载管理、KV 链接管理、Telegram 用户状态检查和表单化配置设置。下载管理内置 AriaNg，并通过 tdl 服务端代理读取 `aria2.rpc_url` / `aria2.secret`，通常不需要在浏览器里单独配置 aria2 RPC。
 
 ### 第 2 步：启动机器人
 

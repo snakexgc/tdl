@@ -27,6 +27,12 @@ type HTTPBufferConfig struct {
 	SizeMB int    `json:"size_mb"`
 }
 
+type WebUIConfig struct {
+	Listen   string `json:"listen"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type Aria2Config struct {
 	RPCURL         string `json:"rpc_url"`
 	Secret         string `json:"secret"`
@@ -51,6 +57,7 @@ type Config struct {
 	Include          []string          `json:"include"`
 	Exclude          []string          `json:"exclude"`
 	HTTP             HTTPConfig        `json:"http"`
+	WebUI            WebUIConfig       `json:"webui"`
 	Aria2            Aria2Config       `json:"aria2"`
 	Bot              BotConfig         `json:"bot"`
 }
@@ -81,6 +88,11 @@ func DefaultConfig() *Config {
 				Mode:   "memory",
 				SizeMB: 64,
 			},
+		},
+		WebUI: WebUIConfig{
+			Listen:   "127.0.0.1:22335",
+			Username: "admin",
+			Password: "",
 		},
 		Aria2: Aria2Config{
 			RPCURL:         "http://127.0.0.1:6800/jsonrpc",

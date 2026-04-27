@@ -22,6 +22,7 @@ import (
 
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/watch"
+	"github.com/iyear/tdl/app/webui"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/util/netutil"
 	"github.com/iyear/tdl/pkg/config"
@@ -140,6 +141,22 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		allowed.Replace(cfg.Bot.AllowedUsers)
 		notifier.UpdateChatIDs(cfg.Bot.AllowedUsers)
 		watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
+	}
+	if config.Get().WebUI.Password != "" && config.Get().WebUI.Listen != "" {
+		go func() {
+			err := webui.Run(ctx, webui.Options{
+				KVEngine:        kvEngine,
+				Namespace:       opts.Namespace,
+				NamespaceKV:     kvd,
+				AfterConfigSave: afterConfigSave,
+				RequestReboot:   requestReboot,
+				WatchRunning:    watchCtrl.Running,
+			})
+			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
+				color.Yellow("WebUI stopped: %v", err)
+			}
+		}()
+		color.Green("WebUI: http://%s", config.Get().WebUI.Listen)
 	}
 
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {

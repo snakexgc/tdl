@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -407,8 +408,10 @@ func TestStreamTelegramMediaSplitsRangeByTelegramFragment(t *testing.T) {
 	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, start, end, &out)
 	require.NoError(t, err)
 	require.Equal(t, payload[start:end+1], out.Bytes())
-	require.Equal(t, []int64{0, downloadStreamPartSize}, invoker.offsets)
-	require.Equal(t, []int{downloadStreamPartSize, 2048}, invoker.limits)
+	require.Equal(t, []telegramChunkRequest{
+		{offset: 0, limit: downloadStreamPartSize},
+		{offset: downloadStreamPartSize, limit: 2048},
+	}, invoker.sortedRequests())
 	require.True(t, invoker.allRequestsStayWithinTelegramFragment())
 }
 
@@ -644,6 +647,23 @@ func (i *recordingUploadInvoker) totalCalls() int {
 	defer i.mu.Unlock()
 
 	return len(i.offsets)
+}
+
+func (i *recordingUploadInvoker) sortedRequests() []telegramChunkRequest {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	requests := make([]telegramChunkRequest, 0, len(i.offsets))
+	for idx := range i.offsets {
+		requests = append(requests, telegramChunkRequest{
+			offset: i.offsets[idx],
+			limit:  i.limits[idx],
+		})
+	}
+	sort.SliceStable(requests, func(a, b int) bool {
+		return requests[a].offset < requests[b].offset
+	})
+	return requests
 }
 
 func (i *recordingUploadInvoker) allRequestsStayWithinTelegramFragment() bool {
