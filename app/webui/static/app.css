@@ -173,6 +173,11 @@ p {
   background: #ffffff;
 }
 
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .btn.compact {
   min-height: 32px;
   padding: 0 10px;
@@ -488,6 +493,37 @@ tr:last-child td {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+}
+
+.update-notes-shell {
+  margin-top: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.update-notes-shell h2 {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--panel-soft);
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.update-notes {
+  min-height: 120px;
+  max-height: 340px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .config-form {

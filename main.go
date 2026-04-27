@@ -10,10 +10,18 @@ import (
 	"go.etcd.io/bbolt"
 
 	"github.com/iyear/tdl/app/bot"
+	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/cmd"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "__apply-update" {
+		if err := updater.RunApply(os.Args[2:]); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -31,6 +39,13 @@ func main() {
 
 		color.Red("Error: %+v", err)
 		os.Exit(1)
+	}
+	if plan, ok := bot.UpdateRequested(); ok {
+		if err := startUpdate(plan); err != nil {
+			color.Red("Update failed: %+v", err)
+			os.Exit(1)
+		}
+		return
 	}
 	if bot.RebootRequested() {
 		if err := restartCurrentProcess(); err != nil {
@@ -51,14 +66,13 @@ func restartCurrentProcess() error {
 		return errors.Wrap(err, "get working directory")
 	}
 
-	args := append([]string{exe}, os.Args[1:]...)
-	proc, err := os.StartProcess(exe, args, &os.ProcAttr{
-		Dir:   cwd,
-		Env:   os.Environ(),
-		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-	})
+	return updater.StartAttached(exe, os.Args[1:], cwd)
+}
+
+func startUpdate(plan updater.Plan) error {
+	exe, err := os.Executable()
 	if err != nil {
-		return errors.Wrap(err, "start replacement process")
+		return errors.Wrap(err, "get executable path")
 	}
-	return proc.Release()
+	return updater.StartApply(plan, exe, os.Args[1:])
 }

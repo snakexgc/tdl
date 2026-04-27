@@ -17,6 +17,7 @@
       <button class="nav-item" data-view="kv">KV 管理</button>
       <button class="nav-item" data-view="user">用户管理</button>
       <button class="nav-item" data-view="config">配置设置</button>
+      <button class="nav-item" data-view="update">检查更新</button>
     </nav>
     <div class="sidebar-foot">
       <div id="runtime-namespace">namespace: -</div>
@@ -151,6 +152,25 @@
       </header>
       <div class="notice" id="config-status"></div>
       <form id="config-form" class="config-form"></form>
+    </section>
+
+    <section class="view" id="view-update">
+      <header class="page-head">
+        <div>
+          <h1>检查更新</h1>
+          <p>对比本地版本和 GitHub 最新 Release，可下载更新并自动重启。</p>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" id="check-update">检查更新</button>
+          <button class="btn primary" id="apply-update" disabled>下载并更新</button>
+        </div>
+      </header>
+      <div class="notice" id="update-status"></div>
+      <div class="info-grid" id="update-info"></div>
+      <section class="update-notes-shell">
+        <h2>Release Notes</h2>
+        <pre id="update-notes" class="update-notes"></pre>
+      </section>
     </section>
   </main>
 

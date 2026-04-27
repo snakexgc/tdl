@@ -92,14 +92,17 @@
 
 `webui.password` 设置后，`tdl bot` 会启动 Web 管理面板，例如访问 `http://127.0.0.1:22335`。面板使用 Basic Auth 鉴权，包含下载管理、KV 链接管理、Telegram 用户状态检查和表单化配置设置。下载管理内置 AriaNg，并通过 tdl 服务端代理读取 `aria2.rpc_url` / `aria2.secret`，通常不需要在浏览器里单独配置 aria2 RPC。
 
+Web 管理面板的“检查更新”页面会对比本地版本和 GitHub 最新 Release，并可下载更新后自动重启。若配置了 `proxy`，检查更新和下载更新都会走该代理。机器人也支持 `/update_tdl` 检查更新，按提示发送 `/update_tdl confirm` 后会自动下载、替换并重启当前程序。
+
 ### 第 2 步：启动机器人
 
 - 请先确保 aria2 已启动并开启 JSON-RPC。
 - 直接运行程序
+- 程序默认启动 bot 模式；在 Windows 上可以直接双击启动，控制台窗口会保留用于查看运行日志。重启和更新后的再启动也会继续使用当前控制台输出。
 tdl 会连接到 Telegram 并在后台等待，你会看到：
 
 ```
-🤖 Bot @dl_bot (ID: 123444) started
+🤖 Bot @dl_bot (ID: 1234666) started
 👀 Watching for reactions... Press Ctrl+C to stop
    HTTP listen: 0.0.0.0:22334
    Public base URL: http://127.0.0.1:22334

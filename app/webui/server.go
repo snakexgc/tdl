@@ -21,6 +21,7 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/iyear/tdl/app/login"
+	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/kv"
@@ -44,6 +45,7 @@ type Options struct {
 	AfterConfigSave func(*config.Config)
 	OnLoginSuccess  func(*tg.User)
 	RequestReboot   func()
+	RequestUpdate   func(updater.Plan)
 	WatchRunning    func() bool
 }
 
@@ -106,6 +108,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/login/password", s.authFunc(s.handleLoginPassword))
 	mux.HandleFunc("/api/login/cancel", s.authFunc(s.handleLoginCancel))
 	mux.HandleFunc("/api/config", s.authFunc(s.handleConfig))
+	mux.HandleFunc("/api/update/check", s.authFunc(s.handleUpdateCheck))
+	mux.HandleFunc("/api/update/apply", s.authFunc(s.handleUpdateApply))
 	mux.HandleFunc("/api/system/reboot", s.authFunc(s.handleReboot))
 	mux.HandleFunc("/", s.authFunc(s.handleAsset("index.html", "text/html; charset=utf-8")))
 
@@ -821,6 +825,44 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		methodNotAllowed(w, "GET, PATCH")
 	}
+}
+
+func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	info, err := updater.CheckLatest(r.Context(), config.Get().Proxy)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "update": info})
+}
+
+func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	if s.opts.RequestUpdate == nil {
+		writeError(w, http.StatusBadRequest, errors.New("update is not available in this mode"))
+		return
+	}
+	plan, info, err := updater.DownloadLatest(r.Context(), config.Get().Proxy)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"update":  info,
+		"message": fmt.Sprintf("更新包已下载，准备更新到 %s 并重启。", info.LatestVersion),
+	})
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		s.opts.RequestUpdate(plan)
+	}()
 }
 
 func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {

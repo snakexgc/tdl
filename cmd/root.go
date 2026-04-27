@@ -45,6 +45,7 @@ var (
 func New() *cobra.Command {
 	// allow PersistentPreRun to be called for every command
 	cobra.EnableTraverseRunHooks = true
+	cobra.MousetrapHelpText = ""
 
 	// 获取可执行文件所在目录
 	execPath, err := os.Executable()

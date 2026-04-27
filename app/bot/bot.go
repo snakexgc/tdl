@@ -21,6 +21,7 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 
 	"github.com/iyear/tdl/app/login"
+	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/app/watch"
 	"github.com/iyear/tdl/app/webui"
 	"github.com/iyear/tdl/core/storage"
@@ -31,6 +32,10 @@ import (
 )
 
 var processRebootRequested atomic.Bool
+var (
+	processUpdateMu   sync.Mutex
+	processUpdatePlan *updater.Plan
+)
 
 type Options struct {
 	Token            string
@@ -44,6 +49,15 @@ type Options struct {
 
 func RebootRequested() bool {
 	return processRebootRequested.Load()
+}
+
+func UpdateRequested() (updater.Plan, bool) {
+	processUpdateMu.Lock()
+	defer processUpdateMu.Unlock()
+	if processUpdatePlan == nil {
+		return updater.Plan{}, false
+	}
+	return *processUpdatePlan, true
 }
 
 func Run(ctx context.Context, opts Options) (rerr error) {
@@ -138,11 +152,20 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		processRebootRequested.Store(true)
 		go shutdown()
 	}
+	requestUpdate := func(plan updater.Plan) {
+		rebootRequested.Store(false)
+		processRebootRequested.Store(false)
+		processUpdateMu.Lock()
+		processUpdatePlan = &plan
+		processUpdateMu.Unlock()
+		go shutdown()
+	}
 	afterConfigSave := func(cfg *config.Config) {
 		allowed.Replace(cfg.Bot.AllowedUsers)
 		notifier.UpdateChatIDs(cfg.Bot.AllowedUsers)
 		watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
 	}
+	updateController := newTDLUpdateController(requestUpdate)
 	if config.Get().WebUI.Password != "" && config.Get().WebUI.Listen != "" {
 		go func() {
 			err := webui.Run(ctx, webui.Options{
@@ -152,6 +175,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 				AfterConfigSave: afterConfigSave,
 				OnLoginSuccess:  onLoginSuccess,
 				RequestReboot:   requestReboot,
+				RequestUpdate:   requestUpdate,
 				WatchRunning:    watchCtrl.Running,
 			})
 			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
@@ -171,7 +195,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, aria2Factory, kvEngine, opts.Namespace, kvd)
+			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, updateController, aria2Factory, kvEngine, opts.Namespace, kvd)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -261,6 +285,7 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 			{Command: "config_get", Description: "查看全部配置"},
 			{Command: "config_set", Description: "修改配置"},
 			{Command: "reboot", Description: "重启(不推荐)"},
+			{Command: "update_tdl", Description: "检查并更新 tdl"},
 			{Command: "clean_kv", Description: "清空KV缓存(危险)"},
 		},
 	})
@@ -308,6 +333,7 @@ func handleAllowedMessage(
 	loginMgr *loginManager,
 	afterConfigSave func(*config.Config),
 	requestReboot func(),
+	updateController *tdlUpdateController,
 	aria2Factory aria2ControllerFactory,
 	kvEngine kv.Storage,
 	namespace string,
@@ -334,6 +360,9 @@ func handleAllowedMessage(
 		return err
 	}
 	if handled, err := handleKVCommand(ctx, msg, text, kvEngine, namespace, namespaceKV); handled || err != nil {
+		return err
+	}
+	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
 		return err
 	}
 
@@ -403,7 +432,7 @@ func commandName(text string) string {
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
 	case "/login_code", "/login_qr", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
-		"/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
+		"/update_tdl", "/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
 		"/clean_kv":
 		return true
 	default:
