@@ -72,7 +72,7 @@ func NewAria2Controller(cfg *config.Config, kvd storage.Storage, logger *zap.Log
 
 	return &Aria2Controller{
 		client:        newAria2Client(cfg.Aria2),
-		store:         newAria2TaskStore(kvd),
+		store:         newAria2TaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		publicBaseURL: cfg.HTTP.PublicBaseURL,
 		logger:        logger,
 	}

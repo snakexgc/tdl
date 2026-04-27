@@ -218,6 +218,11 @@ func Run(ctx context.Context, opts Options) error {
 	color.Green("   Output root: %s", runtime.outputRoot)
 	color.Green("   Download dir template: %s", opts.Dir)
 	color.Green("   Per-file HTTP streams: %d", cfg.Threads)
+	if cfg.HTTP.DownloadLinkTTLHours <= 0 {
+		color.Green("   Download link TTL: permanent")
+	} else {
+		color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
+	}
 	if normalizeHTTPBufferMode(cfg.HTTP.Buffer.Mode) == httpBufferModeMemory {
 		color.Green("   HTTP buffer: memory (%d MiB per active file)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
 	} else {

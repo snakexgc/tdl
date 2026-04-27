@@ -41,9 +41,9 @@ const (
 )
 
 const (
-	downloadTaskKeyPrefix = "watch.download."
-	downloadTaskIndexKey  = "watch.download.index"
-	downloadTaskTTL       = 24 * time.Hour
+	downloadTaskKeyPrefix  = "watch.download."
+	downloadTaskIndexKey   = "watch.download.index"
+	defaultDownloadTaskTTL = 24 * time.Hour
 )
 
 type downloadTask struct {
@@ -242,12 +242,19 @@ type taskStore struct {
 	mu    sync.RWMutex
 	tasks map[string]*downloadTask
 	kv    storage.Storage
+	ttl   time.Duration
 }
 
-func newTaskStore(kv storage.Storage) *taskStore {
+func newTaskStore(kv storage.Storage, ttl ...time.Duration) *taskStore {
+	taskTTL := defaultDownloadTaskTTL
+	if len(ttl) > 0 {
+		taskTTL = ttl[0]
+	}
+
 	return &taskStore{
 		tasks: make(map[string]*downloadTask),
 		kv:    kv,
+		ttl:   taskTTL,
 	}
 }
 
@@ -285,7 +292,7 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 	task, ok := s.tasks[id]
 	s.mu.RUnlock()
 	if ok {
-		if isDownloadTaskExpired(task.CreatedAt, time.Now()) {
+		if isDownloadTaskExpired(task.CreatedAt, time.Now(), s.ttl) {
 			if err := s.delete(ctx, id); err != nil {
 				return nil, false, err
 			}
@@ -310,7 +317,7 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		return nil, false, errors.Wrap(err, "decode persistent download task")
 	}
-	if isDownloadTaskExpired(persisted.CreatedAt, time.Now()) {
+	if isDownloadTaskExpired(persisted.CreatedAt, time.Now(), s.ttl) {
 		if err := s.delete(ctx, id); err != nil {
 			return nil, false, err
 		}
@@ -341,6 +348,10 @@ func (s *taskStore) CleanupExpired(ctx context.Context, now time.Time) error {
 }
 
 func (s *taskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {
+	if s.ttl == 0 {
+		return nil
+	}
+
 	index, err := s.loadIndex(ctx)
 	if err != nil {
 		return err
@@ -348,7 +359,7 @@ func (s *taskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) err
 
 	changed := false
 	for id, createdAt := range index {
-		if !isDownloadTaskExpired(createdAt, now) {
+		if !isDownloadTaskExpired(createdAt, now, s.ttl) {
 			continue
 		}
 		if err := s.kv.Delete(ctx, downloadTaskStorageKey(id)); err != nil {
@@ -429,11 +440,11 @@ func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskI
 	return nil
 }
 
-func isDownloadTaskExpired(createdAt, now time.Time) bool {
-	if createdAt.IsZero() {
+func isDownloadTaskExpired(createdAt, now time.Time, ttl time.Duration) bool {
+	if createdAt.IsZero() || ttl == 0 {
 		return false
 	}
-	return !createdAt.Add(downloadTaskTTL).After(now)
+	return !createdAt.Add(ttl).After(now)
 }
 
 type poolHolder struct {
@@ -482,7 +493,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 	bufferSlots := httpMemoryBufferSlots(cfg.Buffer)
 	p := &downloadProxy{
 		cfg:     cfg,
-		tasks:   newTaskStore(kv),
+		tasks:   newTaskStore(kv, downloadLinkTTL(cfg)),
 		pools:   pools,
 		limiter: newDownloadLimiter(maxFiles, maxPerFile, bufferSlots),
 		logger:  logger.Named("watch-http"),
@@ -501,6 +512,7 @@ func (p *downloadProxy) Start(ctx context.Context) error {
 	p.logger.Info("Starting HTTP download proxy",
 		zap.String("listen", p.cfg.Listen),
 		zap.String("public_base_url", p.cfg.PublicBaseURL),
+		zap.Duration("download_link_ttl", p.tasks.ttl),
 		zap.String("buffer_mode", normalizeHTTPBufferMode(p.cfg.Buffer.Mode)),
 		zap.Int("buffer_size_mb", normalizedHTTPBufferSizeMB(p.cfg.Buffer)))
 
@@ -522,7 +534,7 @@ func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
 }
 
 func (p *downloadProxy) startCleanupLoop(ctx context.Context) {
-	if p.tasks.kv == nil {
+	if p.tasks.kv == nil || p.tasks.ttl == 0 {
 		return
 	}
 
@@ -849,6 +861,13 @@ func buildDownloadURL(baseURL, taskID string) (string, error) {
 	u.Path = path.Join(strings.TrimSuffix(u.Path, "/"), "download", taskID)
 
 	return u.String(), nil
+}
+
+func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
+	if cfg.DownloadLinkTTLHours <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.DownloadLinkTTLHours) * time.Hour
 }
 
 func validateHTTPBufferConfig(cfg config.HTTPBufferConfig) error {

@@ -22,7 +22,7 @@ func newWatchRuntime(cfg *config.Config, kvd storage.Storage, logger *zap.Logger
 	return &watchRuntime{
 		proxy:      newDownloadProxy(cfg.HTTP, cfg.Limit, cfg.Threads, pools, kvd, logger),
 		aria2:      newAria2Client(cfg.Aria2),
-		aria2Tasks: newAria2TaskStore(kvd),
+		aria2Tasks: newAria2TaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		pools:      pools,
 	}
 }

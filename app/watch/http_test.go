@@ -136,7 +136,7 @@ func TestTaskStoreExpiresPersistentTask(t *testing.T) {
 		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
 		FileName:  "file.bin",
 		FileSize:  10,
-		CreatedAt: time.Now().Add(-downloadTaskTTL - time.Second),
+		CreatedAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{
 				ID:            42,
@@ -159,6 +159,43 @@ func TestTaskStoreExpiresPersistentTask(t *testing.T) {
 
 	_, err = kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
 	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+func TestTaskStoreKeepsPersistentTaskWhenTTLDisabled(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	original := newTaskStore(kvd, 0)
+	task := &downloadTask{
+		ID:        "document_42",
+		PeerID:    100,
+		MessageID: 200,
+		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
+		FileName:  "file.bin",
+		FileSize:  10,
+		CreatedAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{
+				ID:            42,
+				AccessHash:    99,
+				FileReference: []byte("ref"),
+			},
+			Name: "file.bin",
+			Size: 10,
+			DC:   4,
+			Date: 123,
+		},
+	}
+	require.NoError(t, original.Add(context.Background(), task))
+
+	restoredStore := newTaskStore(kvd, 0)
+	restored, ok, err := restoredStore.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, task.ID, restored.ID)
+
+	_, err = kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
 }
 
 func TestDownloadHandlerSuccessAndRange(t *testing.T) {

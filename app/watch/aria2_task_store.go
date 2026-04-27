@@ -29,12 +29,17 @@ type aria2TaskRecord struct {
 type persistentAria2TaskIndex map[string]time.Time
 
 type aria2TaskStore struct {
-	mu sync.Mutex
-	kv storage.Storage
+	mu  sync.Mutex
+	kv  storage.Storage
+	ttl time.Duration
 }
 
-func newAria2TaskStore(kv storage.Storage) *aria2TaskStore {
-	return &aria2TaskStore{kv: kv}
+func newAria2TaskStore(kv storage.Storage, ttl ...time.Duration) *aria2TaskStore {
+	taskTTL := defaultDownloadTaskTTL
+	if len(ttl) > 0 {
+		taskTTL = ttl[0]
+	}
+	return &aria2TaskStore{kv: kv, ttl: taskTTL}
 }
 
 func (s *aria2TaskStore) Add(ctx context.Context, record aria2TaskRecord) error {
@@ -163,6 +168,10 @@ func (s *aria2TaskStore) Remove(ctx context.Context, gid string) error {
 }
 
 func (s *aria2TaskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {
+	if s.ttl == 0 {
+		return nil
+	}
+
 	index, err := s.loadIndex(ctx)
 	if err != nil {
 		return err
@@ -170,7 +179,7 @@ func (s *aria2TaskStore) cleanupExpiredLocked(ctx context.Context, now time.Time
 
 	changed := false
 	for gid, createdAt := range index {
-		if !isDownloadTaskExpired(createdAt, now) {
+		if !isDownloadTaskExpired(createdAt, now, s.ttl) {
 			continue
 		}
 		if err := s.kv.Delete(ctx, aria2TaskStorageKey(gid)); err != nil {

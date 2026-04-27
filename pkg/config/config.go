@@ -16,9 +16,10 @@ type BotConfig struct {
 }
 
 type HTTPConfig struct {
-	Listen        string           `json:"listen"`
-	PublicBaseURL string           `json:"public_base_url"`
-	Buffer        HTTPBufferConfig `json:"buffer"`
+	Listen               string           `json:"listen"`
+	PublicBaseURL        string           `json:"public_base_url"`
+	DownloadLinkTTLHours int              `json:"download_link_ttl_hours"`
+	Buffer               HTTPBufferConfig `json:"buffer"`
 }
 
 type HTTPBufferConfig struct {
@@ -73,8 +74,9 @@ func DefaultConfig() *Config {
 		Include:          []string{},
 		Exclude:          []string{},
 		HTTP: HTTPConfig{
-			Listen:        "0.0.0.0:8080",
-			PublicBaseURL: "",
+			Listen:               "0.0.0.0:8080",
+			PublicBaseURL:        "",
+			DownloadLinkTTLHours: 24,
 			Buffer: HTTPBufferConfig{
 				Mode:   "memory",
 				SizeMB: 64,
