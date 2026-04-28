@@ -23,7 +23,6 @@ import (
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/app/webui"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/util/netutil"
 	"github.com/iyear/tdl/pkg/config"
@@ -38,17 +37,38 @@ var (
 )
 
 type Options struct {
-	Token            string
-	AllowedUsers     []int64
-	Proxy            string
-	Namespace        string
-	NTP              string
-	ReconnectTimeout time.Duration
-	Watch            watch.Options
+	Token                 string
+	AllowedUsers          []int64
+	Proxy                 string
+	Namespace             string
+	NTP                   string
+	ReconnectTimeout      time.Duration
+	Watch                 watch.Options
+	WatchControl          watchControl
+	DisableAutoStartWatch bool
+	AfterConfigSave       func(*config.Config)
+	OnLoginSuccess        func(*tg.User)
+	SetNotifier           func(watch.NotifyFunc)
+	RequestReboot         func()
+	RequestUpdate         func(updater.Plan)
+}
+
+type watchControl interface {
+	Start() bool
+	Stop()
+	UpdateOptions(watch.Options)
+	Running() bool
 }
 
 func RebootRequested() bool {
 	return processRebootRequested.Load()
+}
+
+func RequestReboot() {
+	processRebootRequested.Store(true)
+	processUpdateMu.Lock()
+	processUpdatePlan = nil
+	processUpdateMu.Unlock()
 }
 
 func UpdateRequested() (updater.Plan, bool) {
@@ -58,6 +78,13 @@ func UpdateRequested() (updater.Plan, bool) {
 		return updater.Plan{}, false
 	}
 	return *processUpdatePlan, true
+}
+
+func RequestUpdate(plan updater.Plan) {
+	processRebootRequested.Store(false)
+	processUpdateMu.Lock()
+	processUpdatePlan = &plan
+	processUpdateMu.Unlock()
 }
 
 func Run(ctx context.Context, opts Options) (rerr error) {
@@ -79,6 +106,10 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
 	notifier := newBotNotifier(bot, opts.AllowedUsers)
 	allowed := newAllowedUsers(opts.AllowedUsers)
+	if opts.SetNotifier != nil {
+		opts.SetNotifier(notifier.Notify)
+		defer opts.SetNotifier(nil)
+	}
 
 	if err := configureBotMenu(ctx, bot); err != nil {
 		return errors.Wrap(err, "create bot menu")
@@ -95,20 +126,30 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		NTP:              opts.NTP,
 		ReconnectTimeout: opts.ReconnectTimeout,
 	}
-	watchCtrl := newWatchController(ctx, opts.Watch, notifier.Notify)
+	watchCtrl := opts.WatchControl
+	ownsWatch := false
+	if watchCtrl == nil {
+		watchCtrl = watch.NewController(ctx, opts.Watch, notifier.Notify)
+		ownsWatch = true
+	}
 	loginMgr := newLoginManager(ctx, bot, gotdLoginRunner{
 		opts: sessionOpts,
 	})
 	aria2Factory := func() *watch.Aria2Controller {
 		return watch.NewAria2Controller(config.Get(), kvd, nil)
 	}
-	onLoginSuccess := func(_ *tg.User) {
-		notifyWatchAfterLogin(ctx, notifier, watchCtrl)
+	onLoginSuccess := func(user *tg.User) {
+		if opts.OnLoginSuccess != nil {
+			opts.OnLoginSuccess(user)
+		}
+		if !opts.DisableAutoStartWatch {
+			notifyWatchAfterLogin(ctx, notifier, watchCtrl)
+		}
 		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
 	}
 	loginMgr.SetOnSuccess(onLoginSuccess)
 
-	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts)
+	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts, !opts.DisableAutoStartWatch)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
 	if startup.WatchStarted {
 		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
@@ -137,7 +178,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			botLogger.SetShuttingDown()
-			watchCtrl.Stop()
+			if ownsWatch {
+				watchCtrl.Stop()
+			}
 
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -149,42 +192,31 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	requestReboot := func() {
 		rebootRequested.Store(true)
-		processRebootRequested.Store(true)
+		if opts.RequestReboot != nil {
+			opts.RequestReboot()
+		} else {
+			RequestReboot()
+		}
 		go shutdown()
 	}
 	requestUpdate := func(plan updater.Plan) {
 		rebootRequested.Store(false)
-		processRebootRequested.Store(false)
-		processUpdateMu.Lock()
-		processUpdatePlan = &plan
-		processUpdateMu.Unlock()
+		if opts.RequestUpdate != nil {
+			opts.RequestUpdate(plan)
+		} else {
+			RequestUpdate(plan)
+		}
 		go shutdown()
 	}
 	afterConfigSave := func(cfg *config.Config) {
 		allowed.Replace(cfg.Bot.AllowedUsers)
 		notifier.UpdateChatIDs(cfg.Bot.AllowedUsers)
 		watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
+		if opts.AfterConfigSave != nil {
+			opts.AfterConfigSave(cfg)
+		}
 	}
 	updateController := newTDLUpdateController(requestUpdate)
-	if config.Get().WebUI.Password != "" && config.Get().WebUI.Listen != "" {
-		go func() {
-			err := webui.Run(ctx, webui.Options{
-				KVEngine:        kvEngine,
-				Namespace:       opts.Namespace,
-				NamespaceKV:     kvd,
-				AfterConfigSave: afterConfigSave,
-				OnLoginSuccess:  onLoginSuccess,
-				RequestReboot:   requestReboot,
-				RequestUpdate:   requestUpdate,
-				WatchRunning:    watchCtrl.Running,
-			})
-			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
-				color.Yellow("WebUI stopped: %v", err)
-			}
-		}()
-		color.Green("WebUI: http://%s", config.Get().WebUI.Listen)
-	}
-
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
 		if update.Message == nil || update.Message.From == nil {
 			return nil
@@ -291,35 +323,49 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	})
 }
 
-func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl *watchController, opts login.SessionOptions) startupState {
+func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl, opts login.SessionOptions, autoStart bool) startupState {
 	user, err := login.CheckSession(ctx, opts)
 	switch {
 	case err == nil:
-		watchStatus := "已进入监听，正在等待表情触发。"
-		if !watchCtrl.Start() {
-			watchStatus = "已在运行。"
+		watchStatus := "监听模块已交给 Web 管理面板控制。"
+		watchStarted := false
+		if autoStart {
+			watchStatus = "已进入监听，正在等待表情触发。"
+			watchStarted = true
+			if !watchCtrl.Start() {
+				watchStatus = "已在运行。"
+				watchStarted = watchCtrl.Running()
+			}
 		}
 		return startupState{
 			Session:      "有效。" + login.UserSummary(user),
 			Watch:        watchStatus,
-			WatchStarted: true,
+			WatchStarted: watchStarted,
 		}
 	case errors.Is(err, login.ErrSessionUnauthorized):
+		hint := "请使用 /login_code 或 /login_qr 登录；登录成功后会自动重新启动 watch。"
+		if !autoStart {
+			hint = "请在 Web 管理面板完成登录，并在模块管理中启用监听下载。"
+		}
 		return startupState{
 			Session: "无效或不存在。",
 			Watch:   "未启动。",
-			Hint:    "请使用 /login_code 或 /login_qr 登录；登录成功后会自动重新启动 watch。",
+			Hint:    hint,
 		}
 	default:
+		hint := "请稍后重试，或使用 /login_code 或 /login_qr 重新登录；登录成功后会自动重新启动 watch。"
+		if !autoStart {
+			hint = "请稍后重试，或在 Web 管理面板重新登录。"
+		}
 		return startupState{
 			Session: fmt.Sprintf("检查失败：%v", err),
 			Watch:   "未启动。",
-			Hint:    "请稍后重试，或使用 /login_code 或 /login_qr 重新登录；登录成功后会自动重新启动 watch。",
+			Hint:    hint,
 		}
 	}
 }
 
-func notifyWatchAfterLogin(ctx context.Context, notifier *botNotifier, watchCtrl *watchController) {
+func notifyWatchAfterLogin(ctx context.Context, notifier *botNotifier, watchCtrl watchControl) {
 	if watchCtrl.Start() {
 		notifier.Notify(ctx, "登录完成，watch 已重新启动，正在监听表情触发。")
 		return

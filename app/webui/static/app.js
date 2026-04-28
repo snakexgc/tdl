@@ -6,6 +6,7 @@ const state = {
   kvSort: { field: "created_at", dir: "desc" },
   loginPoll: null,
   update: null,
+  modules: [],
 };
 
 const collator = new Intl.Collator("zh-Hans-CN", {
@@ -17,53 +18,60 @@ const sections = [
   {
     title: "基础",
     fields: [
-      ["proxy", "代理地址", "text", "Telegram 连接代理，例如 http://127.0.0.1:10808。"],
-      ["namespace", "命名空间", "text", "隔离登录态、链接和状态数据。修改后需要重启。"],
-      ["debug", "调试日志", "bool", "开启更详细日志。"],
-      ["threads", "单文件并发", "number", "同一个文件最多同时使用的 Telegram 抓取 worker 数。"],
-      ["limit", "最大同时下载文件数", "number", "TDL HTTP 服务端同时对外提供的文件数上限。"],
-      ["pool_size", "DC 下载池大小", "number", "Telegram DC client 池大小。"],
-      ["delay", "DC 下载延迟", "number", "下载延迟，单位秒。"],
-      ["ntp", "NTP 地址", "text", "为空时使用系统时间。"],
-      ["reconnect_timeout", "重连超时", "number", "Telegram client 重连退避时间，单位秒。"],
-      ["download_dir", "下载目录模板", "text", "支持 G/I/Y/M/D，/ 或 \\ 分层，& 连接同层。"],
-      ["trigger_reactions", "触发表情", "list", "逗号或换行分隔；为空表示任意表情触发。"],
-      ["include", "包含扩展名", "list", "只下载这些扩展名，和 exclude 互斥。"],
-      ["exclude", "排除扩展名", "list", "跳过这些扩展名，和 include 互斥。"],
+      ["proxy", "代理地址", "text", "需要代理访问 Telegram 或 GitHub 时填写，例如 http://127.0.0.1:10808。"],
+      ["namespace", "数据空间", "text", "用于区分不同账号的数据；只有多账号场景才需要修改。"],
+      ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
+      ["threads", "单文件连接数", "number", "单个文件同时使用的下载连接数，网络一般时保持默认即可。"],
+      ["limit", "同时下载数", "number", "tdl 同时处理的下载数量，机器性能一般时保持默认即可。"],
+      ["pool_size", "连接池数量", "number", "Telegram 连接池大小，不确定时保持默认。"],
+      ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
+      ["ntp", "时间校准服务器", "text", "系统时间不准时填写，例如 pool.ntp.org。"],
+      ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
+      ["download_dir", "下载目录规则", "text", "用于按群组、日期等自动分目录，例如 G/Y&M。"],
+      ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
+      ["include", "只下载这些扩展名", "list", "例如 mp4,mkv；留空表示不限制。"],
+      ["exclude", "跳过这些扩展名", "list", "例如 png,jpg；留空表示不跳过。"],
     ],
   },
   {
-    title: "HTTP 下载代理",
+    title: "下载链接",
     fields: [
-      ["http.listen", "监听地址", "text", "TDL 下载代理监听地址，例如 0.0.0.0:22334。修改后需重启 watch。"],
-      ["http.public_base_url", "公开基础地址", "text", "aria2 访问 TDL 下载代理使用的地址。"],
-      ["http.download_link_ttl_hours", "链接有效期", "number", "单位小时；0 表示永久有效且不自动清理。"],
-      ["http.buffer.mode", "缓冲模式", "select", "memory 使用共享内存预读；off 使用顺序流式。", ["memory", "off"]],
-      ["http.buffer.size_mb", "缓冲大小", "number", "memory 模式下每个活跃文件的缓存上限，单位 MiB。"],
+      ["http.listen", "监听地址", "text", "tdl 提供下载链接的地址，例如 0.0.0.0:22334。"],
+      ["http.public_base_url", "对外访问地址", "text", "aria2 能访问到的 tdl 地址，不同机器时请填写局域网地址。"],
+      ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
+      ["http.buffer.mode", "下载缓冲", "select", "memory 适合多数场景；off 表示不预读。", ["memory", "off"]],
+      ["http.buffer.size_mb", "缓冲大小", "number", "每个活跃文件可使用的内存上限，单位 MiB。"],
     ],
   },
   {
     title: "Web 管理面板",
     fields: [
-      ["webui.listen", "监听地址", "text", "管理面板监听地址，例如 127.0.0.1:22335。修改后需要重启。"],
-      ["webui.username", "用户名", "text", "Basic Auth 用户名。"],
-      ["webui.password", "密码", "password", "Basic Auth 密码；留空表示保持原密码。"],
+      ["webui.listen", "访问地址", "text", "管理面板监听地址，例如 127.0.0.1:22335。修改后需要重启。"],
+      ["webui.username", "用户名", "text", "登录管理面板时使用的用户名。"],
+      ["webui.password", "密码", "password", "管理面板登录密码；留空表示保持原密码。"],
+    ],
+  },
+  {
+    title: "模块开关",
+    fields: [
+      ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
+      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到 aria2。"],
     ],
   },
   {
     title: "aria2",
     fields: [
-      ["aria2.rpc_url", "RPC 地址", "text", "aria2 JSON-RPC 地址，管理面板会自动通过服务端代理连接。"],
-      ["aria2.secret", "RPC 密钥", "password", "aria2 RPC secret；留空表示保持原密钥。"],
-      ["aria2.dir", "下载根目录", "text", "为空时读取 aria2 全局 dir。"],
-      ["aria2.timeout_seconds", "RPC 超时", "number", "aria2 RPC 请求超时，单位秒。"],
+      ["aria2.rpc_url", "aria2 连接地址", "text", "aria2 的连接地址，例如 http://127.0.0.1:6800/jsonrpc。"],
+      ["aria2.secret", "aria2 密钥", "password", "aria2 设置了密钥时填写；留空表示保持原密钥。"],
+      ["aria2.dir", "下载根目录", "text", "aria2 保存文件的根目录；留空时使用 aria2 默认目录。"],
+      ["aria2.timeout_seconds", "连接超时", "number", "连接 aria2 等待的秒数。"],
     ],
   },
   {
     title: "机器人",
     fields: [
-      ["bot.token", "Bot Token", "password", "Telegram bot token；留空表示保持原 token。修改后需要重启。"],
-      ["bot.allowed_users", "允许用户 ID", "intList", "逗号或换行分隔的 Telegram 用户 ID。"],
+      ["bot.token", "机器人 Token", "password", "从 BotFather 获取；留空表示保持原 token。"],
+      ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人，多个 ID 用逗号或换行分隔。"],
     ],
   },
 ];
@@ -80,6 +88,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadKV();
   loadUser();
   loadLoginStatus();
+  loadModules();
   loadConfig();
   loadUpdateStatus();
 });
@@ -96,6 +105,7 @@ function bindNavigation() {
         loadUser();
         loadLoginStatus();
       }
+      if (view === "modules") loadModules();
       if (view === "config") loadConfig();
       if (view === "update") loadUpdateStatus();
     });
@@ -107,6 +117,7 @@ function bindActions() {
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
   document.getElementById("refresh-user").addEventListener("click", loadUser);
   document.getElementById("reload-config").addEventListener("click", loadConfig);
+  document.getElementById("refresh-modules").addEventListener("click", loadModules);
   document.getElementById("save-config").addEventListener("click", saveConfig);
   document.getElementById("reboot").addEventListener("click", reboot);
   document.getElementById("check-update").addEventListener("click", loadUpdateStatus);
@@ -256,11 +267,88 @@ async function api(path, options = {}) {
 async function loadStatus() {
   try {
     const data = await api("/api/status");
-    document.getElementById("runtime-namespace").textContent = `namespace: ${data.namespace || "-"}`;
-    document.getElementById("runtime-watch").textContent = `watch: ${data.watch_running ? "running" : "stopped"}`;
+    const version = data.version || {};
+    document.getElementById("runtime-version").textContent = `版本：${version.version || "-"}`;
+    document.getElementById("runtime-namespace").textContent = `数据空间：${data.namespace || "-"}`;
+    document.getElementById("runtime-watch").textContent = `监听：${data.watch_running ? "运行中" : "未运行"}`;
   } catch (error) {
-    document.getElementById("runtime-watch").textContent = `status: ${error.message}`;
+    document.getElementById("runtime-watch").textContent = `状态：${error.message}`;
   }
+}
+
+async function loadModules() {
+  const target = document.getElementById("module-list");
+  setModuleStatus("");
+  target.innerHTML = `<div class="empty compact-empty">正在加载...</div>`;
+  try {
+    const data = await api("/api/modules");
+    state.modules = data.modules || [];
+    renderModules();
+    loadStatus();
+  } catch (error) {
+    target.innerHTML = "";
+    setModuleStatus(error.message, "error");
+  }
+}
+
+function renderModules() {
+  const target = document.getElementById("module-list");
+  if (!state.modules.length) {
+    target.innerHTML = `<div class="empty compact-empty">没有可管理的模块</div>`;
+    return;
+  }
+  target.innerHTML = state.modules.map(renderModuleCard).join("");
+  target.querySelectorAll("[data-module-toggle]").forEach((button) => {
+    button.addEventListener("click", () => toggleModule(button.dataset.moduleToggle, button.dataset.nextEnabled === "true"));
+  });
+}
+
+function renderModuleCard(module) {
+  const running = module.running ? "运行中" : "未运行";
+  const enabled = module.enabled ? "已启用" : "已关闭";
+  const nextEnabled = !module.enabled;
+  const toggleText = module.enabled ? "关闭" : "启用";
+  const disabled = module.can_toggle ? "" : "disabled";
+  return `
+    <section class="module-card">
+      <div class="module-main">
+        <div>
+          <h2>${escapeHTML(module.name || module.id)}</h2>
+          <p>${escapeHTML(module.description || "")}</p>
+        </div>
+        <div class="module-badges">
+          <span class="pill ${module.enabled ? "" : "warn"}">${enabled}</span>
+          <span class="pill ${module.running ? "" : "warn"}">${running}</span>
+        </div>
+      </div>
+      <div class="module-foot">
+        <div class="module-status">${escapeHTML(module.status || "-")}</div>
+        <button class="btn ${module.enabled ? "danger" : "primary"}" data-module-toggle="${escapeAttr(module.id)}" data-next-enabled="${nextEnabled}" ${disabled}>${toggleText}</button>
+      </div>
+    </section>
+  `;
+}
+
+async function toggleModule(id, enabled) {
+  setModuleStatus(enabled ? "正在启用模块..." : "正在关闭模块...");
+  try {
+    const data = await api("/api/modules", {
+      method: "POST",
+      body: JSON.stringify({ id, enabled }),
+    });
+    state.modules = data.modules || [];
+    renderModules();
+    loadStatus();
+    setModuleStatus(data.module && data.module.status ? data.module.status : "模块状态已更新。", "success");
+  } catch (error) {
+    setModuleStatus(error.message, "error");
+  }
+}
+
+function setModuleStatus(message, kind = "") {
+  const status = document.getElementById("module-status");
+  status.className = `notice ${kind}`.trim();
+  status.textContent = message || "";
 }
 
 function loadAria2(force = false) {
@@ -508,8 +596,8 @@ async function loadUser() {
     const rows = [
       ["登录状态", data.valid ? "有效" : "无效"],
       ["状态详情", data.status || "-"],
-      ["Namespace", data.namespace || "-"],
-      ["Watch", data.watch_running ? "运行中" : "未运行"],
+      ["数据空间", data.namespace || "-"],
+      ["监听下载", data.watch_running ? "运行中" : "未运行"],
       ["用户 ID", user.id || "-"],
       ["用户名", user.username || "-"],
       ["姓名", user.name || "-"],
@@ -702,7 +790,7 @@ function renderUpdateInfo(update) {
     ["运行平台", `${update.goos || "-"} / ${update.goarch || "-"}`],
     ["最新版本", update.latest_version || "-"],
     ["发布名称", update.latest_name || "-"],
-    ["更新资产", update.asset_name || "-"],
+    ["更新文件", update.asset_name || "-"],
     ["发布地址", update.latest_url || "-"],
   ];
   target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
@@ -812,6 +900,7 @@ async function saveConfig(event) {
     status.className = "notice success";
     status.textContent = data.message || "配置已保存";
     loadStatus();
+    loadModules();
   } catch (error) {
     status.className = "notice error";
     status.textContent = error.message;

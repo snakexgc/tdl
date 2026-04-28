@@ -24,6 +24,7 @@ import (
 	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
+	"github.com/iyear/tdl/pkg/consts"
 	"github.com/iyear/tdl/pkg/kv"
 )
 
@@ -35,6 +36,8 @@ const (
 	downloadTaskIndexKey  = "watch.download.index"
 	aria2TaskKeyPrefix    = "watch.aria2.task."
 	aria2TaskIndexKey     = "watch.aria2.index"
+
+	aria2StatusComplete = "complete"
 )
 
 type Options struct {
@@ -47,6 +50,22 @@ type Options struct {
 	RequestReboot   func()
 	RequestUpdate   func(updater.Plan)
 	WatchRunning    func() bool
+	ModuleManager   ModuleManager
+}
+
+type ModuleManager interface {
+	ModuleStates() []ModuleState
+	SetModuleEnabled(ctx context.Context, id string, enabled bool) (ModuleState, error)
+}
+
+type ModuleState struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+	Running     bool   `json:"running"`
+	CanToggle   bool   `json:"can_toggle"`
+	Status      string `json:"status"`
 }
 
 type Server struct {
@@ -67,6 +86,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	server := NewServer(opts)
+	server.startAria2SyncLoop(ctx)
+
 	httpServer := &http.Server{
 		Addr:    cfg.WebUI.Listen,
 		Handler: server.routes(),
@@ -107,6 +128,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/login/code", s.authFunc(s.handleLoginCode))
 	mux.HandleFunc("/api/login/password", s.authFunc(s.handleLoginPassword))
 	mux.HandleFunc("/api/login/cancel", s.authFunc(s.handleLoginCancel))
+	mux.HandleFunc("/api/modules", s.authFunc(s.handleModules))
 	mux.HandleFunc("/api/config", s.authFunc(s.handleConfig))
 	mux.HandleFunc("/api/update/check", s.authFunc(s.handleUpdateCheck))
 	mux.HandleFunc("/api/update/apply", s.authFunc(s.handleUpdateApply))
@@ -191,7 +213,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"public_base_url": cfg.HTTP.PublicBaseURL,
 			"download_ttl":    cfg.HTTP.DownloadLinkTTLHours,
 		},
+		"version": versionInfo(),
 	})
+}
+
+func versionInfo() map[string]any {
+	return map[string]any{
+		"version": consts.Version,
+		"commit":  consts.Commit,
+		"date":    consts.CommitDate,
+	}
 }
 
 func (s *Server) handleKVLinks(w http.ResponseWriter, r *http.Request) {
@@ -310,12 +341,13 @@ type aria2LinkEntry struct {
 }
 
 type persistentDownloadTask struct {
-	ID        string    `json:"id"`
-	PeerID    int64     `json:"peer_id"`
-	MessageID int       `json:"message_id"`
-	FileName  string    `json:"file_name"`
-	FileSize  int64     `json:"file_size"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	PeerID     int64     `json:"peer_id"`
+	MessageID  int       `json:"message_id"`
+	FileName   string    `json:"file_name"`
+	FileSize   int64     `json:"file_size"`
+	CreatedAt  time.Time `json:"created_at"`
+	Downloaded bool      `json:"downloaded"`
 }
 
 type aria2TaskRecord struct {
@@ -326,6 +358,10 @@ type aria2TaskRecord struct {
 	Out         string    `json:"out"`
 	Connections int       `json:"connections"`
 	CreatedAt   time.Time `json:"created_at"`
+	Status      string    `json:"status"`
+	Total       int64     `json:"total"`
+	Completed   int64     `json:"completed"`
+	Error       string    `json:"error,omitempty"`
 }
 
 type aria2Status struct {
@@ -387,15 +423,16 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 		}
 
 		item := downloadLinkItem{
-			ID:        task.ID,
-			Key:       key,
-			URL:       downloadURL(cfg.HTTP.PublicBaseURL, task.ID),
-			FileName:  task.FileName,
-			FileSize:  task.FileSize,
-			PeerID:    task.PeerID,
-			MessageID: task.MessageID,
-			CreatedAt: task.CreatedAt,
-			Status:    "not_submitted",
+			ID:         task.ID,
+			Key:        key,
+			URL:        downloadURL(cfg.HTTP.PublicBaseURL, task.ID),
+			FileName:   task.FileName,
+			FileSize:   task.FileSize,
+			PeerID:     task.PeerID,
+			MessageID:  task.MessageID,
+			CreatedAt:  task.CreatedAt,
+			Downloaded: task.Downloaded,
+			Status:     "not_submitted",
 		}
 		if cfg.HTTP.DownloadLinkTTLHours <= 0 {
 			item.Permanent = true
@@ -414,12 +451,18 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 				Out:         record.Out,
 				CreatedAt:   record.CreatedAt,
 			}
+			if record.Status != "" {
+				entry.Status = record.Status
+				entry.Total = record.Total
+				entry.Completed = record.Completed
+				entry.Error = record.Error
+			}
 			if st, ok := statusByGID[record.GID]; ok {
 				entry.Status = normalizedAria2Status(st.Status)
 				entry.Total, entry.Completed = aria2Lengths(st)
-				entry.Downloaded = entry.Status == "complete" && (entry.Total == 0 || entry.Completed >= entry.Total)
 				entry.Error = strings.TrimSpace(strings.TrimSpace(st.ErrorCode + " " + st.ErrorMessage))
 			}
+			entry.Downloaded = entry.Status == aria2StatusComplete && (entry.Total == 0 || entry.Completed >= entry.Total)
 			if entry.Downloaded {
 				item.Downloaded = true
 			}
@@ -430,6 +473,122 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 	}
 
 	return items, statusErrText, nil
+}
+
+func (s *Server) startAria2SyncLoop(ctx context.Context) {
+	if s.opts.NamespaceKV == nil || s.opts.KVEngine == nil {
+		return
+	}
+	go func() {
+		_ = s.syncAria2Statuses(ctx)
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = s.syncAria2Statuses(ctx)
+			}
+		}
+	}()
+}
+
+func (s *Server) syncAria2Statuses(ctx context.Context) error {
+	if s.opts.KVEngine == nil || s.opts.NamespaceKV == nil {
+		return nil
+	}
+
+	meta, err := s.opts.KVEngine.MigrateTo()
+	if err != nil {
+		return err
+	}
+	pairs := meta[s.namespace()]
+
+	records, recordsByTask, err := s.parseAria2Records(pairs)
+	if err != nil {
+		return err
+	}
+
+	statusByGID, err := fetchAria2Statuses(ctx, config.Get().Aria2)
+	if err != nil {
+		return err
+	}
+
+	taskCompleted := map[string]bool{}
+	taskHasAria2 := map[string]bool{}
+
+	for taskID, taskRecords := range recordsByTask {
+		taskHasAria2[taskID] = true
+		for _, record := range taskRecords {
+			updated := record
+			if st, ok := statusByGID[record.GID]; ok {
+				updated.Status = normalizedAria2Status(st.Status)
+				updated.Total, updated.Completed = aria2Lengths(st)
+				updated.Error = strings.TrimSpace(st.ErrorCode + " " + st.ErrorMessage)
+			}
+
+			data, err := json.Marshal(updated)
+			if err != nil {
+				continue
+			}
+			_ = s.opts.NamespaceKV.Set(ctx, aria2TaskKeyPrefix+record.GID, data)
+
+			if updated.Status == aria2StatusComplete && (updated.Total == 0 || updated.Completed >= updated.Total) {
+				taskCompleted[taskID] = true
+			}
+		}
+	}
+
+	now := time.Now()
+
+	aria2Index := map[string]time.Time{}
+	if idxData, err := s.opts.NamespaceKV.Get(ctx, aria2TaskIndexKey); err == nil {
+		_ = json.Unmarshal(idxData, &aria2Index)
+	}
+	for gid, record := range records {
+		if record.Status != aria2StatusComplete {
+			aria2Index[gid] = now
+		}
+	}
+	if idxData, err := json.Marshal(aria2Index); err == nil {
+		_ = s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, idxData)
+	}
+
+	downloadIndex := map[string]time.Time{}
+	if idxData, err := s.opts.NamespaceKV.Get(ctx, downloadTaskIndexKey); err == nil {
+		_ = json.Unmarshal(idxData, &downloadIndex)
+	}
+	for taskID := range taskHasAria2 {
+		if !taskCompleted[taskID] {
+			downloadIndex[taskID] = now
+		}
+	}
+	if idxData, err := json.Marshal(downloadIndex); err == nil {
+		_ = s.opts.NamespaceKV.Set(ctx, downloadTaskIndexKey, idxData)
+	}
+
+	for taskID, isCompleted := range taskCompleted {
+		if !isCompleted {
+			continue
+		}
+		data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
+		if err != nil {
+			continue
+		}
+		var task persistentDownloadTask
+		if err := json.Unmarshal(data, &task); err != nil {
+			continue
+		}
+		if task.Downloaded {
+			continue
+		}
+		task.Downloaded = true
+		data, _ = json.Marshal(task)
+		_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, data)
+	}
+
+	return nil
 }
 
 func (s *Server) loadAria2Records() (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {
@@ -820,10 +979,43 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":      true,
 			"config":  publicConfig(next),
-			"message": "配置已保存。大部分运行参数已应用；监听地址、存储、命名空间、bot token 等需要重启后完整生效。",
+			"message": "配置已保存。模块开关会立即生效；监听地址、命名空间、Bot Token 等基础连接参数建议重启后再使用。",
 		})
 	default:
 		methodNotAllowed(w, "GET, PATCH")
+	}
+}
+
+func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
+	if s.opts.ModuleManager == nil {
+		writeError(w, http.StatusBadRequest, errors.New("module manager is not available"))
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"modules": s.opts.ModuleManager.ModuleStates()})
+	case http.MethodPost:
+		var req struct {
+			ID      string `json:"id"`
+			Enabled bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+			return
+		}
+		state, err := s.opts.ModuleManager.SetModuleEnabled(r.Context(), req.ID, req.Enabled)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"module":  state,
+			"modules": s.opts.ModuleManager.ModuleStates(),
+		})
+	default:
+		methodNotAllowed(w, "GET, POST")
 	}
 }
 

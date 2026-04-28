@@ -24,6 +24,10 @@ type aria2TaskRecord struct {
 	Out         string    `json:"out"`
 	Connections int       `json:"connections"`
 	CreatedAt   time.Time `json:"created_at"`
+	Status      string    `json:"status"`
+	Total       int64     `json:"total"`
+	Completed   int64     `json:"completed"`
+	Error       string    `json:"error,omitempty"`
 }
 
 type persistentAria2TaskIndex map[string]time.Time

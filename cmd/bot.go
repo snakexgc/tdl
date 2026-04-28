@@ -1,13 +1,10 @@
 package cmd
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 
 	"github.com/iyear/tdl/app/bot"
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/config"
+	tdlruntime "github.com/iyear/tdl/app/runtime"
 )
 
 func NewBot() *cobra.Command {
@@ -25,17 +22,8 @@ func NewBot() *cobra.Command {
 }
 
 func runBot(cmd *cobra.Command) error {
-	return bot.Run(cmd.Context(), botOptionsFromConfig(config.Get()))
-}
-
-func botOptionsFromConfig(cfg *config.Config) bot.Options {
-	return bot.Options{
-		Token:            cfg.Bot.Token,
-		AllowedUsers:     cfg.Bot.AllowedUsers,
-		Proxy:            cfg.Proxy,
-		Namespace:        cfg.Namespace,
-		NTP:              cfg.NTP,
-		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
-		Watch:            watch.DefaultOptions(cfg),
-	}
+	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
+		RequestReboot: bot.RequestReboot,
+		RequestUpdate: bot.RequestUpdate,
+	})
 }

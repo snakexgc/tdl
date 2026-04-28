@@ -18,6 +18,7 @@ func TestConfigSetValueUpdatesNestedFields(t *testing.T) {
 	require.NoError(t, setConfigValue(cfg, "trigger_reactions", "👍,🔥"))
 	require.NoError(t, setConfigValue(cfg, "bot.allowed_users", "1,2"))
 	require.NoError(t, setConfigValue(cfg, "aria2.secret", "\"\""))
+	require.NoError(t, setConfigValue(cfg, "modules.watch", "false"))
 
 	require.Equal(t, 5, cfg.Limit)
 	require.Equal(t, "http://127.0.0.1:22334", cfg.HTTP.PublicBaseURL)
@@ -26,6 +27,7 @@ func TestConfigSetValueUpdatesNestedFields(t *testing.T) {
 	require.Equal(t, []string{"👍", "🔥"}, cfg.TriggerReactions)
 	require.Equal(t, []int64{1, 2}, cfg.Bot.AllowedUsers)
 	require.Empty(t, cfg.Aria2.Secret)
+	require.False(t, cfg.Modules.Watch)
 }
 
 func TestConfigProtectedPathRejectsBotToken(t *testing.T) {

@@ -33,6 +33,11 @@ type WebUIConfig struct {
 	Password string `json:"password"`
 }
 
+type ModulesConfig struct {
+	Bot   bool `json:"bot"`
+	Watch bool `json:"watch"`
+}
+
 type Aria2Config struct {
 	RPCURL         string `json:"rpc_url"`
 	Secret         string `json:"secret"`
@@ -42,23 +47,24 @@ type Aria2Config struct {
 
 // Config 全局配置结构
 type Config struct {
-	Proxy            string      `json:"proxy"`
-	Namespace        string      `json:"namespace"`
-	Debug            bool        `json:"debug"`
-	Threads          int         `json:"threads"`
-	Limit            int         `json:"limit"`
-	PoolSize         int         `json:"pool_size"`
-	Delay            int         `json:"delay"`
-	NTP              string      `json:"ntp"`
-	ReconnectTimeout int         `json:"reconnect_timeout"`
-	DownloadDir      string      `json:"download_dir"`
-	TriggerReactions []string    `json:"trigger_reactions"`
-	Include          []string    `json:"include"`
-	Exclude          []string    `json:"exclude"`
-	HTTP             HTTPConfig  `json:"http"`
-	WebUI            WebUIConfig `json:"webui"`
-	Aria2            Aria2Config `json:"aria2"`
-	Bot              BotConfig   `json:"bot"`
+	Proxy            string        `json:"proxy"`
+	Namespace        string        `json:"namespace"`
+	Debug            bool          `json:"debug"`
+	Threads          int           `json:"threads"`
+	Limit            int           `json:"limit"`
+	PoolSize         int           `json:"pool_size"`
+	Delay            int           `json:"delay"`
+	NTP              string        `json:"ntp"`
+	ReconnectTimeout int           `json:"reconnect_timeout"`
+	DownloadDir      string        `json:"download_dir"`
+	TriggerReactions []string      `json:"trigger_reactions"`
+	Include          []string      `json:"include"`
+	Exclude          []string      `json:"exclude"`
+	HTTP             HTTPConfig    `json:"http"`
+	WebUI            WebUIConfig   `json:"webui"`
+	Modules          ModulesConfig `json:"modules"`
+	Aria2            Aria2Config   `json:"aria2"`
+	Bot              BotConfig     `json:"bot"`
 }
 
 // DefaultConfig 返回默认配置
@@ -88,6 +94,10 @@ func DefaultConfig() *Config {
 			Listen:   "127.0.0.1:22335",
 			Username: "admin",
 			Password: "",
+		},
+		Modules: ModulesConfig{
+			Bot:   true,
+			Watch: true,
 		},
 		Aria2: Aria2Config{
 			RPCURL:         "http://127.0.0.1:6800/jsonrpc",

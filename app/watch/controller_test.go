@@ -1,4 +1,4 @@
-package bot
+package watch
 
 import (
 	"context"
@@ -6,20 +6,18 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/iyear/tdl/app/watch"
 )
 
-func TestWatchControllerStopWaitsForWatchShutdown(t *testing.T) {
-	oldRunWatch := runWatch
+func TestControllerStopWaitsForWatchShutdown(t *testing.T) {
+	oldRunWatch := runControllerWatch
 	defer func() {
-		runWatch = oldRunWatch
+		runControllerWatch = oldRunWatch
 	}()
 
 	started := make(chan struct{})
 	canceled := make(chan struct{})
 	release := make(chan struct{})
-	runWatch = func(ctx context.Context, opts watch.Options) error {
+	runControllerWatch = func(ctx context.Context, opts Options) error {
 		close(started)
 		<-ctx.Done()
 		close(canceled)
@@ -27,7 +25,7 @@ func TestWatchControllerStopWaitsForWatchShutdown(t *testing.T) {
 		return nil
 	}
 
-	controller := newWatchController(context.Background(), watch.Options{Template: "test"}, nil)
+	controller := NewController(context.Background(), Options{Template: "test"}, nil)
 	require.True(t, controller.Start())
 
 	select {

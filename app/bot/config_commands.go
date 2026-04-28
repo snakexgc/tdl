@@ -39,6 +39,8 @@ var configurablePaths = []string{
 	"webui.listen",
 	"webui.username",
 	"webui.password",
+	"modules.bot",
+	"modules.watch",
 	"aria2.rpc_url",
 	"aria2.secret",
 	"aria2.dir",

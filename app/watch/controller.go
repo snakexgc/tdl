@@ -1,4 +1,4 @@
-package bot
+package watch
 
 import (
 	"context"
@@ -6,40 +6,39 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/iyear/tdl/app/watch"
 )
 
-const watchControllerStopTimeout = 10 * time.Second
+const controllerStopTimeout = 10 * time.Second
 
-var runWatch = watch.Run
+var runControllerWatch = Run
 
-type watchController struct {
+type Controller struct {
 	parent context.Context
-	opts   watch.Options
-	notify watch.NotifyFunc
+	opts   Options
+	notify NotifyFunc
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	done    chan struct{}
 	running bool
+	lastErr error
 }
 
-func newWatchController(parent context.Context, opts watch.Options, notify watch.NotifyFunc) *watchController {
+func NewController(parent context.Context, opts Options, notify NotifyFunc) *Controller {
 	if parent == nil {
 		parent = context.Background()
 	}
 	if opts.Template == "" {
-		opts = watch.DefaultOptions(nil)
+		opts = DefaultOptions(nil)
 	}
-	return &watchController{
+	return &Controller{
 		parent: parent,
 		opts:   opts,
 		notify: notify,
 	}
 }
 
-func (c *watchController) Start() bool {
+func (c *Controller) Start() bool {
 	c.mu.Lock()
 	if c.running {
 		c.mu.Unlock()
@@ -53,14 +52,15 @@ func (c *watchController) Start() bool {
 	c.running = true
 	c.cancel = cancel
 	c.done = done
+	c.lastErr = nil
 	c.mu.Unlock()
 
 	go func() {
-		err := runWatch(ctx, opts)
+		err := runControllerWatch(ctx, opts)
 		cancel()
 
 		if err != nil && !stderrors.Is(err, context.Canceled) && c.notify != nil {
-			c.notify(context.Background(), fmt.Sprintf("watch 流程已停止：%v\n请检查配置或重新登录。", err))
+			c.notify(context.Background(), fmt.Sprintf("监听下载已停止：%v\n请检查配置或重新登录。", err))
 		}
 
 		c.mu.Lock()
@@ -68,6 +68,9 @@ func (c *watchController) Start() bool {
 			c.running = false
 			c.cancel = nil
 			c.done = nil
+			if err != nil && !stderrors.Is(err, context.Canceled) {
+				c.lastErr = err
+			}
 		}
 		c.mu.Unlock()
 
@@ -77,7 +80,7 @@ func (c *watchController) Start() bool {
 	return true
 }
 
-func (c *watchController) Stop() {
+func (c *Controller) Stop() {
 	c.mu.Lock()
 	cancel := c.cancel
 	done := c.done
@@ -90,7 +93,7 @@ func (c *watchController) Stop() {
 		return
 	}
 
-	timer := time.NewTimer(watchControllerStopTimeout)
+	timer := time.NewTimer(controllerStopTimeout)
 	defer timer.Stop()
 
 	select {
@@ -99,9 +102,9 @@ func (c *watchController) Stop() {
 	}
 }
 
-func (c *watchController) UpdateOptions(opts watch.Options) {
+func (c *Controller) UpdateOptions(opts Options) {
 	if opts.Template == "" {
-		opts = watch.DefaultOptions(nil)
+		opts = DefaultOptions(nil)
 	}
 
 	c.mu.Lock()
@@ -109,8 +112,14 @@ func (c *watchController) UpdateOptions(opts watch.Options) {
 	c.opts = opts
 }
 
-func (c *watchController) Running() bool {
+func (c *Controller) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.running
+}
+
+func (c *Controller) LastError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastErr
 }

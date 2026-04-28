@@ -16,12 +16,14 @@
       <button class="nav-item active" data-view="downloads">下载管理</button>
       <button class="nav-item" data-view="kv">KV 管理</button>
       <button class="nav-item" data-view="user">用户管理</button>
+      <button class="nav-item" data-view="modules">模块管理</button>
       <button class="nav-item" data-view="config">配置设置</button>
       <button class="nav-item" data-view="update">检查更新</button>
     </nav>
     <div class="sidebar-foot">
-      <div id="runtime-namespace">namespace: -</div>
-      <div id="runtime-watch">watch: -</div>
+      <div id="runtime-version">版本：-</div>
+      <div id="runtime-namespace">数据空间：-</div>
+      <div id="runtime-watch">监听：-</div>
     </div>
   </aside>
 
@@ -30,7 +32,7 @@
       <header class="page-head">
         <div>
           <h1>下载管理</h1>
-          <p>内置 AriaNg，RPC 会自动通过当前的 TDL 配置自动连接。</p>
+          <p>查看和控制 aria2 下载任务，连接信息会从当前配置自动读取。</p>
         </div>
         <button class="btn secondary" id="reload-aria2">重新载入</button>
       </header>
@@ -43,7 +45,7 @@
       <header class="page-head">
         <div>
           <h1>KV 管理</h1>
-          <p>查看下载链接和 aria2 GID 的关系，支持发送到 aria2、批量删除、按列排序和手动调整列宽。</p>
+          <p>管理 tdl 保存的下载链接，可重新提交到 aria2，也可清理不再需要的记录。</p>
         </div>
         <div class="actions">
           <button class="btn secondary" id="refresh-kv">刷新</button>
@@ -88,7 +90,7 @@
       <header class="page-head">
         <div>
           <h1>用户管理</h1>
-          <p>查看当前 Telegram 登录态，或在 Web 面板中重新登录。</p>
+          <p>查看当前 Telegram 账号状态，或直接在面板中完成登录。</p>
         </div>
       </header>
       <div class="tabs">
@@ -111,7 +113,7 @@
           </section>
           <section class="login-card">
             <h2>手机号登录</h2>
-            <p>参照示例输入手机号后，发送验证码并请输入 Telegram 收到的验证码。</p>
+            <p>输入完整手机号后获取验证码，例如 +8613800000000 或 +1 2232232223。</p>
             <label class="field-inline">
               <span>手机号</span>
               <input id="login-phone" type="text" placeholder="+8613800000000">
@@ -125,7 +127,7 @@
           </section>
           <section class="login-card">
             <h2>2FA 密码</h2>
-            <p>如果账号开启了两步验证，请在这里输入2FA验证码。</p>
+            <p>如果账号开启了两步验证，请输入 Telegram 的登录密码。</p>
             <label class="field-inline">
               <span>密码</span>
               <input id="login-password" type="password" placeholder="Telegram 2FA 密码">
@@ -138,11 +140,25 @@
       </div>
     </section>
 
+    <section class="view" id="view-modules">
+      <header class="page-head">
+        <div>
+          <h1>模块管理</h1>
+          <p>启用或关闭运行中的功能模块。监听下载包含 Telegram 监听、本地下载链接和 aria2 提交。</p>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" id="refresh-modules">刷新状态</button>
+        </div>
+      </header>
+      <div class="notice" id="module-status"></div>
+      <div class="module-list" id="module-list"></div>
+    </section>
+
     <section class="view" id="view-config">
       <header class="page-head">
         <div>
           <h1>配置设置</h1>
-          <p>按字段修改配置。敏感项留空表示保持原值。</p>
+          <p>按字段修改配置。密码、密钥等敏感项留空时会保留原值。</p>
         </div>
         <div class="actions">
           <button class="btn secondary" id="reload-config">重新读取</button>
@@ -158,7 +174,7 @@
       <header class="page-head">
         <div>
           <h1>检查更新</h1>
-          <p>对比本地版本和 GitHub 最新 Release，可下载更新并自动重启。</p>
+          <p>查看当前版本，发现新版本后可以下载并重启到新版。</p>
         </div>
         <div class="actions">
           <button class="btn secondary" id="check-update">检查更新</button>

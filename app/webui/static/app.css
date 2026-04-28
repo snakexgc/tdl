@@ -526,6 +526,52 @@ tr:last-child td {
   line-height: 1.55;
 }
 
+.module-list {
+  display: grid;
+  gap: 12px;
+}
+
+.module-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.module-main,
+.module-foot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.module-card h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.module-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 150px;
+}
+
+.module-foot {
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.module-status {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .config-form {
   display: grid;
   gap: 16px;
@@ -549,29 +595,29 @@ tr:last-child td {
 
 .field-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  grid-template-columns: 1fr;
   gap: 0;
 }
 
 .field {
-  min-height: 104px;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(260px, 1fr) minmax(240px, 1.2fr);
+  align-items: center;
+  gap: 14px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--line);
-}
-
-.field:nth-child(odd) {
-  border-right: 1px solid var(--line);
 }
 
 .field label {
   display: block;
   font-weight: 650;
-  margin-bottom: 7px;
+  margin-bottom: 0;
 }
 
 .field small {
   display: block;
-  margin-top: 6px;
+  margin-top: 0;
   color: var(--muted);
   line-height: 1.45;
 }
@@ -628,8 +674,12 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
-  .field:nth-child(odd) {
-    border-right: 0;
+  .field,
+  .module-main,
+  .module-foot {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .tabs {
