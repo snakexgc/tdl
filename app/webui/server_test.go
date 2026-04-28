@@ -86,6 +86,65 @@ func TestDeleteDownloadLinkRefusesDownloadIndexKey(t *testing.T) {
 	require.Contains(t, engine.meta["default"], downloadTaskIndexKey)
 }
 
+func TestInjectAria2SecretAddsTokenToMulticallInnerMethods(t *testing.T) {
+	body := []byte(`{
+		"jsonrpc":"2.0",
+		"id":"retry",
+		"method":"system.multicall",
+		"params":[[
+			{"methodName":"aria2.tellStatus","params":["gid-1"]},
+			{"methodName":"aria2.getOption","params":["gid-1"]},
+			{"methodName":"system.listMethods","params":[]}
+		]]
+	}`)
+
+	next, err := injectAria2Secret(body, "secret")
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(next, &decoded))
+	params := decoded["params"].([]any)
+	require.Len(t, params, 1)
+
+	calls := params[0].([]any)
+	require.Len(t, calls, 3)
+
+	tellStatus := calls[0].(map[string]any)
+	require.Equal(t, "aria2.tellStatus", tellStatus["methodName"])
+	require.Equal(t, []any{"token:secret", "gid-1"}, tellStatus["params"])
+
+	getOption := calls[1].(map[string]any)
+	require.Equal(t, "aria2.getOption", getOption["methodName"])
+	require.Equal(t, []any{"token:secret", "gid-1"}, getOption["params"])
+
+	systemCall := calls[2].(map[string]any)
+	require.Equal(t, "system.listMethods", systemCall["methodName"])
+	require.Empty(t, systemCall["params"])
+}
+
+func TestInjectAria2SecretDoesNotAddTokenToSystemMethod(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","id":"methods","method":"system.listMethods"}`)
+
+	next, err := injectAria2Secret(body, "secret")
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(next, &decoded))
+	_, ok := decoded["params"]
+	require.False(t, ok)
+}
+
+func TestInjectAria2SecretDoesNotDuplicateExistingToken(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","id":"status","method":"aria2.tellStatus","params":["token:secret","gid-1"]}`)
+
+	next, err := injectAria2Secret(body, "secret")
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(next, &decoded))
+	require.Equal(t, []any{"token:secret", "gid-1"}, decoded["params"])
+}
+
 type fakeWebUIKVEngine struct {
 	meta kv.Meta
 }

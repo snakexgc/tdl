@@ -1390,6 +1390,49 @@ func injectAria2Secret(body []byte, secret string) ([]byte, error) {
 }
 
 func addAria2Token(request map[string]any, token string) {
+	method, _ := request["method"].(string)
+	if method == "system.multicall" {
+		addAria2MulticallToken(request, token)
+		return
+	}
+	if strings.HasPrefix(method, "system.") {
+		return
+	}
+	prependAria2TokenParam(request, token)
+}
+
+func addAria2MulticallToken(request map[string]any, token string) {
+	params, _ := request["params"].([]any)
+	if len(params) == 0 {
+		return
+	}
+	if first, ok := params[0].(string); ok && strings.HasPrefix(first, "token:") {
+		params = params[1:]
+	}
+	if len(params) == 0 {
+		request["params"] = []any{}
+		return
+	}
+	calls, ok := params[0].([]any)
+	if !ok {
+		request["params"] = params
+		return
+	}
+	for _, call := range calls {
+		obj, ok := call.(map[string]any)
+		if !ok {
+			continue
+		}
+		methodName, _ := obj["methodName"].(string)
+		if strings.HasPrefix(methodName, "system.") {
+			continue
+		}
+		prependAria2TokenParam(obj, token)
+	}
+	request["params"] = append([]any{calls}, params[1:]...)
+}
+
+func prependAria2TokenParam(request map[string]any, token string) {
 	params, _ := request["params"].([]any)
 	if len(params) > 0 {
 		if first, ok := params[0].(string); ok && strings.HasPrefix(first, "token:") {
