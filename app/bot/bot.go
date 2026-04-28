@@ -120,27 +120,51 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	if err != nil {
 		return errors.Wrap(err, "open kv storage")
 	}
-	sessionOpts := login.SessionOptions{
-		KV:               kvd,
-		Proxy:            opts.Proxy,
-		NTP:              opts.NTP,
-		ReconnectTimeout: opts.ReconnectTimeout,
+	sessionOptionsForKV := func(kvd storage.Storage) login.SessionOptions {
+		return login.SessionOptions{
+			KV:               kvd,
+			Proxy:            opts.Proxy,
+			NTP:              opts.NTP,
+			ReconnectTimeout: opts.ReconnectTimeout,
+		}
 	}
+	sessionOpts := sessionOptionsForKV(kvd)
 	watchCtrl := opts.WatchControl
 	ownsWatch := false
 	if watchCtrl == nil {
 		watchCtrl = watch.NewController(ctx, opts.Watch, notifier.Notify)
 		ownsWatch = true
 	}
-	loginMgr := newLoginManager(ctx, bot, gotdLoginRunner{
-		opts: sessionOpts,
+	loginMgr := newLoginManagerWithFactory(ctx, bot, func(namespace string) (loginRunner, error) {
+		namespace, err := config.NormalizeNamespace(namespace)
+		if err != nil {
+			return nil, err
+		}
+		targetKV, err := kvEngine.Open(namespace)
+		if err != nil {
+			return nil, errors.Wrap(err, "open namespace storage")
+		}
+		return gotdLoginRunner{opts: sessionOptionsForKV(targetKV)}, nil
 	})
 	aria2Factory := func() *watch.Aria2Controller {
 		return watch.NewAria2Controller(config.Get(), kvd, nil)
 	}
-	onLoginSuccess := func(user *tg.User) {
+	var requestReboot func()
+	onLoginSuccess := func(user *tg.User, namespace string) {
+		restart, err := saveBotNamespaceIfChanged(namespace)
+		if err != nil {
+			notifier.Notify(ctx, fmt.Sprintf("登录成功，但保存用户配置失败：%v", err))
+			return
+		}
 		if opts.OnLoginSuccess != nil {
 			opts.OnLoginSuccess(user)
+		}
+		if restart {
+			notifier.Notify(ctx, fmt.Sprintf("登录成功，正在重启以切换到用户 %s。", namespace))
+			if requestReboot != nil {
+				requestReboot()
+			}
+			return
 		}
 		if !opts.DisableAutoStartWatch {
 			notifyWatchAfterLogin(ctx, notifier, watchCtrl)
@@ -190,7 +214,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			cancelPolling()
 		})
 	}
-	requestReboot := func() {
+	requestReboot = func() {
 		rebootRequested.Store(true)
 		if opts.RequestReboot != nil {
 			opts.RequestReboot()
@@ -306,8 +330,8 @@ func versionSummary() string {
 func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: []telego.BotCommand{
-			{Command: "login_code", Description: "验证码登录"},
-			{Command: "login_qr", Description: "扫描二维码登录"},
+			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
+			{Command: "login_qr", Description: "扫描二维码登录（需填写用户名）"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
 			{Command: "aria2_overview", Description: "查看下载任务概况"},
 			{Command: "aria2_pause_all", Description: "暂停全部下载任务"},
@@ -343,7 +367,7 @@ func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl,
 			WatchStarted: watchStarted,
 		}
 	case errors.Is(err, login.ErrSessionUnauthorized):
-		hint := "请使用 /login_code 或 /login_qr 登录；登录成功后会自动重新启动 watch。"
+		hint := "请使用 /login_code 用户名 或 /login_qr 用户名 登录；登录成功后会自动重新启动 watch。"
 		if !autoStart {
 			hint = "请在 Web 管理面板完成登录，并在模块管理中启用监听下载。"
 		}
@@ -353,7 +377,7 @@ func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl,
 			Hint:    hint,
 		}
 	default:
-		hint := "请稍后重试，或使用 /login_code 或 /login_qr 重新登录；登录成功后会自动重新启动 watch。"
+		hint := "请稍后重试，或使用 /login_code 用户名 或 /login_qr 用户名 重新登录；登录成功后会自动重新启动 watch。"
 		if !autoStart {
 			hint = "请稍后重试，或在 Web 管理面板重新登录。"
 		}
@@ -371,6 +395,31 @@ func notifyWatchAfterLogin(ctx context.Context, notifier *botNotifier, watchCtrl
 		return
 	}
 	notifier.Notify(ctx, "登录完成，watch 已在运行。")
+}
+
+func saveBotNamespaceIfChanged(namespace string) (bool, error) {
+	namespace, err := config.NormalizeNamespace(namespace)
+	if err != nil {
+		return false, err
+	}
+
+	cfg := config.Get()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	if cfg.Namespace == namespace {
+		return false, nil
+	}
+
+	next, err := cloneConfig(cfg)
+	if err != nil {
+		return false, err
+	}
+	next.Namespace = namespace
+	if err := config.Set(next); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func handleAllowedMessage(
@@ -414,7 +463,12 @@ func handleAllowedMessage(
 
 	switch commandName(text) {
 	case "/login_code":
-		if err := loginMgr.StartCode(fromID, chatID); err != nil {
+		loginNamespace, err := loginNamespaceFromCommand(text)
+		if err != nil {
+			sendLoginNamespaceUsage(ctx, chatID, "/login_code")
+			return nil
+		}
+		if err := loginMgr.StartCode(fromID, chatID, loginNamespace); err != nil {
 			if errors.Is(err, errLoginBusy) {
 				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 					tu.ID(chatID),
@@ -426,7 +480,12 @@ func handleAllowedMessage(
 		}
 		return nil
 	case "/login_qr":
-		if err := loginMgr.StartQR(fromID, chatID); err != nil {
+		loginNamespace, err := loginNamespaceFromCommand(text)
+		if err != nil {
+			sendLoginNamespaceUsage(ctx, chatID, "/login_qr")
+			return nil
+		}
+		if err := loginMgr.StartQR(fromID, chatID, loginNamespace); err != nil {
 			if errors.Is(err, errLoginBusy) {
 				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 					tu.ID(chatID),
@@ -473,6 +532,22 @@ func commandName(text string) string {
 		return ""
 	}
 	return "/" + cmd
+}
+
+func loginNamespaceFromCommand(text string) (string, error) {
+	_, _, payload := tu.ParseCommandPayload(text)
+	fields := strings.Fields(payload)
+	if len(fields) != 1 {
+		return "", errors.New("login username is required")
+	}
+	return config.NormalizeNamespace(fields[0])
+}
+
+func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
+	_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
+		tu.ID(chatID),
+		fmt.Sprintf("请在命令后填写用户名，例如：%s alice。\n用户名只能使用英文字母，用来区分保存在 .tdl 目录下的登录数据。", command),
+	))
 }
 
 func isPrivateCommand(text string) bool {

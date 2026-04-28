@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/go-faster/errors"
@@ -112,6 +113,32 @@ func DefaultConfig() *Config {
 	}
 }
 
+func NormalizeNamespace(namespace string) (string, error) {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return "", errors.New("namespace is required")
+	}
+	for _, r := range namespace {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			continue
+		}
+		return "", errors.New("namespace can contain English letters only")
+	}
+	return namespace, nil
+}
+
+func Validate(cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config is nil")
+	}
+	namespace, err := NormalizeNamespace(cfg.Namespace)
+	if err != nil {
+		return errors.Wrap(err, "validate namespace")
+	}
+	cfg.Namespace = namespace
+	return nil
+}
+
 var (
 	instance   *Config
 	once       sync.Once
@@ -148,12 +175,19 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, errors.Wrap(err, "unmarshal config")
 	}
+	if err := Validate(cfg); err != nil {
+		return nil, errors.Wrap(err, "validate config")
+	}
 
 	return cfg, nil
 }
 
 // Save 保存配置到文件
 func Save(path string, cfg *Config) error {
+	if err := Validate(cfg); err != nil {
+		return errors.Wrap(err, "validate config")
+	}
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return errors.Wrap(err, "marshal config")

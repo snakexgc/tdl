@@ -19,7 +19,6 @@ const sections = [
     title: "基础",
     fields: [
       ["proxy", "代理地址", "text", "需要代理访问 Telegram 或 GitHub 时填写，例如 http://127.0.0.1:10808。"],
-      ["namespace", "数据空间", "text", "用于区分不同账号的数据；只有多账号场景才需要修改。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
       ["threads", "单文件连接数", "number", "单个文件同时使用的下载连接数，网络一般时保持默认即可。"],
       ["limit", "同时下载数", "number", "tdl 同时处理的下载数量，机器性能一般时保持默认即可。"],
@@ -116,6 +115,7 @@ function bindActions() {
   document.getElementById("reload-aria2").addEventListener("click", () => loadAria2(true));
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
   document.getElementById("refresh-user").addEventListener("click", loadUser);
+  document.getElementById("switch-user").addEventListener("click", switchUser);
   document.getElementById("reload-config").addEventListener("click", loadConfig);
   document.getElementById("refresh-modules").addEventListener("click", loadModules);
   document.getElementById("save-config").addEventListener("click", saveConfig);
@@ -605,9 +605,17 @@ async function loadUser() {
       ["允许用户", (data.allowed_users || []).join(", ") || "-"],
     ];
     target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
+    setNamespaceInputs(data.namespace || "");
   } catch (error) {
     target.innerHTML = infoItem("检查失败", error.message);
   }
+}
+
+function setNamespaceInputs(namespace) {
+  const switchInput = document.getElementById("switch-namespace");
+  const loginInput = document.getElementById("login-namespace");
+  if (switchInput && !switchInput.value) switchInput.value = namespace || "";
+  if (loginInput && !loginInput.value) loginInput.value = namespace || "";
 }
 
 function infoItem(label, value) {
@@ -634,7 +642,9 @@ async function loadLoginStatus() {
 }
 
 async function startQRLogin() {
-  await loginRequest("/api/login/qr/start", {});
+  const namespace = readNamespaceInput("login-namespace", renderLoginError);
+  if (!namespace) return;
+  await loginRequest("/api/login/qr/start", { namespace });
 }
 
 async function startPhoneLogin() {
@@ -643,7 +653,9 @@ async function startPhoneLogin() {
     renderLoginError("请输入手机号。");
     return;
   }
-  await loginRequest("/api/login/phone/start", { phone });
+  const namespace = readNamespaceInput("login-namespace", renderLoginError);
+  if (!namespace) return;
+  await loginRequest("/api/login/phone/start", { phone, namespace });
 }
 
 async function submitLoginCode() {
@@ -721,6 +733,7 @@ function stopLoginPolling() {
 function renderLoginStatus(data) {
   const parts = [];
   if (data.kind) parts.push(`方式：${data.kind === "qr" ? "二维码登录" : "手机号登录"}`);
+  if (data.namespace) parts.push(`用户：${data.namespace}`);
   if (data.phone) parts.push(`手机号：${data.phone}`);
   if (data.status) parts.push(data.status);
   if (data.error) parts.push(`错误：${data.error}`);
@@ -729,6 +742,47 @@ function renderLoginStatus(data) {
   const kind = data.error || data.stage === "failed" ? "error" : data.stage === "done" ? "success" : "";
   setLoginStatus(parts.join("\n") || "当前没有登录流程。", kind);
   renderQRCode(data);
+}
+
+async function switchUser() {
+  const namespace = readNamespaceInput("switch-namespace", setUserStatusError);
+  if (!namespace) return;
+  if (!confirm(`切换到用户 ${namespace} 并重启 tdl？`)) return;
+  try {
+    const data = await api("/api/user/switch", {
+      method: "POST",
+      body: JSON.stringify({ namespace }),
+    });
+    setUserStatus(data.message || "正在切换用户。", "success");
+  } catch (error) {
+    setUserStatus(error.message, "error");
+  }
+}
+
+function readNamespaceInput(id, showError) {
+  const input = document.getElementById(id);
+  const namespace = (input && input.value ? input.value : "").trim();
+  if (!namespace) {
+    showError("请先输入用户名。");
+    if (input) input.focus();
+    return "";
+  }
+  if (!/^[A-Za-z]+$/.test(namespace)) {
+    showError("用户名只能使用英文字母。");
+    if (input) input.focus();
+    return "";
+  }
+  return namespace;
+}
+
+function setUserStatusError(message) {
+  setUserStatus(message, "error");
+}
+
+function setUserStatus(message, kind = "") {
+  const status = document.getElementById("user-status");
+  status.className = `notice ${kind}`.trim();
+  status.textContent = message || "";
 }
 
 function renderLoginError(message) {

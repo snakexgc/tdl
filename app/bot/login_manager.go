@@ -41,6 +41,8 @@ type loginRunner interface {
 	LoginQR(ctx context.Context, show login.QRShowFunc, password login.PasswordFunc) (*tg.User, error)
 }
 
+type loginRunnerFactory func(namespace string) (loginRunner, error)
+
 type gotdLoginRunner struct {
 	opts login.SessionOptions
 }
@@ -54,22 +56,23 @@ func (r gotdLoginRunner) LoginQR(ctx context.Context, show login.QRShowFunc, pas
 }
 
 type loginManager struct {
-	ctx          context.Context
-	bot          botAPI
-	runner       loginRunner
-	inputTimeout time.Duration
-	flowTimeout  time.Duration
+	ctx           context.Context
+	bot           botAPI
+	runnerFactory loginRunnerFactory
+	inputTimeout  time.Duration
+	flowTimeout   time.Duration
 
 	mu     sync.Mutex
 	active *loginFlow
 
-	onSuccess func(user *tg.User)
+	onSuccess func(user *tg.User, namespace string)
 }
 
 type loginFlow struct {
-	kind   string
-	userID int64
-	chatID int64
+	kind      string
+	namespace string
+	userID    int64
+	chatID    int64
 
 	input  chan loginInput
 	cancel context.CancelFunc
@@ -83,33 +86,44 @@ type loginInput struct {
 }
 
 func newLoginManager(ctx context.Context, bot botAPI, runner loginRunner) *loginManager {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return &loginManager{
-		ctx:          ctx,
-		bot:          bot,
-		runner:       runner,
-		inputTimeout: defaultLoginInputTimeout,
-		flowTimeout:  defaultLoginFlowTimeout,
-	}
-}
-
-func (m *loginManager) StartCode(userID, chatID int64) error {
-	return m.start("code", userID, chatID, func(ctx context.Context, flow *loginFlow) (*tg.User, error) {
-		return m.runner.LoginCode(ctx, botCodeAuthenticator{manager: m, flow: flow})
+	return newLoginManagerWithFactory(ctx, bot, func(string) (loginRunner, error) {
+		return runner, nil
 	})
 }
 
-func (m *loginManager) StartQR(userID, chatID int64) error {
-	return m.start("qr", userID, chatID, func(ctx context.Context, flow *loginFlow) (*tg.User, error) {
+func newLoginManagerWithFactory(ctx context.Context, bot botAPI, factory loginRunnerFactory) *loginManager {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if factory == nil {
+		factory = func(string) (loginRunner, error) {
+			return nil, errors.New("login runner factory is not configured")
+		}
+	}
+	return &loginManager{
+		ctx:           ctx,
+		bot:           bot,
+		runnerFactory: factory,
+		inputTimeout:  defaultLoginInputTimeout,
+		flowTimeout:   defaultLoginFlowTimeout,
+	}
+}
+
+func (m *loginManager) StartCode(userID, chatID int64, namespace ...string) error {
+	return m.start("code", firstNamespace(namespace), userID, chatID, func(ctx context.Context, flow *loginFlow, runner loginRunner) (*tg.User, error) {
+		return runner.LoginCode(ctx, botCodeAuthenticator{manager: m, flow: flow})
+	})
+}
+
+func (m *loginManager) StartQR(userID, chatID int64, namespace ...string) error {
+	return m.start("qr", firstNamespace(namespace), userID, chatID, func(ctx context.Context, flow *loginFlow, runner loginRunner) (*tg.User, error) {
 		show := func(ctx context.Context, token qrlogin.Token) error {
 			return m.showQR(ctx, flow, token)
 		}
 		password := func(ctx context.Context) (string, error) {
 			return m.ask(ctx, flow, "password", "请输入 Telegram 2FA 密码：", true)
 		}
-		return m.runner.LoginQR(ctx, show, password)
+		return runner.LoginQR(ctx, show, password)
 	})
 }
 
@@ -158,7 +172,7 @@ func (m *loginManager) Busy() bool {
 	return m.active != nil
 }
 
-func (m *loginManager) SetOnSuccess(fn func(user *tg.User)) {
+func (m *loginManager) SetOnSuccess(fn func(user *tg.User, namespace string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onSuccess = fn
@@ -175,19 +189,29 @@ func (m *loginManager) activeStage() string {
 
 func (m *loginManager) start(
 	kind string,
+	namespace string,
 	userID int64,
 	chatID int64,
-	run func(ctx context.Context, flow *loginFlow) (*tg.User, error),
+	run func(ctx context.Context, flow *loginFlow, runner loginRunner) (*tg.User, error),
 ) error {
+	runner, err := m.runnerFactory(namespace)
+	if err != nil {
+		return err
+	}
+	if runner == nil {
+		return errors.New("login runner is not configured")
+	}
+
 	ctx, cancel := context.WithTimeout(m.ctx, m.flowTimeout)
 	flow := &loginFlow{
-		kind:   kind,
-		userID: userID,
-		chatID: chatID,
-		input:  make(chan loginInput, 8),
-		cancel: cancel,
-		done:   make(chan struct{}),
-		stage:  "starting",
+		kind:      kind,
+		namespace: namespace,
+		userID:    userID,
+		chatID:    chatID,
+		input:     make(chan loginInput, 8),
+		cancel:    cancel,
+		done:      make(chan struct{}),
+		stage:     "starting",
 	}
 
 	m.mu.Lock()
@@ -203,11 +227,15 @@ func (m *loginManager) start(
 		defer cancel()
 		defer m.finish(flow)
 
-		if err := m.sendText(chatID, "登录流程已开始，发送 /cancel_login 可以取消。"); err != nil {
+		startMessage := "登录流程已开始，发送 /cancel_login 可以取消。"
+		if flow.namespace != "" {
+			startMessage = fmt.Sprintf("用户 %s 的登录流程已开始，发送 /cancel_login 可以取消。", flow.namespace)
+		}
+		if err := m.sendText(chatID, startMessage); err != nil {
 			return
 		}
 
-		user, err := run(ctx, flow)
+		user, err := run(ctx, flow, runner)
 		if err != nil {
 			m.notifyFailure(flow, err)
 			return
@@ -223,7 +251,7 @@ func (m *loginManager) start(
 
 		_ = m.sendText(chatID, "登录成功！\n"+login.UserSummary(user))
 		if onSuccess := m.successHandler(); onSuccess != nil {
-			onSuccess(user)
+			onSuccess(user, flow.namespace)
 		}
 	}()
 
@@ -248,7 +276,7 @@ func (m *loginManager) setStage(flow *loginFlow, stage string) {
 	}
 }
 
-func (m *loginManager) successHandler() func(user *tg.User) {
+func (m *loginManager) successHandler() func(user *tg.User, namespace string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.onSuccess
@@ -309,9 +337,9 @@ func (m *loginManager) notifyFailure(flow *loginFlow, err error) {
 	case stderrors.Is(err, context.Canceled):
 		_ = m.sendText(flow.chatID, "登录已取消。")
 	case stderrors.Is(err, context.DeadlineExceeded), stderrors.Is(err, errLoginInputTimeout):
-		_ = m.sendText(flow.chatID, "登录已超时，请重新发送 /login_code 或 /login_qr。")
+		_ = m.sendText(flow.chatID, "登录已超时，请重新发送 /login_code 用户名 或 /login_qr 用户名。")
 	case stderrors.Is(err, errLoginInvalidUser):
-		_ = m.sendText(flow.chatID, "登录失败：未获取到有效账号，请重新发送 /login_code 或 /login_qr。")
+		_ = m.sendText(flow.chatID, "登录失败：未获取到有效账号，请重新发送 /login_code 用户名 或 /login_qr 用户名。")
 	default:
 		_ = m.sendText(flow.chatID, fmt.Sprintf("登录失败：%v", err))
 	}
@@ -338,6 +366,13 @@ func (f *loginFlow) matches(userID, chatID int64) bool {
 
 func validLoginUser(user *tg.User) bool {
 	return user != nil && user.ID != 0
+}
+
+func firstNamespace(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
 }
 
 func stopTimer(timer *time.Timer) {

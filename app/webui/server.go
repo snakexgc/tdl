@@ -122,6 +122,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/kv/links/actions", s.authFunc(s.handleKVActions))
 	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))
 	mux.HandleFunc("/api/user", s.authFunc(s.handleUser))
+	mux.HandleFunc("/api/user/switch", s.authFunc(s.handleUserSwitch))
 	mux.HandleFunc("/api/login/status", s.authFunc(s.handleLoginStatus))
 	mux.HandleFunc("/api/login/qr/start", s.authFunc(s.handleLoginQRStart))
 	mux.HandleFunc("/api/login/phone/start", s.authFunc(s.handleLoginPhoneStart))
@@ -588,7 +589,54 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 		_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, data)
 	}
 
+	ttl := downloadLinkTTL(config.Get().HTTP)
+	if ttl > 0 && len(downloadIndex) > 0 {
+		dlChanged := false
+		for taskID, createdAt := range downloadIndex {
+			if !createdAt.Add(ttl).Before(now) {
+				continue
+			}
+			_ = s.opts.NamespaceKV.Delete(ctx, downloadTaskKeyPrefix+taskID)
+			delete(downloadIndex, taskID)
+			dlChanged = true
+		}
+		if dlChanged {
+			if idxData, err := json.Marshal(downloadIndex); err == nil {
+				_ = s.opts.NamespaceKV.Set(ctx, downloadTaskIndexKey, idxData)
+			}
+		}
+	}
+
+	arIndexChanged := false
+	for gid, createdAt := range aria2Index {
+		if ttl > 0 && createdAt.Add(ttl).Before(now) {
+			_ = s.opts.NamespaceKV.Delete(ctx, aria2TaskKeyPrefix+gid)
+			delete(aria2Index, gid)
+			arIndexChanged = true
+			continue
+		}
+		if record, ok := records[aria2TaskKeyPrefix+gid]; ok && record.TaskID != "" {
+			if _, exists := downloadIndex[record.TaskID]; !exists {
+				_ = s.opts.NamespaceKV.Delete(ctx, aria2TaskKeyPrefix+gid)
+				delete(aria2Index, gid)
+				arIndexChanged = true
+			}
+		}
+	}
+	if arIndexChanged {
+		if idxData, err := json.Marshal(aria2Index); err == nil {
+			_ = s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, idxData)
+		}
+	}
+
 	return nil
+}
+
+func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
+	if cfg.DownloadLinkTTLHours <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.DownloadLinkTTLHours) * time.Hour
 }
 
 func (s *Server) loadAria2Records() (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {
@@ -840,6 +888,62 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	if s.opts.RequestReboot == nil {
+		writeError(w, http.StatusBadRequest, errors.New("reboot is not available in this mode"))
+		return
+	}
+	var req struct {
+		Namespace string `json:"namespace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	namespace, err := config.NormalizeNamespace(req.Namespace)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	cfg := config.Get()
+	if cfg != nil && cfg.Namespace == namespace {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":        true,
+			"namespace": namespace,
+			"message":   "当前已经是该用户。",
+		})
+		return
+	}
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	next, err := cloneConfig(cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	next.Namespace = namespace
+	if err := config.Set(next); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"namespace": namespace,
+		"message":   "用户已切换，正在重启以加载该用户的数据。",
+	})
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		s.opts.RequestReboot()
+	}()
+}
+
 func telegramUserInfo(user *tg.User) map[string]any {
 	if user == nil {
 		return map[string]any{}
@@ -870,7 +974,14 @@ func (s *Server) handleLoginQRStart(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "POST")
 		return
 	}
-	if err := s.login.startQR(r.Context()); err != nil {
+	var req struct {
+		Namespace string `json:"namespace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	if err := s.login.startQR(r.Context(), req.Namespace); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -883,13 +994,14 @@ func (s *Server) handleLoginPhoneStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Phone string `json:"phone"`
+		Phone     string `json:"phone"`
+		Namespace string `json:"namespace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	if err := s.login.startPhone(r.Context(), req.Phone); err != nil {
+	if err := s.login.startPhone(r.Context(), req.Phone, req.Namespace); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -961,6 +1073,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for path, raw := range req.Values {
+			if strings.EqualFold(strings.TrimSpace(path), "namespace") {
+				writeError(w, http.StatusBadRequest, errors.New("namespace must be changed from user management"))
+				return
+			}
 			if isBlankSensitivePatch(path, raw) {
 				continue
 			}

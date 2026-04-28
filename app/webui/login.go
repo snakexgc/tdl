@@ -14,10 +14,16 @@ import (
 	"github.com/skip2/go-qrcode"
 
 	"github.com/iyear/tdl/app/login"
+	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
 )
 
-const webLoginTimeout = 10 * time.Minute
+const (
+	webLoginTimeout = 10 * time.Minute
+
+	loginStageDone   = "done"
+	loginStageFailed = "failed"
+)
 
 type webLoginManager struct {
 	opts Options
@@ -27,15 +33,16 @@ type webLoginManager struct {
 }
 
 type webLoginFlow struct {
-	mu      sync.Mutex
-	kind    string
-	stage   string
-	status  string
-	errText string
-	phone   string
-	qrURL   string
-	qrImage string
-	user    map[string]any
+	mu        sync.Mutex
+	kind      string
+	stage     string
+	status    string
+	errText   string
+	phone     string
+	namespace string
+	qrURL     string
+	qrImage   string
+	user      map[string]any
 
 	codeCh     chan string
 	passwordCh chan string
@@ -44,40 +51,49 @@ type webLoginFlow struct {
 }
 
 type webLoginStatus struct {
-	Active  bool           `json:"active"`
-	Kind    string         `json:"kind,omitempty"`
-	Stage   string         `json:"stage,omitempty"`
-	Status  string         `json:"status,omitempty"`
-	Error   string         `json:"error,omitempty"`
-	Phone   string         `json:"phone,omitempty"`
-	QRURL   string         `json:"qr_url,omitempty"`
-	QRImage string         `json:"qr_image,omitempty"`
-	User    map[string]any `json:"user,omitempty"`
+	Active    bool           `json:"active"`
+	Kind      string         `json:"kind,omitempty"`
+	Stage     string         `json:"stage,omitempty"`
+	Status    string         `json:"status,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Phone     string         `json:"phone,omitempty"`
+	Namespace string         `json:"namespace,omitempty"`
+	QRURL     string         `json:"qr_url,omitempty"`
+	QRImage   string         `json:"qr_image,omitempty"`
+	User      map[string]any `json:"user,omitempty"`
 }
 
 func newWebLoginManager(opts Options) *webLoginManager {
 	return &webLoginManager{opts: opts}
 }
 
-func (m *webLoginManager) startPhone(parent context.Context, phone string) error {
+func (m *webLoginManager) startPhone(parent context.Context, phone, namespace string) error {
 	phone = normalizePhone(phone)
 	if phone == "" {
 		return errors.New("phone is required")
 	}
-	return m.start(parent, "phone", func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
+	namespace, kvd, err := m.openNamespaceKV(namespace)
+	if err != nil {
+		return err
+	}
+	return m.start(parent, "phone", namespace, func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
 		flow.set("code", "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
 		authenticator := webCodeAuthenticator{
 			flow:  flow,
 			phone: phone,
 		}
-		return login.CodeWithAuthenticator(ctx, m.sessionOptions(), authenticator)
+		return login.CodeWithAuthenticator(ctx, m.sessionOptions(kvd), authenticator)
 	}, func(flow *webLoginFlow) {
 		flow.phone = phone
 	})
 }
 
-func (m *webLoginManager) startQR(parent context.Context) error {
-	return m.start(parent, "qr", func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
+func (m *webLoginManager) startQR(parent context.Context, namespace string) error {
+	namespace, kvd, err := m.openNamespaceKV(namespace)
+	if err != nil {
+		return err
+	}
+	return m.start(parent, "qr", namespace, func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
 		show := func(ctx context.Context, token qrlogin.Token) error {
 			png, err := qrcode.Encode(token.URL(), qrcode.Medium, 512)
 			if err != nil {
@@ -95,13 +111,14 @@ func (m *webLoginManager) startQR(parent context.Context) error {
 			flow.set("password", "请输入 Telegram 2FA 密码。")
 			return flow.waitPassword(ctx)
 		}
-		return login.QRWithCallbacks(ctx, m.sessionOptions(), show, password)
+		return login.QRWithCallbacks(ctx, m.sessionOptions(kvd), show, password)
 	}, nil)
 }
 
 func (m *webLoginManager) start(
 	parent context.Context,
 	kind string,
+	namespace string,
 	run func(context.Context, *webLoginFlow) (*tg.User, error),
 	init func(*webLoginFlow),
 ) error {
@@ -121,6 +138,7 @@ func (m *webLoginManager) start(
 		kind:       kind,
 		stage:      "starting",
 		status:     "登录流程已开始。",
+		namespace:  namespace,
 		codeCh:     make(chan string, 1),
 		passwordCh: make(chan string, 1),
 		done:       make(chan struct{}),
@@ -145,17 +163,36 @@ func (m *webLoginManager) start(
 		user, err := run(ctx, flow)
 		if err != nil {
 			flow.muSet(func() {
-				flow.stage = "failed"
+				flow.stage = loginStageFailed
 				flow.status = "登录失败。"
 				flow.errText = err.Error()
 			})
 			return
 		}
+		restart, err := m.saveNamespaceIfChanged(flow.namespace)
+		if err != nil {
+			flow.muSet(func() {
+				flow.stage = loginStageFailed
+				flow.status = "登录已完成，但保存用户配置失败。"
+				flow.errText = err.Error()
+			})
+			return
+		}
 		flow.muSet(func() {
-			flow.stage = "done"
+			flow.stage = loginStageDone
 			flow.status = "登录成功。"
+			if restart {
+				flow.status = "登录成功，正在重启以切换到该用户。"
+			}
 			flow.user = telegramUserInfo(user)
 		})
+		if restart && m.opts.RequestReboot != nil {
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				m.opts.RequestReboot()
+			}()
+			return
+		}
 		if m.opts.OnLoginSuccess != nil {
 			m.opts.OnLoginSuccess(user)
 		}
@@ -163,13 +200,61 @@ func (m *webLoginManager) start(
 	return nil
 }
 
-func (m *webLoginManager) sessionOptions() login.SessionOptions {
+func (m *webLoginManager) openNamespaceKV(raw string) (string, storage.Storage, error) {
+	namespace, err := config.NormalizeNamespace(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	if m.opts.KVEngine != nil {
+		kvd, err := m.opts.KVEngine.Open(namespace)
+		if err != nil {
+			return "", nil, errors.Wrap(err, "open namespace storage")
+		}
+		return namespace, kvd, nil
+	}
+	if namespace == m.currentNamespace() && m.opts.NamespaceKV != nil {
+		return namespace, m.opts.NamespaceKV, nil
+	}
+	return "", nil, errors.New("namespace storage is not configured")
+}
+
+func (m *webLoginManager) saveNamespaceIfChanged(namespace string) (bool, error) {
+	cfg := config.Get()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	if cfg.Namespace == namespace {
+		return false, nil
+	}
+	next, err := cloneConfig(cfg)
+	if err != nil {
+		return false, err
+	}
+	next.Namespace = namespace
+	if err := config.Set(next); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *webLoginManager) currentNamespace() string {
+	if m.opts.Namespace != "" {
+		return m.opts.Namespace
+	}
+	cfg := config.Get()
+	if cfg != nil {
+		return cfg.Namespace
+	}
+	return ""
+}
+
+func (m *webLoginManager) sessionOptions(kvd storage.Storage) login.SessionOptions {
 	cfg := config.Get()
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
 	return login.SessionOptions{
-		KV:               m.opts.NamespaceKV,
+		KV:               kvd,
 		Proxy:            cfg.Proxy,
 		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
@@ -187,15 +272,16 @@ func (m *webLoginManager) status() webLoginStatus {
 	flow.mu.Lock()
 	defer flow.mu.Unlock()
 	return webLoginStatus{
-		Active:  !flow.isTerminalLocked(),
-		Kind:    flow.kind,
-		Stage:   flow.stage,
-		Status:  flow.status,
-		Error:   flow.errText,
-		Phone:   flow.phone,
-		QRURL:   flow.qrURL,
-		QRImage: flow.qrImage,
-		User:    flow.user,
+		Active:    !flow.isTerminalLocked(),
+		Kind:      flow.kind,
+		Stage:     flow.stage,
+		Status:    flow.status,
+		Error:     flow.errText,
+		Phone:     flow.phone,
+		Namespace: flow.namespace,
+		QRURL:     flow.qrURL,
+		QRImage:   flow.qrImage,
+		User:      flow.user,
 	}
 }
 
@@ -332,7 +418,7 @@ func (f *webLoginFlow) finished() bool {
 }
 
 func (f *webLoginFlow) isTerminalLocked() bool {
-	return f.stage == "done" || f.stage == "failed"
+	return f.stage == loginStageDone || f.stage == loginStageFailed
 }
 
 func normalizePhone(phone string) string {

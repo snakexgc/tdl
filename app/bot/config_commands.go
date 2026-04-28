@@ -19,7 +19,6 @@ const maskedStr = "(hidden)"
 
 var configurablePaths = []string{
 	"proxy",
-	"namespace",
 	"debug",
 	"threads",
 	"limit",
@@ -88,6 +87,9 @@ func handleConfigSet(ctx *th.Context, chatID int64, payload string, afterSave fu
 	}
 	if isProtectedConfigPath(path) {
 		return sendMessage(ctx, chatID, "bot.token 不能通过机器人修改，请继续在 config.json 中维护。")
+	}
+	if strings.EqualFold(strings.TrimSpace(path), "namespace") {
+		return sendMessage(ctx, chatID, "namespace 请在 Web 管理面板的用户管理中切换；切换后程序会自动重启并加载对应用户。")
 	}
 
 	next, err := cloneConfig(config.Get())

@@ -46,3 +46,23 @@ func TestLoadHTTPBufferConfig(t *testing.T) {
 	require.Equal(t, "off", cfg.HTTP.Buffer.Mode)
 	require.Equal(t, 32, cfg.HTTP.Buffer.SizeMB)
 }
+
+func TestLoadRejectsInvalidNamespace(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"namespace":"user1"}`), 0o644))
+
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "English letters only")
+}
+
+func TestNormalizeNamespaceAllowsEnglishLetters(t *testing.T) {
+	t.Parallel()
+
+	ns, err := NormalizeNamespace(" Alice ")
+	require.NoError(t, err)
+	require.Equal(t, "Alice", ns)
+}

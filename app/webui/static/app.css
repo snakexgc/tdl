@@ -442,6 +442,35 @@ tr:last-child td {
   margin-bottom: 14px;
 }
 
+.login-namespace,
+.user-switch {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px) auto;
+  align-items: end;
+  gap: 14px;
+  margin: 0 0 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.user-switch {
+  margin-top: 14px;
+}
+
+.login-namespace h2,
+.user-switch h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.login-namespace p,
+.user-switch p {
+  margin-top: 6px;
+}
+
 .login-card {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -675,6 +704,8 @@ tr:last-child td {
   }
 
   .field,
+  .login-namespace,
+  .user-switch,
   .module-main,
   .module-foot {
     grid-template-columns: 1fr;

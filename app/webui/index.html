@@ -101,9 +101,31 @@
         <div class="section-actions">
           <button class="btn secondary" id="refresh-user">重新检查</button>
         </div>
+        <div class="notice" id="user-status"></div>
         <div class="info-grid" id="user-info"></div>
+        <section class="user-switch">
+          <div>
+            <h2>切换用户</h2>
+            <p>输入英文字母组成的用户名，tdl 会切换到对应的数据空间并自动重启。</p>
+          </div>
+          <label class="field-inline user-switch-field">
+            <span>用户名</span>
+            <input id="switch-namespace" type="text" pattern="[A-Za-z]+" placeholder="alice" autocomplete="off">
+          </label>
+          <button class="btn primary" id="switch-user">切换并重启</button>
+        </section>
       </div>
       <div class="user-tab" id="user-tab-login">
+        <section class="login-namespace">
+          <div>
+            <h2>登录用户</h2>
+            <p>登录前请先填写用户名。用户名会作为本地数据空间，只允许英文字母。</p>
+          </div>
+          <label class="field-inline login-namespace-field">
+            <span>用户名</span>
+            <input id="login-namespace" type="text" pattern="[A-Za-z]+" placeholder="alice" autocomplete="off">
+          </label>
+        </section>
         <div class="login-grid">
           <section class="login-card">
             <h2>二维码登录</h2>

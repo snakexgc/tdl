@@ -44,3 +44,7 @@ func TestConfigStoragePathIsNotConfigurable(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "未知配置项")
 }
+
+func TestConfigurablePathsDoNotExposeNamespace(t *testing.T) {
+	require.NotContains(t, configurablePaths, "namespace")
+}
