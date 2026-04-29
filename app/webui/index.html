@@ -98,22 +98,27 @@
         <button class="tab-button" data-user-tab="login">用户登录</button>
       </div>
       <div class="user-tab active" id="user-tab-current">
+        <section class="user-switch">
+          <label class="field-inline user-switch-field">
+            <span>选择用户</span>
+            <select id="switch-namespace">
+              <option value="">正在读取已登录用户...</option>
+            </select>
+          </label>
+          <div class="user-switch-copy">
+            <h2>切换或删除用户</h2>
+            <p>选择已登录用户，可切换并重启，也可以删除不再需要的登录数据。</p>
+          </div>
+          <div class="user-switch-actions">
+            <button class="btn primary" id="switch-user">切换并重启</button>
+            <button class="btn danger" id="delete-user">删除用户</button>
+          </div>
+        </section>
         <div class="section-actions">
           <button class="btn secondary" id="refresh-user">重新检查</button>
         </div>
         <div class="notice" id="user-status"></div>
         <div class="info-grid" id="user-info"></div>
-        <section class="user-switch">
-          <div>
-            <h2>切换用户</h2>
-            <p>输入英文字母组成的用户名，tdl 会切换到对应的数据空间并自动重启。</p>
-          </div>
-          <label class="field-inline user-switch-field">
-            <span>用户名</span>
-            <input id="switch-namespace" type="text" pattern="[A-Za-z]+" placeholder="alice" autocomplete="off">
-          </label>
-          <button class="btn primary" id="switch-user">切换并重启</button>
-        </section>
       </div>
       <div class="user-tab" id="user-tab-login">
         <section class="login-namespace">

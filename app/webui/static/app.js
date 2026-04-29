@@ -7,6 +7,8 @@ const state = {
   loginPoll: null,
   update: null,
   modules: [],
+  userSessions: [],
+  currentNamespace: "",
 };
 
 const collator = new Intl.Collator("zh-Hans-CN", {
@@ -114,6 +116,8 @@ function bindActions() {
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
   document.getElementById("refresh-user").addEventListener("click", loadUser);
   document.getElementById("switch-user").addEventListener("click", switchUser);
+  document.getElementById("delete-user").addEventListener("click", deleteUser);
+  document.getElementById("switch-namespace").addEventListener("change", () => updateUserActionButtons());
   document.getElementById("reload-config").addEventListener("click", loadConfig);
   document.getElementById("refresh-modules").addEventListener("click", loadModules);
   document.getElementById("save-config").addEventListener("click", saveConfig);
@@ -603,6 +607,9 @@ async function loadUser() {
       ["允许用户", (data.allowed_users || []).join(", ") || "-"],
     ];
     target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
+    state.userSessions = data.sessions || [];
+    state.currentNamespace = data.namespace || "";
+    renderUserSwitch(data.namespace || "", state.userSessions, data.sessions_error || "");
     setNamespaceInputs(data.namespace || "");
   } catch (error) {
     target.innerHTML = infoItem("检查失败", error.message);
@@ -610,10 +617,48 @@ async function loadUser() {
 }
 
 function setNamespaceInputs(namespace) {
-  const switchInput = document.getElementById("switch-namespace");
   const loginInput = document.getElementById("login-namespace");
-  if (switchInput && !switchInput.value) switchInput.value = namespace || "";
   if (loginInput && !loginInput.value) loginInput.value = namespace || "";
+}
+
+function renderUserSwitch(currentNamespace, sessions, error = "") {
+  const select = document.getElementById("switch-namespace");
+  const button = document.getElementById("switch-user");
+  const deleteButton = document.getElementById("delete-user");
+  if (!select || !button || !deleteButton) return;
+
+  const usable = Array.isArray(sessions) ? sessions.filter((item) => item && item.namespace) : [];
+  if (!usable.length) {
+    select.innerHTML = `<option value="">${escapeHTML(error || "未发现已登录用户")}</option>`;
+    select.disabled = true;
+    button.disabled = true;
+    deleteButton.disabled = true;
+    deleteButton.title = "";
+    return;
+  }
+
+  select.disabled = false;
+  select.innerHTML = usable.map((item) => {
+    const label = item.current || item.namespace === currentNamespace ? `${item.namespace}（当前）` : item.namespace;
+    return `<option value="${escapeAttr(item.namespace)}">${escapeHTML(label)}</option>`;
+  }).join("");
+  if (usable.some((item) => item.namespace === currentNamespace)) {
+    select.value = currentNamespace;
+  }
+  updateUserActionButtons(currentNamespace);
+}
+
+function updateUserActionButtons(currentNamespace = state.currentNamespace) {
+  const select = document.getElementById("switch-namespace");
+  const switchButton = document.getElementById("switch-user");
+  const deleteButton = document.getElementById("delete-user");
+  if (!select || !switchButton || !deleteButton) return;
+
+  const namespace = (select.value || "").trim();
+  const hasNamespace = Boolean(namespace);
+  switchButton.disabled = !hasNamespace;
+  deleteButton.disabled = !hasNamespace || namespace === currentNamespace;
+  deleteButton.title = namespace === currentNamespace ? "请先切换到其他用户后再删除当前用户" : "";
 }
 
 function infoItem(label, value) {
@@ -743,7 +788,7 @@ function renderLoginStatus(data) {
 }
 
 async function switchUser() {
-  const namespace = readNamespaceInput("switch-namespace", setUserStatusError);
+  const namespace = readSelectedNamespace();
   if (!namespace) return;
   if (!confirm(`切换到用户 ${namespace} 并重启 tdl？`)) return;
   try {
@@ -755,6 +800,42 @@ async function switchUser() {
   } catch (error) {
     setUserStatus(error.message, "error");
   }
+}
+
+async function deleteUser() {
+  const namespace = readSelectedNamespace();
+  if (!namespace) return;
+  if (namespace === state.currentNamespace) {
+    setUserStatusError("当前用户正在运行中，请先切换到其他用户后再删除。");
+    return;
+  }
+  if (!confirm(`删除用户 ${namespace} 的登录数据？该用户将不再出现在切换列表中。`)) return;
+  try {
+    const data = await api("/api/user/delete", {
+      method: "POST",
+      body: JSON.stringify({ namespace }),
+    });
+    setUserStatus(data.message || "用户登录数据已删除。", "success");
+    await loadUser();
+  } catch (error) {
+    setUserStatus(error.message, "error");
+  }
+}
+
+function readSelectedNamespace() {
+  const select = document.getElementById("switch-namespace");
+  const namespace = (select && select.value ? select.value : "").trim();
+  if (!namespace) {
+    setUserStatusError("请选择一个已登录用户。");
+    if (select) select.focus();
+    return "";
+  }
+  if (!/^[A-Za-z]+$/.test(namespace)) {
+    setUserStatusError("用户数据文件名无效，无法操作。");
+    if (select) select.focus();
+    return "";
+  }
+  return namespace;
 }
 
 function readNamespaceInput(id, showError) {

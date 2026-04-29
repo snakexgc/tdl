@@ -442,8 +442,7 @@ tr:last-child td {
   margin-bottom: 14px;
 }
 
-.login-namespace,
-.user-switch {
+.login-namespace {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px) auto;
   align-items: end;
@@ -456,7 +455,36 @@ tr:last-child td {
 }
 
 .user-switch {
-  margin-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  margin: 0 0 14px;
+  background: #f8fbfc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.user-switch-copy {
+  min-width: 0;
+}
+
+.user-switch-field {
+  margin-bottom: 0;
+}
+
+.user-switch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-switch-actions .btn {
+  min-height: 38px;
+  white-space: nowrap;
 }
 
 .login-namespace h2,
@@ -500,7 +528,8 @@ tr:last-child td {
   font-size: 12px;
 }
 
-.field-inline input {
+.field-inline input,
+.field-inline select {
   width: 100%;
   min-height: 36px;
   border: 1px solid #cbd6d9;
@@ -711,6 +740,14 @@ tr:last-child td {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .user-switch-actions {
+    justify-content: flex-start;
+  }
+
+  .user-switch-actions .btn {
+    flex: 1;
   }
 
   .tabs {

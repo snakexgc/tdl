@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -153,6 +154,81 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 	var task persistentDownloadTask
 	require.NoError(t, json.Unmarshal(data, &task))
 	require.True(t, task.Downloaded)
+}
+
+func TestListUserSessionsOnlyReturnsNamespacesWithSession(t *testing.T) {
+	initWebUITestConfig(t)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		"Alice": {
+			"session": []byte("alice-session"),
+		},
+		"Bob": {
+			"session": []byte("bob-session"),
+		},
+		"Cache": {
+			"watch.download.document_1": []byte("{}"),
+		},
+		"Bob1": {
+			"session": []byte("invalid-name-session"),
+		},
+		"Empty": {
+			"session": []byte{},
+		},
+	}}
+	server := NewServer(Options{KVEngine: engine, Namespace: "Bob"})
+
+	sessions, err := server.listUserSessions(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []userSessionOption{
+		{Namespace: "Bob", Current: true},
+		{Namespace: "Alice"},
+	}, sessions)
+}
+
+func TestDeleteUserSessionRemovesLoginKeysOnly(t *testing.T) {
+	initWebUITestConfig(t)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		"Alice": {
+			userSessionKey:                   []byte("alice-session"),
+			userAppKey:                       []byte("desktop"),
+			downloadTaskKeyPrefix + "item_1": []byte("{}"),
+		},
+		"Bob": {
+			userSessionKey: []byte("bob-session"),
+		},
+	}}
+	server := NewServer(Options{KVEngine: engine, Namespace: "Bob"})
+
+	deleted, err := server.deleteUserSession(context.Background(), "Alice")
+	require.NoError(t, err)
+	require.Equal(t, 2, deleted)
+	require.NotContains(t, engine.meta["Alice"], userSessionKey)
+	require.NotContains(t, engine.meta["Alice"], userAppKey)
+	require.Contains(t, engine.meta["Alice"], downloadTaskKeyPrefix+"item_1")
+
+	sessions, err := server.listUserSessions(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []userSessionOption{{Namespace: "Bob", Current: true}}, sessions)
+}
+
+func TestHandleUserDeleteRejectsCurrentUser(t *testing.T) {
+	initWebUITestConfig(t)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		"Bob": {
+			userSessionKey: []byte("bob-session"),
+		},
+	}}
+	server := NewServer(Options{KVEngine: engine, Namespace: "Bob"})
+	req := httptest.NewRequest(http.MethodPost, "/api/user/delete", strings.NewReader(`{"namespace":"Bob"}`))
+	rec := httptest.NewRecorder()
+
+	server.handleUserDelete(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, engine.meta["Bob"], userSessionKey)
 }
 
 func TestDeleteDownloadLinkRefusesDownloadIndexKey(t *testing.T) {

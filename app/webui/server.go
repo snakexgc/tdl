@@ -39,6 +39,9 @@ const (
 	aria2TaskIndexKey     = "watch.aria2.index"
 
 	aria2StatusComplete = "complete"
+
+	userSessionKey = "session"
+	userAppKey     = "app"
 )
 
 type Options struct {
@@ -124,6 +127,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))
 	mux.HandleFunc("/api/user", s.authFunc(s.handleUser))
 	mux.HandleFunc("/api/user/switch", s.authFunc(s.handleUserSwitch))
+	mux.HandleFunc("/api/user/delete", s.authFunc(s.handleUserDelete))
 	mux.HandleFunc("/api/login/status", s.authFunc(s.handleLoginStatus))
 	mux.HandleFunc("/api/login/qr/start", s.authFunc(s.handleLoginQRStart))
 	mux.HandleFunc("/api/login/phone/start", s.authFunc(s.handleLoginPhoneStart))
@@ -1055,10 +1059,15 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := config.Get()
+	sessions, sessionsErr := s.listUserSessions(r.Context())
 	resp := map[string]any{
 		"namespace":     s.namespace(),
 		"watch_running": s.watchRunning(),
 		"allowed_users": cfg.Bot.AllowedUsers,
+		"sessions":      sessions,
+	}
+	if sessionsErr != nil {
+		resp["sessions_error"] = sessionsErr.Error()
 	}
 	if s.opts.NamespaceKV == nil {
 		resp["valid"] = false
@@ -1119,6 +1128,15 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	exists, err := s.userSessionExists(r.Context(), namespace)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusBadRequest, errors.New("请选择已有登录用户，未登录的用户请先在用户登录页面完成登录。"))
+		return
+	}
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -1142,6 +1160,147 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		s.opts.RequestReboot()
 	}()
+}
+
+type userSessionOption struct {
+	Namespace string `json:"namespace"`
+	Current   bool   `json:"current"`
+}
+
+func (s *Server) listUserSessions(ctx context.Context) ([]userSessionOption, error) {
+	if s.opts.KVEngine == nil {
+		return nil, errors.New("kv engine is not configured")
+	}
+	namespaces, err := s.opts.KVEngine.Namespaces()
+	if err != nil {
+		return nil, errors.Wrap(err, "list user session files")
+	}
+	sort.Strings(namespaces)
+
+	current := s.namespace()
+	sessions := make([]userSessionOption, 0, len(namespaces))
+	seen := map[string]struct{}{}
+	for _, namespace := range namespaces {
+		normalized, err := config.NormalizeNamespace(namespace)
+		if err != nil || normalized != namespace {
+			continue
+		}
+		if _, ok := seen[namespace]; ok {
+			continue
+		}
+		kvd, err := s.opts.KVEngine.Open(namespace)
+		if err != nil {
+			continue
+		}
+		session, err := kvd.Get(ctx, userSessionKey)
+		if err != nil || len(session) == 0 {
+			continue
+		}
+		seen[namespace] = struct{}{}
+		sessions = append(sessions, userSessionOption{
+			Namespace: namespace,
+			Current:   namespace == current,
+		})
+	}
+
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].Current != sessions[j].Current {
+			return sessions[i].Current
+		}
+		return sessions[i].Namespace < sessions[j].Namespace
+	})
+	return sessions, nil
+}
+
+func (s *Server) userSessionExists(ctx context.Context, namespace string) (bool, error) {
+	sessions, err := s.listUserSessions(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, session := range sessions {
+		if session.Namespace == namespace {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Namespace string `json:"namespace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	namespace, err := config.NormalizeNamespace(req.Namespace)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if namespace == s.namespace() {
+		writeError(w, http.StatusBadRequest, errors.New("当前用户正在运行中，请先切换到其他用户后再删除。"))
+		return
+	}
+
+	deleted, err := s.deleteUserSession(r.Context(), namespace)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"namespace": namespace,
+		"deleted":   deleted,
+		"message":   "用户登录数据已删除。",
+	})
+}
+
+func (s *Server) deleteUserSession(ctx context.Context, namespace string) (int, error) {
+	if s.opts.KVEngine == nil {
+		return 0, errors.New("kv engine is not configured")
+	}
+	exists, err := s.userSessionExists(ctx, namespace)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, errors.New("请选择已有登录用户。")
+	}
+
+	kvd, err := s.opts.KVEngine.Open(namespace)
+	if err != nil {
+		return 0, errors.Wrap(err, "open user storage")
+	}
+
+	deleted := 0
+	for _, key := range []string{userSessionKey, userAppKey} {
+		ok, err := deleteUserKey(ctx, kvd, key)
+		if err != nil {
+			return deleted, err
+		}
+		if ok {
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+func deleteUserKey(ctx context.Context, kvd storage.Storage, key string) (bool, error) {
+	if _, err := kvd.Get(ctx, key); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
+		}
+		return false, errors.Wrapf(err, "check user key %s", key)
+	}
+	if err := kvd.Delete(ctx, key); err != nil {
+		return false, errors.Wrapf(err, "delete user key %s", key)
+	}
+	return true, nil
 }
 
 func telegramUserInfo(user *tg.User) map[string]any {
