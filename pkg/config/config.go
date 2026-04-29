@@ -10,6 +10,8 @@ import (
 	"github.com/go-faster/errors"
 )
 
+const DefaultPoolSize = 8
+
 // BotConfig Bot 配置
 type BotConfig struct {
 	Token        string  `json:"token"`
@@ -51,8 +53,6 @@ type Config struct {
 	Proxy            string        `json:"proxy"`
 	Namespace        string        `json:"namespace"`
 	Debug            bool          `json:"debug"`
-	Threads          int           `json:"threads"`
-	Limit            int           `json:"limit"`
 	PoolSize         int           `json:"pool_size"`
 	Delay            int           `json:"delay"`
 	NTP              string        `json:"ntp"`
@@ -73,9 +73,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Namespace:        "default",
 		Debug:            false,
-		Threads:          4,
-		Limit:            2,
-		PoolSize:         8,
+		PoolSize:         DefaultPoolSize,
 		Delay:            0,
 		ReconnectTimeout: 10,
 		DownloadDir:      "downloads",
@@ -127,6 +125,13 @@ func NormalizeNamespace(namespace string) (string, error) {
 	return namespace, nil
 }
 
+func EffectivePoolSize(cfg *Config) int {
+	if cfg == nil || cfg.PoolSize < 1 {
+		return DefaultPoolSize
+	}
+	return cfg.PoolSize
+}
+
 func Validate(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config is nil")
@@ -136,6 +141,7 @@ func Validate(cfg *Config) error {
 		return errors.Wrap(err, "validate namespace")
 	}
 	cfg.Namespace = namespace
+	cfg.PoolSize = EffectivePoolSize(cfg)
 	return nil
 }
 

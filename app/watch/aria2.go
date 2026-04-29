@@ -18,9 +18,8 @@ import (
 const aria2BoolTrue = "true"
 
 type aria2AddURIOptions struct {
-	Dir         string
-	Out         string
-	Connections int
+	Dir string
+	Out string
 }
 
 type aria2Client struct {
@@ -161,13 +160,12 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	if opts.Out != "" {
 		options["out"] = opts.Out
 	}
-	connections := normalizeAria2Connections(opts.Connections)
-	options["split"] = strconv.Itoa(connections)
-	options["max-connection-per-server"] = strconv.Itoa(connections)
+	// tdl streams Telegram chunks concurrently itself. Letting aria2 split the
+	// same tdl URL into multiple HTTP ranges adds failure surface without adding
+	// Telegram-side concurrency.
+	options["split"] = "1"
+	options["max-connection-per-server"] = "1"
 	options["continue"] = aria2BoolTrue
-	if connections > 1 {
-		options["min-split-size"] = "1M"
-	}
 	options["allow-piece-length-change"] = aria2BoolTrue
 	options["allow-overwrite"] = aria2BoolTrue
 	options["auto-file-renaming"] = "false"
@@ -312,11 +310,4 @@ func (c *aria2Client) RemoveDownloadResult(ctx context.Context, gid string) erro
 		return fmt.Errorf("unexpected aria2 removeDownloadResult response %q", result)
 	}
 	return nil
-}
-
-func normalizeAria2Connections(connections int) int {
-	if connections < 1 {
-		return 1
-	}
-	return connections
 }

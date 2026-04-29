@@ -20,8 +20,6 @@ const maskedStr = "(hidden)"
 var configurablePaths = []string{
 	"proxy",
 	"debug",
-	"threads",
-	"limit",
 	"pool_size",
 	"delay",
 	"ntp",
@@ -83,7 +81,7 @@ func handleConfigGet(ctx *th.Context, chatID int64, path string) error {
 func handleConfigSet(ctx *th.Context, chatID int64, payload string, afterSave func(*config.Config)) error {
 	path, raw, ok := splitConfigSetPayload(payload)
 	if !ok {
-		return sendMessage(ctx, chatID, "用法：/config_set 配置项 值\n例如：/config_set limit 3\n例如：/config_set include [\"mp4\",\"mkv\"]")
+		return sendMessage(ctx, chatID, "用法：/config_set 配置项 值\n例如：/config_set pool_size 8\n例如：/config_set include [\"mp4\",\"mkv\"]")
 	}
 	if isProtectedConfigPath(path) {
 		return sendMessage(ctx, chatID, "bot.token 不能通过机器人修改，请继续在 config.json 中维护。")

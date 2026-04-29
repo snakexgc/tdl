@@ -731,6 +731,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	}
 	pairs := meta[s.namespace()]
 	cfg := config.Get()
+	poolSize := config.EffectivePoolSize(cfg)
 
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
@@ -758,7 +759,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			task.ID = id
 		}
 		link := downloadURL(cfg.HTTP.PublicBaseURL, task.ID)
-		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName, cfg.Threads)
+		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName)
 		if err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
@@ -770,7 +771,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			DownloadURL: link,
 			Dir:         cfg.Aria2.Dir,
 			Out:         task.FileName,
-			Connections: cfg.Threads,
+			Connections: poolSize,
 			CreatedAt:   time.Now(),
 		}); err != nil {
 			result.Skipped++
@@ -783,18 +784,14 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	return result
 }
 
-func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string, connections int) (string, error) {
-	normalizedConnections := connections
-	if normalizedConnections < 1 {
-		normalizedConnections = 1
-	}
+func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string) (string, error) {
 	options := map[string]any{
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
 		"auto-file-renaming":        "false",
-		"split":                     strconv.Itoa(normalizedConnections),
-		"max-connection-per-server": strconv.Itoa(normalizedConnections),
+		"split":                     "1",
+		"max-connection-per-server": "1",
 		"user-agent":                "tdl-webui-aria2",
 	}
 	if cfg.Dir != "" {
@@ -802,9 +799,6 @@ func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string, c
 	}
 	if out != "" {
 		options["out"] = out
-	}
-	if normalizedConnections > 1 {
-		options["min-split-size"] = "1M"
 	}
 	var gid string
 	if err := callAria2(ctx, cfg, "aria2.addUri", []any{[]string{uri}, options}, &gid); err != nil {
@@ -1331,8 +1325,8 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "read request"))
 		return
 	}
-	if cfg.Aria2.Secret != "" {
-		body, err = injectAria2Secret(body, cfg.Aria2.Secret)
+	if cfg.Aria2.Secret != "" || bytes.Contains(body, []byte("/download/")) {
+		body, err = rewriteAria2ProxyRequest(body, cfg.HTTP.PublicBaseURL, cfg.Aria2.Secret)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -1363,20 +1357,27 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func injectAria2Secret(body []byte, secret string) ([]byte, error) {
+	return rewriteAria2ProxyRequest(body, "", secret)
+}
+
+func rewriteAria2ProxyRequest(body []byte, publicBaseURL, secret string) ([]byte, error) {
 	var payload any
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
 	if err := dec.Decode(&payload); err != nil {
 		return nil, errors.Wrap(err, "decode aria2 request")
 	}
-	token := "token:" + secret
+	token := ""
+	if secret != "" {
+		token = "token:" + secret
+	}
 	switch value := payload.(type) {
 	case map[string]any:
-		addAria2Token(value, token)
+		rewriteAria2RequestObject(value, publicBaseURL, token)
 	case []any:
 		for _, item := range value {
 			if obj, ok := item.(map[string]any); ok {
-				addAria2Token(obj, token)
+				rewriteAria2RequestObject(obj, publicBaseURL, token)
 			}
 		}
 	default:
@@ -1387,6 +1388,13 @@ func injectAria2Secret(body []byte, secret string) ([]byte, error) {
 		return nil, errors.Wrap(err, "encode aria2 request")
 	}
 	return next, nil
+}
+
+func rewriteAria2RequestObject(request map[string]any, publicBaseURL, token string) {
+	normalizeAria2AddURIRequest(request, publicBaseURL)
+	if token != "" {
+		addAria2Token(request, token)
+	}
 }
 
 func addAria2Token(request map[string]any, token string) {
@@ -1440,6 +1448,112 @@ func prependAria2TokenParam(request map[string]any, token string) {
 		}
 	}
 	request["params"] = append([]any{token}, params...)
+}
+
+func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string) {
+	method, _ := request["method"].(string)
+	if method == "system.multicall" {
+		params, _ := request["params"].([]any)
+		if len(params) == 0 {
+			return
+		}
+		if first, ok := params[0].(string); ok && strings.HasPrefix(first, "token:") {
+			params = params[1:]
+		}
+		if len(params) == 0 {
+			return
+		}
+		calls, ok := params[0].([]any)
+		if !ok {
+			return
+		}
+		for _, call := range calls {
+			if obj, ok := call.(map[string]any); ok {
+				normalizeAria2MulticallAddURIRequest(obj, publicBaseURL)
+			}
+		}
+		return
+	}
+	if method != "aria2.addUri" {
+		return
+	}
+	normalizeAria2AddURIParams(request, publicBaseURL)
+}
+
+func normalizeAria2MulticallAddURIRequest(request map[string]any, publicBaseURL string) {
+	method, _ := request["methodName"].(string)
+	if method != "aria2.addUri" {
+		return
+	}
+	normalizeAria2AddURIParams(request, publicBaseURL)
+}
+
+func normalizeAria2AddURIParams(request map[string]any, publicBaseURL string) {
+	params, _ := request["params"].([]any)
+	paramStart := 0
+	if len(params) > 0 {
+		if first, ok := params[0].(string); ok && strings.HasPrefix(first, "token:") {
+			paramStart = 1
+		}
+	}
+	if len(params) <= paramStart {
+		return
+	}
+	urls, ok := params[paramStart].([]any)
+	if !ok || !hasTDLDownloadURI(urls, publicBaseURL) {
+		return
+	}
+
+	optionIndex := paramStart + 1
+	var options map[string]any
+	if len(params) > optionIndex {
+		options, _ = params[optionIndex].(map[string]any)
+	}
+	if options == nil {
+		options = map[string]any{}
+		if len(params) > optionIndex {
+			params[optionIndex] = options
+		} else {
+			params = append(params, options)
+		}
+	}
+	options["split"] = "1"
+	options["max-connection-per-server"] = "1"
+	delete(options, "min-split-size")
+	request["params"] = params
+}
+
+func hasTDLDownloadURI(urls []any, publicBaseURL string) bool {
+	for _, raw := range urls {
+		value, ok := raw.(string)
+		if ok && isTDLDownloadURI(value, publicBaseURL) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTDLDownloadURI(raw, publicBaseURL string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+
+	expectedPath := "/download/"
+	var base *url.URL
+	if publicBaseURL != "" {
+		if parsed, err := url.Parse(publicBaseURL); err == nil {
+			base = parsed
+			expectedPath = strings.TrimRight(parsed.Path, "/") + "/download/"
+		}
+	}
+
+	if base != nil && base.Host != "" && u.Host != "" {
+		if !strings.EqualFold(u.Scheme, base.Scheme) || !strings.EqualFold(u.Host, base.Host) {
+			return false
+		}
+	}
+	return strings.HasPrefix(u.Path, expectedPath)
 }
 
 func fetchAria2Statuses(ctx context.Context, cfg config.Aria2Config) (map[string]aria2Status, error) {

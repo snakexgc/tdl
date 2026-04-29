@@ -186,13 +186,9 @@ func (c *Aria2Controller) RetryStopped(ctx context.Context) (Aria2ActionResult, 
 		if next.Dir == "" && next.Out == "" {
 			next.Dir, next.Out = maybeAria2PathOptions(task)
 		}
-		if next.Connections <= 0 {
-			next.Connections = 1
-		}
 		gid, err := c.client.AddURI(ctx, downloadURL, aria2AddURIOptions{
-			Dir:         next.Dir,
-			Out:         next.Out,
-			Connections: next.Connections,
+			Dir: next.Dir,
+			Out: next.Out,
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))

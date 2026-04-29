@@ -30,7 +30,20 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.True(t, cfg.Modules.Watch)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
+	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Empty(t, cfg.TriggerReactions)
+}
+
+func TestLoadIgnoresLegacyThreadsAndLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"threads":4,"limit":2,"pool_size":6}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, 6, cfg.PoolSize)
 }
 
 func TestLoadHTTPBufferConfig(t *testing.T) {

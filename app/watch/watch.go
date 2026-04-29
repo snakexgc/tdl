@@ -64,7 +64,7 @@ func DefaultOptions(cfg *config.Config) Options {
 	return Options{
 		Dir:              cfg.DownloadDir,
 		Template:         defaultFileTemplate,
-		Threads:          cfg.Threads,
+		Threads:          config.EffectivePoolSize(cfg),
 		TriggerReactions: append([]string(nil), cfg.TriggerReactions...),
 		Include:          append([]string(nil), cfg.Include...),
 		Exclude:          append([]string(nil), cfg.Exclude...),
@@ -88,7 +88,10 @@ type downloadJob struct {
 	link   string
 }
 
-const aria2ConnectRetryInterval = 10 * time.Second
+const (
+	aria2ConnectRetryInterval = 10 * time.Second
+	maxConcurrentDownloads    = 1
+)
 
 type aria2ConcurrentDownloadSetter interface {
 	SetMaxConcurrentDownloads(ctx context.Context, limit int) error
@@ -182,14 +185,16 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
-	if err := waitForAria2(runCtx, runtime.aria2, cfg.Limit, aria2ConnectRetryInterval, logctx.From(runCtx)); err != nil {
+	poolSize := config.EffectivePoolSize(cfg)
+
+	if err := waitForAria2(runCtx, runtime.aria2, maxConcurrentDownloads, aria2ConnectRetryInterval, logctx.From(runCtx)); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return errors.Wrap(err, "configure aria2 max concurrent downloads")
 	}
 	logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
-		zap.Int("limit", cfg.Limit))
+		zap.Int("limit", maxConcurrentDownloads))
 	outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
 	if err != nil {
 		if opts.Notify != nil {
@@ -217,7 +222,7 @@ func Run(ctx context.Context, opts Options) error {
 	color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
 	color.Green("   Output root: %s", runtime.outputRoot)
 	color.Green("   Download dir template: %s", opts.Dir)
-	color.Green("   Per-file HTTP streams: %d", cfg.Threads)
+	color.Green("   Telegram pool / per-file streams: %d", poolSize)
 	if cfg.HTTP.DownloadLinkTTLHours <= 0 {
 		color.Green("   Download link TTL: permanent")
 	} else {
@@ -228,7 +233,7 @@ func Run(ctx context.Context, opts Options) error {
 	} else {
 		color.Green("   HTTP buffer: off")
 	}
-	color.Green("   Max concurrent downloads: %d", cfg.Limit)
+	color.Green("   Max concurrent downloads: %d", maxConcurrentDownloads)
 	color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
 	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 
@@ -303,6 +308,7 @@ func Run(ctx context.Context, opts Options) error {
 
 func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime, pausedAria2GIDs []string) (resumed bool, rerr error) {
 	cfg := config.Get()
+	poolSize := config.EffectivePoolSize(cfg)
 
 	o := pkgtclient.Options{
 		KV:               kvd,
@@ -348,7 +354,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 	err = tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
 		pool := dcpool.NewPool(client,
-			int64(cfg.PoolSize),
+			int64(poolSize),
 			tclient.NewDefaultMiddlewares(ctx, reconnectDelay)...)
 		defer multierr.AppendInvoke(&rerr, multierr.Close(pool))
 		defer runtime.pools.Set(nil)
@@ -380,7 +386,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		}()
 
 		eg, egCtx := errgroup.WithContext(ctx)
-		eg.SetLimit(cfg.Limit)
+		eg.SetLimit(maxConcurrentDownloads)
 		go w.dispatcher(egCtx, eg)
 
 		<-ctx.Done()
@@ -446,9 +452,6 @@ func validateWatchConfig(cfg *config.Config) error {
 	}
 	if cfg.Aria2.RPCURL == "" {
 		return errors.New("aria2.rpc_url is empty, please set it in config.json")
-	}
-	if cfg.Limit < 1 {
-		return errors.New("limit must be greater than 0")
 	}
 	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
 		return err
@@ -1011,9 +1014,8 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 	}
 
 	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, aria2AddURIOptions{
-		Dir:         prepared.dir,
-		Out:         prepared.out,
-		Connections: w.opts.Threads,
+		Dir: prepared.dir,
+		Out: prepared.out,
 	})
 	if err != nil {
 		return errors.Wrap(err, "submit to aria2")

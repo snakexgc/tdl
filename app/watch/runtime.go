@@ -18,9 +18,10 @@ type watchRuntime struct {
 
 func newWatchRuntime(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *watchRuntime {
 	pools := &poolHolder{}
+	poolSize := config.EffectivePoolSize(cfg)
 
 	return &watchRuntime{
-		proxy:      newDownloadProxy(cfg.HTTP, cfg.Limit, cfg.Threads, pools, kvd, logger),
+		proxy:      newDownloadProxy(cfg.HTTP, 1, poolSize, pools, kvd, logger),
 		aria2:      newAria2Client(cfg.Aria2),
 		aria2Tasks: newAria2TaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		pools:      pools,

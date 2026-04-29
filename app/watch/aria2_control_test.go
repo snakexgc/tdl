@@ -141,7 +141,7 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.Equal(t, 1, retried.Matched)
 	require.Equal(t, 1, retried.Changed)
 	require.Equal(t, []string{"http://127.0.0.1:8080/download/document_1"}, client.addedURIs)
-	require.Equal(t, []aria2AddURIOptions{{Dir: "downloads", Out: "video.mp4", Connections: 6}}, client.addedOptions)
+	require.Equal(t, []aria2AddURIOptions{{Dir: "downloads", Out: "video.mp4"}}, client.addedOptions)
 	require.Equal(t, []string{"registered-error"}, client.removedResults)
 
 	records, err := store.Records(ctx)

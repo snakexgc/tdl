@@ -20,9 +20,7 @@ const sections = [
     fields: [
       ["proxy", "代理地址", "text", "需要代理访问 Telegram 或 GitHub 时填写，例如 http://127.0.0.1:10808。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
-      ["threads", "单文件连接数", "number", "单个文件同时使用的下载连接数，网络一般时保持默认即可。"],
-      ["limit", "同时下载数", "number", "tdl 同时处理的下载数量，机器性能一般时保持默认即可。"],
-      ["pool_size", "连接池数量", "number", "Telegram 连接池大小，不确定时保持默认。"],
+      ["pool_size", "下载并发", "number", "Telegram 连接池大小，也用于单个文件的分片下载并发；不确定时保持默认。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "系统时间不准时填写，例如 pool.ntp.org。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],

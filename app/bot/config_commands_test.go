@@ -11,7 +11,7 @@ import (
 func TestConfigSetValueUpdatesNestedFields(t *testing.T) {
 	cfg := config.DefaultConfig()
 
-	require.NoError(t, setConfigValue(cfg, "limit", "5"))
+	require.NoError(t, setConfigValue(cfg, "pool_size", "5"))
 	require.NoError(t, setConfigValue(cfg, "http.public_base_url", "http://127.0.0.1:22334"))
 	require.NoError(t, setConfigValue(cfg, "http.download_link_ttl_hours", "0"))
 	require.NoError(t, setConfigValue(cfg, "include", "mp4,mkv"))
@@ -20,7 +20,7 @@ func TestConfigSetValueUpdatesNestedFields(t *testing.T) {
 	require.NoError(t, setConfigValue(cfg, "aria2.secret", "\"\""))
 	require.NoError(t, setConfigValue(cfg, "modules.watch", "false"))
 
-	require.Equal(t, 5, cfg.Limit)
+	require.Equal(t, 5, cfg.PoolSize)
 	require.Equal(t, "http://127.0.0.1:22334", cfg.HTTP.PublicBaseURL)
 	require.Equal(t, 0, cfg.HTTP.DownloadLinkTTLHours)
 	require.Equal(t, []string{"mp4", "mkv"}, cfg.Include)
@@ -47,4 +47,6 @@ func TestConfigStoragePathIsNotConfigurable(t *testing.T) {
 
 func TestConfigurablePathsDoNotExposeNamespace(t *testing.T) {
 	require.NotContains(t, configurablePaths, "namespace")
+	require.NotContains(t, configurablePaths, "threads")
+	require.NotContains(t, configurablePaths, "limit")
 }

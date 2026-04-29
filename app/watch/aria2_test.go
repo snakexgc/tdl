@@ -34,9 +34,8 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	})
 
 	gid, err := client.AddURI(context.Background(), "http://example.com/file", aria2AddURIOptions{
-		Dir:         "downloads",
-		Out:         "file.bin",
-		Connections: 4,
+		Dir: "downloads",
+		Out: "file.bin",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "gid-1", gid)
@@ -46,10 +45,9 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"dir":                       "downloads",
 		"out":                       "file.bin",
-		"split":                     "4",
-		"max-connection-per-server": "4",
+		"split":                     "1",
+		"max-connection-per-server": "1",
 		"continue":                  "true",
-		"min-split-size":            "1M",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
 		"auto-file-renaming":        "false",

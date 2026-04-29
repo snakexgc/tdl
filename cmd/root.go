@@ -132,9 +132,7 @@ func New() *cobra.Command {
 	cmd.PersistentFlags().IntP(consts.FlagPartSize, "s", 512*1024, "part size for transfer")
 	_ = cmd.PersistentFlags().MarkDeprecated(consts.FlagPartSize, "part size has been set to maximum by default, this flag will be removed in the future")
 
-	cmd.PersistentFlags().IntP(consts.FlagThreads, "t", cfg.Threads, "max threads for transfer one item")
-	cmd.PersistentFlags().IntP(consts.FlagLimit, "l", cfg.Limit, "max number of concurrent tasks")
-	cmd.PersistentFlags().Int(consts.FlagPoolSize, cfg.PoolSize, "specify the size of the DC pool, zero means infinity")
+	cmd.PersistentFlags().Int(consts.FlagPoolSize, config.EffectivePoolSize(cfg), "Telegram connection pool size and per-file download workers")
 	cmd.PersistentFlags().Duration(consts.FlagDelay, time.Duration(cfg.Delay)*time.Second, "delay between each task, zero means no delay")
 
 	cmd.PersistentFlags().String(consts.FlagNTP, cfg.NTP, "ntp server host, if not set, use system time")
