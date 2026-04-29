@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -376,8 +377,14 @@ type aria2Status struct {
 }
 
 type aria2File struct {
-	Length          string `json:"length"`
-	CompletedLength string `json:"completedLength"`
+	Length          string     `json:"length"`
+	CompletedLength string     `json:"completedLength"`
+	Path            string     `json:"path"`
+	URIs            []aria2URI `json:"uris"`
+}
+
+type aria2URI struct {
+	URI string `json:"uri"`
 }
 
 func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, string, error) {
@@ -395,12 +402,14 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 	if err != nil {
 		return nil, "", err
 	}
-	_ = records
 
-	statusByGID, statusErr := fetchAria2Statuses(ctx, config.Get().Aria2)
+	cfg := config.Get()
+	statusByGID, statusErr := fetchAria2Statuses(ctx, cfg.Aria2)
 	var statusErrText string
 	if statusErr != nil {
 		statusErrText = statusErr.Error()
+	} else {
+		s.discoverAria2RecordsFromDownloadLinks(ctx, pairs, records, recordsByTask, statusByGID, cfg)
 	}
 
 	keys := make([]string, 0, len(pairs))
@@ -411,7 +420,6 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 	}
 	sort.Strings(keys)
 
-	cfg := config.Get()
 	now := time.Now()
 	items := make([]downloadLinkItem, 0, len(keys))
 	for _, key := range keys {
@@ -466,6 +474,7 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 			entry.Downloaded = entry.Status == aria2StatusComplete && (entry.Total == 0 || entry.Completed >= entry.Total)
 			if entry.Downloaded {
 				item.Downloaded = true
+				s.markDownloadTaskDownloaded(ctx, task.ID)
 			}
 			item.Status = entry.Status
 			item.Aria2 = append(item.Aria2, entry)
@@ -515,6 +524,7 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.discoverAria2RecordsFromDownloadLinks(ctx, pairs, records, recordsByTask, statusByGID, config.Get())
 
 	taskCompleted := map[string]bool{}
 	taskHasAria2 := map[string]bool{}
@@ -547,9 +557,9 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 	if idxData, err := s.opts.NamespaceKV.Get(ctx, aria2TaskIndexKey); err == nil {
 		_ = json.Unmarshal(idxData, &aria2Index)
 	}
-	for gid, record := range records {
+	for _, record := range records {
 		if record.Status != aria2StatusComplete {
-			aria2Index[gid] = now
+			aria2Index[record.GID] = now
 		}
 	}
 	if idxData, err := json.Marshal(aria2Index); err == nil {
@@ -675,6 +685,202 @@ func (s *Server) parseAria2Records(pairs map[string][]byte) (map[string]aria2Tas
 		})
 	}
 	return records, byTask, nil
+}
+
+type downloadLinkTarget struct {
+	TaskID      string
+	DownloadURL string
+	FileName    string
+}
+
+func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pairs map[string][]byte, records map[string]aria2TaskRecord, byTask map[string][]aria2TaskRecord, statusByGID map[string]aria2Status, cfg *config.Config) {
+	if len(statusByGID) == 0 {
+		return
+	}
+	if cfg == nil {
+		cfg = config.Get()
+	}
+
+	publicBaseURL := ""
+	poolSize := config.EffectivePoolSize(cfg)
+	if cfg != nil {
+		publicBaseURL = cfg.HTTP.PublicBaseURL
+	}
+	targetsByID, targetsByURL := downloadLinkTargets(pairs, cfg)
+	if len(targetsByID) == 0 {
+		return
+	}
+
+	changedTasks := map[string]struct{}{}
+	for _, status := range statusByGID {
+		if status.GID == "" {
+			continue
+		}
+		key := aria2TaskKeyPrefix + status.GID
+		if _, exists := records[key]; exists {
+			continue
+		}
+		target, downloadURL, ok := aria2StatusDownloadTarget(status, targetsByID, targetsByURL, publicBaseURL)
+		if !ok {
+			continue
+		}
+
+		dir, out := aria2StatusPathOptions(status)
+		if out == "" {
+			out = target.FileName
+		}
+		total, completed := aria2Lengths(status)
+		record := aria2TaskRecord{
+			GID:         status.GID,
+			TaskID:      target.TaskID,
+			DownloadURL: downloadURL,
+			Dir:         dir,
+			Out:         out,
+			Connections: poolSize,
+			CreatedAt:   time.Now(),
+			Status:      normalizedAria2Status(status.Status),
+			Total:       total,
+			Completed:   completed,
+			Error:       strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage),
+		}
+
+		records[key] = record
+		byTask[target.TaskID] = append(byTask[target.TaskID], record)
+		changedTasks[target.TaskID] = struct{}{}
+		if s.opts.NamespaceKV != nil {
+			_ = s.saveAria2Record(ctx, record)
+		}
+	}
+
+	for taskID := range changedTasks {
+		sort.SliceStable(byTask[taskID], func(i, j int) bool {
+			return byTask[taskID][i].CreatedAt.Before(byTask[taskID][j].CreatedAt)
+		})
+	}
+}
+
+func downloadLinkTargets(pairs map[string][]byte, cfg *config.Config) (map[string]downloadLinkTarget, map[string]downloadLinkTarget) {
+	byID := map[string]downloadLinkTarget{}
+	byURL := map[string]downloadLinkTarget{}
+	publicBaseURL := ""
+	if cfg != nil {
+		publicBaseURL = cfg.HTTP.PublicBaseURL
+	}
+
+	for key, data := range pairs {
+		if !isDownloadTaskRecordKey(key) {
+			continue
+		}
+		var task persistentDownloadTask
+		if err := json.Unmarshal(data, &task); err != nil {
+			continue
+		}
+		if task.ID == "" {
+			task.ID = strings.TrimPrefix(key, downloadTaskKeyPrefix)
+		}
+		if task.ID == "" {
+			continue
+		}
+		target := downloadLinkTarget{
+			TaskID:      task.ID,
+			DownloadURL: downloadURL(publicBaseURL, task.ID),
+			FileName:    task.FileName,
+		}
+		byID[target.TaskID] = target
+		byURL[target.DownloadURL] = target
+	}
+	return byID, byURL
+}
+
+func aria2StatusDownloadTarget(status aria2Status, targetsByID, targetsByURL map[string]downloadLinkTarget, publicBaseURL string) (downloadLinkTarget, string, bool) {
+	for _, file := range status.Files {
+		for _, uri := range file.URIs {
+			raw := strings.TrimSpace(uri.URI)
+			if raw == "" {
+				continue
+			}
+			if target, ok := targetsByURL[raw]; ok {
+				return target, raw, true
+			}
+			id := downloadTaskIDFromURL(raw, publicBaseURL)
+			if id == "" {
+				continue
+			}
+			if target, ok := targetsByID[id]; ok {
+				return target, raw, true
+			}
+		}
+	}
+	return downloadLinkTarget{}, "", false
+}
+
+func downloadTaskIDFromURL(raw, publicBaseURL string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+
+	expectedPath := "/download/"
+	var base *url.URL
+	if publicBaseURL != "" {
+		if parsed, err := url.Parse(publicBaseURL); err == nil {
+			base = parsed
+			expectedPath = strings.TrimRight(parsed.Path, "/") + "/download/"
+		}
+	}
+
+	if base != nil && base.Host != "" && u.Host != "" {
+		if !strings.EqualFold(u.Scheme, base.Scheme) || !strings.EqualFold(u.Host, base.Host) {
+			return ""
+		}
+	}
+	if !strings.HasPrefix(u.Path, expectedPath) {
+		return ""
+	}
+
+	id := strings.TrimPrefix(u.Path, expectedPath)
+	if idx := strings.Index(id, "/"); idx >= 0 {
+		id = id[:idx]
+	}
+	id, err = url.PathUnescape(id)
+	if err != nil || id == "" || strings.Contains(id, "/") || !isDownloadTaskRecordKey(downloadTaskKeyPrefix+id) {
+		return ""
+	}
+	return id
+}
+
+func aria2StatusPathOptions(status aria2Status) (dir, out string) {
+	if len(status.Files) == 0 || status.Files[0].Path == "" {
+		return "", ""
+	}
+	path := filepath.Clean(status.Files[0].Path)
+	if path == "." {
+		return "", ""
+	}
+	return filepath.Dir(path), filepath.Base(path)
+}
+
+func (s *Server) markDownloadTaskDownloaded(ctx context.Context, taskID string) {
+	if s.opts.NamespaceKV == nil || taskID == "" {
+		return
+	}
+	data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
+	if err != nil {
+		return
+	}
+	var task persistentDownloadTask
+	if err := json.Unmarshal(data, &task); err != nil || task.Downloaded {
+		return
+	}
+	task.Downloaded = true
+	if task.ID == "" {
+		task.ID = taskID
+	}
+	data, err = json.Marshal(task)
+	if err != nil {
+		return
+	}
+	_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, data)
 }
 
 func (s *Server) deleteDownloadLink(ctx context.Context, id string) (int, error) {

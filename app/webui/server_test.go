@@ -66,6 +66,95 @@ func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 	require.Equal(t, createdAt, items[0].CreatedAt)
 }
 
+func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
+	initWebUITestConfig(t)
+
+	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
+	taskData, err := json.Marshal(persistentDownloadTask{
+		ID:        "document_1",
+		FileName:  "video.mp4",
+		FileSize:  100,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	oldRecordData, err := json.Marshal(aria2TaskRecord{
+		GID:         "old-gid",
+		TaskID:      "document_1",
+		DownloadURL: "http://127.0.0.1:22334/download/document_1",
+		CreatedAt:   createdAt,
+		Status:      "error",
+		Error:       "EOF",
+	})
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "aria2.tellStopped":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":[{"gid":"new-gid","status":"complete","totalLength":"100","completedLength":"100","files":[{"length":"100","completedLength":"100","uris":[{"uri":"http://127.0.0.1:22334/download/document_1"}]}]},{"gid":"foreign-gid","status":"complete","totalLength":"100","completedLength":"100","files":[{"uris":[{"uri":"http://127.0.0.1:22334/download/document_2"}]}]}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":[]}`))
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.Get()
+	oldRPC := cfg.Aria2.RPCURL
+	oldBase := cfg.HTTP.PublicBaseURL
+	cfg.Aria2.RPCURL = srv.URL
+	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
+	defer func() {
+		cfg.Aria2.RPCURL = oldRPC
+		cfg.HTTP.PublicBaseURL = oldBase
+	}()
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		"default": {
+			downloadTaskKeyPrefix + "document_1": taskData,
+			aria2TaskKeyPrefix + "old-gid":       oldRecordData,
+		},
+	}}
+	namespaceKV, err := engine.Open("default")
+	require.NoError(t, err)
+	server := NewServer(Options{KVEngine: engine, Namespace: "default", NamespaceKV: namespaceKV})
+
+	items, statusErr, err := server.listDownloadLinks(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, statusErr)
+	require.Len(t, items, 1)
+	require.True(t, items[0].Downloaded)
+	require.Len(t, items[0].Aria2, 2)
+
+	var retried aria2LinkEntry
+	for _, entry := range items[0].Aria2 {
+		if entry.GID == "new-gid" {
+			retried = entry
+		}
+	}
+	require.Equal(t, "new-gid", retried.GID)
+	require.Equal(t, aria2StatusComplete, retried.Status)
+	require.True(t, retried.Downloaded)
+
+	data, err := namespaceKV.Get(context.Background(), aria2TaskKeyPrefix+"new-gid")
+	require.NoError(t, err)
+	var saved aria2TaskRecord
+	require.NoError(t, json.Unmarshal(data, &saved))
+	require.Equal(t, "document_1", saved.TaskID)
+	require.Equal(t, "http://127.0.0.1:22334/download/document_1", saved.DownloadURL)
+	_, err = namespaceKV.Get(context.Background(), aria2TaskKeyPrefix+"foreign-gid")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	data, err = namespaceKV.Get(context.Background(), downloadTaskKeyPrefix+"document_1")
+	require.NoError(t, err)
+	var task persistentDownloadTask
+	require.NoError(t, json.Unmarshal(data, &task))
+	require.True(t, task.Downloaded)
+}
+
 func TestDeleteDownloadLinkRefusesDownloadIndexKey(t *testing.T) {
 	initWebUITestConfig(t)
 
