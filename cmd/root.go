@@ -45,15 +45,8 @@ func New() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
 	cobra.MousetrapHelpText = ""
 
-	// 获取可执行文件所在目录
-	execPath, err := os.Executable()
-	if err != nil {
-		panic(errors.Wrap(err, "get executable path"))
-	}
-	execDir := filepath.Dir(execPath)
-
 	// 初始化 JSON 配置
-	if err := config.Init(execDir); err != nil {
+	if err := config.Init(consts.HomeDir); err != nil {
 		panic(errors.Wrap(err, "init config"))
 	}
 

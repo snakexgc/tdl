@@ -7,5 +7,4 @@ services:
       - "22335:22335"
       - "22334:22334"
     volumes:
-      - $PWD/tdl/config.json:/app/config.json
-      - $PWD/tdl/.tdl:/app/.tdl
+      - ./tdl:/data

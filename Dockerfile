@@ -28,9 +28,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM alpine:latest
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && mkdir -p /app /data
 
-WORKDIR /app
+ENV TDL_HOME=/data
+
+WORKDIR /data
 
 COPY --from=builder /out/tdl /app/tdl
 
