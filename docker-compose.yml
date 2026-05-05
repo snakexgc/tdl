@@ -1,0 +1,11 @@
+services:
+  tdl:
+    image: ghcr.io/snakexgc/tdl:latest
+    container_name: tdl
+    restart: unless-stopped
+    ports:
+      - "22335:22335"
+      - "22334:22334"
+    volumes:
+      - $PWD/tdl/config.json:/app/config.json
+      - $PWD/tdl/.tdl:/app/.tdl

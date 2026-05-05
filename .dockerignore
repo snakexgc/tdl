@@ -1,0 +1,15 @@
+.git
+.github
+.tdl
+.tdl/
+.goreleaser.yaml
+tdl/
+tdl.exe
+config.json
+downloads/
+dist/
+*.log
+*.tmp
+*.bak
+*.zip
+*.tar.gz

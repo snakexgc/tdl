@@ -1,31 +1,39 @@
-# https://www.docker.com/blog/faster-multi-platform-builds-dockerfile-cross-compilation-guide/
+# syntax=docker/dockerfile:1.7
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 ARG VERSION="dev"
 ARG COMMIT="unknown"
 ARG COMMIT_DATE="unknown"
 
-WORKDIR /
+WORKDIR /src
 
 COPY . .
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG TARGETVARIANT
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg \
-    GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    set -eux; \
+    goarm="${TARGETVARIANT#v}"; \
+    if [ "$TARGETARCH" != "arm" ]; then goarm=""; fi; \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$goarm \
     go build -trimpath \
-    -ldflags "-s -w  \
+    -ldflags "-s -w \
     -X github.com/iyear/tdl/pkg/consts.Version=${VERSION}  \
     -X github.com/iyear/tdl/pkg/consts.Commit=${COMMIT}  \
     -X github.com/iyear/tdl/pkg/consts.CommitDate=${COMMIT_DATE}" \
-    -o tdl
+    -o /out/tdl
 
 FROM alpine:latest
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates tzdata
 
-COPY --from=builder /tdl /usr/bin/tdl
+WORKDIR /app
 
-ENTRYPOINT ["tdl"]
+COPY --from=builder /out/tdl /app/tdl
+
+EXPOSE 22334 22335
+
+ENTRYPOINT ["/app/tdl"]
