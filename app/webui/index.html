@@ -149,49 +149,84 @@
         <div class="info-grid" id="user-info"></div>
       </div>
       <div class="user-tab" id="user-tab-login">
-        <section class="login-namespace">
-          <div>
-            <h2>登录用户</h2>
-            <p>登录前请先填写用户名。用户名会作为本地数据空间，只允许英文字母。</p>
+        <section class="login-flow">
+          <div class="login-flow-head">
+            <div>
+              <h2>登录用户</h2>
+              <p>用户名会作为本地数据空间，只允许英文字母。</p>
+            </div>
+            <label class="field-inline login-namespace-field">
+              <span>用户名</span>
+              <input id="login-namespace" type="text" pattern="[A-Za-z]+" placeholder="alice" autocomplete="off">
+            </label>
           </div>
-          <label class="field-inline login-namespace-field">
-            <span>用户名</span>
-            <input id="login-namespace" type="text" pattern="[A-Za-z]+" placeholder="alice" autocomplete="off">
-          </label>
+
+          <ol class="login-steps" aria-label="登录步骤">
+            <li data-login-step="method" class="is-current"><span>1</span>填写手机号</li>
+            <li data-login-step="auth"><span>2</span>验证码</li>
+            <li data-login-step="password"><span>3</span>2FA</li>
+            <li data-login-step="finish"><span>4</span>完成</li>
+          </ol>
+
+          <div class="login-meta" id="login-meta"></div>
+
+          <div class="login-stage">
+            <section class="login-step-panel" id="login-step-method">
+              <div class="login-step-copy">
+                <h3 id="login-method-title">验证码登录</h3>
+                <p id="login-method-copy">输入完整手机号后，继续填写 Telegram 收到的验证码。</p>
+              </div>
+              <div id="login-phone-start" class="login-form-panel">
+                <label class="field-inline">
+                  <span>手机号</span>
+                  <input id="login-phone" type="text" placeholder="+8613800000000" autocomplete="tel">
+                </label>
+                <button class="btn primary" id="start-phone-login" type="button">发送验证码</button>
+              </div>
+            </section>
+
+            <section class="login-step-panel" id="login-step-code" hidden>
+              <div class="login-step-copy">
+                <h3>输入验证码</h3>
+                <p>请填写 Telegram 发送的原始验证码。</p>
+              </div>
+              <label class="field-inline">
+                <span>验证码</span>
+                <input id="login-code" type="text" inputmode="numeric" placeholder="Telegram 验证码" autocomplete="one-time-code">
+              </label>
+              <button class="btn primary" id="submit-login-code" type="button">提交验证码</button>
+            </section>
+
+            <section class="login-step-panel" id="login-step-password" hidden>
+              <div class="login-step-copy">
+                <h3>输入 2FA 密码</h3>
+                <p>此账号开启了两步验证。</p>
+              </div>
+              <label class="field-inline">
+                <span>密码</span>
+                <input id="login-password" type="password" placeholder="Telegram 2FA 密码" autocomplete="current-password">
+              </label>
+              <button class="btn primary" id="submit-login-password" type="button">提交密码</button>
+            </section>
+
+            <section class="login-step-panel" id="login-step-result" hidden>
+              <div class="login-result-mark" id="login-result-mark">✓</div>
+              <div class="login-step-copy">
+                <h3 id="login-result-title">登录成功</h3>
+                <p id="login-result-copy">用户状态已更新。</p>
+              </div>
+              <div class="login-result-actions">
+                <button class="btn secondary" id="restart-login-flow" type="button">重新开始</button>
+                <button class="btn primary" id="finish-login-flow" type="button">完成</button>
+              </div>
+            </section>
+          </div>
+
+          <div class="notice" id="login-status" role="status" aria-live="polite"></div>
+          <div class="login-actions">
+            <button class="btn danger" id="cancel-login" type="button" hidden>取消当前登录</button>
+          </div>
         </section>
-        <div class="login-grid">
-          <section class="login-card">
-            <h2>二维码登录</h2>
-            <p>使用 Telegram 客户端扫描二维码完成登录。</p>
-            <button class="btn primary" id="start-qr-login">生成二维码</button>
-            <div id="qr-box" class="qr-box"></div>
-          </section>
-          <section class="login-card">
-            <h2>手机号登录</h2>
-            <p>输入完整手机号后获取验证码，例如 +8613800000000 或 +1 2232232223。</p>
-            <label class="field-inline">
-              <span>手机号</span>
-              <input id="login-phone" type="text" placeholder="+8613800000000">
-            </label>
-            <button class="btn primary" id="start-phone-login">发送验证码</button>
-            <label class="field-inline">
-              <span>验证码</span>
-              <input id="login-code" type="text" inputmode="numeric" placeholder="Telegram验证码">
-            </label>
-            <button class="btn secondary" id="submit-login-code">提交验证码</button>
-          </section>
-          <section class="login-card">
-            <h2>2FA 密码</h2>
-            <p>如果账号开启了两步验证，请输入 Telegram 的登录密码。</p>
-            <label class="field-inline">
-              <span>密码</span>
-              <input id="login-password" type="password" placeholder="Telegram 2FA 密码">
-            </label>
-            <button class="btn secondary" id="submit-login-password">提交密码</button>
-          </section>
-        </div>
-        <div class="notice" id="login-status"></div>
-        <button class="btn danger" id="cancel-login">取消当前登录</button>
       </div>
     </section>
 

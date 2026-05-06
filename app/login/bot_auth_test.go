@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/go-faster/errors"
+	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
 	"github.com/iyear/tdl/core/storage"
@@ -46,6 +49,29 @@ func TestValidateAuthenticatedUserRejectsEmptyUser(t *testing.T) {
 	require.Error(t, validateAuthenticatedUser(nil))
 	require.Error(t, validateAuthenticatedUser(&tg.User{}))
 	require.NoError(t, validateAuthenticatedUser(&tg.User{ID: 42}))
+}
+
+func TestUserFromAuthorizationRejectsEmptyUser(t *testing.T) {
+	user, ok := userFromAuthorization(&tg.AuthAuthorization{User: &tg.User{ID: 42}})
+	require.True(t, ok)
+	require.Equal(t, int64(42), user.ID)
+
+	_, ok = userFromAuthorization(nil)
+	require.False(t, ok)
+
+	_, ok = userFromAuthorization(&tg.AuthAuthorization{User: &tg.UserEmpty{}})
+	require.False(t, ok)
+
+	_, ok = userFromAuthorization(&tg.AuthAuthorization{User: &tg.User{}})
+	require.False(t, ok)
+}
+
+func TestInputErrorClassifiersHandleWrappedErrors(t *testing.T) {
+	require.True(t, isCodeInputError(errors.Wrap(tgerr.New(400, "PHONE_CODE_INVALID"), "sign in")))
+	require.False(t, isCodeInputError(errors.Wrap(tgerr.New(400, "PHONE_CODE_EXPIRED"), "sign in")))
+
+	require.True(t, isPasswordInputError(errors.Wrap(auth.ErrPasswordInvalid, "check password")))
+	require.True(t, isPasswordInputError(errors.Wrap(tgerr.New(400, "PASSWORD_HASH_INVALID"), "check password")))
 }
 
 func TestUserSummaryMarksEmptyUserInvalid(t *testing.T) {

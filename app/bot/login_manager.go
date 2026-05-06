@@ -10,11 +10,9 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/auth"
-	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
-	"github.com/skip2/go-qrcode"
 
 	"github.com/iyear/tdl/app/login"
 )
@@ -32,13 +30,11 @@ var (
 
 type botAPI interface {
 	SendMessage(ctx context.Context, params *telego.SendMessageParams) (*telego.Message, error)
-	SendPhoto(ctx context.Context, params *telego.SendPhotoParams) (*telego.Message, error)
 	DeleteMessage(ctx context.Context, params *telego.DeleteMessageParams) error
 }
 
 type loginRunner interface {
 	LoginCode(ctx context.Context, authenticator auth.UserAuthenticator) (*tg.User, error)
-	LoginQR(ctx context.Context, show login.QRShowFunc, password login.PasswordFunc) (*tg.User, error)
 }
 
 type loginRunnerFactory func(namespace string) (loginRunner, error)
@@ -49,10 +45,6 @@ type gotdLoginRunner struct {
 
 func (r gotdLoginRunner) LoginCode(ctx context.Context, authenticator auth.UserAuthenticator) (*tg.User, error) {
 	return login.CodeWithAuthenticator(ctx, r.opts, authenticator)
-}
-
-func (r gotdLoginRunner) LoginQR(ctx context.Context, show login.QRShowFunc, password login.PasswordFunc) (*tg.User, error) {
-	return login.QRWithCallbacks(ctx, r.opts, show, password)
 }
 
 type loginManager struct {
@@ -112,18 +104,6 @@ func newLoginManagerWithFactory(ctx context.Context, bot botAPI, factory loginRu
 func (m *loginManager) StartCode(userID, chatID int64, namespace ...string) error {
 	return m.start("code", firstNamespace(namespace), userID, chatID, func(ctx context.Context, flow *loginFlow, runner loginRunner) (*tg.User, error) {
 		return runner.LoginCode(ctx, botCodeAuthenticator{manager: m, flow: flow})
-	})
-}
-
-func (m *loginManager) StartQR(userID, chatID int64, namespace ...string) error {
-	return m.start("qr", firstNamespace(namespace), userID, chatID, func(ctx context.Context, flow *loginFlow, runner loginRunner) (*tg.User, error) {
-		show := func(ctx context.Context, token qrlogin.Token) error {
-			return m.showQR(ctx, flow, token)
-		}
-		password := func(ctx context.Context) (string, error) {
-			return m.ask(ctx, flow, "password", "请输入 Telegram 2FA 密码：", true)
-		}
-		return runner.LoginQR(ctx, show, password)
 	})
 }
 
@@ -316,32 +296,27 @@ func (m *loginManager) ask(ctx context.Context, flow *loginFlow, stage, prompt s
 	}
 }
 
-func (m *loginManager) showQR(_ context.Context, flow *loginFlow, token qrlogin.Token) error {
-	m.setStage(flow, "qr")
-
-	png, err := qrcode.Encode(token.URL(), qrcode.Medium, 512)
-	if err != nil {
-		return errors.Wrap(err, "create qr image")
-	}
-
-	caption := "请用 Telegram 客户端扫描二维码完成登录。\n如果图片无法识别，也可以打开：\n" + token.URL()
-	_, err = m.bot.SendPhoto(m.ctx, tu.Photo(
-		tu.ID(flow.chatID),
-		tu.FileFromBytes(png, "tdl-login-qr.png"),
-	).WithCaption(caption))
-	return err
-}
-
 func (m *loginManager) notifyFailure(flow *loginFlow, err error) {
 	switch {
 	case stderrors.Is(err, context.Canceled):
 		_ = m.sendText(flow.chatID, "登录已取消。")
 	case stderrors.Is(err, context.DeadlineExceeded), stderrors.Is(err, errLoginInputTimeout):
-		_ = m.sendText(flow.chatID, "登录已超时，请重新发送 /login_code 用户名 或 /login_qr 用户名。")
+		_ = m.sendText(flow.chatID, "登录已超时，请重新发送 /login_code 用户名。")
 	case stderrors.Is(err, errLoginInvalidUser):
-		_ = m.sendText(flow.chatID, "登录失败：未获取到有效账号，请重新发送 /login_code 用户名 或 /login_qr 用户名。")
+		_ = m.sendText(flow.chatID, "登录失败：未获取到有效账号，请重新发送 /login_code 用户名。")
 	default:
 		_ = m.sendText(flow.chatID, fmt.Sprintf("登录失败：%v", err))
+	}
+}
+
+func (m *loginManager) reportInputError(_ context.Context, flow *loginFlow, input string, _ error) error {
+	switch input {
+	case login.AuthInputCode:
+		return m.sendText(flow.chatID, "验证码不正确，请重新发送。")
+	case login.AuthInputPassword:
+		return m.sendText(flow.chatID, "2FA 密码不正确，请重新发送。")
+	default:
+		return nil
 	}
 }
 
@@ -417,6 +392,10 @@ func (a botCodeAuthenticator) Code(ctx context.Context, _ *tg.AuthSentCode) (str
 
 func (a botCodeAuthenticator) Password(ctx context.Context) (string, error) {
 	return a.manager.ask(ctx, a.flow, "password", "请输入 2FA 密码：", true)
+}
+
+func (a botCodeAuthenticator) AuthInputError(ctx context.Context, input string, err error) error {
+	return a.manager.reportInputError(ctx, a.flow, input, err)
 }
 
 func (a botCodeAuthenticator) SignUp(_ context.Context) (auth.UserInfo, error) {

@@ -130,7 +130,6 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/user/switch", s.authFunc(s.handleUserSwitch))
 	mux.HandleFunc("/api/user/delete", s.authFunc(s.handleUserDelete))
 	mux.HandleFunc("/api/login/status", s.authFunc(s.handleLoginStatus))
-	mux.HandleFunc("/api/login/qr/start", s.authFunc(s.handleLoginQRStart))
 	mux.HandleFunc("/api/login/phone/start", s.authFunc(s.handleLoginPhoneStart))
 	mux.HandleFunc("/api/login/code", s.authFunc(s.handleLoginCode))
 	mux.HandleFunc("/api/login/password", s.authFunc(s.handleLoginPassword))
@@ -1380,25 +1379,6 @@ func telegramUserInfo(user *tg.User) map[string]any {
 func (s *Server) handleLoginStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, "GET")
-		return
-	}
-	writeJSON(w, http.StatusOK, s.login.status())
-}
-
-func (s *Server) handleLoginQRStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, "POST")
-		return
-	}
-	var req struct {
-		Namespace string `json:"namespace"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
-		return
-	}
-	if err := s.login.startQR(r.Context(), req.Namespace); err != nil {
-		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.login.status())

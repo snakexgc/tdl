@@ -9,6 +9,9 @@ const state = {
   modules: [],
   userSessions: [],
   currentNamespace: "",
+  loginMethod: "phone",
+  loginPanel: "",
+  lastLoginData: null,
 };
 
 const collator = new Intl.Collator("zh-Hans-CN", {
@@ -246,11 +249,29 @@ function bindUserTabs() {
 }
 
 function bindLoginActions() {
-  document.getElementById("start-qr-login").addEventListener("click", startQRLogin);
   document.getElementById("start-phone-login").addEventListener("click", startPhoneLogin);
   document.getElementById("submit-login-code").addEventListener("click", submitLoginCode);
   document.getElementById("submit-login-password").addEventListener("click", submitLoginPassword);
   document.getElementById("cancel-login").addEventListener("click", cancelLogin);
+  document.getElementById("restart-login-flow").addEventListener("click", resetLoginFlow);
+  document.getElementById("finish-login-flow").addEventListener("click", finishLoginFlow);
+
+  [
+    ["login-namespace", startSelectedLogin],
+    ["login-phone", startPhoneLogin],
+    ["login-code", submitLoginCode],
+    ["login-password", submitLoginPassword],
+  ].forEach(([id, submit]) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      submit();
+    });
+  });
+
+  updateLoginMethodUI();
 }
 
 async function api(path, options = {}) {
@@ -743,13 +764,9 @@ async function loadLoginStatus() {
   }
 }
 
-async function startQRLogin() {
-  const namespace = readNamespaceInput("login-namespace", renderLoginError);
-  if (!namespace) return;
-  await loginRequest("/api/login/qr/start", { namespace });
-}
-
 async function startPhoneLogin() {
+  state.loginMethod = "phone";
+  updateLoginMethodUI();
   const phone = document.getElementById("login-phone").value.trim();
   if (!phone) {
     renderLoginError("请输入手机号。");
@@ -761,21 +778,29 @@ async function startPhoneLogin() {
 }
 
 async function submitLoginCode() {
-  const code = document.getElementById("login-code").value.trim();
+  const input = document.getElementById("login-code");
+  const code = input.value.trim();
   if (!code) {
     renderLoginError("请输入 Telegram 收到的原始验证码。");
     return;
   }
-  await loginRequest("/api/login/code", { code });
+  const data = await loginRequest("/api/login/code", { code });
+  if (data) input.value = "";
 }
 
 async function submitLoginPassword() {
-  const password = document.getElementById("login-password").value;
+  const input = document.getElementById("login-password");
+  const password = input.value;
   if (!password) {
     renderLoginError("请输入 Telegram 2FA 密码。");
     return;
   }
-  await loginRequest("/api/login/password", { password });
+  const data = await loginRequest("/api/login/password", { password });
+  if (data) input.value = "";
+}
+
+function startSelectedLogin() {
+  startPhoneLogin();
 }
 
 async function cancelLogin() {
@@ -801,8 +826,10 @@ async function loginRequest(path, body) {
     } else {
       stopLoginPolling();
     }
+    return data;
   } catch (error) {
     renderLoginError(error.message);
+    return null;
   }
 }
 
@@ -833,17 +860,170 @@ function stopLoginPolling() {
 }
 
 function renderLoginStatus(data) {
-  const parts = [];
-  if (data.kind) parts.push(`方式：${data.kind === "qr" ? "二维码登录" : "手机号登录"}`);
-  if (data.namespace) parts.push(`用户：${data.namespace}`);
-  if (data.phone) parts.push(`手机号：${data.phone}`);
-  if (data.status) parts.push(data.status);
-  if (data.error) parts.push(`错误：${data.error}`);
-  if (data.user) parts.push(`用户：${data.user.name || data.user.username || data.user.id || "-"}`);
+  data = data || {};
+  state.lastLoginData = data;
+  state.loginMethod = "phone";
 
-  const kind = data.error || data.stage === "failed" ? "error" : data.stage === "done" ? "success" : "";
-  setLoginStatus(parts.join("\n") || "当前没有登录流程。", kind);
-  renderQRCode(data);
+  updateLoginMethodUI(data);
+  renderLoginMeta(data);
+  renderLoginSteps(data);
+  renderLoginPanel(data);
+  renderLoginResult(data);
+  updateLoginActions(data);
+  setLoginStatus(loginStatusMessage(data), loginStatusKind(data));
+}
+
+function updateLoginMethodUI(data = {}) {
+  const phoneStart = document.getElementById("login-phone-start");
+  if (phoneStart) phoneStart.hidden = false;
+
+  const title = document.getElementById("login-method-title");
+  const copy = document.getElementById("login-method-copy");
+  if (title) title.textContent = "验证码登录";
+  if (copy) copy.textContent = "输入完整手机号后，继续填写 Telegram 收到的验证码。";
+}
+
+function renderLoginMeta(data) {
+  const meta = document.getElementById("login-meta");
+  if (!meta) return;
+  const items = [];
+  if (data.kind) items.push(["方式", "验证码登录"]);
+  if (data.namespace) items.push(["用户", data.namespace]);
+  if (data.phone) items.push(["手机号", data.phone]);
+  if (data.user) items.push(["Telegram", loginUserLabel(data.user)]);
+  meta.innerHTML = items.map(([label, value]) => `
+    <span><strong>${escapeHTML(label)}</strong>${escapeHTML(String(value || "-"))}</span>
+  `).join("");
+}
+
+function renderLoginSteps(data) {
+  const order = ["method", "auth", "password", "finish"];
+  const current = currentLoginStep(data);
+  const currentIndex = order.indexOf(current);
+  document.querySelectorAll("[data-login-step]").forEach((item) => {
+    const step = item.dataset.loginStep;
+    const index = order.indexOf(step);
+    const isCurrent = step === current;
+    item.classList.toggle("is-current", isCurrent);
+    item.classList.toggle("is-complete", index >= 0 && index < currentIndex);
+    item.classList.toggle("is-error", step === "finish" && data.stage === "failed");
+    if (isCurrent) {
+      item.setAttribute("aria-current", "step");
+    } else {
+      item.removeAttribute("aria-current");
+    }
+  });
+}
+
+function currentLoginStep(data = {}) {
+  if (data.stage === "done" || data.stage === "failed") return "finish";
+  if (data.stage === "password") return "password";
+  if (data.active && data.kind === "phone") return "auth";
+  return "method";
+}
+
+function renderLoginPanel(data) {
+  let panel = "login-step-method";
+  if (data.stage === "done" || data.stage === "failed") {
+    panel = "login-step-result";
+  } else if (data.stage === "password") {
+    panel = "login-step-password";
+  } else if (data.active && data.kind === "phone") {
+    panel = "login-step-code";
+  }
+  if (showLoginPanel(panel)) {
+    focusLoginPanel(panel);
+  }
+}
+
+function showLoginPanel(panelID) {
+  if (state.loginPanel === panelID) return false;
+  state.loginPanel = panelID;
+  document.querySelectorAll(".login-step-panel").forEach((panel) => {
+    const active = panel.id === panelID;
+    panel.hidden = !active;
+    panel.classList.remove("animate-in");
+    if (active) {
+      window.requestAnimationFrame(() => panel.classList.add("animate-in"));
+    }
+  });
+  return true;
+}
+
+function focusLoginPanel(panelID) {
+  const focusTargets = {
+    "login-step-method": "login-phone",
+    "login-step-code": "login-code",
+    "login-step-password": "login-password",
+  };
+  const target = document.getElementById(focusTargets[panelID]);
+  if (!target) return;
+  window.setTimeout(() => target.focus(), 120);
+}
+
+function renderLoginResult(data) {
+  if (data.stage !== "done" && data.stage !== "failed") return;
+  const failed = data.stage === "failed";
+  const mark = document.getElementById("login-result-mark");
+  const title = document.getElementById("login-result-title");
+  const copy = document.getElementById("login-result-copy");
+  const finish = document.getElementById("finish-login-flow");
+  if (mark) {
+    mark.textContent = failed ? "!" : "✓";
+    mark.classList.toggle("error", failed);
+  }
+  if (title) title.textContent = failed ? "登录失败" : "登录成功";
+  if (copy) {
+    copy.textContent = failed
+      ? (data.error || data.status || "请检查输入后重新开始。")
+      : `${loginUserLabel(data.user)} 已登录。`;
+  }
+  if (finish) finish.textContent = failed ? "留在此处" : "查看当前用户";
+}
+
+function updateLoginActions(data = {}) {
+  const cancel = document.getElementById("cancel-login");
+  if (cancel) cancel.hidden = !data.active;
+}
+
+function loginStatusMessage(data = {}) {
+  if (data.stage === "failed") return data.error ? `登录失败：${data.error}` : "登录失败。";
+  if (data.active && data.error) return data.error;
+  if (data.stage === "done") return "登录成功。";
+  if (data.stage === "password") return data.status || "请输入 2FA 密码。";
+  if (data.active && data.kind === "phone") return data.status || "请输入 Telegram 收到的验证码。";
+  if (data.status && data.status !== "当前没有登录流程。") return data.status;
+  return "";
+}
+
+function loginStatusKind(data = {}) {
+  if (data.error || data.stage === "failed") return "error";
+  if (data.stage === "done") return "success";
+  return "";
+}
+
+function loginUserLabel(user) {
+  if (!user) return "-";
+  return user.name || user.username || user.id || "-";
+}
+
+function resetLoginFlow() {
+  state.lastLoginData = {};
+  showLoginPanel("login-step-method");
+  renderLoginSteps({});
+  renderLoginMeta({});
+  updateLoginActions({});
+  setLoginStatus("");
+}
+
+function finishLoginFlow() {
+  const done = state.lastLoginData && state.lastLoginData.stage === "done";
+  if (!done) {
+    resetLoginFlow();
+    return;
+  }
+  const currentTab = document.querySelector('[data-user-tab="current"]');
+  if (currentTab) currentTab.click();
 }
 
 async function switchUser() {
@@ -931,19 +1111,6 @@ function setLoginStatus(message, kind = "") {
   const status = document.getElementById("login-status");
   status.className = `notice ${kind}`.trim();
   status.textContent = message || "";
-}
-
-function renderQRCode(data) {
-  const box = document.getElementById("qr-box");
-  if (data.qr_image) {
-    box.innerHTML = `<img src="${escapeAttr(data.qr_image)}" alt="Telegram 登录二维码">`;
-    return;
-  }
-  if (data.kind === "qr" && data.active) {
-    box.innerHTML = `<div class="empty compact-empty">正在等待二维码...</div>`;
-    return;
-  }
-  box.innerHTML = "";
 }
 
 async function loadUpdateStatus() {

@@ -331,7 +331,6 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: []telego.BotCommand{
 			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
-			{Command: "login_qr", Description: "扫描二维码登录（需填写用户名）"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
 			{Command: "aria2_overview", Description: "查看下载任务概况"},
 			{Command: "aria2_pause_all", Description: "暂停全部下载任务"},
@@ -367,7 +366,7 @@ func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl,
 			WatchStarted: watchStarted,
 		}
 	case errors.Is(err, login.ErrSessionUnauthorized):
-		hint := "请使用 /login_code 用户名 或 /login_qr 用户名 登录；登录成功后会自动重新启动 watch。"
+		hint := "请使用 /login_code 用户名 登录；登录成功后会自动重新启动 watch。"
 		if !autoStart {
 			hint = "请在 Web 管理面板完成登录，并在模块管理中启用监听下载。"
 		}
@@ -377,7 +376,7 @@ func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl,
 			Hint:    hint,
 		}
 	default:
-		hint := "请稍后重试，或使用 /login_code 用户名 或 /login_qr 用户名 重新登录；登录成功后会自动重新启动 watch。"
+		hint := "请稍后重试，或使用 /login_code 用户名 重新登录；登录成功后会自动重新启动 watch。"
 		if !autoStart {
 			hint = "请稍后重试，或在 Web 管理面板重新登录。"
 		}
@@ -479,23 +478,6 @@ func handleAllowedMessage(
 			return err
 		}
 		return nil
-	case "/login_qr":
-		loginNamespace, err := loginNamespaceFromCommand(text)
-		if err != nil {
-			sendLoginNamespaceUsage(ctx, chatID, "/login_qr")
-			return nil
-		}
-		if err := loginMgr.StartQR(fromID, chatID, loginNamespace); err != nil {
-			if errors.Is(err, errLoginBusy) {
-				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
-					tu.ID(chatID),
-					"已有登录流程正在进行，请先完成或发送 /cancel_login 取消。",
-				))
-				return nil
-			}
-			return err
-		}
-		return nil
 	case "/cancel_login":
 		if loginMgr.Cancel(fromID, chatID) {
 			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在取消当前登录流程。"))
@@ -552,7 +534,7 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
-	case "/login_code", "/login_qr", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
+	case "/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
 		"/update_tdl", "/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
 		"/clean_kv":
 		return true

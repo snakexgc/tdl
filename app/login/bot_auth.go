@@ -8,7 +8,6 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
-	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
@@ -26,9 +25,21 @@ type SessionOptions struct {
 }
 
 type (
-	QRShowFunc   func(ctx context.Context, token qrlogin.Token) error
-	PasswordFunc func(ctx context.Context) (string, error)
+	PasswordFunc   func(ctx context.Context) (string, error)
+	InputErrorFunc func(ctx context.Context, input string, err error) error
 )
+
+const (
+	AuthInputCode     = "code"
+	AuthInputPassword = "password"
+
+	loginSelfAttempts   = 10
+	loginSelfRetryDelay = 500 * time.Millisecond
+)
+
+type InputErrorReporter interface {
+	AuthInputError(ctx context.Context, input string, err error) error
+}
 
 var ErrSessionUnauthorized = errors.New("telegram session is not authorized")
 
@@ -38,10 +49,20 @@ func CodeWithAuthenticator(ctx context.Context, opts SessionOptions, authenticat
 	}
 
 	return runWithTemporarySession(ctx, opts, nil, true, func(ctx context.Context, c *telegram.Client) (*tg.User, error) {
-		if err := c.Auth().IfNecessary(ctx, auth.NewFlow(authenticator, auth.SendCodeOptions{})); err != nil {
+		client := c.Auth()
+		status, err := client.Status(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "get auth status")
+		}
+		if status.Authorized {
+			return status.User, nil
+		}
+
+		authorization, err := authWithCode(ctx, client, authenticator)
+		if err != nil {
 			return nil, err
 		}
-		return c.Self(ctx)
+		return authenticatedUserAfterLogin(ctx, c, authorization)
 	})
 }
 
@@ -86,33 +107,205 @@ func CheckSession(ctx context.Context, opts SessionOptions) (*tg.User, error) {
 	return user, nil
 }
 
-func QRWithCallbacks(ctx context.Context, opts SessionOptions, show QRShowFunc, password PasswordFunc) (*tg.User, error) {
-	if show == nil {
-		return nil, errors.New("qr show callback is nil")
-	}
-	if password == nil {
-		return nil, errors.New("password callback is nil")
+func authWithCode(ctx context.Context, client *auth.Client, authenticator auth.UserAuthenticator) (*tg.AuthAuthorization, error) {
+	phone, err := authenticator.Phone(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "get phone")
 	}
 
-	d := tg.NewUpdateDispatcher()
-	return runWithTemporarySession(ctx, opts, d, false, func(ctx context.Context, c *telegram.Client) (*tg.User, error) {
-		_, err := c.QR().Auth(ctx, qrlogin.OnLoginToken(d), show)
+	sentCode, err := client.SendCode(ctx, phone, auth.SendCodeOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "send code")
+	}
+
+	switch s := sentCode.(type) {
+	case *tg.AuthSentCode:
+		return signInWithCode(ctx, client, authenticator, phone, s)
+	case *tg.AuthSentCodeSuccess:
+		switch authorization := s.Authorization.(type) {
+		case *tg.AuthAuthorization:
+			return authorization, nil
+		case *tg.AuthAuthorizationSignUpRequired:
+			return handleSignUp(ctx, client, authenticator, phone, "", &auth.SignUpRequired{
+				TermsOfService: authorization.TermsOfService,
+			})
+		default:
+			return nil, errors.Errorf("unexpected authorization type: %T", authorization)
+		}
+	default:
+		return nil, errors.Errorf("unexpected sent code type: %T", sentCode)
+	}
+}
+
+func signInWithCode(ctx context.Context, client *auth.Client, authenticator auth.UserAuthenticator, phone string, sentCode *tg.AuthSentCode) (*tg.AuthAuthorization, error) {
+	for {
+		code, err := authenticator.Code(ctx, sentCode)
 		if err != nil {
-			if !tgerr.Is(err, "SESSION_PASSWORD_NEEDED") {
-				return nil, errors.Wrap(err, "qr auth")
-			}
-
-			pwd, err := password(ctx)
-			if err != nil {
-				return nil, errors.Wrap(err, "2fa password")
-			}
-			if _, err = c.Auth().Password(ctx, pwd); err != nil {
-				return nil, errors.Wrap(err, "2fa auth")
-			}
+			return nil, errors.Wrap(err, "get code")
 		}
 
-		return c.Self(ctx)
+		authorization, err := client.SignIn(ctx, phone, code, sentCode.PhoneCodeHash)
+		if err == nil {
+			return authorization, nil
+		}
+		if errors.Is(err, auth.ErrPasswordAuthNeeded) {
+			return authPasswordWithRetry(ctx, client, authenticator.Password, reporterInputError(authenticator))
+		}
+		var signUpRequired *auth.SignUpRequired
+		if errors.As(err, &signUpRequired) {
+			return handleSignUp(ctx, client, authenticator, phone, sentCode.PhoneCodeHash, signUpRequired)
+		}
+		if isCodeInputError(err) {
+			if reportErr := reportAuthenticatorInputError(ctx, authenticator, AuthInputCode, err); reportErr != nil {
+				return nil, errors.Wrap(reportErr, "report code error")
+			}
+			continue
+		}
+
+		return nil, errors.Wrap(err, "sign in")
+	}
+}
+
+func authPasswordWithRetry(ctx context.Context, client *auth.Client, password PasswordFunc, inputErrors ...InputErrorFunc) (*tg.AuthAuthorization, error) {
+	for {
+		pwd, err := password(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "2fa password")
+		}
+
+		authorization, err := client.Password(ctx, pwd)
+		if err == nil {
+			return authorization, nil
+		}
+		if isPasswordInputError(err) {
+			if reportErr := reportInputErrorFuncs(ctx, AuthInputPassword, err, inputErrors...); reportErr != nil {
+				return nil, errors.Wrap(reportErr, "report password error")
+			}
+			continue
+		}
+
+		return nil, errors.Wrap(err, "2fa auth")
+	}
+}
+
+func handleSignUp(ctx context.Context, client *auth.Client, authenticator auth.UserAuthenticator, phone, hash string, signUpRequired *auth.SignUpRequired) (*tg.AuthAuthorization, error) {
+	if signUpRequired == nil {
+		return nil, errors.New("sign up is required")
+	}
+	if err := authenticator.AcceptTermsOfService(ctx, signUpRequired.TermsOfService); err != nil {
+		return nil, errors.Wrap(err, "confirm TOS")
+	}
+	info, err := authenticator.SignUp(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "sign up info not provided")
+	}
+	authorization, err := client.SignUp(ctx, auth.SignUp{
+		PhoneNumber:   phone,
+		PhoneCodeHash: hash,
+		FirstName:     info.FirstName,
+		LastName:      info.LastName,
 	})
+	if err != nil {
+		return nil, errors.Wrap(err, "sign up")
+	}
+	return authorization, nil
+}
+
+func authenticatedUserAfterLogin(ctx context.Context, c *telegram.Client, authorization *tg.AuthAuthorization) (*tg.User, error) {
+	if user, ok := userFromAuthorization(authorization); ok {
+		return user, nil
+	}
+
+	var last error
+	for attempt := 0; attempt < loginSelfAttempts; attempt++ {
+		user, err := c.Self(ctx)
+		if err == nil {
+			if err = validateAuthenticatedUser(user); err == nil {
+				return user, nil
+			}
+			last = err
+		} else {
+			last = errors.Wrap(err, "get self")
+		}
+
+		if attempt+1 < loginSelfAttempts {
+			if err := sleepContext(ctx, loginSelfRetryDelay); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	status, err := c.Auth().Status(ctx)
+	if err == nil && status.Authorized {
+		if err = validateAuthenticatedUser(status.User); err == nil {
+			return status.User, nil
+		}
+		last = err
+	} else if err != nil {
+		last = errors.Wrap(err, "get auth status")
+	}
+
+	if last == nil {
+		last = errors.New("authenticated user is nil")
+	}
+	return nil, last
+}
+
+func userFromAuthorization(authorization *tg.AuthAuthorization) (*tg.User, bool) {
+	if authorization == nil || authorization.User == nil {
+		return nil, false
+	}
+	user, ok := authorization.User.AsNotEmpty()
+	if !ok || validateAuthenticatedUser(user) != nil {
+		return nil, false
+	}
+	return user, true
+}
+
+func isCodeInputError(err error) bool {
+	return tgerr.Is(err, "PHONE_CODE_EMPTY", "PHONE_CODE_INVALID")
+}
+
+func isPasswordInputError(err error) bool {
+	return errors.Is(err, auth.ErrPasswordInvalid) || tgerr.Is(err, "PASSWORD_HASH_INVALID")
+}
+
+func reporterInputError(authenticator auth.UserAuthenticator) InputErrorFunc {
+	return func(ctx context.Context, input string, err error) error {
+		return reportAuthenticatorInputError(ctx, authenticator, input, err)
+	}
+}
+
+func reportAuthenticatorInputError(ctx context.Context, authenticator auth.UserAuthenticator, input string, err error) error {
+	reporter, ok := authenticator.(InputErrorReporter)
+	if !ok || reporter == nil {
+		return nil
+	}
+	return reporter.AuthInputError(ctx, input, err)
+}
+
+func reportInputErrorFuncs(ctx context.Context, input string, err error, inputErrors ...InputErrorFunc) error {
+	for _, inputError := range inputErrors {
+		if inputError == nil {
+			continue
+		}
+		if reportErr := inputError(ctx, input, err); reportErr != nil {
+			return reportErr
+		}
+	}
+	return nil
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func UserSummary(user *tg.User) string {

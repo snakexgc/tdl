@@ -11,8 +11,6 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/mymmrac/telego"
 	"github.com/stretchr/testify/require"
-
-	"github.com/iyear/tdl/app/login"
 )
 
 func TestLoginManagerCodeFlowSuccess(t *testing.T) {
@@ -54,7 +52,7 @@ func TestLoginManagerRejectsConcurrentFlowAndCleansAfterCancel(t *testing.T) {
 	manager := newTestLoginManager(bot, runner)
 
 	require.NoError(t, manager.StartCode(100, 100))
-	require.ErrorIs(t, manager.StartQR(101, 101), errLoginBusy)
+	require.ErrorIs(t, manager.StartCode(101, 101), errLoginBusy)
 	require.True(t, manager.Cancel(100, 100))
 	require.Eventually(t, func() bool { return !manager.Busy() }, time.Second, 10*time.Millisecond)
 }
@@ -93,20 +91,20 @@ func TestLoginManagerInputTimeoutCleansActiveFlow(t *testing.T) {
 
 	require.NoError(t, manager.StartCode(100, 100))
 	require.Eventually(t, func() bool { return !manager.Busy() }, time.Second, 10*time.Millisecond)
-	require.Contains(t, bot.messagesText(), "登录已超时，请重新发送 /login_code 用户名 或 /login_qr 用户名。")
+	require.Contains(t, bot.messagesText(), "登录已超时，请重新发送 /login_code 用户名。")
 }
 
-func TestLoginManagerQRCancelDoesNotReportSuccessWithEmptyUser(t *testing.T) {
+func TestLoginManagerCancelDoesNotReportSuccessWithEmptyUser(t *testing.T) {
 	bot := &fakeBotAPI{}
 	runner := &fakeLoginRunner{
-		qr: func(ctx context.Context, _ login.QRShowFunc, _ login.PasswordFunc) (*tg.User, error) {
+		code: func(ctx context.Context, _ auth.UserAuthenticator) (*tg.User, error) {
 			<-ctx.Done()
 			return &tg.User{}, nil
 		},
 	}
 	manager := newTestLoginManager(bot, runner)
 
-	require.NoError(t, manager.StartQR(100, 100))
+	require.NoError(t, manager.StartCode(100, 100))
 	require.True(t, manager.Cancel(100, 100))
 	require.Eventually(t, func() bool { return !manager.Busy() }, time.Second, 10*time.Millisecond)
 
@@ -118,7 +116,7 @@ func TestLoginManagerQRCancelDoesNotReportSuccessWithEmptyUser(t *testing.T) {
 func TestLoginManagerUsesNamespaceRunnerFactory(t *testing.T) {
 	bot := &fakeBotAPI{}
 	runner := &fakeLoginRunner{
-		qr: func(context.Context, login.QRShowFunc, login.PasswordFunc) (*tg.User, error) {
+		code: func(context.Context, auth.UserAuthenticator) (*tg.User, error) {
 			return &tg.User{ID: 42}, nil
 		},
 	}
@@ -134,7 +132,7 @@ func TestLoginManagerUsesNamespaceRunnerFactory(t *testing.T) {
 		success <- namespace
 	})
 
-	require.NoError(t, manager.StartQR(100, 100, "Alice"))
+	require.NoError(t, manager.StartCode(100, 100, "Alice"))
 	require.Equal(t, "Alice", factoryNamespace)
 	require.Eventually(t, func() bool { return !manager.Busy() }, time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool { return len(success) == 1 }, time.Second, 10*time.Millisecond)
@@ -147,10 +145,10 @@ func TestLoginNamespaceFromCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Alice", namespace)
 
-	_, err = loginNamespaceFromCommand("/login_qr")
+	_, err = loginNamespaceFromCommand("/login_code")
 	require.Error(t, err)
 
-	_, err = loginNamespaceFromCommand("/login_qr alice1")
+	_, err = loginNamespaceFromCommand("/login_code alice1")
 	require.Error(t, err)
 }
 
@@ -185,24 +183,15 @@ func hasMessagePrefix(messages []string, prefix string) bool {
 
 type fakeLoginRunner struct {
 	code func(ctx context.Context, authenticator auth.UserAuthenticator) (*tg.User, error)
-	qr   func(ctx context.Context, show login.QRShowFunc, password login.PasswordFunc) (*tg.User, error)
 }
 
 func (f *fakeLoginRunner) LoginCode(ctx context.Context, authenticator auth.UserAuthenticator) (*tg.User, error) {
 	return f.code(ctx, authenticator)
 }
 
-func (f *fakeLoginRunner) LoginQR(ctx context.Context, show login.QRShowFunc, password login.PasswordFunc) (*tg.User, error) {
-	if f.qr != nil {
-		return f.qr(ctx, show, password)
-	}
-	return nil, context.Canceled
-}
-
 type fakeBotAPI struct {
 	mu       sync.Mutex
 	messages []string
-	photos   []string
 	deleted  []int
 }
 
@@ -212,14 +201,6 @@ func (f *fakeBotAPI) SendMessage(_ context.Context, params *telego.SendMessagePa
 
 	f.messages = append(f.messages, params.Text)
 	return &telego.Message{MessageID: len(f.messages)}, nil
-}
-
-func (f *fakeBotAPI) SendPhoto(_ context.Context, params *telego.SendPhotoParams) (*telego.Message, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.photos = append(f.photos, params.Caption)
-	return &telego.Message{MessageID: len(f.photos)}, nil
 }
 
 func (f *fakeBotAPI) DeleteMessage(_ context.Context, params *telego.DeleteMessageParams) error {

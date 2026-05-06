@@ -2,16 +2,13 @@ package webui
 
 import (
 	"context"
-	"encoding/base64"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/auth"
-	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
-	"github.com/skip2/go-qrcode"
 
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/core/storage"
@@ -40,8 +37,6 @@ type webLoginFlow struct {
 	errText   string
 	phone     string
 	namespace string
-	qrURL     string
-	qrImage   string
 	user      map[string]any
 
 	codeCh     chan string
@@ -58,8 +53,6 @@ type webLoginStatus struct {
 	Error     string         `json:"error,omitempty"`
 	Phone     string         `json:"phone,omitempty"`
 	Namespace string         `json:"namespace,omitempty"`
-	QRURL     string         `json:"qr_url,omitempty"`
-	QRImage   string         `json:"qr_image,omitempty"`
 	User      map[string]any `json:"user,omitempty"`
 }
 
@@ -86,33 +79,6 @@ func (m *webLoginManager) startPhone(parent context.Context, phone, namespace st
 	}, func(flow *webLoginFlow) {
 		flow.phone = phone
 	})
-}
-
-func (m *webLoginManager) startQR(parent context.Context, namespace string) error {
-	namespace, kvd, err := m.openNamespaceKV(namespace)
-	if err != nil {
-		return err
-	}
-	return m.start(parent, "qr", namespace, func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
-		show := func(ctx context.Context, token qrlogin.Token) error {
-			png, err := qrcode.Encode(token.URL(), qrcode.Medium, 512)
-			if err != nil {
-				return errors.Wrap(err, "create QR image")
-			}
-			flow.muSet(func() {
-				flow.stage = "qr"
-				flow.status = "请使用 Telegram 客户端扫描二维码。"
-				flow.qrURL = token.URL()
-				flow.qrImage = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
-			})
-			return nil
-		}
-		password := func(ctx context.Context) (string, error) {
-			flow.set("password", "请输入 Telegram 2FA 密码。")
-			return flow.waitPassword(ctx)
-		}
-		return login.QRWithCallbacks(ctx, m.sessionOptions(kvd), show, password)
-	}, nil)
 }
 
 func (m *webLoginManager) start(
@@ -279,8 +245,6 @@ func (m *webLoginManager) status() webLoginStatus {
 		Error:     flow.errText,
 		Phone:     flow.phone,
 		Namespace: flow.namespace,
-		QRURL:     flow.qrURL,
-		QRImage:   flow.qrImage,
 		User:      flow.user,
 	}
 }
@@ -330,13 +294,17 @@ func (a webCodeAuthenticator) Phone(ctx context.Context) (string, error) {
 }
 
 func (a webCodeAuthenticator) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
-	a.flow.set("code", "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
+	a.flow.prompt("code", "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
 	return a.flow.waitCode(ctx)
 }
 
 func (a webCodeAuthenticator) Password(ctx context.Context) (string, error) {
-	a.flow.set("password", "请输入 Telegram 2FA 密码。")
+	a.flow.prompt("password", "请输入 Telegram 2FA 密码。")
 	return a.flow.waitPassword(ctx)
+}
+
+func (a webCodeAuthenticator) AuthInputError(ctx context.Context, input string, err error) error {
+	return a.flow.authInputError(ctx, input, err)
 }
 
 func (a webCodeAuthenticator) SignUp(_ context.Context) (auth.UserInfo, error) {
@@ -351,6 +319,38 @@ func (f *webLoginFlow) set(stage, status string) {
 	f.muSet(func() {
 		f.stage = stage
 		f.status = status
+		f.errText = ""
+	})
+}
+
+func (f *webLoginFlow) prompt(stage, status string) {
+	f.muSet(func() {
+		f.stage = stage
+		if f.errText == "" {
+			f.status = status
+		}
+	})
+}
+
+func (f *webLoginFlow) authInputError(_ context.Context, input string, err error) error {
+	stage := input
+	if stage == "" {
+		stage = "password"
+	}
+	message := loginInputErrorText(input, err)
+	f.muSet(func() {
+		f.stage = stage
+		f.status = message
+		f.errText = message
+	})
+	return nil
+}
+
+func (f *webLoginFlow) verifying(stage, status string) {
+	f.muSet(func() {
+		f.stage = stage
+		f.status = status
+		f.errText = ""
 	})
 }
 
@@ -368,6 +368,7 @@ func (f *webLoginFlow) waitCode(ctx context.Context) (string, error) {
 		if code == "" {
 			return "", errors.New("code is empty")
 		}
+		f.verifying("code", "正在验证验证码...")
 		return code, nil
 	}
 }
@@ -380,6 +381,7 @@ func (f *webLoginFlow) waitPassword(ctx context.Context) (string, error) {
 		if password == "" {
 			return "", errors.New("password is empty")
 		}
+		f.verifying("password", "正在验证 2FA 密码...")
 		return password, nil
 	}
 }
@@ -390,6 +392,7 @@ func (f *webLoginFlow) sendCode(code string) error {
 	}
 	select {
 	case f.codeCh <- code:
+		f.verifying("code", "正在验证验证码...")
 		return nil
 	default:
 		return errors.New("code has already been submitted")
@@ -402,6 +405,7 @@ func (f *webLoginFlow) sendPassword(password string) error {
 	}
 	select {
 	case f.passwordCh <- password:
+		f.verifying("password", "正在验证 2FA 密码...")
 		return nil
 	default:
 		return errors.New("password has already been submitted")
@@ -435,4 +439,15 @@ func loginErrorText(err error) string {
 		return "连接 Telegram 超时，未能完成初始化。请检查服务器能否访问 Telegram；如果需要代理，请在配置中填写 proxy，也可以适当调大 reconnect_timeout 后重试。原始错误：" + text
 	}
 	return text
+}
+
+func loginInputErrorText(input string, err error) string {
+	switch input {
+	case login.AuthInputCode:
+		return "验证码不正确，请重新输入。"
+	case login.AuthInputPassword:
+		return "2FA 密码不正确，请重新输入。"
+	default:
+		return loginErrorText(err)
+	}
 }
