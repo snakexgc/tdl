@@ -37,7 +37,7 @@ func CodeWithAuthenticator(ctx context.Context, opts SessionOptions, authenticat
 		return nil, errors.New("authenticator is nil")
 	}
 
-	return runWithTemporarySession(ctx, opts, nil, func(ctx context.Context, c *telegram.Client) (*tg.User, error) {
+	return runWithTemporarySession(ctx, opts, nil, true, func(ctx context.Context, c *telegram.Client) (*tg.User, error) {
 		if err := c.Auth().IfNecessary(ctx, auth.NewFlow(authenticator, auth.SendCodeOptions{})); err != nil {
 			return nil, err
 		}
@@ -95,7 +95,7 @@ func QRWithCallbacks(ctx context.Context, opts SessionOptions, show QRShowFunc, 
 	}
 
 	d := tg.NewUpdateDispatcher()
-	return runWithTemporarySession(ctx, opts, d, func(ctx context.Context, c *telegram.Client) (*tg.User, error) {
+	return runWithTemporarySession(ctx, opts, d, false, func(ctx context.Context, c *telegram.Client) (*tg.User, error) {
 		_, err := c.QR().Auth(ctx, qrlogin.OnLoginToken(d), show)
 		if err != nil {
 			if !tgerr.Is(err, "SESSION_PASSWORD_NEEDED") {
@@ -142,6 +142,7 @@ func runWithTemporarySession(
 	ctx context.Context,
 	opts SessionOptions,
 	updateHandler telegram.UpdateHandler,
+	preflightPing bool,
 	fn func(ctx context.Context, c *telegram.Client) (*tg.User, error),
 ) (*tg.User, error) {
 	if opts.KV == nil {
@@ -169,8 +170,10 @@ func runWithTemporarySession(
 
 	var user *tg.User
 	if err = c.Run(ctx, func(ctx context.Context) error {
-		if err := c.Ping(ctx); err != nil {
-			return err
+		if preflightPing {
+			if err := c.Ping(ctx); err != nil {
+				return err
+			}
 		}
 
 		u, err := fn(ctx, c)

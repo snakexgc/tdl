@@ -201,9 +201,7 @@ docker compose up -d
 
 ## 反馈
 [加入电报](https://t.me/+mHQOJCcxV64xMDE1)  
-
 或者  
-
 [提issues](https://github.com/snakexgc/tdl/issues)  
 
 ## 协议

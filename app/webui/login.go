@@ -165,7 +165,7 @@ func (m *webLoginManager) start(
 			flow.muSet(func() {
 				flow.stage = loginStageFailed
 				flow.status = "登录失败。"
-				flow.errText = err.Error()
+				flow.errText = loginErrorText(err)
 			})
 			return
 		}
@@ -423,4 +423,16 @@ func (f *webLoginFlow) isTerminalLocked() bool {
 
 func normalizePhone(phone string) string {
 	return strings.NewReplacer(" ", "", "\t", "", "-", "", "(", "", ")", "").Replace(phone)
+}
+
+func loginErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "retryuntilack") && strings.Contains(lower, "retry limit reached") {
+		return "连接 Telegram 超时，未能完成初始化。请检查服务器能否访问 Telegram；如果需要代理，请在配置中填写 proxy，也可以适当调大 reconnect_timeout 后重试。原始错误：" + text
+	}
+	return text
 }
