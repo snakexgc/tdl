@@ -14,6 +14,13 @@ func TestNeedsUpdateSemverAndDev(t *testing.T) {
 	require.False(t, needsUpdate("v1.2.4", "v1.2.3"))
 }
 
+func TestNeedsUpdateDockerOriginVersion(t *testing.T) {
+	require.True(t, isDockerVersion("v3.6.0-origin-master"))
+	require.Equal(t, "v3.6.0", releaseVersionForCompare("v3.6.0-origin-master"))
+	require.False(t, needsUpdate("v3.6.0-origin-master", "v3.6.0"))
+	require.True(t, needsUpdate("v3.6.0-origin-master", "v3.6.1"))
+}
+
 func TestChooseAssetSkipsChecksums(t *testing.T) {
 	assets := []githubAsset{
 		{Name: "tdl_checksums.txt", BrowserDownloadURL: "bad"},

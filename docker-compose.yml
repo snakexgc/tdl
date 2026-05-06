@@ -3,8 +3,27 @@ services:
     image: ghcr.io/snakexgc/tdl:latest
     container_name: tdl
     restart: unless-stopped
-    ports:
-      - "22335:22335"
-      - "22334:22334"
+    depends_on:
+      - aria2-pro
+    network_mode: host
     volumes:
       - ./tdl:/data
+
+  aria2-pro:
+    image: p3terx/aria2-pro:latest
+    container_name: aria2-pro
+    restart: unless-stopped
+    network_mode: host
+    logging:
+      options:
+        max-size: "1m"
+    environment:
+      PUID: 0
+      PGID: 0
+      RPC_SECRET: tdl_change_must
+      RPC_PORT: 6800
+      LISTEN_PORT: 6888
+      SPECIAL_MODE: rclone
+    volumes:
+      - ./aria2-config:/config
+      - ./rclone-downloads:/downloads

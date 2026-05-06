@@ -286,6 +286,37 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 	}, reqBody.Params[1])
 }
 
+func TestCheckAria2RequiresRPCURL(t *testing.T) {
+	result := checkAria2(context.Background(), config.Aria2Config{})
+
+	require.False(t, result.OK)
+	require.False(t, result.Configured)
+	require.Contains(t, result.Message, "aria2.rpc_url")
+}
+
+func TestCheckAria2Success(t *testing.T) {
+	var reqBody struct {
+		Method string `json:"method"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":{"version":"1.37.0"}}`))
+	}))
+	defer srv.Close()
+
+	result := checkAria2(context.Background(), config.Aria2Config{
+		RPCURL:         srv.URL,
+		TimeoutSeconds: 5,
+	})
+
+	require.True(t, result.OK)
+	require.True(t, result.Configured)
+	require.Equal(t, "aria2.getVersion", reqBody.Method)
+	require.Equal(t, "1.37.0", result.Version)
+	require.Contains(t, result.Message, "连接正常")
+}
+
 func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 	body := []byte(`{
 		"jsonrpc":"2.0",

@@ -30,6 +30,10 @@ const (
 	githubAPIBase     = "https://api.github.com"
 	updateTimeout     = 3 * time.Minute
 	goosWindows       = "windows"
+	runtimeBinary     = "binary"
+	runtimeDocker     = "docker"
+	dockerVersionMark = "-origin-"
+	dockerUpdateCmd   = "docker compose pull && docker compose up -d"
 )
 
 type Info struct {
@@ -39,6 +43,8 @@ type Info struct {
 	GOOS           string    `json:"goos"`
 	GOARCH         string    `json:"goarch"`
 	Repository     string    `json:"repository"`
+	Runtime        string    `json:"runtime"`
+	Docker         bool      `json:"docker"`
 	LatestVersion  string    `json:"latest_version"`
 	LatestName     string    `json:"latest_name"`
 	LatestURL      string    `json:"latest_url"`
@@ -46,6 +52,7 @@ type Info struct {
 	PublishedAt    time.Time `json:"published_at,omitempty"`
 	AssetName      string    `json:"asset_name,omitempty"`
 	AssetURL       string    `json:"asset_url,omitempty"`
+	UpdateCommand  string    `json:"update_command,omitempty"`
 	NeedsUpdate    bool      `json:"needs_update"`
 	CanUpdate      bool      `json:"can_update"`
 	Message        string    `json:"message"`
@@ -90,16 +97,21 @@ func CheckLatestFrom(ctx context.Context, repository, proxyURL string) (Info, er
 	info.PublishedAt = release.PublishedAt
 	info.NeedsUpdate = needsUpdate(consts.Version, release.TagName)
 
-	if asset, ok := chooseAsset(release.Assets); ok {
-		info.AssetName = asset.Name
-		info.AssetURL = asset.BrowserDownloadURL
-		info.CanUpdate = info.NeedsUpdate
-	} else if info.NeedsUpdate {
-		info.Message = fmt.Sprintf("未找到适用于 %s/%s 的发布资产", runtime.GOOS, runtime.GOARCH)
+	if !info.Docker {
+		if asset, ok := chooseAsset(release.Assets); ok {
+			info.AssetName = asset.Name
+			info.AssetURL = asset.BrowserDownloadURL
+			info.CanUpdate = info.NeedsUpdate
+		} else if info.NeedsUpdate {
+			info.Message = fmt.Sprintf("未找到适用于 %s/%s 的发布资产", runtime.GOOS, runtime.GOARCH)
+		}
 	}
 
 	if !info.NeedsUpdate {
 		info.Message = "当前已是最新版本"
+	} else if info.Docker {
+		info.UpdateCommand = dockerUpdateCmd
+		info.Message = fmt.Sprintf("发现新版本。当前运行在 Docker 镜像中，请在服务器执行 `%s` 更新容器。", dockerUpdateCmd)
 	} else if info.CanUpdate {
 		info.Message = "发现新版本，可以更新"
 	}
@@ -217,6 +229,11 @@ func StartAttached(path string, args []string, cwd string) error {
 }
 
 func currentInfo(repository string) Info {
+	docker := isDockerVersion(consts.Version)
+	runtimeType := runtimeBinary
+	if docker {
+		runtimeType = runtimeDocker
+	}
 	return Info{
 		CurrentVersion: consts.Version,
 		CurrentCommit:  consts.Commit,
@@ -224,6 +241,8 @@ func currentInfo(repository string) Info {
 		GOOS:           runtime.GOOS,
 		GOARCH:         runtime.GOARCH,
 		Repository:     repository,
+		Runtime:        runtimeType,
+		Docker:         docker,
 	}
 }
 
@@ -380,8 +399,8 @@ func osAliases(goos string) []string {
 }
 
 func needsUpdate(current, latest string) bool {
-	current = strings.TrimSpace(current)
-	latest = strings.TrimSpace(latest)
+	current = releaseVersionForCompare(current)
+	latest = releaseVersionForCompare(latest)
 	if latest == "" {
 		return false
 	}
@@ -394,6 +413,19 @@ func needsUpdate(current, latest string) bool {
 		return semver.Compare(currentSemver, latestSemver) < 0
 	}
 	return strings.TrimPrefix(current, "v") != strings.TrimPrefix(latest, "v")
+}
+
+func isDockerVersion(version string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(version)), dockerVersionMark)
+}
+
+func releaseVersionForCompare(version string) string {
+	version = strings.TrimSpace(version)
+	lower := strings.ToLower(version)
+	if idx := strings.Index(lower, dockerVersionMark); idx >= 0 {
+		return strings.TrimSpace(version[:idx])
+	}
+	return version
 }
 
 func canonicalVersion(version string) string {

@@ -122,6 +122,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/aria2ng.html", s.authFunc(s.handleAsset("aria2ng.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("/aria2/jsonrpc", s.authFunc(s.handleAria2Proxy))
 	mux.HandleFunc("/api/status", s.authFunc(s.handleStatus))
+	mux.HandleFunc("/api/aria2/check", s.authFunc(s.handleAria2Check))
 	mux.HandleFunc("/api/kv/links", s.authFunc(s.handleKVLinks))
 	mux.HandleFunc("/api/kv/links/actions", s.authFunc(s.handleKVActions))
 	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))
@@ -221,6 +222,62 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"version": versionInfo(),
 	})
+}
+
+type aria2CheckResult struct {
+	OK         bool   `json:"ok"`
+	Configured bool   `json:"configured"`
+	RPCURL     string `json:"rpc_url"`
+	Version    string `json:"version,omitempty"`
+	Message    string `json:"message"`
+	Error      string `json:"error,omitempty"`
+}
+
+func (s *Server) handleAria2Check(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, checkAria2(r.Context(), config.Get().Aria2))
+}
+
+func checkAria2(ctx context.Context, cfg config.Aria2Config) aria2CheckResult {
+	rpcURL := strings.TrimSpace(cfg.RPCURL)
+	result := aria2CheckResult{
+		RPCURL: rpcURL,
+	}
+	if rpcURL == "" {
+		result.Message = "尚未配置 aria2.rpc_url。请先在配置设置中填写 aria2 JSON-RPC 地址。"
+		return result
+	}
+	result.Configured = true
+
+	parsed, err := url.Parse(rpcURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		result.Message = "aria2.rpc_url 格式不正确。"
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return result
+	}
+
+	var version struct {
+		Version string `json:"version"`
+	}
+	if err := callAria2(ctx, cfg, "aria2.getVersion", []any{}, &version); err != nil {
+		result.Message = "无法连接 aria2 JSON-RPC。请检查地址、端口、网络和密钥。"
+		result.Error = err.Error()
+		return result
+	}
+
+	result.OK = true
+	result.Version = version.Version
+	if version.Version != "" {
+		result.Message = "aria2 连接正常，版本：" + version.Version
+	} else {
+		result.Message = "aria2 连接正常。"
+	}
+	return result
 }
 
 func versionInfo() map[string]any {

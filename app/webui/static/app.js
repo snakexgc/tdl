@@ -113,6 +113,17 @@ function bindNavigation() {
 
 function bindActions() {
   document.getElementById("reload-aria2").addEventListener("click", () => loadAria2(true));
+  document.getElementById("aria2-retry-check").addEventListener("click", () => loadAria2(true));
+  document.getElementById("aria2-open-config").addEventListener("click", () => {
+    document.querySelector('[data-view="config"]').click();
+    setTimeout(() => {
+      const input = document.querySelector('#config-form [data-path="aria2.rpc_url"]');
+      if (input) {
+        input.focus();
+        input.scrollIntoView({ block: "center" });
+      }
+    }, 0);
+  });
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
   document.getElementById("refresh-user").addEventListener("click", loadUser);
   document.getElementById("switch-user").addEventListener("click", switchUser);
@@ -353,8 +364,33 @@ function setModuleStatus(message, kind = "") {
   status.textContent = message || "";
 }
 
-function loadAria2(force = false) {
+async function loadAria2(force = false) {
   if (state.aria2Loaded && !force) return;
+  if (force) {
+    state.aria2Loaded = false;
+    document.getElementById("aria2-frame").removeAttribute("src");
+  }
+  showAria2Guide({
+    message: "正在检查 aria2 配置...",
+    checking: true,
+  });
+
+  let check;
+  try {
+    check = await api("/api/aria2/check");
+  } catch (error) {
+    showAria2Guide({
+      message: "无法检查 aria2 配置。",
+      error: error.message,
+    });
+    return;
+  }
+
+  if (!check.ok) {
+    showAria2Guide(check);
+    return;
+  }
+
   const protocol = location.protocol.replace(":", "");
   const port = location.port || (protocol === "https" ? "443" : "80");
   const query = new URLSearchParams({
@@ -363,8 +399,31 @@ function loadAria2(force = false) {
     port,
     interface: "aria2/jsonrpc",
   });
-  document.getElementById("aria2-frame").src = `/aria2ng.html#!/settings/rpc/set?${query.toString()}`;
+  hideAria2Guide();
+  const frame = document.getElementById("aria2-frame");
+  frame.src = `/aria2ng.html#!/settings/rpc/set?${query.toString()}`;
   state.aria2Loaded = true;
+}
+
+function showAria2Guide(result = {}) {
+  const guide = document.getElementById("aria2-guide");
+  const frame = document.getElementById("aria2-frame");
+  const message = document.getElementById("aria2-guide-message");
+  frame.hidden = true;
+  guide.hidden = false;
+  if (!result.checking) {
+    frame.removeAttribute("src");
+  }
+  const parts = [];
+  if (result.message) parts.push(result.message);
+  if (result.rpc_url) parts.push(`当前 aria2.rpc_url：${result.rpc_url}`);
+  if (result.error) parts.push(`错误详情：${result.error}`);
+  message.textContent = parts.join("\n") || "请先完成 aria2 配置。";
+}
+
+function hideAria2Guide() {
+  document.getElementById("aria2-guide").hidden = true;
+  document.getElementById("aria2-frame").hidden = false;
 }
 
 async function loadKV() {
@@ -916,19 +975,26 @@ function renderUpdateInfo(update) {
     notes.textContent = "";
     return;
   }
+  const runtimeLabel = update.docker
+    ? "Docker 镜像"
+    : (update.runtime === "binary" ? "本机二进制" : (update.runtime || "本机二进制"));
   const rows = [
     ["当前版本", update.current_version || "-"],
     ["当前提交", update.current_commit || "-"],
     ["构建日期", update.current_date || "-"],
     ["运行平台", `${update.goos || "-"} / ${update.goarch || "-"}`],
+    ["运行方式", runtimeLabel],
     ["最新版本", update.latest_version || "-"],
     ["发布名称", update.latest_name || "-"],
     ["更新文件", update.asset_name || "-"],
     ["发布地址", update.latest_url || "-"],
   ];
+  if (update.update_command) {
+    rows.push(["更新命令", update.update_command]);
+  }
   target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
   notes.textContent = update.release_notes || "";
-  const kind = update.needs_update ? "success" : "";
+  const kind = update.needs_update ? (update.can_update ? "success" : "warn") : "";
   status.className = `notice ${kind}`.trim();
   status.textContent = update.message || (update.needs_update ? "发现新版本。" : "当前已是最新版本。");
   document.getElementById("apply-update").disabled = !update.needs_update || !update.can_update;
@@ -1032,6 +1098,11 @@ async function saveConfig(event) {
     renderConfigForm();
     status.className = "notice success";
     status.textContent = data.message || "配置已保存";
+    state.aria2Loaded = false;
+    document.getElementById("aria2-frame").removeAttribute("src");
+    if (document.getElementById("view-downloads").classList.contains("active")) {
+      loadAria2(true);
+    }
     loadStatus();
     loadModules();
   } catch (error) {

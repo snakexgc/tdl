@@ -37,7 +37,35 @@
         <button class="btn secondary" id="reload-aria2">重新载入</button>
       </header>
       <div class="frame-wrap">
-        <iframe id="aria2-frame" title="AriaNg 下载管理"></iframe>
+        <section class="aria2-guide" id="aria2-guide" hidden>
+          <div>
+            <h2>aria2 尚未连接</h2>
+            <p id="aria2-guide-message">正在检查 aria2 配置...</p>
+          </div>
+          <div class="guide-grid">
+            <div>
+              <h3>需要确认</h3>
+              <ul>
+                <li><code>aria2.rpc_url</code> 是 tdl 服务端可以访问的 JSON-RPC 地址。</li>
+                <li><code>aria2.secret</code> 与 aria2 的 RPC 密钥一致。</li>
+                <li>如果 aria2 运行在 Docker、NAS 或另一台机器上，不要使用只能在本机访问的地址。</li>
+              </ul>
+            </div>
+            <div>
+              <h3>常见示例</h3>
+              <ul>
+                <li>同一台宿主机：<code>http://127.0.0.1:6800/jsonrpc</code></li>
+                <li>Docker Compose 同网络：<code>http://aria2:6800/jsonrpc</code></li>
+                <li>另一台机器：<code>http://可访问的IP:6800/jsonrpc</code></li>
+              </ul>
+            </div>
+          </div>
+          <div class="actions guide-actions">
+            <button class="btn primary" id="aria2-open-config" type="button">打开配置设置</button>
+            <button class="btn secondary" id="aria2-retry-check" type="button">重新检查</button>
+          </div>
+        </section>
+        <iframe id="aria2-frame" title="AriaNg 下载管理" hidden></iframe>
       </div>
     </section>
 
