@@ -93,7 +93,7 @@ tdl 对 aria2 暴露单条 HTTP 下载连接，文件内部仍会由 tdl 使用 
 
 `http.buffer.mode=memory` 会让当前活跃文件共享一块有上限的内存预读缓冲，用来降低 HTTP 顺序写出对 Telegram 分片抓取的反压。默认 `http.buffer.size_mb=64`；如果机器内存较小可设为 32，高带宽或 aria2 与 tdl 同机时可尝试 128。设置为 `off` 可回到旧的顺序流式行为。
 
-`webui.password` 设置后，直接启动程序会打开 Web 管理面板，例如访问 `http://127.0.0.1:22335`。面板包含下载管理、KV 链接管理、Telegram 用户登录、模块管理、配置设置和检查更新。下载管理内置 AriaNg，并通过 tdl 服务端代理读取 `aria2.rpc_url` / `aria2.secret`，通常不需要在浏览器里单独配置 aria2 RPC。
+`webui.password` 设置后，直接启动程序会打开 Web 管理面板，例如访问 `http://127.0.0.1:22335`。面板使用页面登录，不再依赖浏览器弹出的 Basic Auth 窗口。面板包含用户管理、配置文件、下载管理、KV 链接管理、模块管理和检查更新。下载管理内置 AriaNg，并通过 tdl 服务端代理读取 `aria2.rpc_url` / `aria2.secret`，通常不需要在浏览器里单独配置 aria2 RPC。
 
 Web 管理面板的“模块管理”可以在运行时启用或关闭功能。`监听下载` 是一个整体模块，包含 Telegram 表情监听、本地 HTTP 下载链接和 aria2 任务提交；关闭该模块会停止这组功能，Web 管理面板仍会保持运行。
 

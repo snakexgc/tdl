@@ -3,8 +3,10 @@ package webui
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -29,7 +32,7 @@ import (
 	"github.com/iyear/tdl/pkg/kv"
 )
 
-//go:embed index.html aria2ng.html static/*
+//go:embed index.html login.html aria2ng.html static/* views/*
 var assets embed.FS
 
 const (
@@ -42,6 +45,9 @@ const (
 
 	userSessionKey = "session"
 	userAppKey     = "app"
+
+	webUICookieName = "tdl_webui_session"
+	webUISessionTTL = 24 * time.Hour
 )
 
 type Options struct {
@@ -73,8 +79,12 @@ type ModuleState struct {
 }
 
 type Server struct {
-	opts  Options
+	opts Options
+
 	login *webLoginManager
+
+	sessionMu sync.Mutex
+	sessions  map[string]time.Time
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -109,8 +119,9 @@ func Run(ctx context.Context, opts Options) error {
 
 func NewServer(opts Options) *Server {
 	return &Server{
-		opts:  opts,
-		login: newWebLoginManager(opts),
+		opts:     opts,
+		login:    newWebLoginManager(opts),
+		sessions: map[string]time.Time{},
 	}
 }
 
@@ -118,9 +129,15 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	staticFS, _ := fs.Sub(assets, "static")
-	mux.Handle("/static/", s.auth(http.StripPrefix("/static/", http.FileServer(http.FS(staticFS)))))
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.HandleFunc("/login", s.handleLoginPage)
+	mux.HandleFunc("/api/auth/session", s.handleAuthSession)
+	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/auth/logout", s.authFunc(s.handleAuthLogout))
+	mux.HandleFunc("/views/", s.authFunc(s.handleViewAsset))
 	mux.HandleFunc("/aria2ng.html", s.authFunc(s.handleAsset("aria2ng.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("/aria2/jsonrpc", s.authFunc(s.handleAria2Proxy))
+	mux.HandleFunc("/api/heartbeat", s.authFunc(s.handleHeartbeat))
 	mux.HandleFunc("/api/status", s.authFunc(s.handleStatus))
 	mux.HandleFunc("/api/aria2/check", s.authFunc(s.handleAria2Check))
 	mux.HandleFunc("/api/kv/links", s.authFunc(s.handleKVLinks))
@@ -146,10 +163,12 @@ func (s *Server) routes() http.Handler {
 
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg := config.Get()
-		if cfg == nil || !basicAuthOK(r, cfg.WebUI.Username, cfg.WebUI.Password) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="tdl webui"`)
-			http.Error(w, "authentication required", http.StatusUnauthorized)
+		if !s.sessionOK(r) {
+			if wantsHTML(r) {
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+			writeError(w, http.StatusUnauthorized, errors.New("authentication required"))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -160,17 +179,171 @@ func (s *Server) authFunc(fn http.HandlerFunc) http.HandlerFunc {
 	return s.auth(fn).ServeHTTP
 }
 
-func basicAuthOK(r *http.Request, username, password string) bool {
-	if username == "" || password == "" {
-		return false
-	}
-	gotUser, gotPassword, ok := r.BasicAuth()
-	if !ok {
+func credentialsOK(gotUser, gotPassword, username, password string) bool {
+	if username == "" || password == "" || gotUser == "" || gotPassword == "" {
 		return false
 	}
 	userOK := subtle.ConstantTimeCompare([]byte(gotUser), []byte(username)) == 1
 	passOK := subtle.ConstantTimeCompare([]byte(gotPassword), []byte(password)) == 1
 	return userOK && passOK
+}
+
+func (s *Server) sessionOK(r *http.Request) bool {
+	cookie, err := r.Cookie(webUICookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return false
+	}
+	token := cookie.Value
+	now := time.Now()
+
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	expiresAt, ok := s.sessions[token]
+	if !ok || !expiresAt.After(now) {
+		delete(s.sessions, token)
+		return false
+	}
+	s.sessions[token] = now.Add(webUISessionTTL)
+	return true
+}
+
+func (s *Server) issueSession(w http.ResponseWriter, r *http.Request) error {
+	token, err := newSessionToken()
+	if err != nil {
+		return err
+	}
+	s.sessionMu.Lock()
+	s.sessions[token] = time.Now().Add(webUISessionTTL)
+	s.sessionMu.Unlock()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     webUICookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(webUISessionTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsHTTPS(r),
+	})
+	return nil
+}
+
+func (s *Server) clearSession(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(webUICookieName); err == nil {
+		s.sessionMu.Lock()
+		delete(s.sessions, cookie.Value)
+		s.sessionMu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     webUICookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsHTTPS(r),
+	})
+}
+
+func newSessionToken() (string, error) {
+	data := make([]byte, 32)
+	if _, err := rand.Read(data); err != nil {
+		return "", errors.Wrap(err, "generate session token")
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func wantsHTML(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/views/") || strings.HasPrefix(r.URL.Path, "/aria2/") {
+		return false
+	}
+	accept := r.Header.Get("Accept")
+	return r.Method == http.MethodGet && (accept == "" || strings.Contains(accept, "text/html"))
+}
+
+func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.sessionOK(r) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	s.serveAsset(w, r, "login.html", "text/html; charset=utf-8")
+}
+
+func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	if !s.sessionOK(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+		return
+	}
+	cfg := config.Get()
+	user := ""
+	if cfg != nil {
+		user = cfg.WebUI.Username
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"user":          user,
+	})
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	cfg := config.Get()
+	if cfg == nil || !credentialsOK(strings.TrimSpace(req.Username), req.Password, cfg.WebUI.Username, cfg.WebUI.Password) {
+		writeError(w, http.StatusUnauthorized, errors.New("用户名或密码错误"))
+		return
+	}
+	if err := s.issueSession(w, r); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	s.clearSession(w, r)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleViewAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/views/")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || !strings.HasSuffix(name, ".html") {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveAsset(w, r, "views/"+name, "text/html; charset=utf-8")
 }
 
 func (s *Server) handleAsset(name, contentType string) http.HandlerFunc {
@@ -184,18 +357,33 @@ func (s *Server) handleAsset(name, contentType string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		data, err := assets.ReadFile(name)
-		if err != nil {
-			http.Error(w, "asset not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method == http.MethodHead {
-			return
-		}
-		_, _ = w.Write(data)
+		s.serveAsset(w, r, name, contentType)
 	}
+}
+
+func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name, contentType string) {
+	data, err := assets.ReadFile(name)
+	if err != nil {
+		http.Error(w, "asset not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"time": time.Now().UTC().Format(time.RFC3339Nano),
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

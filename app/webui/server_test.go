@@ -20,6 +20,11 @@ import (
 
 var webUITestConfigOnce sync.Once
 
+const (
+	webUITestUsername = "admin"
+	webUITestPassword = "secret"
+)
+
 func initWebUITestConfig(t *testing.T) {
 	t.Helper()
 	var initErr error
@@ -32,6 +37,95 @@ func initWebUITestConfig(t *testing.T) {
 	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
 	cfg.HTTP.DownloadLinkTTLHours = 24
 	cfg.Aria2.RPCURL = ""
+}
+
+func TestRoutesServeFormLoginWithoutBasicChallenge(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	server := NewServer(Options{})
+	handler := server.routes()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.Equal(t, "/login", rec.Header().Get("Location"))
+	require.Empty(t, rec.Header().Get("WWW-Authenticate"))
+
+	req = httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `id="webui-login-form"`)
+	require.Empty(t, rec.Header().Get("WWW-Authenticate"))
+}
+
+func TestRoutesAuthenticateWithWebSessionCookie(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	server := NewServer(Options{})
+	handler := server.routes()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+webUITestUsername+`","password":"`+webUITestPassword+`"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotEmpty(t, rec.Result().Cookies())
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == webUICookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	require.NotNil(t, sessionCookie)
+	require.True(t, sessionCookie.HttpOnly)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"namespace"`)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/heartbeat", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"ok":true`)
+
+	req = httptest.NewRequest(http.MethodGet, "/views/user.html", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `id="view-user"`)
+}
+
+func TestRoutesRejectUnauthenticatedAPIWithJSON(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	server := NewServer(Options{})
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+
+	server.routes().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	require.Empty(t, rec.Header().Get("WWW-Authenticate"))
+	require.Contains(t, rec.Body.String(), "authentication required")
 }
 
 func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {

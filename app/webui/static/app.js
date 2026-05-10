@@ -12,12 +12,20 @@ const state = {
   loginMethod: "phone",
   loginPanel: "",
   lastLoginData: null,
+  heartbeatTimer: null,
+  heartbeatLastSeen: 0,
+  heartbeatState: "checking",
 };
 
 const collator = new Intl.Collator("zh-Hans-CN", {
   numeric: true,
   sensitivity: "base",
 });
+
+const views = ["user", "config", "downloads", "kv", "modules", "update"];
+const heartbeatIntervalMS = 1000;
+const heartbeatOfflineMS = 3000;
+const heartbeatRequestTimeoutMS = 1500;
 
 const sections = [
   {
@@ -79,6 +87,16 @@ const sections = [
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
+  bootstrap().catch((error) => {
+    const host = document.getElementById("view-host");
+    if (host) {
+      host.innerHTML = `<div class="notice error">管理面板载入失败：${escapeHTML(error.message)}</div>`;
+    }
+  });
+});
+
+async function bootstrap() {
+  await loadViews();
   bindNavigation();
   bindActions();
   bindKVTable();
@@ -86,46 +104,71 @@ document.addEventListener("DOMContentLoaded", () => {
   bindUserTabs();
   bindLoginActions();
   loadStatus();
-  loadAria2();
-  loadKV();
-  loadUser();
-  loadLoginStatus();
-  loadModules();
-  loadConfig();
-  loadUpdateStatus();
-});
+  loadActiveViewData();
+  startHeartbeat();
+}
+
+async function loadViews() {
+  const host = document.getElementById("view-host");
+  const html = await Promise.all(views.map(async (view) => {
+    const response = await fetch(`/views/${view}.html`, { credentials: "same-origin" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      throw new Error("登录已过期。");
+    }
+    if (!response.ok) {
+      throw new Error(`无法载入 ${view}.html`);
+    }
+    return response.text();
+  }));
+  host.innerHTML = html.join("");
+}
 
 function bindNavigation() {
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
-      const view = button.dataset.view;
-      document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item === button));
-      document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
-      if (view === "downloads") loadAria2();
-      if (view === "kv") loadKV();
-      if (view === "user") {
-        loadUser();
-        loadLoginStatus();
-      }
-      if (view === "modules") loadModules();
-      if (view === "config") loadConfig();
-      if (view === "update") loadUpdateStatus();
+      selectView(button.dataset.view);
     });
   });
 }
 
+function selectView(view) {
+  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
+  document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
+  loadViewData(view);
+}
+
+function loadActiveViewData() {
+  const view = document.querySelector(".nav-item.active")?.dataset.view || "user";
+  loadViewData(view);
+}
+
+function loadViewData(view) {
+  if (view === "downloads") loadAria2();
+  if (view === "kv") loadKV();
+  if (view === "user") {
+    loadUser();
+    loadLoginStatus();
+  }
+  if (view === "modules") loadModules();
+  if (view === "config") loadConfig();
+  if (view === "update") loadUpdateStatus();
+}
+
 function bindActions() {
+  document.getElementById("logout").addEventListener("click", logout);
   document.getElementById("reload-aria2").addEventListener("click", () => loadAria2(true));
   document.getElementById("aria2-retry-check").addEventListener("click", () => loadAria2(true));
-  document.getElementById("aria2-open-config").addEventListener("click", () => {
-    document.querySelector('[data-view="config"]').click();
-    setTimeout(() => {
+  document.getElementById("aria2-open-config").addEventListener("click", async () => {
+    selectView("config");
+    await loadConfig();
+    requestAnimationFrame(() => {
       const input = document.querySelector('#config-form [data-path="aria2.rpc_url"]');
       if (input) {
         input.focus();
         input.scrollIntoView({ block: "center" });
       }
-    }, 0);
+    });
   });
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
   document.getElementById("refresh-user").addEventListener("click", loadUser);
@@ -138,6 +181,69 @@ function bindActions() {
   document.getElementById("reboot").addEventListener("click", reboot);
   document.getElementById("check-update").addEventListener("click", loadUpdateStatus);
   document.getElementById("apply-update").addEventListener("click", applyUpdate);
+}
+
+async function logout() {
+  if (state.heartbeatTimer) {
+    clearInterval(state.heartbeatTimer);
+    state.heartbeatTimer = null;
+  }
+  try {
+    await api("/api/auth/logout", { method: "POST", body: "{}" });
+  } finally {
+    window.location.href = "/login";
+  }
+}
+
+function startHeartbeat() {
+  state.heartbeatLastSeen = Date.now();
+  setHeartbeatState("checking");
+  runHeartbeat();
+  state.heartbeatTimer = window.setInterval(runHeartbeat, heartbeatIntervalMS);
+}
+
+async function runHeartbeat() {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), heartbeatRequestTimeoutMS);
+  try {
+    const response = await fetch("/api/heartbeat", {
+      credentials: "same-origin",
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(response.statusText);
+    }
+    state.heartbeatLastSeen = Date.now();
+    setHeartbeatState("online");
+  } catch {
+    const elapsed = state.heartbeatLastSeen ? Date.now() - state.heartbeatLastSeen : heartbeatOfflineMS;
+    if (elapsed >= heartbeatOfflineMS) {
+      setHeartbeatState("offline");
+    }
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function setHeartbeatState(next) {
+  if (state.heartbeatState === next) return;
+  state.heartbeatState = next;
+  const indicator = document.getElementById("heartbeat-indicator");
+  const label = document.getElementById("heartbeat-label");
+  if (!indicator || !label) return;
+  indicator.dataset.state = next;
+  if (next === "online") {
+    label.textContent = "TDL 在线";
+  } else if (next === "offline") {
+    label.textContent = "TDL 离线";
+  } else {
+    label.textContent = "TDL 连接中";
+  }
 }
 
 function bindKVTable() {
@@ -283,6 +389,10 @@ async function api(path, options = {}) {
     },
     ...options,
   });
+  if (response.status === 401) {
+    window.location.href = "/login";
+    throw new Error("登录已过期，请重新登录。");
+  }
   const text = await response.text();
   let data = {};
   if (text) {

@@ -1,0 +1,44 @@
+<section class="view" id="view-kv">
+  <header class="page-head">
+    <div>
+      <h1>KV 管理</h1>
+      <p>管理 tdl 保存的下载链接，可重新提交到 aria2，也可清理不再需要的记录。</p>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="refresh-kv" type="button">刷新</button>
+      <button class="btn secondary" id="select-undownloaded" type="button">选中未下载</button>
+      <button class="btn primary" id="download-selected" type="button">发送到 aria2</button>
+      <button class="btn danger" id="delete-selected" type="button">批量删除</button>
+    </div>
+  </header>
+  <div class="notice" id="kv-status"></div>
+  <div class="table-shell">
+    <table id="kv-table">
+      <colgroup>
+        <col style="width:44px">
+        <col style="width:260px">
+        <col style="width:360px">
+        <col style="width:240px">
+        <col style="width:110px">
+        <col style="width:180px">
+        <col style="width:180px">
+        <col style="width:170px">
+      </colgroup>
+      <thead>
+        <tr>
+          <th><input id="select-all-kv" type="checkbox" aria-label="全选当前列表"></th>
+          <th><button class="sort-button" data-sort="name" type="button">文件</button><span class="col-resizer"></span></th>
+          <th><button class="sort-button" data-sort="url" type="button">链接</button><span class="col-resizer"></span></th>
+          <th><button class="sort-button" data-sort="status" type="button">aria2</button><span class="col-resizer"></span></th>
+          <th><button class="sort-button" data-sort="downloaded" type="button">下载状态</button><span class="col-resizer"></span></th>
+          <th><button class="sort-button" data-sort="created_at" type="button">创建时间</button><span class="col-resizer"></span></th>
+          <th><button class="sort-button" data-sort="expires_at" type="button">过期时间</button><span class="col-resizer"></span></th>
+          <th>操作<span class="col-resizer"></span></th>
+        </tr>
+      </thead>
+      <tbody id="kv-body">
+        <tr><td colspan="8" class="empty">正在加载...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>

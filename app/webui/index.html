@@ -7,278 +7,39 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-title">TDL</div>
-      <div class="brand-subtitle">管理面板</div>
-    </div>
-    <nav class="nav" aria-label="主菜单">
-      <button class="nav-item active" data-view="downloads">下载管理</button>
-      <button class="nav-item" data-view="kv">KV 管理</button>
-      <button class="nav-item" data-view="user">用户管理</button>
-      <button class="nav-item" data-view="modules">模块管理</button>
-      <button class="nav-item" data-view="config">配置设置</button>
-      <button class="nav-item" data-view="update">检查更新</button>
-    </nav>
-    <div class="sidebar-foot">
-      <div id="runtime-version">版本：-</div>
-      <div id="runtime-namespace">数据空间：-</div>
-      <div id="runtime-watch">监听：-</div>
-    </div>
-  </aside>
-
-  <main class="main">
-    <section class="view active" id="view-downloads">
-      <header class="page-head">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">TDL</div>
         <div>
-          <h1>下载管理</h1>
-          <p>查看和控制 aria2 下载任务，连接信息会从当前配置自动读取。</p>
+          <div class="brand-title">管理面板</div>
+          <div class="brand-subtitle">Telegram Download Toolkit</div>
         </div>
-        <button class="btn secondary" id="reload-aria2">重新载入</button>
-      </header>
-      <div class="frame-wrap">
-        <section class="aria2-guide" id="aria2-guide" hidden>
-          <div>
-            <h2>aria2 尚未连接</h2>
-            <p id="aria2-guide-message">正在检查 aria2 配置...</p>
-          </div>
-          <div class="guide-grid">
-            <div>
-              <h3>需要确认</h3>
-              <ul>
-                <li><code>aria2.rpc_url</code> 是 tdl 服务端可以访问的 JSON-RPC 地址。</li>
-                <li><code>aria2.secret</code> 与 aria2 的 RPC 密钥一致。</li>
-                <li>如果 aria2 运行在 Docker、NAS 或另一台机器上，不要使用只能在本机访问的地址。</li>
-              </ul>
-            </div>
-            <div>
-              <h3>常见示例</h3>
-              <ul>
-                <li>同一台宿主机：<code>http://127.0.0.1:6800/jsonrpc</code></li>
-                <li>Docker Compose 同网络：<code>http://aria2:6800/jsonrpc</code></li>
-                <li>另一台机器：<code>http://可访问的IP:6800/jsonrpc</code></li>
-              </ul>
-            </div>
-          </div>
-          <div class="actions guide-actions">
-            <button class="btn primary" id="aria2-open-config" type="button">打开配置设置</button>
-            <button class="btn secondary" id="aria2-retry-check" type="button">重新检查</button>
-          </div>
-        </section>
-        <iframe id="aria2-frame" title="AriaNg 下载管理" hidden></iframe>
       </div>
-    </section>
-
-    <section class="view" id="view-kv">
-      <header class="page-head">
-        <div>
-          <h1>KV 管理</h1>
-          <p>管理 tdl 保存的下载链接，可重新提交到 aria2，也可清理不再需要的记录。</p>
+      <nav class="nav" aria-label="主菜单">
+        <button class="nav-item active" data-view="user" type="button">用户管理</button>
+        <button class="nav-item" data-view="config" type="button">配置文件</button>
+        <button class="nav-item" data-view="downloads" type="button">下载管理</button>
+        <button class="nav-item" data-view="kv" type="button">KV 管理</button>
+        <button class="nav-item" data-view="modules" type="button">模块管理</button>
+        <button class="nav-item" data-view="update" type="button">检查更新</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="heartbeat" id="heartbeat-indicator" data-state="checking" role="status" aria-live="polite">
+          <span class="heartbeat-dot" aria-hidden="true"></span>
+          <span id="heartbeat-label">TDL 连接中</span>
         </div>
-        <div class="actions">
-          <button class="btn secondary" id="refresh-kv">刷新</button>
-          <button class="btn secondary" id="select-undownloaded">选中未下载</button>
-          <button class="btn primary" id="download-selected">发送到 aria2</button>
-          <button class="btn danger" id="delete-selected">批量删除</button>
-        </div>
-      </header>
-      <div class="notice" id="kv-status"></div>
-      <div class="table-shell">
-        <table id="kv-table">
-          <colgroup>
-            <col style="width:44px">
-            <col style="width:260px">
-            <col style="width:360px">
-            <col style="width:240px">
-            <col style="width:110px">
-            <col style="width:180px">
-            <col style="width:180px">
-            <col style="width:170px">
-          </colgroup>
-          <thead>
-            <tr>
-              <th><input id="select-all-kv" type="checkbox" aria-label="全选当前列表"></th>
-              <th><button class="sort-button" data-sort="name">文件</button><span class="col-resizer"></span></th>
-              <th><button class="sort-button" data-sort="url">链接</button><span class="col-resizer"></span></th>
-              <th><button class="sort-button" data-sort="status">aria2</button><span class="col-resizer"></span></th>
-              <th><button class="sort-button" data-sort="downloaded">下载状态</button><span class="col-resizer"></span></th>
-              <th><button class="sort-button" data-sort="created_at">创建时间</button><span class="col-resizer"></span></th>
-              <th><button class="sort-button" data-sort="expires_at">过期时间</button><span class="col-resizer"></span></th>
-              <th>操作<span class="col-resizer"></span></th>
-            </tr>
-          </thead>
-          <tbody id="kv-body">
-            <tr><td colspan="8" class="empty">正在加载...</td></tr>
-          </tbody>
-        </table>
+        <div id="runtime-version">版本：-</div>
+        <div id="runtime-namespace">数据空间：-</div>
+        <div id="runtime-watch">监听：-</div>
+        <button class="sidebar-logout" id="logout" type="button">退出登录</button>
       </div>
-    </section>
+    </aside>
 
-    <section class="view" id="view-user">
-      <header class="page-head">
-        <div>
-          <h1>用户管理</h1>
-          <p>查看当前 Telegram 账号状态，或直接在面板中完成登录。</p>
-        </div>
-      </header>
-      <div class="tabs">
-        <button class="tab-button active" data-user-tab="current">当前用户</button>
-        <button class="tab-button" data-user-tab="login">用户登录</button>
-      </div>
-      <div class="user-tab active" id="user-tab-current">
-        <section class="user-switch">
-          <label class="field-inline user-switch-field">
-            <span>选择用户</span>
-            <select id="switch-namespace">
-              <option value="">正在读取已登录用户...</option>
-            </select>
-          </label>
-          <div class="user-switch-copy">
-            <h2>切换或删除用户</h2>
-            <p>选择已登录用户，可切换并重启，也可以删除不再需要的登录数据。</p>
-          </div>
-          <div class="user-switch-actions">
-            <button class="btn primary" id="switch-user">切换并重启</button>
-            <button class="btn danger" id="delete-user">删除用户</button>
-          </div>
-        </section>
-        <div class="section-actions">
-          <button class="btn secondary" id="refresh-user">重新检查</button>
-        </div>
-        <div class="notice" id="user-status"></div>
-        <div class="info-grid" id="user-info"></div>
-      </div>
-      <div class="user-tab" id="user-tab-login">
-        <section class="login-flow">
-          <div class="login-flow-head">
-            <div>
-              <h2>登录用户</h2>
-              <p>用户名会作为本地数据空间，只允许英文字母。</p>
-            </div>
-            <label class="field-inline login-namespace-field">
-              <span>用户名</span>
-              <input id="login-namespace" type="text" pattern="[A-Za-z]+" placeholder="alice" autocomplete="off">
-            </label>
-          </div>
-
-          <ol class="login-steps" aria-label="登录步骤">
-            <li data-login-step="method" class="is-current"><span>1</span>填写手机号</li>
-            <li data-login-step="auth"><span>2</span>验证码</li>
-            <li data-login-step="password"><span>3</span>2FA</li>
-            <li data-login-step="finish"><span>4</span>完成</li>
-          </ol>
-
-          <div class="login-meta" id="login-meta"></div>
-
-          <div class="login-stage">
-            <section class="login-step-panel" id="login-step-method">
-              <div class="login-step-copy">
-                <h3 id="login-method-title">验证码登录</h3>
-                <p id="login-method-copy">输入完整手机号后，继续填写 Telegram 收到的验证码。</p>
-              </div>
-              <div id="login-phone-start" class="login-form-panel">
-                <label class="field-inline">
-                  <span>手机号</span>
-                  <input id="login-phone" type="text" placeholder="+8613800000000" autocomplete="tel">
-                </label>
-                <button class="btn primary" id="start-phone-login" type="button">发送验证码</button>
-              </div>
-            </section>
-
-            <section class="login-step-panel" id="login-step-code" hidden>
-              <div class="login-step-copy">
-                <h3>输入验证码</h3>
-                <p>请填写 Telegram 发送的原始验证码。</p>
-              </div>
-              <label class="field-inline">
-                <span>验证码</span>
-                <input id="login-code" type="text" inputmode="numeric" placeholder="Telegram 验证码" autocomplete="one-time-code">
-              </label>
-              <button class="btn primary" id="submit-login-code" type="button">提交验证码</button>
-            </section>
-
-            <section class="login-step-panel" id="login-step-password" hidden>
-              <div class="login-step-copy">
-                <h3>输入 2FA 密码</h3>
-                <p>此账号开启了两步验证。</p>
-              </div>
-              <label class="field-inline">
-                <span>密码</span>
-                <input id="login-password" type="password" placeholder="Telegram 2FA 密码" autocomplete="current-password">
-              </label>
-              <button class="btn primary" id="submit-login-password" type="button">提交密码</button>
-            </section>
-
-            <section class="login-step-panel" id="login-step-result" hidden>
-              <div class="login-result-mark" id="login-result-mark">✓</div>
-              <div class="login-step-copy">
-                <h3 id="login-result-title">登录成功</h3>
-                <p id="login-result-copy">用户状态已更新。</p>
-              </div>
-              <div class="login-result-actions">
-                <button class="btn secondary" id="restart-login-flow" type="button">重新开始</button>
-                <button class="btn primary" id="finish-login-flow" type="button">完成</button>
-              </div>
-            </section>
-          </div>
-
-          <div class="notice" id="login-status" role="status" aria-live="polite"></div>
-          <div class="login-actions">
-            <button class="btn danger" id="cancel-login" type="button" hidden>取消当前登录</button>
-          </div>
-        </section>
-      </div>
-    </section>
-
-    <section class="view" id="view-modules">
-      <header class="page-head">
-        <div>
-          <h1>模块管理</h1>
-          <p>启用或关闭运行中的功能模块。监听下载包含 Telegram 监听、本地下载链接和 aria2 提交。</p>
-        </div>
-        <div class="actions">
-          <button class="btn secondary" id="refresh-modules">刷新状态</button>
-        </div>
-      </header>
-      <div class="notice" id="module-status"></div>
-      <div class="module-list" id="module-list"></div>
-    </section>
-
-    <section class="view" id="view-config">
-      <header class="page-head">
-        <div>
-          <h1>配置设置</h1>
-          <p>按字段修改配置。密码、密钥等敏感项留空时会保留原值。</p>
-        </div>
-        <div class="actions">
-          <button class="btn secondary" id="reload-config">重新读取</button>
-          <button class="btn danger" id="reboot">重启生效</button>
-          <button class="btn primary" id="save-config">保存配置</button>
-        </div>
-      </header>
-      <div class="notice" id="config-status"></div>
-      <form id="config-form" class="config-form"></form>
-    </section>
-
-    <section class="view" id="view-update">
-      <header class="page-head">
-        <div>
-          <h1>检查更新</h1>
-          <p>查看当前版本，发现新版本后可以下载并重启到新版。</p>
-        </div>
-        <div class="actions">
-          <button class="btn secondary" id="check-update">检查更新</button>
-          <button class="btn primary" id="apply-update" disabled>下载并更新</button>
-        </div>
-      </header>
-      <div class="notice" id="update-status"></div>
-      <div class="info-grid" id="update-info"></div>
-      <section class="update-notes-shell">
-        <h2>Release Notes</h2>
-        <pre id="update-notes" class="update-notes"></pre>
-      </section>
-    </section>
-  </main>
+    <main class="main" id="view-host" aria-live="polite">
+      <div class="view-loading">正在载入管理面板...</div>
+    </main>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

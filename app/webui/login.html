@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 TDL 管理面板</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="auth-page">
+  <main class="auth-shell">
+    <section class="auth-panel" aria-labelledby="auth-title">
+      <div class="auth-brand">
+        <div class="brand-mark">TDL</div>
+        <div>
+          <div class="brand-title">管理面板</div>
+          <div class="brand-subtitle">安全登录</div>
+        </div>
+      </div>
+      <form id="webui-login-form" class="auth-form">
+        <div>
+          <h1 id="auth-title">登录</h1>
+          <p>请输入 WebUI 用户名和密码。</p>
+        </div>
+        <label class="field-inline">
+          <span>用户名</span>
+          <input id="webui-username" name="username" type="text" autocomplete="username" required autofocus>
+        </label>
+        <label class="field-inline">
+          <span>密码</span>
+          <input id="webui-password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="btn primary auth-submit" id="webui-login-submit" type="submit">进入面板</button>
+        <div class="notice" id="webui-login-status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>
