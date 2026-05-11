@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	watcharia2 "github.com/iyear/tdl/app/watch/aria2"
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
 	"github.com/iyear/tdl/core/storage"
@@ -89,8 +90,7 @@ type downloadJob struct {
 }
 
 const (
-	aria2ConnectRetryInterval = 10 * time.Second
-	maxConcurrentDownloads    = 1
+	maxConcurrentDownloads = 1
 )
 
 type aria2ConcurrentDownloadSetter interface {
@@ -137,6 +137,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := validateWatchConfig(cfg); err != nil {
 		return err
 	}
+	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	tpl, err := template.New("watch").
 		Funcs(tplfunc.FuncMap(tplfunc.All...)).
@@ -160,9 +161,12 @@ func Run(ctx context.Context, opts Options) error {
 	runtime := newWatchRuntime(cfg, kvd, logctx.From(runCtx))
 	var pauseOnShutdownOnce sync.Once
 	pauseOnShutdown := func() {
+		if downloaderMode != config.DownloaderModeAria2 {
+			return
+		}
 		pauseOnShutdownOnce.Do(func() {
 			color.Yellow("⏹ Stopping watcher...")
-			paused, err := pauseTDLAria2TasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			paused, err := watcharia2.PauseTDLTasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 			if err != nil {
 				color.Yellow("⚠️ Failed to pause tdl aria2 tasks before shutdown: %v", err)
 				return
@@ -185,41 +189,64 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
-	poolSize := config.EffectivePoolSize(cfg)
+	poolSize := effectiveDownloadPoolSize(cfg)
 
-	if err := waitForAria2(runCtx, runtime.aria2, maxConcurrentDownloads, aria2ConnectRetryInterval, logctx.From(runCtx)); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
+	switch downloaderMode {
+	case config.DownloaderModeAria2:
+		if err := waitForAria2(runCtx, runtime.aria2, maxConcurrentDownloads, watcharia2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return errors.Wrap(err, "configure aria2 max concurrent downloads")
 		}
-		return errors.Wrap(err, "configure aria2 max concurrent downloads")
-	}
-	logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
-		zap.Int("limit", maxConcurrentDownloads))
-	outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
-	if err != nil {
-		if opts.Notify != nil {
-			opts.Notify(runCtx, fmt.Sprintf("aria2 下载目录异常：%v", err))
+		logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
+			zap.Int("limit", maxConcurrentDownloads))
+		outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
+		if err != nil {
+			if opts.Notify != nil {
+				opts.Notify(runCtx, fmt.Sprintf("aria2 下载目录异常：%v", err))
+			}
+			return errors.Wrap(err, "prepare aria2 output root")
 		}
-		return errors.Wrap(err, "prepare aria2 output root")
+		runtime.outputRoot = outputRoot
+		runtime.ensureOutputDirs = ensureOutputDirs
+	case config.DownloaderModeInternal:
+		outputRoot, fallback, err := prepareInternalOutputRoot(cfg)
+		if err != nil {
+			if opts.Notify != nil {
+				opts.Notify(runCtx, fmt.Sprintf("内部下载目录异常：%v", err))
+			}
+			return errors.Wrap(err, "prepare internal output root")
+		}
+		if fallback {
+			color.Yellow("⚠️ aria2.dir 不可用，内部下载器将使用备用目录：%s", outputRoot)
+		}
+		runtime.outputRoot = outputRoot
+		runtime.ensureOutputDirs = true
 	}
-	runtime.outputRoot = outputRoot
-	runtime.ensureOutputDirs = ensureOutputDirs
 
 	proxyErrCh := make(chan error, 1)
-	go func() {
-		if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			select {
-			case proxyErrCh <- err:
-			default:
+	if strings.TrimSpace(cfg.HTTP.Listen) != "" {
+		go func() {
+			if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				select {
+				case proxyErrCh <- err:
+				default:
+				}
+				cancelRun()
 			}
-			cancelRun()
-		}
-	}()
+		}()
+	}
 
 	color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
-	color.Green("   HTTP listen: %s", cfg.HTTP.Listen)
-	color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
-	color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
+	if strings.TrimSpace(cfg.HTTP.Listen) != "" {
+		color.Green("   HTTP listen: %s", cfg.HTTP.Listen)
+	}
+	if downloaderMode == config.DownloaderModeAria2 {
+		color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
+		color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
+	}
+	color.Green("   Downloader mode: %s", downloaderMode)
 	color.Green("   Output root: %s", runtime.outputRoot)
 	color.Green("   Download dir template: %s", opts.Dir)
 	color.Green("   Telegram pool / per-file streams: %d", poolSize)
@@ -235,7 +262,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	color.Green("   Max concurrent downloads: %d", maxConcurrentDownloads)
 	color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
-	warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
+	if downloaderMode == config.DownloaderModeAria2 {
+		warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
+	}
 
 	reconnectDelay := time.Duration(cfg.ReconnectTimeout) * time.Second
 	if reconnectDelay <= 0 {
@@ -277,19 +306,21 @@ func Run(ctx context.Context, opts Options) error {
 		}
 
 		color.Yellow("⚠️ Watcher disconnected: %v", err)
-		newPausedGIDs, pauseErr := suspendTDLAria2TasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
-		if pauseErr != nil {
-			if errors.Is(pauseErr, context.Canceled) {
-				if proxyErr := takeProxyErr(); proxyErr != nil {
-					return errors.Wrap(proxyErr, "start http proxy")
+		if downloaderMode == config.DownloaderModeAria2 {
+			newPausedGIDs, pauseErr := watcharia2.SuspendTDLTasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			if pauseErr != nil {
+				if errors.Is(pauseErr, context.Canceled) {
+					if proxyErr := takeProxyErr(); proxyErr != nil {
+						return errors.Wrap(proxyErr, "start http proxy")
+					}
+					return nil
 				}
-				return nil
+				return errors.Wrap(pauseErr, "pause aria2 tasks before reconnect")
 			}
-			return errors.Wrap(pauseErr, "pause aria2 tasks before reconnect")
-		}
-		pausedAria2GIDs = mergeUniqueGIDs(pausedAria2GIDs, newPausedGIDs)
-		if len(newPausedGIDs) > 0 {
-			color.Yellow("⏸ Paused %d tdl aria2 task(s) before reconnect", len(newPausedGIDs))
+			pausedAria2GIDs = watcharia2.MergeUniqueGIDs(pausedAria2GIDs, newPausedGIDs)
+			if len(newPausedGIDs) > 0 {
+				color.Yellow("⏸ Paused %d tdl aria2 task(s) before reconnect", len(newPausedGIDs))
+			}
 		}
 		color.Yellow("🔄 Reconnecting in %v...", reconnectDelay)
 
@@ -308,7 +339,8 @@ func Run(ctx context.Context, opts Options) error {
 
 func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime, pausedAria2GIDs []string) (resumed bool, rerr error) {
 	cfg := config.Get()
-	poolSize := config.EffectivePoolSize(cfg)
+	poolSize := effectiveDownloadPoolSize(cfg)
+	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	o := pkgtclient.Options{
 		KV:               kvd,
@@ -368,12 +400,18 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		if err != nil {
 			return errors.Wrap(err, "get self user")
 		}
-		if len(pausedAria2GIDs) > 0 {
-			if err := resumeTDLAria2Tasks(ctx, runtime.aria2, pausedAria2GIDs, logctx.From(ctx)); err != nil {
+		if downloaderMode == config.DownloaderModeInternal && runtime.internal != nil {
+			if err := runtime.internal.Start(ctx); err != nil {
+				return errors.Wrap(err, "start internal downloader")
+			}
+			defer runtime.internal.Stop()
+		}
+		if downloaderMode == config.DownloaderModeAria2 && len(pausedAria2GIDs) > 0 {
+			if err := watcharia2.ResumeTDLTasks(ctx, runtime.aria2, pausedAria2GIDs, logctx.From(ctx)); err != nil {
 				return errors.Wrap(err, "resume paused aria2 tasks")
 			}
 			resumed = true
-			color.Green("▶ Resumed %d tdl aria2 task(s) after reconnect", len(uniqueGIDs(pausedAria2GIDs)))
+			color.Green("▶ Resumed %d tdl aria2 task(s) after reconnect", len(watcharia2.UniqueGIDs(pausedAria2GIDs)))
 		}
 		updatesDone := make(chan struct{})
 		go func() {
@@ -407,7 +445,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, limit int, retryInterval time.Duration, logger *zap.Logger) error {
 	if retryInterval <= 0 {
-		retryInterval = aria2ConnectRetryInterval
+		retryInterval = watcharia2.DefaultConnectRetryInterval
 	}
 	if logger == nil {
 		logger = zap.NewNop()
@@ -418,7 +456,7 @@ func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, lim
 		if err == nil {
 			return nil
 		}
-		if errors.Is(err, context.Canceled) || !isAria2ConnectionError(err) {
+		if errors.Is(err, context.Canceled) || !watcharia2.IsConnectionError(err) {
 			return err
 		}
 
@@ -444,17 +482,23 @@ func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, lim
 }
 
 func validateWatchConfig(cfg *config.Config) error {
-	if cfg.HTTP.Listen == "" {
-		return errors.New("http.listen is empty")
-	}
-	if cfg.HTTP.PublicBaseURL == "" {
-		return errors.New("http.public_base_url is empty, please set it in config.json")
-	}
-	if cfg.Aria2.RPCURL == "" {
-		return errors.New("aria2.rpc_url is empty, please set it in config.json")
-	}
 	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
 		return err
+	}
+	switch config.EffectiveDownloaderMode(cfg) {
+	case config.DownloaderModeAria2:
+		if cfg.HTTP.Listen == "" {
+			return errors.New("http.listen is empty")
+		}
+		if cfg.HTTP.PublicBaseURL == "" {
+			return errors.New("http.public_base_url is empty, please set it in config.json")
+		}
+		if cfg.Aria2.RPCURL == "" {
+			return errors.New("aria2.rpc_url is empty, please set it in config.json")
+		}
+	case config.DownloaderModeInternal:
+	default:
+		return fmt.Errorf("unsupported downloader mode %q", cfg.Downloader.Mode)
 	}
 	return nil
 }
@@ -880,7 +924,11 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 								zap.String("name", f.file.media.Name),
 								zap.Error(err))
 							color.Red("❌ Submission failed: msg %d (%s): %v", f.file.msg.ID, f.file.media.Name, err)
-							w.notify(ctx, "提交到 aria2 失败。\n文件：%s\n消息 ID: %d\n错误：%v", f.file.media.Name, f.file.msg.ID, err)
+							target := "aria2"
+							if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
+								target = "内部下载队列"
+							}
+							w.notify(ctx, "提交到%s失败。\n文件：%s\n消息 ID: %d\n错误：%v", target, f.file.media.Name, f.file.msg.ID, err)
 						}
 					}
 					return nil
@@ -1008,19 +1056,35 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return errors.Wrap(err, "register download task")
 	}
 
+	if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
+		if _, err := w.runtime.internal.Add(ctx, task, prepared); err != nil {
+			return errors.Wrap(err, "queue internal download")
+		}
+		logctx.From(ctx).Info("Queued internal download task",
+			zap.Int64("peer_id", file.peerID),
+			zap.Int("msg_id", file.msg.ID),
+			zap.String("file_name", prepared.fileName),
+			zap.String("target_path", prepared.fullPath),
+			zap.String("task_id", task.ID))
+
+		color.Green("🚀 Queued internal download: msg %d -> %s", file.msg.ID, prepared.fullPath)
+		color.Green("   Task: %s", task.ID)
+		return nil
+	}
+
 	downloadURL, err := w.runtime.proxy.BuildURL(task.ID)
 	if err != nil {
 		return errors.Wrap(err, "build download url")
 	}
 
-	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, aria2AddURIOptions{
+	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, watcharia2.AddURIOptions{
 		Dir: prepared.dir,
 		Out: prepared.out,
 	})
 	if err != nil {
 		return errors.Wrap(err, "submit to aria2")
 	}
-	if err := w.runtime.aria2Tasks.Add(ctx, aria2TaskRecord{
+	if err := w.runtime.aria2Tasks.Add(ctx, watcharia2.TaskRecord{
 		GID:         gid,
 		TaskID:      task.ID,
 		DownloadURL: downloadURL,

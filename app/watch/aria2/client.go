@@ -1,4 +1,4 @@
-package watch
+package aria2
 
 import (
 	"bytes"
@@ -17,30 +17,36 @@ import (
 
 const aria2BoolTrue = "true"
 
-type aria2AddURIOptions struct {
+type AddURIOptions struct {
 	Dir string
 	Out string
 }
 
-type aria2Client struct {
+type aria2AddURIOptions = AddURIOptions
+
+type Client struct {
 	rpcURL     string
 	secret     string
 	httpClient *http.Client
 }
 
-func newAria2Client(cfg config.Aria2Config) *aria2Client {
+func NewClient(cfg config.Aria2Config) *Client {
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 
-	return &aria2Client{
+	return &Client{
 		rpcURL: cfg.RPCURL,
 		secret: cfg.Secret,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 	}
+}
+
+func newAria2Client(cfg config.Aria2Config) *Client {
+	return NewClient(cfg)
 }
 
 type aria2RPCRequest struct {
@@ -62,7 +68,7 @@ type aria2RPCError struct {
 	Message string `json:"message"`
 }
 
-func isAria2ConnectionError(err error) bool {
+func IsConnectionError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
@@ -85,7 +91,7 @@ func isAria2ConnectionError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
 }
 
-func (c *aria2Client) callRaw(ctx context.Context, method string, params []any) (json.RawMessage, error) {
+func (c *Client) callRaw(ctx context.Context, method string, params []any) (json.RawMessage, error) {
 	if c.rpcURL == "" {
 		return nil, errors.New("aria2 rpc_url is empty")
 	}
@@ -135,7 +141,7 @@ func (c *aria2Client) callRaw(ctx context.Context, method string, params []any) 
 	return decoded.Result, nil
 }
 
-func (c *aria2Client) callString(ctx context.Context, method string, params []any) (string, error) {
+func (c *Client) callString(ctx context.Context, method string, params []any) (string, error) {
 	raw, err := c.callRaw(ctx, method, params)
 	if err != nil {
 		return "", err
@@ -149,7 +155,7 @@ func (c *aria2Client) callString(ctx context.Context, method string, params []an
 	return result, nil
 }
 
-func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOptions) (string, error) {
+func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (string, error) {
 	params := make([]any, 0, 2)
 	params = append(params, []string{uri})
 
@@ -185,7 +191,7 @@ func (c *aria2Client) AddURI(ctx context.Context, uri string, opts aria2AddURIOp
 	return result, nil
 }
 
-func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) error {
+func (c *Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) error {
 	if limit < 1 {
 		return errors.New("aria2 max concurrent downloads must be greater than 0")
 	}
@@ -204,7 +210,7 @@ func (c *aria2Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) 
 	return nil
 }
 
-func (c *aria2Client) GetGlobalDir(ctx context.Context) (string, error) {
+func (c *Client) GetGlobalDir(ctx context.Context) (string, error) {
 	raw, err := c.callRaw(ctx, "aria2.getGlobalOption", []any{})
 	if err != nil {
 		return "", err
@@ -217,69 +223,75 @@ func (c *aria2Client) GetGlobalDir(ctx context.Context) (string, error) {
 	return options["dir"], nil
 }
 
-type aria2DownloadStatus struct {
-	GID             string      `json:"gid"`
-	Status          string      `json:"status"`
-	TotalLength     string      `json:"totalLength"`
-	CompletedLength string      `json:"completedLength"`
-	ErrorCode       string      `json:"errorCode"`
-	ErrorMessage    string      `json:"errorMessage"`
-	Files           []aria2File `json:"files"`
+type DownloadStatus struct {
+	GID             string `json:"gid"`
+	Status          string `json:"status"`
+	TotalLength     string `json:"totalLength"`
+	CompletedLength string `json:"completedLength"`
+	ErrorCode       string `json:"errorCode"`
+	ErrorMessage    string `json:"errorMessage"`
+	Files           []File `json:"files"`
 }
 
-type aria2File struct {
-	Path            string     `json:"path"`
-	Length          string     `json:"length"`
-	CompletedLength string     `json:"completedLength"`
-	URIs            []aria2URI `json:"uris"`
+type aria2DownloadStatus = DownloadStatus
+
+type File struct {
+	Path            string `json:"path"`
+	Length          string `json:"length"`
+	CompletedLength string `json:"completedLength"`
+	URIs            []URI  `json:"uris"`
 }
 
-type aria2URI struct {
+type aria2File = File
+
+type URI struct {
 	URI string `json:"uri"`
 }
 
+type aria2URI = URI
+
 var aria2StatusKeys = []string{"gid", "status", "totalLength", "completedLength", "errorCode", "errorMessage", "files"}
 
-func (c *aria2Client) TellActive(ctx context.Context) ([]aria2DownloadStatus, error) {
+func (c *Client) TellActive(ctx context.Context) ([]DownloadStatus, error) {
 	raw, err := c.callRaw(ctx, "aria2.tellActive", []any{aria2StatusKeys})
 	if err != nil {
 		return nil, err
 	}
 
-	var result []aria2DownloadStatus
+	var result []DownloadStatus
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, errors.Wrap(err, "decode aria2 active tasks")
 	}
 	return result, nil
 }
 
-func (c *aria2Client) TellWaiting(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error) {
+func (c *Client) TellWaiting(ctx context.Context, offset, num int) ([]DownloadStatus, error) {
 	raw, err := c.callRaw(ctx, "aria2.tellWaiting", []any{offset, num, aria2StatusKeys})
 	if err != nil {
 		return nil, err
 	}
 
-	var result []aria2DownloadStatus
+	var result []DownloadStatus
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, errors.Wrap(err, "decode aria2 waiting tasks")
 	}
 	return result, nil
 }
 
-func (c *aria2Client) TellStopped(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error) {
+func (c *Client) TellStopped(ctx context.Context, offset, num int) ([]DownloadStatus, error) {
 	raw, err := c.callRaw(ctx, "aria2.tellStopped", []any{offset, num, aria2StatusKeys})
 	if err != nil {
 		return nil, err
 	}
 
-	var result []aria2DownloadStatus
+	var result []DownloadStatus
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, errors.Wrap(err, "decode aria2 stopped tasks")
 	}
 	return result, nil
 }
 
-func (c *aria2Client) ForcePause(ctx context.Context, gid string) error {
+func (c *Client) ForcePause(ctx context.Context, gid string) error {
 	result, err := c.callString(ctx, "aria2.forcePause", []any{gid})
 	if err != nil {
 		return err
@@ -290,7 +302,7 @@ func (c *aria2Client) ForcePause(ctx context.Context, gid string) error {
 	return nil
 }
 
-func (c *aria2Client) Unpause(ctx context.Context, gid string) error {
+func (c *Client) Unpause(ctx context.Context, gid string) error {
 	result, err := c.callString(ctx, "aria2.unpause", []any{gid})
 	if err != nil {
 		return err
@@ -301,7 +313,7 @@ func (c *aria2Client) Unpause(ctx context.Context, gid string) error {
 	return nil
 }
 
-func (c *aria2Client) RemoveDownloadResult(ctx context.Context, gid string) error {
+func (c *Client) RemoveDownloadResult(ctx context.Context, gid string) error {
 	result, err := c.callString(ctx, "aria2.removeDownloadResult", []any{gid})
 	if err != nil {
 		return err

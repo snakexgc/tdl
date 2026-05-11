@@ -28,10 +28,36 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Empty(t, cfg.WebUI.Password)
 	require.True(t, cfg.Modules.Bot)
 	require.True(t, cfg.Modules.Watch)
+	require.Equal(t, DownloaderModeAria2, cfg.Downloader.Mode)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Empty(t, cfg.TriggerReactions)
+}
+
+func TestLoadNormalizesDownloaderMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"downloader":{"mode":" INTERNAL "}}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	require.Equal(t, DownloaderModeInternal, cfg.Downloader.Mode)
+}
+
+func TestLoadRejectsInvalidDownloaderMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"downloader":{"mode":"unknown"}}`), 0o644))
+
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "downloader.mode")
 }
 
 func TestLoadIgnoresLegacyThreadsAndLimit(t *testing.T) {

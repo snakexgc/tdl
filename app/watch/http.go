@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/iyear/tdl/app/watch/transfer"
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
 	"github.com/iyear/tdl/core/storage"
@@ -466,7 +467,7 @@ func (h *poolHolder) Get() dcpool.Pool {
 	return h.pool
 }
 
-type taskStreamer func(ctx context.Context, task *downloadTask, lease *downloadLease, start, end int64, w io.Writer) error
+type taskStreamer func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error
 
 type telegramMediaSource struct {
 	mu        sync.RWMutex
@@ -481,7 +482,7 @@ type downloadProxy struct {
 	pools   *poolHolder
 	server  *http.Server
 	stream  taskStreamer
-	limiter *downloadLimiter
+	limiter *transfer.Limiter
 	logger  *zap.Logger
 }
 
@@ -495,7 +496,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 		cfg:     cfg,
 		tasks:   newTaskStore(kv, downloadLinkTTL(cfg)),
 		pools:   pools,
-		limiter: newDownloadLimiter(maxFiles, maxPerFile, bufferSlots),
+		limiter: transfer.NewLimiter(maxFiles, maxPerFile, bufferSlots),
 		logger:  logger.Named("watch-http"),
 	}
 
@@ -633,7 +634,7 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var lease *downloadLease
+	var lease *transfer.Lease
 	if r.Method != http.MethodHead {
 		waitStart := time.Now()
 		acquired, err := p.limiter.Acquire(r.Context(), task.ID)
@@ -731,7 +732,7 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		zap.Int64("range_end", end))
 }
 
-func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, lease *downloadLease, start, end int64, w io.Writer) error {
+func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
 	pool := p.pools.Get()
 	if pool == nil {
 		err := errors.New("telegram client unavailable")
@@ -910,7 +911,7 @@ func httpMemoryBufferSlots(cfg config.HTTPBufferConfig) int {
 	return slots
 }
 
-func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *downloadLease, start, end int64, w io.Writer) error {
+func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.Lease, start, end int64, w io.Writer) error {
 	logger := logctx.From(ctx)
 	if end < start {
 		return errors.New("invalid byte range")
@@ -1172,7 +1173,7 @@ func (s *telegramMediaSource) Media() *tmedia.Media {
 	return s.media
 }
 
-func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *downloadLease, req telegramChunkRequest) ([]byte, error) {
+func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, req telegramChunkRequest) ([]byte, error) {
 	for {
 		media := s.Media()
 		if media == nil {

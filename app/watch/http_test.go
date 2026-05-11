@@ -17,6 +17,7 @@ import (
 	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
+	"github.com/iyear/tdl/app/watch/transfer"
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/tmedia"
@@ -208,7 +209,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	payload := []byte("0123456789")
-	proxy.stream = func(ctx context.Context, task *downloadTask, lease *downloadLease, start, end int64, w io.Writer) error {
+	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
 		_, err := w.Write(payload[start : end+1])
 		return err
 	}
@@ -292,7 +293,7 @@ func TestDownloadHandlerHead(t *testing.T) {
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	called := false
-	proxy.stream = func(ctx context.Context, task *downloadTask, lease *downloadLease, start, end int64, w io.Writer) error {
+	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
 		called = true
 		return nil
 	}
@@ -461,7 +462,7 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 		DC:           2,
 	}
 	pool := testDownloadPool{client: client}
-	lease, err := newDownloadLimiter(1, 2, bufferSlots).Acquire(context.Background(), "task-1")
+	lease, err := transfer.NewLimiter(1, 2, bufferSlots).Acquire(context.Background(), "task-1")
 	require.NoError(t, err)
 	defer lease.Release()
 
@@ -712,10 +713,10 @@ func (p testDownloadPool) Close() error {
 
 var _ dcpool.Pool = testDownloadPool{}
 
-func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *downloadLease {
+func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *transfer.Lease {
 	t.Helper()
 
-	lease, err := newDownloadLimiter(1, maxWorkers).Acquire(context.Background(), "task-1")
+	lease, err := transfer.NewLimiter(1, maxWorkers).Acquire(context.Background(), "task-1")
 	require.NoError(t, err)
 	return lease
 }

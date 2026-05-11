@@ -1,4 +1,4 @@
-package watch
+package aria2
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func TestAria2TaskStoreKeepsRecordWhenTTLDisabled(t *testing.T) {
 		GID:         "gid-1",
 		TaskID:      "document_1",
 		DownloadURL: "http://127.0.0.1:8080/download/document_1",
-		CreatedAt:   time.Now().Add(-defaultDownloadTaskTTL - time.Second),
+		CreatedAt:   time.Now().Add(-DefaultTaskTTL - time.Second),
 	}))
 
 	records, err := store.Records(ctx)

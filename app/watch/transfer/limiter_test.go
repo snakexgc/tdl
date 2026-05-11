@@ -1,4 +1,4 @@
-package watch
+package transfer
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDownloadLimiterLimitsConcurrentFiles(t *testing.T) {
+func TestLimiterLimitsConcurrentFiles(t *testing.T) {
 	t.Parallel()
 
-	limiter := newDownloadLimiter(2, 4)
+	limiter := NewLimiter(2, 4)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -22,7 +22,7 @@ func TestDownloadLimiterLimitsConcurrentFiles(t *testing.T) {
 	require.NoError(t, err)
 	defer releaseB.Release()
 
-	acquired := make(chan *downloadLease, 1)
+	acquired := make(chan *Lease, 1)
 	errCh := make(chan error, 1)
 	go func() {
 		release, err := limiter.Acquire(ctx, "file-c")
@@ -54,10 +54,10 @@ func TestDownloadLimiterLimitsConcurrentFiles(t *testing.T) {
 	}
 }
 
-func TestDownloadLimiterLimitsPerFileRequests(t *testing.T) {
+func TestLimiterLimitsPerFileRequests(t *testing.T) {
 	t.Parallel()
 
-	limiter := newDownloadLimiter(2, 2)
+	limiter := NewLimiter(2, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -68,7 +68,7 @@ func TestDownloadLimiterLimitsPerFileRequests(t *testing.T) {
 	require.NoError(t, err)
 	defer releaseTwo.Release()
 
-	acquired := make(chan *downloadLease, 1)
+	acquired := make(chan *Lease, 1)
 	errCh := make(chan error, 1)
 	go func() {
 		release, err := limiter.Acquire(ctx, "file-a")
@@ -100,10 +100,10 @@ func TestDownloadLimiterLimitsPerFileRequests(t *testing.T) {
 	}
 }
 
-func TestDownloadLeaseLimitsConcurrentWorkers(t *testing.T) {
+func TestLeaseLimitsConcurrentWorkers(t *testing.T) {
 	t.Parallel()
 
-	limiter := newDownloadLimiter(2, 2)
+	limiter := NewLimiter(2, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -146,10 +146,10 @@ func TestDownloadLeaseLimitsConcurrentWorkers(t *testing.T) {
 	lease.ReleaseWorker()
 }
 
-func TestDownloadLeaseBufferSharedPerFile(t *testing.T) {
+func TestLeaseBufferSharedPerFile(t *testing.T) {
 	t.Parallel()
 
-	limiter := newDownloadLimiter(1, 4, 2)
+	limiter := NewLimiter(1, 4, 2)
 
 	leaseOne, err := limiter.Acquire(context.Background(), "file-a")
 	require.NoError(t, err)

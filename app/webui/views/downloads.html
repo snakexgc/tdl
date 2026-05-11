@@ -2,7 +2,7 @@
   <header class="page-head">
     <div>
       <h1>下载管理</h1>
-      <p>查看和控制 aria2 下载任务，连接信息会从当前配置自动读取。</p>
+      <p>根据当前下载器模式查看和控制任务。</p>
     </div>
     <button class="btn secondary" id="reload-aria2" type="button">重新载入</button>
   </header>
@@ -36,5 +36,25 @@
       </div>
     </section>
     <iframe id="aria2-frame" title="AriaNg 下载管理" hidden></iframe>
+    <section class="internal-downloads" id="internal-downloads" hidden>
+      <div class="notice" id="internal-download-status"></div>
+      <div class="table-shell internal-table-shell">
+        <table id="internal-download-table">
+          <thead>
+            <tr>
+              <th>文件</th>
+              <th>状态</th>
+              <th>进度</th>
+              <th>保存路径</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="internal-download-body">
+            <tr><td colspan="6" class="empty">正在加载...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </section>

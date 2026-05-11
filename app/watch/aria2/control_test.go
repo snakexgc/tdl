@@ -1,4 +1,4 @@
-package watch
+package aria2
 
 import (
 	"context"

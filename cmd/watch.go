@@ -12,8 +12,8 @@ func NewWatch() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "watch",
-		Short:   "Watch for message reactions and submit media downloads to aria2",
-		Long:    "Watch for message reactions in real-time. When you add a reaction to a message, its media will be exposed over HTTP and submitted to aria2 automatically.",
+		Short:   "Watch for message reactions and submit media downloads",
+		Long:    "Watch for message reactions in real-time. When you add a reaction to a message, its media will be submitted to the configured downloader automatically.",
 		GroupID: groupTools.ID,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Threads = config.EffectivePoolSize(config.Get())

@@ -1,6 +1,8 @@
 const state = {
   config: null,
   aria2Loaded: false,
+  downloaderMode: "aria2",
+  internalDownloads: [],
   kvItems: [],
   selectedKV: new Set(),
   kvSort: { field: "created_at", dir: "desc" },
@@ -65,7 +67,13 @@ const sections = [
     title: "模块开关",
     fields: [
       ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
-      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到 aria2。"],
+      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到当前下载器。"],
+    ],
+  },
+  {
+    title: "下载器",
+    fields: [
+      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器，固定单文件 8 线程、同时 1 个文件。", ["aria2", "internal"]],
     ],
   },
   {
@@ -144,7 +152,7 @@ function loadActiveViewData() {
 }
 
 function loadViewData(view) {
-  if (view === "downloads") loadAria2();
+  if (view === "downloads") loadDownloads();
   if (view === "kv") loadKV();
   if (view === "user") {
     loadUser();
@@ -157,8 +165,8 @@ function loadViewData(view) {
 
 function bindActions() {
   document.getElementById("logout").addEventListener("click", logout);
-  document.getElementById("reload-aria2").addEventListener("click", () => loadAria2(true));
-  document.getElementById("aria2-retry-check").addEventListener("click", () => loadAria2(true));
+  document.getElementById("reload-aria2").addEventListener("click", () => loadDownloads(true));
+  document.getElementById("aria2-retry-check").addEventListener("click", () => loadDownloads(true));
   document.getElementById("aria2-open-config").addEventListener("click", async () => {
     selectView("config");
     await loadConfig();
@@ -274,6 +282,16 @@ function bindKVTable() {
     runKVAction("delete", Array.from(state.selectedKV));
   });
 
+  document.getElementById("internal-download-body").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-internal-action]");
+    if (!button) return;
+    const action = button.dataset.internalAction;
+    const id = button.dataset.internalId;
+    if (!id) return;
+    if (action === "delete" && !confirm(`删除下载任务 ${id}？未完成的本地临时文件会一并删除。`)) return;
+    await runInternalDownloadAction(action, [id]);
+  });
+
   document.querySelectorAll("#kv-table .sort-button").forEach((button) => {
     button.addEventListener("click", () => {
       setKVSort(button.dataset.sort);
@@ -301,7 +319,8 @@ function bindKVTable() {
     const deleteButton = event.target.closest("[data-delete-link]");
     if (deleteButton) {
       const id = deleteButton.dataset.deleteLink;
-      if (!confirm(`删除链接记录 ${id}？此操作只清理 KV 记录，不会删除 aria2 中已存在的下载任务。`)) return;
+      const suffix = state.downloaderMode === "internal" ? "关联的内部下载任务会一并移除。" : "不会删除 aria2 中已存在的下载任务。";
+      if (!confirm(`删除链接记录 ${id}？${suffix}`)) return;
       await api(`/api/kv/links/${encodeURIComponent(id)}`, { method: "DELETE" });
       state.selectedKV.delete(id);
       await loadKV();
@@ -411,6 +430,7 @@ async function api(path, options = {}) {
 async function loadStatus() {
   try {
     const data = await api("/api/status");
+    state.downloaderMode = data.downloader && data.downloader.mode ? data.downloader.mode : "aria2";
     const version = data.version || {};
     document.getElementById("runtime-version").textContent = `版本：${version.version || "-"}`;
     document.getElementById("runtime-namespace").textContent = `数据空间：${data.namespace || "-"}`;
@@ -495,7 +515,34 @@ function setModuleStatus(message, kind = "") {
   status.textContent = message || "";
 }
 
-async function loadAria2(force = false) {
+async function loadDownloads(force = false) {
+  let status = null;
+  try {
+    status = await api("/api/status");
+    state.downloaderMode = status.downloader && status.downloader.mode ? status.downloader.mode : "aria2";
+  } catch {
+    state.downloaderMode = "aria2";
+  }
+
+  if (state.downloaderMode === "internal") {
+    state.aria2Loaded = false;
+    const frame = document.getElementById("aria2-frame");
+    const guide = document.getElementById("aria2-guide");
+    if (frame) {
+      frame.hidden = true;
+      frame.removeAttribute("src");
+    }
+    if (guide) guide.hidden = true;
+    document.getElementById("internal-downloads").hidden = false;
+    await loadInternalDownloads();
+    return;
+  }
+
+  document.getElementById("internal-downloads").hidden = true;
+  await loadAria2Frame(force);
+}
+
+async function loadAria2Frame(force = false) {
   if (state.aria2Loaded && !force) return;
   if (force) {
     state.aria2Loaded = false;
@@ -557,14 +604,126 @@ function hideAria2Guide() {
   document.getElementById("aria2-frame").hidden = false;
 }
 
+async function loadInternalDownloads() {
+  const body = document.getElementById("internal-download-body");
+  setInternalDownloadStatus("");
+  body.innerHTML = `<tr><td colspan="6" class="empty">正在加载...</td></tr>`;
+  try {
+    const data = await api("/api/internal-downloads");
+    state.internalDownloads = data.items || [];
+    renderInternalDownloads();
+  } catch (error) {
+    state.internalDownloads = [];
+    setInternalDownloadStatus(error.message, "error");
+    body.innerHTML = `<tr><td colspan="6" class="empty">加载失败</td></tr>`;
+  }
+}
+
+function renderInternalDownloads() {
+  const body = document.getElementById("internal-download-body");
+  if (!state.internalDownloads.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">没有内部下载任务</td></tr>`;
+    return;
+  }
+  body.innerHTML = state.internalDownloads.map(renderInternalDownloadRow).join("");
+}
+
+function renderInternalDownloadRow(item) {
+  const total = Number(item.total || 0);
+  const completed = Number(item.completed || 0);
+  const pct = total > 0 ? Math.min(100, Math.max(0, (completed / total) * 100)) : 0;
+  const status = item.status || "queued";
+  const error = item.error ? `<div class="subtle bad-text">${escapeHTML(item.error)}</div>` : "";
+  return `
+    <tr>
+      <td>
+        <strong>${escapeHTML(item.file_name || item.id)}</strong>
+        <div class="mono subtle">${escapeHTML(item.id)}</div>
+      </td>
+      <td><span class="pill ${internalStatusClass(status)}">${escapeHTML(internalStatusLabel(status))}</span>${error}</td>
+      <td>
+        <div>${formatBytes(completed)} / ${formatBytes(total)}</div>
+        <div class="subtle">${pct.toFixed(1)}%</div>
+      </td>
+      <td class="mono">${escapeHTML(item.path || "-")}</td>
+      <td class="time-cell">${formatTime(item.updated_at || item.created_at)}</td>
+      <td>
+        <div class="row-actions">
+          ${status === "paused" || status === "error" ? `<button class="btn primary compact" data-internal-action="start" data-internal-id="${escapeAttr(item.id)}">开始</button>` : ""}
+          ${status !== "complete" && status !== "paused" ? `<button class="btn secondary compact" data-internal-action="pause" data-internal-id="${escapeAttr(item.id)}">暂停</button>` : ""}
+          <button class="btn danger compact" data-internal-action="delete" data-internal-id="${escapeAttr(item.id)}">删除</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+async function runInternalDownloadAction(action, ids) {
+  setInternalDownloadStatus(internalActionPending(action));
+  try {
+    const data = await api("/api/internal-downloads/actions", {
+      method: "POST",
+      body: JSON.stringify({ action, ids }),
+    });
+    await loadInternalDownloads();
+    const result = data.result || {};
+    const errors = result.errors && result.errors.length ? `；失败 ${result.errors.length} 项：${result.errors.join("；")}` : "";
+    setInternalDownloadStatus(`已处理 ${result.changed || 0} 个任务，跳过 ${result.skipped || 0} 个${errors}`, errors ? "error" : "success");
+  } catch (error) {
+    setInternalDownloadStatus(error.message, "error");
+  }
+}
+
+function internalActionPending(action) {
+  if (action === "pause") return "正在暂停任务...";
+  if (action === "start") return "正在加入队列...";
+  if (action === "delete") return "正在删除任务...";
+  return "正在处理任务...";
+}
+
+function internalStatusLabel(status) {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "active":
+      return "下载中";
+    case "paused":
+      return "已暂停";
+    case "complete":
+      return "已完成";
+    case "error":
+      return "出错";
+    default:
+      return status || "-";
+  }
+}
+
+function internalStatusClass(status) {
+  switch (status) {
+    case "complete":
+      return "";
+    case "error":
+      return "bad";
+    default:
+      return "warn";
+  }
+}
+
+function setInternalDownloadStatus(message, kind = "") {
+  const status = document.getElementById("internal-download-status");
+  status.className = `notice ${kind}`.trim();
+  status.textContent = message || "";
+}
+
 async function loadKV() {
+  await loadStatus();
   const body = document.getElementById("kv-body");
   setKVStatus("");
   body.innerHTML = `<tr><td colspan="8" class="empty">正在加载...</td></tr>`;
   try {
     const data = await api("/api/kv/links");
     if (data.status_error) {
-      setKVStatus(`aria2 状态查询失败：${data.status_error}`, "error");
+      setKVStatus(`下载器状态查询失败：${data.status_error}`, "error");
     }
     state.kvItems = data.items || [];
     const ids = new Set(state.kvItems.map((item) => item.id));
@@ -594,6 +753,7 @@ function renderKVTable() {
 function renderKVRow(item) {
   const expires = item.permanent ? "永久" : item.expires_at ? formatTime(item.expires_at) : "-";
   const selected = state.selectedKV.has(item.id) ? "checked" : "";
+  const downloadLabel = state.downloaderMode === "internal" ? "加入队列" : "发送到 aria2";
   return `
     <tr class="${item.expired ? "row-expired" : ""}">
       <td class="select-col">
@@ -605,18 +765,25 @@ function renderKVRow(item) {
         <div class="subtle">${formatBytes(item.file_size || 0)}</div>
       </td>
       <td class="mono"><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">${escapeHTML(item.url)}</a></td>
-      <td>${renderAria2Entries(item)}</td>
+      <td>${renderDownloadEntries(item)}</td>
       <td>${renderDownloadedState(item)}</td>
       <td class="time-cell">${formatTime(item.created_at)}</td>
       <td class="time-cell">${escapeHTML(expires)}</td>
       <td>
         <div class="row-actions">
-          <button class="btn primary compact" data-download-link="${escapeAttr(item.id)}">发送到 aria2</button>
+          <button class="btn primary compact" data-download-link="${escapeAttr(item.id)}">${downloadLabel}</button>
           <button class="btn danger compact" data-delete-link="${escapeAttr(item.id)}">删除</button>
         </div>
       </td>
     </tr>
   `;
+}
+
+function renderDownloadEntries(item) {
+  if (state.downloaderMode === "internal") {
+    return renderInternalEntries(item);
+  }
+  return renderAria2Entries(item);
 }
 
 function renderAria2Entries(item) {
@@ -631,6 +798,25 @@ function renderAria2Entries(item) {
     return `
       <div class="aria2-entry">
         <div class="mono">${escapeHTML(entry.gid || "-")} <span class="pill ${aria2StatusClass(status)}">${escapeHTML(status)}</span></div>
+        <div class="subtle">${escapeHTML(progress)}</div>
+        ${error}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderInternalEntries(item) {
+  const entries = item.internal || [];
+  if (!entries.length) {
+    return `<span class="pill warn">尚未加入</span>`;
+  }
+  return entries.map((entry) => {
+    const status = entry.status || "queued";
+    const progress = entry.total ? ` ${formatBytes(entry.completed)} / ${formatBytes(entry.total)}` : "";
+    const error = entry.error ? `<div class="subtle bad-text">${escapeHTML(entry.error)}</div>` : "";
+    return `
+      <div class="aria2-entry">
+        <div class="mono">${escapeHTML(entry.id || "-")} <span class="pill ${internalStatusClass(status)}">${escapeHTML(internalStatusLabel(status))}</span></div>
         <div class="subtle">${escapeHTML(progress)}</div>
         ${error}
       </div>
@@ -733,7 +919,8 @@ function updateKVSelectionState() {
   selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
 
   const count = state.selectedKV.size;
-  document.getElementById("download-selected").textContent = count ? `发送到 aria2 (${count})` : "发送到 aria2";
+  const downloadText = state.downloaderMode === "internal" ? "加入下载队列" : "发送到 aria2";
+  document.getElementById("download-selected").textContent = count ? `${downloadText} (${count})` : downloadText;
   document.getElementById("delete-selected").textContent = count ? `批量删除 (${count})` : "批量删除";
 }
 
@@ -744,10 +931,12 @@ async function runKVAction(action, ids, options = {}) {
     return;
   }
   if (action === "delete" && options.confirm !== false) {
-    if (!confirm(`确认删除 ${uniqueIDs.length} 条链接记录？此操作不会删除 aria2 中已存在的下载任务。`)) return;
+    const suffix = state.downloaderMode === "internal" ? "关联的内部下载任务会一并移除。" : "此操作不会删除 aria2 中已存在的下载任务。";
+    if (!confirm(`确认删除 ${uniqueIDs.length} 条链接记录？${suffix}`)) return;
   }
 
-  setKVStatus(action === "download" ? "正在将链接提交到 aria2..." : "正在删除链接记录...");
+  const pendingText = state.downloaderMode === "internal" ? "正在加入内部下载队列..." : "正在将链接提交到 aria2...";
+  setKVStatus(action === "download" ? pendingText : "正在删除链接记录...");
   try {
     const data = await api("/api/kv/links/actions", {
       method: "POST",
@@ -768,7 +957,8 @@ async function runKVAction(action, ids, options = {}) {
 function kvActionMessage(action, data) {
   const errors = data.errors && data.errors.length ? `；失败 ${data.errors.length} 项：${data.errors.join("；")}` : "";
   if (action === "download") {
-    return `已将 ${data.added || 0} 条链接提交到 aria2 下载队列，跳过 ${data.skipped || 0} 条${errors}`;
+    const target = state.downloaderMode === "internal" ? "内部下载队列" : "aria2 下载队列";
+    return `已将 ${data.added || 0} 条链接提交到 ${target}，跳过 ${data.skipped || 0} 条${errors}`;
   }
   return `已删除 ${data.deleted || 0} 条 KV 记录${errors}`;
 }
@@ -1378,7 +1568,7 @@ async function saveConfig(event) {
     state.aria2Loaded = false;
     document.getElementById("aria2-frame").removeAttribute("src");
     if (document.getElementById("view-downloads").classList.contains("active")) {
-      loadAria2(true);
+      loadDownloads(true);
     }
     loadStatus();
     loadModules();

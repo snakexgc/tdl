@@ -355,6 +355,21 @@ p {
   background: #ffffff;
 }
 
+.internal-downloads {
+  height: 100%;
+  padding: 18px;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.internal-table-shell {
+  max-height: calc(100% - 42px);
+}
+
+#internal-download-table {
+  min-width: 1080px;
+}
+
 .aria2-guide {
   height: 100%;
   padding: 28px;

@@ -1,20 +1,20 @@
-package watch
+package transfer
 
 import (
 	"context"
 	"sync"
 )
 
-type downloadLimiter struct {
+type Limiter struct {
 	fileTokens  chan struct{}
 	perFileMax  int
 	bufferSlots int
 
 	mu    sync.Mutex
-	files map[string]*downloadLimitState
+	files map[string]*limitState
 }
 
-type downloadLimitState struct {
+type limitState struct {
 	refs          int
 	active        bool
 	ready         chan struct{}
@@ -23,25 +23,25 @@ type downloadLimitState struct {
 	bufferTokens  chan struct{}
 }
 
-type downloadLease struct {
-	limiter *downloadLimiter
+type Lease struct {
+	limiter *Limiter
 	taskID  string
-	state   *downloadLimitState
+	state   *limitState
 }
 
-func newDownloadLimiter(maxFiles, perFileMax int, bufferSlots ...int) *downloadLimiter {
-	maxFiles = normalizeDownloadLimit(maxFiles)
-	perFileMax = normalizeDownloadLimit(perFileMax)
+func NewLimiter(maxFiles, perFileMax int, bufferSlots ...int) *Limiter {
+	maxFiles = normalizeLimit(maxFiles)
+	perFileMax = normalizeLimit(perFileMax)
 	normalizedBufferSlots := 0
 	if len(bufferSlots) > 0 {
-		normalizedBufferSlots = normalizeDownloadBufferSlots(bufferSlots[0])
+		normalizedBufferSlots = normalizeBufferSlots(bufferSlots[0])
 	}
 
-	l := &downloadLimiter{
+	l := &Limiter{
 		fileTokens:  make(chan struct{}, maxFiles),
 		perFileMax:  perFileMax,
 		bufferSlots: normalizedBufferSlots,
-		files:       make(map[string]*downloadLimitState),
+		files:       make(map[string]*limitState),
 	}
 	for i := 0; i < maxFiles; i++ {
 		l.fileTokens <- struct{}{}
@@ -50,99 +50,99 @@ func newDownloadLimiter(maxFiles, perFileMax int, bufferSlots ...int) *downloadL
 	return l
 }
 
-func normalizeDownloadLimit(v int) int {
+func normalizeLimit(v int) int {
 	if v < 1 {
 		return 1
 	}
 	return v
 }
 
-func normalizeDownloadBufferSlots(v int) int {
+func normalizeBufferSlots(v int) int {
 	if v < 0 {
 		return 0
 	}
 	return v
 }
 
-func (l *downloadLimiter) Acquire(ctx context.Context, taskID string) (*downloadLease, error) {
+func (l *Limiter) Acquire(ctx context.Context, taskID string) (*Lease, error) {
 	state, err := l.acquireFile(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := acquireDownloadToken(ctx, state.requestTokens); err != nil {
+	if err := acquireToken(ctx, state.requestTokens); err != nil {
 		l.releaseInterest(taskID)
 		return nil, err
 	}
 
-	return &downloadLease{
+	return &Lease{
 		limiter: l,
 		taskID:  taskID,
 		state:   state,
 	}, nil
 }
 
-func (l *downloadLease) Release() {
+func (l *Lease) Release() {
 	if l == nil {
 		return
 	}
 
-	releaseDownloadToken(l.state.requestTokens)
+	releaseToken(l.state.requestTokens)
 	l.limiter.releaseInterest(l.taskID)
 }
 
-func (l *downloadLease) AcquireWorker(ctx context.Context) error {
+func (l *Lease) AcquireWorker(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	return acquireDownloadToken(ctx, l.state.workerTokens)
+	return acquireToken(ctx, l.state.workerTokens)
 }
 
-func (l *downloadLease) ReleaseWorker() {
+func (l *Lease) ReleaseWorker() {
 	if l == nil {
 		return
 	}
-	releaseDownloadToken(l.state.workerTokens)
+	releaseToken(l.state.workerTokens)
 }
 
-func (l *downloadLease) MaxWorkers() int {
+func (l *Lease) MaxWorkers() int {
 	if l == nil {
 		return 1
 	}
 	return cap(l.state.workerTokens)
 }
 
-func (l *downloadLease) BufferSlots() int {
+func (l *Lease) BufferSlots() int {
 	if l == nil || l.state == nil || l.state.bufferTokens == nil {
 		return 0
 	}
 	return cap(l.state.bufferTokens)
 }
 
-func (l *downloadLease) AcquireBuffer(ctx context.Context) (func(), error) {
+func (l *Lease) AcquireBuffer(ctx context.Context) (func(), error) {
 	if l == nil || l.state == nil || l.state.bufferTokens == nil {
 		return nil, nil
 	}
-	if err := acquireDownloadToken(ctx, l.state.bufferTokens); err != nil {
+	if err := acquireToken(ctx, l.state.bufferTokens); err != nil {
 		return nil, err
 	}
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			releaseDownloadToken(l.state.bufferTokens)
+			releaseToken(l.state.bufferTokens)
 		})
 	}, nil
 }
 
-func (l *downloadLimiter) acquireFile(ctx context.Context, taskID string) (*downloadLimitState, error) {
+func (l *Limiter) acquireFile(ctx context.Context, taskID string) (*limitState, error) {
 	registered := false
 
 	for {
 		l.mu.Lock()
 		state := l.files[taskID]
 		if state == nil {
-			state = newDownloadLimitState(l.perFileMax, l.bufferSlots)
+			state = newLimitState(l.perFileMax, l.bufferSlots)
 			l.files[taskID] = state
 		}
 		if !registered {
@@ -170,7 +170,7 @@ func (l *downloadLimiter) acquireFile(ctx context.Context, taskID string) (*down
 			state.ready = ready
 			l.mu.Unlock()
 
-			err := acquireDownloadToken(ctx, l.fileTokens)
+			err := acquireToken(ctx, l.fileTokens)
 			l.completeActivation(taskID, ready, err == nil)
 			if err != nil {
 				l.releaseInterest(taskID)
@@ -180,7 +180,7 @@ func (l *downloadLimiter) acquireFile(ctx context.Context, taskID string) (*down
 	}
 }
 
-func (l *downloadLimiter) completeActivation(taskID string, ready chan struct{}, success bool) {
+func (l *Limiter) completeActivation(taskID string, ready chan struct{}, success bool) {
 	releaseFileToken := false
 
 	l.mu.Lock()
@@ -200,11 +200,11 @@ func (l *downloadLimiter) completeActivation(taskID string, ready chan struct{},
 	l.mu.Unlock()
 
 	if releaseFileToken {
-		releaseDownloadToken(l.fileTokens)
+		releaseToken(l.fileTokens)
 	}
 }
 
-func (l *downloadLimiter) releaseInterest(taskID string) {
+func (l *Limiter) releaseInterest(taskID string) {
 	releaseFileToken := false
 
 	l.mu.Lock()
@@ -224,12 +224,12 @@ func (l *downloadLimiter) releaseInterest(taskID string) {
 	l.mu.Unlock()
 
 	if releaseFileToken {
-		releaseDownloadToken(l.fileTokens)
+		releaseToken(l.fileTokens)
 	}
 }
 
-func newDownloadLimitState(perFileMax, bufferSlots int) *downloadLimitState {
-	state := &downloadLimitState{
+func newLimitState(perFileMax, bufferSlots int) *limitState {
+	state := &limitState{
 		requestTokens: make(chan struct{}, perFileMax),
 		workerTokens:  make(chan struct{}, perFileMax),
 	}
@@ -247,7 +247,7 @@ func newDownloadLimitState(perFileMax, bufferSlots int) *downloadLimitState {
 	return state
 }
 
-func acquireDownloadToken(ctx context.Context, tokens chan struct{}) error {
+func acquireToken(ctx context.Context, tokens chan struct{}) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -256,7 +256,7 @@ func acquireDownloadToken(ctx context.Context, tokens chan struct{}) error {
 	}
 }
 
-func releaseDownloadToken(tokens chan struct{}) {
+func releaseToken(tokens chan struct{}) {
 	select {
 	case tokens <- struct{}{}:
 	default:

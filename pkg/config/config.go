@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,11 @@ import (
 )
 
 const DefaultPoolSize = 8
+
+const (
+	DownloaderModeAria2    = "aria2"
+	DownloaderModeInternal = "internal"
+)
 
 // BotConfig Bot 配置
 type BotConfig struct {
@@ -41,6 +47,10 @@ type ModulesConfig struct {
 	Watch bool `json:"watch"`
 }
 
+type DownloaderConfig struct {
+	Mode string `json:"mode"`
+}
+
 type Aria2Config struct {
 	RPCURL         string `json:"rpc_url"`
 	Secret         string `json:"secret"`
@@ -50,22 +60,23 @@ type Aria2Config struct {
 
 // Config 全局配置结构
 type Config struct {
-	Proxy            string        `json:"proxy"`
-	Namespace        string        `json:"namespace"`
-	Debug            bool          `json:"debug"`
-	PoolSize         int           `json:"pool_size"`
-	Delay            int           `json:"delay"`
-	NTP              string        `json:"ntp"`
-	ReconnectTimeout int           `json:"reconnect_timeout"`
-	DownloadDir      string        `json:"download_dir"`
-	TriggerReactions []string      `json:"trigger_reactions"`
-	Include          []string      `json:"include"`
-	Exclude          []string      `json:"exclude"`
-	HTTP             HTTPConfig    `json:"http"`
-	WebUI            WebUIConfig   `json:"webui"`
-	Modules          ModulesConfig `json:"modules"`
-	Aria2            Aria2Config   `json:"aria2"`
-	Bot              BotConfig     `json:"bot"`
+	Proxy            string           `json:"proxy"`
+	Namespace        string           `json:"namespace"`
+	Debug            bool             `json:"debug"`
+	PoolSize         int              `json:"pool_size"`
+	Delay            int              `json:"delay"`
+	NTP              string           `json:"ntp"`
+	ReconnectTimeout int              `json:"reconnect_timeout"`
+	DownloadDir      string           `json:"download_dir"`
+	TriggerReactions []string         `json:"trigger_reactions"`
+	Include          []string         `json:"include"`
+	Exclude          []string         `json:"exclude"`
+	HTTP             HTTPConfig       `json:"http"`
+	WebUI            WebUIConfig      `json:"webui"`
+	Modules          ModulesConfig    `json:"modules"`
+	Downloader       DownloaderConfig `json:"downloader"`
+	Aria2            Aria2Config      `json:"aria2"`
+	Bot              BotConfig        `json:"bot"`
 }
 
 // DefaultConfig 返回默认配置
@@ -97,6 +108,9 @@ func DefaultConfig() *Config {
 		Modules: ModulesConfig{
 			Bot:   true,
 			Watch: true,
+		},
+		Downloader: DownloaderConfig{
+			Mode: DownloaderModeAria2,
 		},
 		Aria2: Aria2Config{
 			RPCURL:         "http://127.0.0.1:6800/jsonrpc",
@@ -132,6 +146,30 @@ func EffectivePoolSize(cfg *Config) int {
 	return cfg.PoolSize
 }
 
+func NormalizeDownloaderMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return DownloaderModeAria2, nil
+	}
+	switch mode {
+	case DownloaderModeAria2, DownloaderModeInternal:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("downloader.mode must be %q or %q", DownloaderModeAria2, DownloaderModeInternal)
+	}
+}
+
+func EffectiveDownloaderMode(cfg *Config) string {
+	if cfg == nil {
+		return DownloaderModeAria2
+	}
+	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
+	if err != nil {
+		return DownloaderModeAria2
+	}
+	return mode
+}
+
 func Validate(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config is nil")
@@ -142,6 +180,11 @@ func Validate(cfg *Config) error {
 	}
 	cfg.Namespace = namespace
 	cfg.PoolSize = EffectivePoolSize(cfg)
+	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
+	if err != nil {
+		return err
+	}
+	cfg.Downloader.Mode = mode
 	return nil
 }
 

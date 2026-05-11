@@ -1,4 +1,4 @@
-package watch
+package aria2
 
 import (
 	"context"
@@ -18,24 +18,26 @@ import (
 
 const aria2ControlBatchSize = 1000
 
-type aria2ControlClient interface {
-	TellActive(ctx context.Context) ([]aria2DownloadStatus, error)
-	TellWaiting(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error)
-	TellStopped(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error)
+type ControlClient interface {
+	TellActive(ctx context.Context) ([]DownloadStatus, error)
+	TellWaiting(ctx context.Context, offset, num int) ([]DownloadStatus, error)
+	TellStopped(ctx context.Context, offset, num int) ([]DownloadStatus, error)
 	ForcePause(ctx context.Context, gid string) error
 	Unpause(ctx context.Context, gid string) error
-	AddURI(ctx context.Context, uri string, opts aria2AddURIOptions) (string, error)
+	AddURI(ctx context.Context, uri string, opts AddURIOptions) (string, error)
 	RemoveDownloadResult(ctx context.Context, gid string) error
 }
 
-type Aria2Controller struct {
-	client        aria2ControlClient
-	store         *aria2TaskStore
+type Controller struct {
+	client        ControlClient
+	store         *TaskStore
 	publicBaseURL string
 	logger        *zap.Logger
 }
 
-type Aria2TaskInfo struct {
+type Aria2Controller = Controller
+
+type TaskInfo struct {
 	GID             string
 	Status          string
 	TotalLength     int64
@@ -45,24 +47,30 @@ type Aria2TaskInfo struct {
 	ErrorMessage    string
 }
 
-type Aria2Overview struct {
+type Aria2TaskInfo = TaskInfo
+
+type Overview struct {
 	TotalTasks       int
 	RemainingTasks   int
 	RemainingBytes   int64
 	StatusCounts     map[string]int
-	RetryCandidates  []Aria2TaskInfo
+	RetryCandidates  []TaskInfo
 	RetryBytes       int64
 	RetryStatusCount map[string]int
 }
 
-type Aria2ActionResult struct {
+type Aria2Overview = Overview
+
+type ActionResult struct {
 	Matched int
 	Changed int
 	Skipped int
 	Errors  []string
 }
 
-func NewAria2Controller(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Aria2Controller {
+type Aria2ActionResult = ActionResult
+
+func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Controller {
 	if cfg == nil {
 		cfg = config.Get()
 	}
@@ -70,21 +78,25 @@ func NewAria2Controller(cfg *config.Config, kvd storage.Storage, logger *zap.Log
 		logger = zap.NewNop()
 	}
 
-	return &Aria2Controller{
-		client:        newAria2Client(cfg.Aria2),
-		store:         newAria2TaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
+	return &Controller{
+		client:        NewClient(cfg.Aria2),
+		store:         NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		publicBaseURL: cfg.HTTP.PublicBaseURL,
 		logger:        logger,
 	}
 }
 
-func (c *Aria2Controller) Overview(ctx context.Context) (Aria2Overview, error) {
+func NewAria2Controller(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Controller {
+	return NewController(cfg, kvd, logger)
+}
+
+func (c *Controller) Overview(ctx context.Context) (Overview, error) {
 	tasks, _, err := c.listOwnedTasks(ctx)
 	if err != nil {
-		return Aria2Overview{}, err
+		return Overview{}, err
 	}
 
-	overview := Aria2Overview{
+	overview := Overview{
 		TotalTasks:       len(tasks),
 		StatusCounts:     map[string]int{},
 		RetryStatusCount: map[string]int{},
@@ -107,13 +119,13 @@ func (c *Aria2Controller) Overview(ctx context.Context) (Aria2Overview, error) {
 	return overview, nil
 }
 
-func (c *Aria2Controller) PauseAll(ctx context.Context) (Aria2ActionResult, error) {
+func (c *Controller) PauseAll(ctx context.Context) (ActionResult, error) {
 	tasks, _, err := c.listOwnedTasks(ctx)
 	if err != nil {
-		return Aria2ActionResult{}, err
+		return ActionResult{}, err
 	}
 
-	var result Aria2ActionResult
+	var result ActionResult
 	for _, task := range tasks {
 		status := normalizedAria2Status(task.Status)
 		switch status {
@@ -131,13 +143,13 @@ func (c *Aria2Controller) PauseAll(ctx context.Context) (Aria2ActionResult, erro
 	return result, nil
 }
 
-func (c *Aria2Controller) StartAll(ctx context.Context) (Aria2ActionResult, error) {
+func (c *Controller) StartAll(ctx context.Context) (ActionResult, error) {
 	tasks, _, err := c.listOwnedTasks(ctx)
 	if err != nil {
-		return Aria2ActionResult{}, err
+		return ActionResult{}, err
 	}
 
-	var result Aria2ActionResult
+	var result ActionResult
 	for _, task := range tasks {
 		status := normalizedAria2Status(task.Status)
 		if status != "paused" {
@@ -154,14 +166,14 @@ func (c *Aria2Controller) StartAll(ctx context.Context) (Aria2ActionResult, erro
 	return result, nil
 }
 
-func (c *Aria2Controller) RetryStopped(ctx context.Context) (Aria2ActionResult, error) {
+func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 	tasks, records, err := c.listOwnedTasks(ctx)
 	if err != nil {
-		return Aria2ActionResult{}, err
+		return ActionResult{}, err
 	}
 
 	downloadPrefix, _ := c.downloadPrefix()
-	var result Aria2ActionResult
+	var result ActionResult
 	for _, task := range tasks {
 		info := aria2TaskInfo(task)
 		if !isRetryableStoppedAria2Task(info) {
@@ -186,7 +198,7 @@ func (c *Aria2Controller) RetryStopped(ctx context.Context) (Aria2ActionResult, 
 		if next.Dir == "" && next.Out == "" {
 			next.Dir, next.Out = maybeAria2PathOptions(task)
 		}
-		gid, err := c.client.AddURI(ctx, downloadURL, aria2AddURIOptions{
+		gid, err := c.client.AddURI(ctx, downloadURL, AddURIOptions{
 			Dir: next.Dir,
 			Out: next.Out,
 		})
@@ -219,7 +231,7 @@ func (c *Aria2Controller) RetryStopped(ctx context.Context) (Aria2ActionResult, 
 	return result, nil
 }
 
-func (c *Aria2Controller) listOwnedTasks(ctx context.Context) ([]aria2DownloadStatus, map[string]aria2TaskRecord, error) {
+func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[string]TaskRecord, error) {
 	if c == nil || c.client == nil {
 		return nil, nil, errors.New("aria2 controller is not initialized")
 	}
@@ -234,7 +246,7 @@ func (c *Aria2Controller) listOwnedTasks(ctx context.Context) ([]aria2DownloadSt
 	}
 	downloadPrefix, _ := c.downloadPrefix()
 
-	var all []aria2DownloadStatus
+	var all []DownloadStatus
 	active, err := c.client.TellActive(ctx)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "query aria2 active tasks")
@@ -254,7 +266,7 @@ func (c *Aria2Controller) listOwnedTasks(ctx context.Context) ([]aria2DownloadSt
 	all = append(all, stopped...)
 
 	seen := map[string]struct{}{}
-	owned := make([]aria2DownloadStatus, 0, len(all))
+	owned := make([]DownloadStatus, 0, len(all))
 	for _, task := range all {
 		if task.GID == "" {
 			continue
@@ -274,8 +286,8 @@ func (c *Aria2Controller) listOwnedTasks(ctx context.Context) ([]aria2DownloadSt
 	return owned, records, nil
 }
 
-func (c *Aria2Controller) listWaiting(ctx context.Context) ([]aria2DownloadStatus, error) {
-	var all []aria2DownloadStatus
+func (c *Controller) listWaiting(ctx context.Context) ([]DownloadStatus, error) {
+	var all []DownloadStatus
 	for offset := 0; ; {
 		batch, err := c.client.TellWaiting(ctx, offset, aria2ControlBatchSize)
 		if err != nil {
@@ -289,8 +301,8 @@ func (c *Aria2Controller) listWaiting(ctx context.Context) ([]aria2DownloadStatu
 	}
 }
 
-func (c *Aria2Controller) listStopped(ctx context.Context) ([]aria2DownloadStatus, error) {
-	var all []aria2DownloadStatus
+func (c *Controller) listStopped(ctx context.Context) ([]DownloadStatus, error) {
+	var all []DownloadStatus
 	for offset := 0; ; {
 		batch, err := c.client.TellStopped(ctx, offset, aria2ControlBatchSize)
 		if err != nil {
@@ -304,14 +316,14 @@ func (c *Aria2Controller) listStopped(ctx context.Context) ([]aria2DownloadStatu
 	}
 }
 
-func (c *Aria2Controller) downloadPrefix() (string, error) {
+func (c *Controller) downloadPrefix() (string, error) {
 	if c == nil || c.publicBaseURL == "" {
 		return "", nil
 	}
 	return aria2DownloadURLPrefix(c.publicBaseURL)
 }
 
-func aria2TaskInfo(task aria2DownloadStatus) Aria2TaskInfo {
+func aria2TaskInfo(task DownloadStatus) TaskInfo {
 	total := parseAria2Length(task.TotalLength)
 	completed := parseAria2Length(task.CompletedLength)
 	if total == 0 && len(task.Files) > 0 {
@@ -325,7 +337,7 @@ func aria2TaskInfo(task aria2DownloadStatus) Aria2TaskInfo {
 		remaining = 0
 	}
 
-	return Aria2TaskInfo{
+	return TaskInfo{
 		GID:             task.GID,
 		Status:          normalizedAria2Status(task.Status),
 		TotalLength:     total,
@@ -355,7 +367,7 @@ func normalizedAria2Status(status string) string {
 	return status
 }
 
-func isRetryableStoppedAria2Task(info Aria2TaskInfo) bool {
+func isRetryableStoppedAria2Task(info TaskInfo) bool {
 	switch info.Status {
 	case "error", "removed":
 		return true
@@ -366,7 +378,7 @@ func isRetryableStoppedAria2Task(info Aria2TaskInfo) bool {
 	}
 }
 
-func firstTDLTaskURI(task aria2DownloadStatus, downloadPrefix string) string {
+func firstTDLTaskURI(task DownloadStatus, downloadPrefix string) string {
 	var first string
 	for _, file := range task.Files {
 		for _, uri := range file.URIs {
@@ -384,7 +396,7 @@ func firstTDLTaskURI(task aria2DownloadStatus, downloadPrefix string) string {
 	return first
 }
 
-func maybeAria2PathOptions(task aria2DownloadStatus) (dir, out string) {
+func maybeAria2PathOptions(task DownloadStatus) (dir, out string) {
 	if len(task.Files) == 0 || task.Files[0].Path == "" {
 		return "", ""
 	}
@@ -392,8 +404,15 @@ func maybeAria2PathOptions(task aria2DownloadStatus) (dir, out string) {
 	return filepath.Dir(path), filepath.Base(path)
 }
 
-func sortAria2TaskInfos(values []Aria2TaskInfo) {
+func sortAria2TaskInfos(values []TaskInfo) {
 	sort.SliceStable(values, func(i, j int) bool {
 		return values[i].GID < values[j].GID
 	})
+}
+
+func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
+	if cfg.DownloadLinkTTLHours <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.DownloadLinkTTLHours) * time.Hour
 }

@@ -38,6 +38,7 @@ var configurablePaths = []string{
 	"webui.password",
 	"modules.bot",
 	"modules.watch",
+	"downloader.mode",
 	"aria2.rpc_url",
 	"aria2.secret",
 	"aria2.dir",

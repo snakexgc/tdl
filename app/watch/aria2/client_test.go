@@ -1,4 +1,4 @@
-package watch
+package aria2
 
 import (
 	"context"
@@ -225,7 +225,9 @@ func TestWaitForAria2RetriesConnectionErrors(t *testing.T) {
 		},
 	}
 
-	err := waitForAria2(context.Background(), client, 3, time.Millisecond, zap.NewNop())
+	err := retryAria2ConnectionWithInterval(context.Background(), zap.NewNop(), "set aria2 max concurrent downloads", time.Millisecond, func() error {
+		return client.SetMaxConcurrentDownloads(context.Background(), 3)
+	})
 	require.NoError(t, err)
 	require.Equal(t, 3, client.calls)
 	require.Equal(t, []int{3, 3, 3}, client.limits)
@@ -238,7 +240,9 @@ func TestWaitForAria2DoesNotRetryRPCError(t *testing.T) {
 		errs: []error{gferrors.New("aria2 rpc error 1: unauthorized")},
 	}
 
-	err := waitForAria2(context.Background(), client, 3, time.Millisecond, zap.NewNop())
+	err := retryAria2ConnectionWithInterval(context.Background(), zap.NewNop(), "set aria2 max concurrent downloads", time.Millisecond, func() error {
+		return client.SetMaxConcurrentDownloads(context.Background(), 3)
+	})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "unauthorized")
 	require.Equal(t, 1, client.calls)

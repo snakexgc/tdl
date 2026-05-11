@@ -128,6 +128,30 @@ func TestRoutesRejectUnauthenticatedAPIWithJSON(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "authentication required")
 }
 
+func TestRoutesProtectAria2Entrypoints(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	handler := NewServer(Options{}).routes()
+
+	req := httptest.NewRequest(http.MethodGet, "/aria2ng.html", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.Equal(t, "/login", rec.Header().Get("Location"))
+	require.Empty(t, rec.Header().Get("WWW-Authenticate"))
+
+	req = httptest.NewRequest(http.MethodPost, "/aria2/jsonrpc", strings.NewReader(`{"jsonrpc":"2.0","method":"aria2.tellActive","id":"x"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	require.Empty(t, rec.Header().Get("WWW-Authenticate"))
+	require.Contains(t, rec.Body.String(), "authentication required")
+}
+
 func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 	initWebUITestConfig(t)
 

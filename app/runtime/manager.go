@@ -46,6 +46,7 @@ type Manager struct {
 	botDone   chan struct{}
 	botStatus string
 	botErr    error
+	watchMode string
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -101,6 +102,7 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		requestReboot: opts.RequestReboot,
 		requestUpdate: opts.RequestUpdate,
 		botStatus:     "未启动",
+		watchMode:     config.EffectiveDownloaderMode(config.Get()),
 	}
 	manager.watchCtrl = watch.NewController(ctx, watch.DefaultOptions(config.Get()), manager.Notify)
 	return manager
@@ -152,6 +154,12 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 		cfg = config.Get()
 	}
 	m.watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
+	nextWatchMode := config.EffectiveDownloaderMode(cfg)
+	m.mu.Lock()
+	prevWatchMode := m.watchMode
+	m.watchMode = nextWatchMode
+	m.mu.Unlock()
+	restartWatch := prevWatchMode != "" && prevWatchMode != nextWatchMode && m.watchCtrl.Running()
 
 	if cfg.Modules.Bot {
 		m.StartBot()
@@ -159,7 +167,14 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 		go m.StopBot()
 	}
 	if cfg.Modules.Watch {
-		go m.StartWatch(context.Background())
+		if restartWatch {
+			go func() {
+				m.StopWatch()
+				_ = m.StartWatch(context.Background())
+			}()
+		} else {
+			go m.StartWatch(context.Background())
+		}
 	} else {
 		go m.StopWatch()
 	}
@@ -404,7 +419,7 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 	return webui.ModuleState{
 		ID:          "watch",
 		Name:        "监听下载",
-		Description: "监听 Telegram 表情触发，提供本地下载链接，并把任务提交到 aria2。",
+		Description: "监听 Telegram 表情触发，并把任务提交到当前下载器。",
 		Enabled:     cfg != nil && cfg.Modules.Watch,
 		Running:     running,
 		CanToggle:   true,

@@ -1,4 +1,4 @@
-package watch
+package aria2
 
 import (
 	"context"
@@ -17,16 +17,18 @@ const (
 	aria2StatusActive          = "active"
 	aria2ShutdownPauseTimeout  = 5 * time.Second
 	aria2ShutdownRetryInterval = time.Second
+
+	DefaultConnectRetryInterval = 10 * time.Second
 )
 
-type aria2ReconnectClient interface {
-	TellActive(ctx context.Context) ([]aria2DownloadStatus, error)
-	TellWaiting(ctx context.Context, offset, num int) ([]aria2DownloadStatus, error)
+type ReconnectClient interface {
+	TellActive(ctx context.Context) ([]DownloadStatus, error)
+	TellWaiting(ctx context.Context, offset, num int) ([]DownloadStatus, error)
 	ForcePause(ctx context.Context, gid string) error
 	Unpause(ctx context.Context, gid string) error
 }
 
-func suspendTDLAria2TasksForReconnect(ctx context.Context, client aria2ReconnectClient, store *aria2TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+func SuspendTDLTasksForReconnect(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -75,7 +77,11 @@ func suspendTDLAria2TasksForReconnect(ctx context.Context, client aria2Reconnect
 	return paused, nil
 }
 
-func resumeTDLAria2Tasks(ctx context.Context, client aria2ReconnectClient, gids []string, logger *zap.Logger) error {
+func suspendTDLAria2TasksForReconnect(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+	return SuspendTDLTasksForReconnect(ctx, client, store, publicBaseURL, logger)
+}
+
+func ResumeTDLTasks(ctx context.Context, client ReconnectClient, gids []string, logger *zap.Logger) error {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -100,7 +106,11 @@ func resumeTDLAria2Tasks(ctx context.Context, client aria2ReconnectClient, gids 
 	return nil
 }
 
-func pauseTDLAria2TasksForShutdown(ctx context.Context, client aria2ReconnectClient, store *aria2TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+func resumeTDLAria2Tasks(ctx context.Context, client ReconnectClient, gids []string, logger *zap.Logger) error {
+	return ResumeTDLTasks(ctx, client, gids, logger)
+}
+
+func PauseTDLTasksForShutdown(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -152,8 +162,12 @@ func pauseTDLAria2TasksForShutdown(ctx context.Context, client aria2ReconnectCli
 	return paused, nil
 }
 
-func listTDLAria2ReconnectTasks(ctx context.Context, client aria2ReconnectClient, registeredGIDs map[string]struct{}, downloadPrefix string, logger *zap.Logger) ([]aria2DownloadStatus, error) {
-	var active []aria2DownloadStatus
+func pauseTDLAria2TasksForShutdown(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+	return PauseTDLTasksForShutdown(ctx, client, store, publicBaseURL, logger)
+}
+
+func listTDLAria2ReconnectTasks(ctx context.Context, client ReconnectClient, registeredGIDs map[string]struct{}, downloadPrefix string, logger *zap.Logger) ([]DownloadStatus, error) {
+	var active []DownloadStatus
 	if err := retryAria2Connection(ctx, logger, "query aria2 active tasks", func() error {
 		var err error
 		active, err = client.TellActive(ctx)
@@ -162,9 +176,9 @@ func listTDLAria2ReconnectTasks(ctx context.Context, client aria2ReconnectClient
 		return nil, errors.Wrap(err, "query aria2 active tasks")
 	}
 
-	result := make([]aria2DownloadStatus, 0, len(active))
+	result := make([]DownloadStatus, 0, len(active))
 	seen := map[string]struct{}{}
-	appendOwned := func(task aria2DownloadStatus) {
+	appendOwned := func(task DownloadStatus) {
 		if task.GID == "" {
 			return
 		}
@@ -185,7 +199,7 @@ func listTDLAria2ReconnectTasks(ctx context.Context, client aria2ReconnectClient
 	}
 
 	for offset := 0; ; {
-		var waiting []aria2DownloadStatus
+		var waiting []DownloadStatus
 		if err := retryAria2Connection(ctx, logger, "query aria2 waiting tasks", func() error {
 			var err error
 			waiting, err = client.TellWaiting(ctx, offset, aria2TellWaitingBatchSize)
@@ -208,7 +222,7 @@ func listTDLAria2ReconnectTasks(ctx context.Context, client aria2ReconnectClient
 	return result, nil
 }
 
-func isTDLAria2Task(task aria2DownloadStatus, registeredGIDs map[string]struct{}, downloadPrefix string) bool {
+func IsTDLTask(task DownloadStatus, registeredGIDs map[string]struct{}, downloadPrefix string) bool {
 	if _, ok := registeredGIDs[task.GID]; ok {
 		return true
 	}
@@ -223,16 +237,24 @@ func isTDLAria2Task(task aria2DownloadStatus, registeredGIDs map[string]struct{}
 	return false
 }
 
-func retryAria2Connection(ctx context.Context, logger *zap.Logger, action string, fn func() error) error {
-	return retryAria2ConnectionWithInterval(ctx, logger, action, aria2ConnectRetryInterval, fn)
+func isTDLAria2Task(task DownloadStatus, registeredGIDs map[string]struct{}, downloadPrefix string) bool {
+	return IsTDLTask(task, registeredGIDs, downloadPrefix)
 }
 
-func retryAria2ConnectionWithInterval(ctx context.Context, logger *zap.Logger, action string, retryInterval time.Duration, fn func() error) error {
+func RetryConnection(ctx context.Context, logger *zap.Logger, action string, fn func() error) error {
+	return RetryConnectionWithInterval(ctx, logger, action, DefaultConnectRetryInterval, fn)
+}
+
+func retryAria2Connection(ctx context.Context, logger *zap.Logger, action string, fn func() error) error {
+	return RetryConnection(ctx, logger, action, fn)
+}
+
+func RetryConnectionWithInterval(ctx context.Context, logger *zap.Logger, action string, retryInterval time.Duration, fn func() error) error {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	if retryInterval <= 0 {
-		retryInterval = aria2ConnectRetryInterval
+		retryInterval = DefaultConnectRetryInterval
 	}
 
 	for {
@@ -240,7 +262,7 @@ func retryAria2ConnectionWithInterval(ctx context.Context, logger *zap.Logger, a
 		if err == nil {
 			return nil
 		}
-		if errors.Is(err, context.Canceled) || !isAria2ConnectionError(err) {
+		if errors.Is(err, context.Canceled) || !IsConnectionError(err) {
 			return err
 		}
 
@@ -266,7 +288,11 @@ func retryAria2ConnectionWithInterval(ctx context.Context, logger *zap.Logger, a
 	}
 }
 
-func aria2DownloadURLPrefix(baseURL string) (string, error) {
+func retryAria2ConnectionWithInterval(ctx context.Context, logger *zap.Logger, action string, retryInterval time.Duration, fn func() error) error {
+	return RetryConnectionWithInterval(ctx, logger, action, retryInterval, fn)
+}
+
+func DownloadURLPrefix(baseURL string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return "", errors.Wrap(err, "parse public_base_url")
@@ -279,7 +305,11 @@ func aria2DownloadURLPrefix(baseURL string) (string, error) {
 	return u.String(), nil
 }
 
-func mergeUniqueGIDs(base, add []string) []string {
+func aria2DownloadURLPrefix(baseURL string) (string, error) {
+	return DownloadURLPrefix(baseURL)
+}
+
+func MergeUniqueGIDs(base, add []string) []string {
 	seen := map[string]struct{}{}
 	merged := make([]string, 0, len(base)+len(add))
 	for _, gid := range base {
@@ -305,6 +335,10 @@ func mergeUniqueGIDs(base, add []string) []string {
 	return merged
 }
 
+func UniqueGIDs(gids []string) []string {
+	return MergeUniqueGIDs(nil, gids)
+}
+
 func uniqueGIDs(gids []string) []string {
-	return mergeUniqueGIDs(nil, gids)
+	return UniqueGIDs(gids)
 }

@@ -26,6 +26,7 @@ import (
 
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/updater"
+	"github.com/iyear/tdl/app/watch"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
@@ -140,6 +141,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/heartbeat", s.authFunc(s.handleHeartbeat))
 	mux.HandleFunc("/api/status", s.authFunc(s.handleStatus))
 	mux.HandleFunc("/api/aria2/check", s.authFunc(s.handleAria2Check))
+	mux.HandleFunc("/api/internal-downloads", s.authFunc(s.handleInternalDownloads))
+	mux.HandleFunc("/api/internal-downloads/actions", s.authFunc(s.handleInternalDownloadActions))
 	mux.HandleFunc("/api/kv/links", s.authFunc(s.handleKVLinks))
 	mux.HandleFunc("/api/kv/links/actions", s.authFunc(s.handleKVActions))
 	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))
@@ -403,6 +406,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"rpc_url": cfg.Aria2.RPCURL,
 			"proxy":   "/aria2/jsonrpc",
 		},
+		"downloader": map[string]any{
+			"mode": config.EffectiveDownloaderMode(cfg),
+		},
 		"http": map[string]any{
 			"public_base_url": cfg.HTTP.PublicBaseURL,
 			"download_ttl":    cfg.HTTP.DownloadLinkTTLHours,
@@ -465,6 +471,62 @@ func checkAria2(ctx context.Context, cfg config.Aria2Config) aria2CheckResult {
 		result.Message = "aria2 连接正常。"
 	}
 	return result
+}
+
+func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	controller := s.internalDownloadController()
+	items, err := controller.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+	})
+}
+
+func (s *Server) handleInternalDownloadActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var req struct {
+		Action string   `json:"action"`
+		IDs    []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
+		return
+	}
+	controller := s.internalDownloadController()
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	var (
+		result watch.InternalDownloadActionResult
+		err    error
+	)
+	switch action {
+	case "pause":
+		result, err = controller.Pause(r.Context(), req.IDs)
+	case "start":
+		result, err = controller.Start(r.Context(), req.IDs)
+	case "delete":
+		result, err = controller.Delete(r.Context(), req.IDs)
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported action %q", req.Action))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     len(result.Errors) == 0,
+		"result": result,
+	})
 }
 
 func versionInfo() map[string]any {
@@ -561,20 +623,21 @@ func (s *Server) handleKVActions(w http.ResponseWriter, r *http.Request) {
 }
 
 type downloadLinkItem struct {
-	ID         string           `json:"id"`
-	Key        string           `json:"key"`
-	URL        string           `json:"url"`
-	FileName   string           `json:"file_name"`
-	FileSize   int64            `json:"file_size"`
-	PeerID     int64            `json:"peer_id"`
-	MessageID  int              `json:"message_id"`
-	CreatedAt  time.Time        `json:"created_at"`
-	ExpiresAt  *time.Time       `json:"expires_at,omitempty"`
-	Permanent  bool             `json:"permanent"`
-	Expired    bool             `json:"expired"`
-	Downloaded bool             `json:"downloaded"`
-	Status     string           `json:"status"`
-	Aria2      []aria2LinkEntry `json:"aria2"`
+	ID         string              `json:"id"`
+	Key        string              `json:"key"`
+	URL        string              `json:"url"`
+	FileName   string              `json:"file_name"`
+	FileSize   int64               `json:"file_size"`
+	PeerID     int64               `json:"peer_id"`
+	MessageID  int                 `json:"message_id"`
+	CreatedAt  time.Time           `json:"created_at"`
+	ExpiresAt  *time.Time          `json:"expires_at,omitempty"`
+	Permanent  bool                `json:"permanent"`
+	Expired    bool                `json:"expired"`
+	Downloaded bool                `json:"downloaded"`
+	Status     string              `json:"status"`
+	Aria2      []aria2LinkEntry    `json:"aria2"`
+	Internal   []internalLinkEntry `json:"internal"`
 }
 
 type aria2LinkEntry struct {
@@ -588,6 +651,17 @@ type aria2LinkEntry struct {
 	Total       int64     `json:"total"`
 	Completed   int64     `json:"completed"`
 	Error       string    `json:"error,omitempty"`
+}
+
+type internalLinkEntry struct {
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	Path      string    `json:"path"`
+	Total     int64     `json:"total"`
+	Completed int64     `json:"completed"`
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type persistentDownloadTask struct {
@@ -652,12 +726,34 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 	}
 
 	cfg := config.Get()
-	statusByGID, statusErr := fetchAria2Statuses(ctx, cfg.Aria2)
+	downloaderMode := config.EffectiveDownloaderMode(cfg)
+	statusByGID := map[string]aria2Status{}
 	var statusErrText string
-	if statusErr != nil {
-		statusErrText = statusErr.Error()
-	} else {
-		s.discoverAria2RecordsFromDownloadLinks(ctx, pairs, records, recordsByTask, statusByGID, cfg)
+	if downloaderMode == config.DownloaderModeAria2 {
+		var statusErr error
+		statusByGID, statusErr = fetchAria2Statuses(ctx, cfg.Aria2)
+		if statusErr != nil {
+			statusErrText = statusErr.Error()
+		} else {
+			s.discoverAria2RecordsFromDownloadLinks(ctx, pairs, records, recordsByTask, statusByGID, cfg)
+		}
+	}
+	internalByTask := map[string][]watch.InternalDownloadInfo{}
+	if s.opts.NamespaceKV != nil {
+		internalItems, err := s.internalDownloadController().List(ctx)
+		if err != nil {
+			if statusErrText == "" {
+				statusErrText = err.Error()
+			}
+		} else {
+			for _, item := range internalItems {
+				taskID := item.TaskID
+				if taskID == "" {
+					taskID = item.ID
+				}
+				internalByTask[taskID] = append(internalByTask[taskID], item)
+			}
+		}
 	}
 
 	keys := make([]string, 0, len(pairs))
@@ -727,6 +823,24 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 			item.Status = entry.Status
 			item.Aria2 = append(item.Aria2, entry)
 		}
+		for _, internal := range internalByTask[task.ID] {
+			entry := internalLinkEntry{
+				ID:        internal.ID,
+				Status:    internal.Status,
+				Path:      internal.Path,
+				Total:     internal.Total,
+				Completed: internal.Completed,
+				Error:     internal.Error,
+				CreatedAt: internal.CreatedAt,
+				UpdatedAt: internal.UpdatedAt,
+			}
+			if entry.Status == watch.InternalDownloadStatusComplete && (entry.Total == 0 || entry.Completed >= entry.Total) {
+				item.Downloaded = true
+				s.markDownloadTaskDownloaded(ctx, task.ID)
+			}
+			item.Status = entry.Status
+			item.Internal = append(item.Internal, entry)
+		}
 		items = append(items, item)
 	}
 
@@ -735,6 +849,9 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 
 func (s *Server) startAria2SyncLoop(ctx context.Context) {
 	if s.opts.NamespaceKV == nil || s.opts.KVEngine == nil {
+		return
+	}
+	if config.EffectiveDownloaderMode(config.Get()) != config.DownloaderModeAria2 {
 		return
 	}
 	go func() {
@@ -754,6 +871,9 @@ func (s *Server) startAria2SyncLoop(ctx context.Context) {
 
 func (s *Server) syncAria2Statuses(ctx context.Context) error {
 	if s.opts.KVEngine == nil || s.opts.NamespaceKV == nil {
+		return nil
+	}
+	if config.EffectiveDownloaderMode(config.Get()) != config.DownloaderModeAria2 {
 		return nil
 	}
 
@@ -1159,6 +1279,10 @@ func (s *Server) deleteDownloadLink(ctx context.Context, id string) (int, error)
 		}
 		deleted++
 	}
+	result, err := s.internalDownloadController().Delete(ctx, []string{id})
+	if err == nil {
+		deleted += result.Changed
+	}
 	return deleted, nil
 }
 
@@ -1186,6 +1310,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	pairs := meta[s.namespace()]
 	cfg := config.Get()
 	poolSize := config.EffectivePoolSize(cfg)
+	internalController := s.internalDownloadController()
 
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
@@ -1211,6 +1336,15 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 		}
 		if task.ID == "" {
 			task.ID = id
+		}
+		if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
+			if _, err := internalController.AddLink(ctx, cfg, task.ID); err != nil {
+				result.Skipped++
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
+				continue
+			}
+			result.Added++
+			continue
 		}
 		link := downloadURL(cfg.HTTP.PublicBaseURL, task.ID)
 		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName)
@@ -2272,6 +2406,10 @@ func (s *Server) namespace() string {
 		return cfg.Namespace
 	}
 	return "default"
+}
+
+func (s *Server) internalDownloadController() *watch.InternalDownloadController {
+	return watch.NewInternalDownloadController(s.opts.NamespaceKV)
 }
 
 func (s *Server) watchRunning() bool {
