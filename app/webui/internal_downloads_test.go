@@ -2,6 +2,7 @@ package webui
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -66,4 +67,64 @@ func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	require.Len(t, items[0].Internal, 1)
 	require.Equal(t, watch.InternalDownloadStatusQueued, items[0].Internal[0].Status)
 	require.Contains(t, items[0].Internal[0].Path, "12345")
+}
+
+func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.T) {
+	initWebUITestConfig(t)
+
+	cfg := config.Get()
+	oldDir := cfg.Aria2.Dir
+	oldDownloadDir := cfg.DownloadDir
+	defer func() {
+		cfg.Aria2.Dir = oldDir
+		cfg.DownloadDir = oldDownloadDir
+	}()
+	cfg.Aria2.Dir = t.TempDir()
+	cfg.DownloadDir = "I"
+
+	taskData := []byte(`{
+		"id":"document_42",
+		"peer_id":12345,
+		"message_id":7,
+		"peer":{"kind":"channel","id":12345,"access_hash":9007199254740993},
+		"file_name":"video.mp4",
+		"file_size":100,
+		"media":{
+			"name":"video.mp4",
+			"size":100,
+			"dc":2,
+			"date":0,
+			"location":{"kind":"document","id":42,"access_hash":9007199254740993,"file_reference":"cmVm"}
+		},
+		"created_at":"2026-05-01T08:00:00Z"
+	}`)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		"default": {
+			downloadTaskKeyPrefix + "document_42": taskData,
+		},
+	}}
+	namespaceKV, err := engine.Open("default")
+	require.NoError(t, err)
+	server := NewServer(Options{KVEngine: engine, Namespace: "default", NamespaceKV: namespaceKV})
+
+	server.markDownloadTaskDownloaded(context.Background(), "document_42")
+
+	data, err := namespaceKV.Get(context.Background(), downloadTaskKeyPrefix+"document_42")
+	require.NoError(t, err)
+	var raw struct {
+		Downloaded bool `json:"downloaded"`
+		Media      struct {
+			Location struct {
+				Kind string `json:"kind"`
+			} `json:"location"`
+		} `json:"media"`
+	}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.True(t, raw.Downloaded)
+	require.Equal(t, "document", raw.Media.Location.Kind)
+
+	info, err := watch.NewInternalDownloadController(namespaceKV).AddLink(context.Background(), cfg, "document_42")
+	require.NoError(t, err)
+	require.Equal(t, watch.InternalDownloadStatusQueued, info.Status)
 }

@@ -951,20 +951,7 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 		if !isCompleted {
 			continue
 		}
-		data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
-		if err != nil {
-			continue
-		}
-		var task persistentDownloadTask
-		if err := json.Unmarshal(data, &task); err != nil {
-			continue
-		}
-		if task.Downloaded {
-			continue
-		}
-		task.Downloaded = true
-		data, _ = json.Marshal(task)
-		_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, data)
+		s.markDownloadTaskDownloaded(ctx, taskID)
 	}
 
 	ttl := downloadLinkTTL(config.Get().HTTP)
@@ -1236,19 +1223,70 @@ func (s *Server) markDownloadTaskDownloaded(ctx context.Context, taskID string) 
 	if err != nil {
 		return
 	}
-	var task persistentDownloadTask
-	if err := json.Unmarshal(data, &task); err != nil || task.Downloaded {
-		return
-	}
-	task.Downloaded = true
-	if task.ID == "" {
-		task.ID = taskID
-	}
-	data, err = json.Marshal(task)
-	if err != nil {
+	data, changed, err := markDownloadTaskDataDownloaded(data, taskID)
+	if err != nil || !changed {
 		return
 	}
 	_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, data)
+}
+
+func markDownloadTaskDataDownloaded(data []byte, taskID string) ([]byte, bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, false, err
+	}
+	if raw == nil {
+		raw = map[string]json.RawMessage{}
+	}
+	if downloadedRaw, ok := raw["downloaded"]; ok {
+		var downloaded bool
+		if err := json.Unmarshal(downloadedRaw, &downloaded); err == nil && downloaded {
+			return data, false, nil
+		}
+	}
+
+	raw["downloaded"] = json.RawMessage("true")
+	if idRaw, ok := raw["id"]; !ok || string(idRaw) == `""` || strings.TrimSpace(string(idRaw)) == "" {
+		idData, err := json.Marshal(taskID)
+		if err != nil {
+			return nil, false, err
+		}
+		raw["id"] = idData
+	}
+	updated, err := json.Marshal(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	return updated, true, nil
+}
+
+func hasPersistentDownloadMedia(data []byte) bool {
+	var raw struct {
+		Media struct {
+			Location struct {
+				Kind string `json:"kind"`
+			} `json:"location"`
+		} `json:"media"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	return strings.TrimSpace(raw.Media.Location.Kind) != ""
+}
+
+func internalDownloadMetadataError(id string) string {
+	return fmt.Sprintf("%s: 下载链接缺少媒体定位信息，无法加入内部下载队列；请删除该 KV 记录后重新触发表情生成下载链接", id)
+}
+
+func isRestorePersistentDownloadTaskError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "restore persistent download task")
+}
+
+func appendInternalDownloadError(errorsList []string, id string, data []byte, err error) []string {
+	if isRestorePersistentDownloadTaskError(err) && !hasPersistentDownloadMedia(data) {
+		return append(errorsList, internalDownloadMetadataError(id))
+	}
+	return append(errorsList, fmt.Sprintf("%s: %v", id, err))
 }
 
 func (s *Server) deleteDownloadLink(ctx context.Context, id string) (int, error) {
@@ -1340,7 +1378,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 		if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 			if _, err := internalController.AddLink(ctx, cfg, task.ID); err != nil {
 				result.Skipped++
-				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
+				result.Errors = appendInternalDownloadError(result.Errors, id, data, err)
 				continue
 			}
 			result.Added++

@@ -3,6 +3,9 @@ const state = {
   aria2Loaded: false,
   downloaderMode: "aria2",
   internalDownloads: [],
+  internalDownloadSamples: new Map(),
+  internalDownloadPoll: null,
+  internalDownloadLoading: false,
   kvItems: [],
   selectedKV: new Set(),
   kvSort: { field: "created_at", dir: "desc" },
@@ -28,6 +31,7 @@ const views = ["user", "config", "downloads", "kv", "modules", "update"];
 const heartbeatIntervalMS = 1000;
 const heartbeatOfflineMS = 3000;
 const heartbeatRequestTimeoutMS = 1500;
+const internalDownloadRefreshMS = 1000;
 
 const sections = [
   {
@@ -143,6 +147,7 @@ function bindNavigation() {
 function selectView(view) {
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
+  if (view !== "downloads") stopInternalDownloadPolling();
   loadViewData(view);
 }
 
@@ -196,6 +201,7 @@ async function logout() {
     clearInterval(state.heartbeatTimer);
     state.heartbeatTimer = null;
   }
+  stopInternalDownloadPolling();
   try {
     await api("/api/auth/logout", { method: "POST", body: "{}" });
   } finally {
@@ -535,9 +541,11 @@ async function loadDownloads(force = false) {
     if (guide) guide.hidden = true;
     document.getElementById("internal-downloads").hidden = false;
     await loadInternalDownloads();
+    startInternalDownloadPolling();
     return;
   }
 
+  stopInternalDownloadPolling();
   document.getElementById("internal-downloads").hidden = true;
   await loadAria2Frame(force);
 }
@@ -604,18 +612,45 @@ function hideAria2Guide() {
   document.getElementById("aria2-frame").hidden = false;
 }
 
-async function loadInternalDownloads() {
+function startInternalDownloadPolling() {
+  if (state.internalDownloadPoll) return;
+  state.internalDownloadPoll = window.setInterval(() => {
+    if (!document.getElementById("view-downloads").classList.contains("active") || state.downloaderMode !== "internal") {
+      stopInternalDownloadPolling();
+      return;
+    }
+    loadInternalDownloads({ silent: true });
+  }, internalDownloadRefreshMS);
+}
+
+function stopInternalDownloadPolling() {
+  if (!state.internalDownloadPoll) return;
+  window.clearInterval(state.internalDownloadPoll);
+  state.internalDownloadPoll = null;
+}
+
+async function loadInternalDownloads(options = {}) {
+  if (state.internalDownloadLoading) return;
+  state.internalDownloadLoading = true;
+  const silent = Boolean(options.silent);
   const body = document.getElementById("internal-download-body");
-  setInternalDownloadStatus("");
-  body.innerHTML = `<tr><td colspan="6" class="empty">正在加载...</td></tr>`;
+  if (!silent) {
+    setInternalDownloadStatus("");
+    body.innerHTML = `<tr><td colspan="6" class="empty">正在加载...</td></tr>`;
+  }
   try {
     const data = await api("/api/internal-downloads");
-    state.internalDownloads = data.items || [];
+    state.internalDownloads = updateInternalDownloadSpeeds(data.items || []);
     renderInternalDownloads();
   } catch (error) {
-    state.internalDownloads = [];
+    if (!silent) {
+      state.internalDownloads = [];
+      state.internalDownloadSamples.clear();
+      body.innerHTML = `<tr><td colspan="6" class="empty">加载失败</td></tr>`;
+    }
     setInternalDownloadStatus(error.message, "error");
-    body.innerHTML = `<tr><td colspan="6" class="empty">加载失败</td></tr>`;
+  } finally {
+    state.internalDownloadLoading = false;
   }
 }
 
@@ -628,12 +663,56 @@ function renderInternalDownloads() {
   body.innerHTML = state.internalDownloads.map(renderInternalDownloadRow).join("");
 }
 
+function updateInternalDownloadSpeeds(items) {
+  const now = Date.now();
+  const seen = new Set();
+  items.forEach((item) => {
+    const id = item.id || item.task_id || item.file_name;
+    if (!id) return;
+    seen.add(id);
+    const completed = Number(item.completed || 0);
+    const total = Number(item.total || 0);
+    const status = item.status || "queued";
+    const previous = state.internalDownloadSamples.get(id);
+    let speed = previous ? previous.speed : 0;
+
+    if (previous && now > previous.sampledAt) {
+      const elapsed = (now - previous.sampledAt) / 1000;
+      const delta = completed - previous.completed;
+      if (status === "active" && elapsed > 0 && delta >= 0) {
+        speed = delta / elapsed;
+      } else if (status !== "active") {
+        speed = 0;
+      }
+    } else if (status !== "active") {
+      speed = 0;
+    }
+    if (total > 0 && completed >= total) {
+      speed = 0;
+    }
+
+    item.speed_bps = speed;
+    state.internalDownloadSamples.set(id, {
+      completed,
+      sampledAt: now,
+      speed,
+    });
+  });
+
+  Array.from(state.internalDownloadSamples.keys()).forEach((id) => {
+    if (!seen.has(id)) state.internalDownloadSamples.delete(id);
+  });
+  return items;
+}
+
 function renderInternalDownloadRow(item) {
   const total = Number(item.total || 0);
   const completed = Number(item.completed || 0);
   const pct = total > 0 ? Math.min(100, Math.max(0, (completed / total) * 100)) : 0;
   const status = item.status || "queued";
   const error = item.error ? `<div class="subtle bad-text">${escapeHTML(item.error)}</div>` : "";
+  const speed = Number(item.speed_bps || 0);
+  const speedText = status === "active" ? `${formatBytes(speed)}/s` : "-";
   return `
     <tr>
       <td>
@@ -642,8 +721,16 @@ function renderInternalDownloadRow(item) {
       </td>
       <td><span class="pill ${internalStatusClass(status)}">${escapeHTML(internalStatusLabel(status))}</span>${error}</td>
       <td>
-        <div>${formatBytes(completed)} / ${formatBytes(total)}</div>
-        <div class="subtle">${pct.toFixed(1)}%</div>
+        <div class="download-progress">
+          <div class="download-progress-meta">
+            <span>${pct.toFixed(1)}%</span>
+            <span>${formatBytes(completed)} / ${formatBytes(total)}</span>
+          </div>
+          <div class="download-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}">
+            <span style="width: ${pct.toFixed(2)}%"></span>
+          </div>
+          <div class="download-speed">速度：${escapeHTML(speedText)}</div>
+        </div>
       </td>
       <td class="mono">${escapeHTML(item.path || "-")}</td>
       <td class="time-cell">${formatTime(item.updated_at || item.created_at)}</td>
