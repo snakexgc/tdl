@@ -149,6 +149,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	aria2Factory := func() *watch.Aria2Controller {
 		return watch.NewAria2Controller(config.Get(), kvd, nil)
 	}
+	internalFactory := func() *watch.InternalDownloadController {
+		return watch.NewInternalDownloadController(kvd)
+	}
 	go runAria2EventListener(ctx, bot, notifier, aria2Factory)
 	var requestReboot func()
 	onLoginSuccess := func(user *tg.User, namespace string) {
@@ -170,13 +173,15 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		if !opts.DisableAutoStartWatch {
 			notifyWatchAfterLogin(ctx, notifier, watchCtrl)
 		}
-		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+		if aria2DownloaderEnabled() {
+			go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+		}
 	}
 	loginMgr.SetOnSuccess(onLoginSuccess)
 
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts, !opts.DisableAutoStartWatch)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
-	if startup.WatchStarted {
+	if startup.WatchStarted && aria2DownloaderEnabled() {
 		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
 	}
 
@@ -247,7 +252,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
 			return nil
 		}
-		return handleAria2Callback(ctx, query, aria2Factory)
+		return handleDownloadCallback(ctx, query, aria2Factory, internalFactory)
 	}, th.AnyCallbackQuery())
 
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
@@ -260,7 +265,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, updateController, aria2Factory, kvEngine, opts.Namespace, kvd)
+			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, updateController, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -339,20 +344,21 @@ func versionSummary() string {
 func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: []telego.BotCommand{
-			{Command: "start", Description: "开始使用并显示 aria2 控制键盘"},
-			{Command: "menu", Description: "显示 aria2 控制键盘"},
-			{Command: "help", Description: "查看 aria2 机器人帮助"},
-			{Command: "info", Description: "查看 aria2 设置信息"},
-			{Command: "web", Description: "获取 AriaNg 在线控制地址"},
+			{Command: "start", Description: "开始使用并显示下载器控制键盘"},
+			{Command: "menu", Description: "显示当前下载器控制键盘"},
+			{Command: "help", Description: "查看当前下载器帮助"},
+			{Command: "info", Description: "查看当前下载器信息"},
+			{Command: "web", Description: "获取 AriaNg 在线控制地址（aria2）"},
 			{Command: "path", Description: "修改 aria2 默认下载目录"},
 			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
-			{Command: "aria2_active", Description: "查看正在下载的 aria2 任务"},
-			{Command: "aria2_waiting", Description: "查看等待或暂停的 aria2 任务"},
-			{Command: "aria2_stopped", Description: "查看已完成或停止的 aria2 任务"},
-			{Command: "aria2_overview", Description: "查看下载任务概况"},
-			{Command: "aria2_pause_all", Description: "暂停全部下载任务"},
-			{Command: "aria2_start_all", Description: "开始全部下载任务"},
+			{Command: "downloads", Description: "查看当前下载器管理命令"},
+			{Command: "downloads_active", Description: "查看正在下载的任务"},
+			{Command: "downloads_waiting", Description: "查看等待或暂停的任务"},
+			{Command: "downloads_stopped", Description: "查看已完成或停止的任务"},
+			{Command: "downloads_overview", Description: "查看下载任务概况"},
+			{Command: "downloads_pause_all", Description: "暂停全部下载任务"},
+			{Command: "downloads_start_all", Description: "开始全部下载任务"},
 			{Command: "aria2_retry", Description: "重试已停止的下载任务"},
 			{Command: "config", Description: "查看配置命令"},
 			{Command: "config_get", Description: "查看全部配置"},
@@ -447,6 +453,7 @@ func handleAllowedMessage(
 	requestReboot func(),
 	updateController *tdlUpdateController,
 	aria2Factory aria2ControllerFactory,
+	internalFactory internalDownloadControllerFactory,
 	kvEngine kv.Storage,
 	namespace string,
 	namespaceKV storage.Storage,
@@ -468,7 +475,7 @@ func handleAllowedMessage(
 	if handled, err := handleConfigCommand(ctx, msg, text, afterConfigSave); handled || err != nil {
 		return err
 	}
-	if handled, err := handleAria2Command(ctx, msg, text, aria2Factory); handled || err != nil {
+	if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
 		return err
 	}
 	if handled, err := handleKVCommand(ctx, msg, text, kvEngine, namespace, namespaceKV); handled || err != nil {
@@ -552,10 +559,14 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
-	case "/start", "/menu", "/help", "/info", "/web", "/path",
+	case botCmdStart, botCmdMenu, botCmdHelp, botCmdInfo, botCmdWeb, botCmdPath,
 		"/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
-		"/update_tdl", "/aria2", "/aria2_help", "/aria2_active", "/aria2_waiting", "/aria2_stopped",
-		"/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
+		botCmdDownloads, botCmdDownloadsHelp, botCmdDownloadsActive, botCmdDownloadsWaiting, botCmdDownloadsStopped,
+		botCmdDownloadsOverview, botCmdDownloadsPauseAll, botCmdDownloadsStartAll,
+		botCmdInternal, botCmdInternalHelp, botCmdInternalActive, botCmdInternalWaiting, botCmdInternalStopped,
+		botCmdInternalOverview, botCmdInternalPauseAll, botCmdInternalStartAll,
+		"/update_tdl", botCmdAria2, botCmdAria2Help, botCmdAria2Active, botCmdAria2Waiting, botCmdAria2Stopped,
+		botCmdAria2Overview, botCmdAria2PauseAll, botCmdAria2StartAll, botCmdAria2Retry,
 		"/clean_kv":
 		return true
 	default:

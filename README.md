@@ -59,10 +59,7 @@
   },
   "bot": {
     "token": "55555555:xxxxxx", // Telegram 机器人 token
-    "allowed_users": [123456], // 允许的用户 ID 列表
-    "upload_completed": false, // aria2 任务完成后是否上传回 Telegram
-    "forward_chat_id": 0, // 上传成功后转发到指定聊天 ID；0 表示不转发
-    "delete_uploaded_files": false // 上传成功后是否删除本地文件
+    "allowed_users": [123456] // 允许的用户 ID 列表
   }
 }
 ```
@@ -89,9 +86,6 @@
 | `modules.watch`        | 监听下载模块；包含 Telegram 表情监听、下载链接和任务提交                                    |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
-| `bot.upload_completed` | aria2 任务完成后把本地文件上传回 Telegram；受 Bot API 文件大小限制，默认关闭                                  |
-| `bot.forward_chat_id`  | 上传成功后转发到指定聊天 ID；`0` 表示不转发                                             |
-| `bot.delete_uploaded_files` | 上传成功后删除本地文件；启用前请确认下载目录中没有需要保留的文件                                  |
 
 本地 KV 和 Telegram 登录数据固定使用 bolt 存储，保存在程序同目录的 `.tdl/` 文件夹中，不需要在 `config.json` 中配置。
 

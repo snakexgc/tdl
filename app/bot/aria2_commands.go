@@ -83,19 +83,19 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 
 	cmd, _, payload := tu.ParseCommandPayload(text)
 	switch "/" + cmd {
-	case "/start", "/menu":
+	case botCmdStart, botCmdMenu:
 		return true, sendAria2Menu(ctx, msg.Chat.ID, msg.From.ID)
-	case "/help":
+	case botCmdHelp:
 		return true, sendMessage(ctx, msg.Chat.ID, aria2BotHelpMessage(msg.From.ID))
-	case "/web":
+	case botCmdWeb:
 		return true, sendMessage(ctx, msg.Chat.ID, ariaNgURL(config.Get().Aria2))
-	case "/info":
+	case botCmdInfo:
 		options, err := runAria2GlobalOptions(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取 aria2 设置失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2GlobalOptions(options))
-	case "/path":
+	case botCmdPath:
 		dir := strings.TrimSpace(payload)
 		if dir == "" {
 			return true, sendMessage(ctx, msg.Chat.ID, "用法：/path 绝对路径，例如 /root/downloads")
@@ -104,27 +104,27 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("默认路径设置失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("默认路径设置成功：%s\n如果 aria2 在 Docker 中运行，请确认该目录已正确挂载。", dir))
-	case "/aria2_active":
+	case botCmdAria2Active, botCmdDownloadsActive:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c *watch.Aria2Controller) ([]watch.Aria2DownloadStatus, error) {
 			return c.ActiveTasks(ctx)
 		})
-	case "/aria2_waiting":
+	case botCmdAria2Waiting, botCmdDownloadsWaiting:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在等待/暂停的 aria2 任务：", factory, func(ctx context.Context, c *watch.Aria2Controller) ([]watch.Aria2DownloadStatus, error) {
 			return c.WaitingTasks(ctx)
 		})
-	case "/aria2_stopped":
+	case botCmdAria2Stopped, botCmdDownloadsStopped:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "已完成/停止的 aria2 任务：", factory, func(ctx context.Context, c *watch.Aria2Controller) ([]watch.Aria2DownloadStatus, error) {
 			return c.StoppedTasks(ctx)
 		})
-	case "/aria2", "/aria2_help":
+	case botCmdAria2, botCmdAria2Help, botCmdDownloads, botCmdDownloadsHelp:
 		return true, sendMessage(ctx, msg.Chat.ID, aria2HelpMessage())
-	case "/aria2_overview":
+	case botCmdAria2Overview, botCmdDownloadsOverview:
 		overview, err := runAria2Overview(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取 aria2 任务总览失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2Overview(overview))
-	case "/aria2_pause_all":
+	case botCmdAria2PauseAll, botCmdDownloadsPauseAll:
 		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *watch.Aria2Controller) (watch.Aria2ActionResult, error) {
 			return controller.PauseAll(ctx)
 		})
@@ -132,7 +132,7 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("暂停 TDL aria2 任务失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2ActionResult("暂停全部", result))
-	case "/aria2_start_all":
+	case botCmdAria2StartAll, botCmdDownloadsStartAll:
 		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *watch.Aria2Controller) (watch.Aria2ActionResult, error) {
 			return controller.StartAll(ctx)
 		})
@@ -140,7 +140,7 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("开始 TDL aria2 任务失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2ActionResult("开始全部", result))
-	case "/aria2_retry":
+	case botCmdAria2Retry:
 		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *watch.Aria2Controller) (watch.Aria2ActionResult, error) {
 			return controller.RetryStopped(ctx)
 		})
@@ -413,14 +413,14 @@ func aria2HelpMessage() string {
 		"/info 查看 aria2 全局设置",
 		"/web 获取 AriaNg 在线控制地址",
 		"/path 绝对路径 修改 aria2 默认下载目录",
-		"/aria2_active 查看正在下载任务",
-		"/aria2_waiting 查看等待/暂停任务",
-		"/aria2_stopped 查看已完成/停止任务",
+		"/downloads_active 查看正在下载任务",
+		"/downloads_waiting 查看等待/暂停任务",
+		"/downloads_stopped 查看已完成/停止任务",
 		"",
 		"TDL 任务命令：",
-		"/aria2_overview 查看 TDL 任务总览",
-		"/aria2_pause_all 暂停全部 TDL 任务",
-		"/aria2_start_all 开始全部已暂停的 TDL 任务",
+		"/downloads_overview 查看 TDL 任务总览",
+		"/downloads_pause_all 暂停全部 TDL 任务",
+		"/downloads_start_all 开始全部已暂停的 TDL 任务",
 		"/aria2_retry 重试已停止且未完成的 TDL 任务",
 	}, "\n")
 }

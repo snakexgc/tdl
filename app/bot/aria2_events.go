@@ -4,12 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -29,10 +25,6 @@ const (
 type aria2EventBot interface {
 	SendMessage(ctx context.Context, params *telego.SendMessageParams) (*telego.Message, error)
 	EditMessageText(ctx context.Context, params *telego.EditMessageTextParams) (*telego.Message, error)
-	DeleteMessage(ctx context.Context, params *telego.DeleteMessageParams) error
-	SendDocument(ctx context.Context, params *telego.SendDocumentParams) (*telego.Message, error)
-	SendVideo(ctx context.Context, params *telego.SendVideoParams) (*telego.Message, error)
-	ForwardMessage(ctx context.Context, params *telego.ForwardMessageParams) (*telego.Message, error)
 }
 
 type aria2Event struct {
@@ -54,6 +46,11 @@ func runAria2EventListener(ctx context.Context, bot aria2EventBot, notifier *bot
 			return
 		}
 
+		if !aria2DownloaderEnabled() {
+			waitAria2EventReconnect(ctx)
+			continue
+		}
+
 		wsURL, err := aria2WebSocketURL(config.Get().Aria2.RPCURL)
 		if err == nil {
 			_ = listenAria2Events(ctx, wsURL, bot, notifier, factory)
@@ -62,18 +59,20 @@ func runAria2EventListener(ctx context.Context, bot aria2EventBot, notifier *bot
 			return
 		}
 
-		timer := time.NewTimer(aria2EventReconnectDelay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+		if !waitAria2EventReconnect(ctx) {
 			return
-		case <-timer.C:
 		}
+	}
+}
+
+func waitAria2EventReconnect(ctx context.Context) bool {
+	timer := time.NewTimer(aria2EventReconnectDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -104,6 +103,10 @@ func listenAria2Events(ctx context.Context, wsURL string, bot aria2EventBot, not
 }
 
 func handleAria2Event(ctx context.Context, bot aria2EventBot, notifier *botNotifier, factory aria2ControllerFactory, method, gid string) {
+	if !aria2DownloaderEnabled() {
+		return
+	}
+
 	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 
@@ -118,7 +121,7 @@ func handleAria2Event(ctx context.Context, bot aria2EventBot, notifier *botNotif
 	case "aria2.onDownloadStart":
 		notifyAria2DownloadStart(ctx, bot, notifier, factory, task)
 	case "aria2.onDownloadComplete":
-		notifyAria2DownloadComplete(ctx, bot, notifier, task)
+		notifyAria2DownloadComplete(ctx, notifier, task)
 	case "aria2.onDownloadError":
 		notifyAria2DownloadError(ctx, notifier, task)
 	case "aria2.onDownloadPause":
@@ -177,7 +180,7 @@ func pollAria2DownloadProgress(ctx context.Context, bot aria2EventBot, chatID in
 	}
 }
 
-func notifyAria2DownloadComplete(ctx context.Context, bot aria2EventBot, notifier *botNotifier, task watch.Aria2DownloadStatus) {
+func notifyAria2DownloadComplete(ctx context.Context, notifier *botNotifier, task watch.Aria2DownloadStatus) {
 	if len(task.Files) == 0 {
 		notifier.Notify(ctx, fmt.Sprintf("下载完成===> %s", watch.Aria2TaskName(task)))
 		return
@@ -189,12 +192,6 @@ func notifyAria2DownloadComplete(ctx context.Context, bot aria2EventBot, notifie
 			continue
 		}
 		notifier.Notify(ctx, "下载完成===> "+filePath)
-		if !config.Get().Bot.UploadCompleted {
-			continue
-		}
-		for _, chatID := range notifier.ChatIDs() {
-			uploadCompletedAria2File(ctx, bot, chatID, filePath)
-		}
 	}
 }
 
@@ -208,117 +205,6 @@ func notifyAria2DownloadError(ctx context.Context, notifier *botNotifier, task w
 		return
 	}
 	notifier.Notify(ctx, fmt.Sprintf("%s 下载失败", watch.Aria2TaskName(task)))
-}
-
-func uploadCompletedAria2File(ctx context.Context, bot aria2EventBot, chatID int64, filePath string) {
-	if strings.Contains(filePath, "[METADATA]") {
-		if config.Get().Bot.DeleteUploadedFiles {
-			_ = os.Remove(filePath)
-		}
-		return
-	}
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		_, _ = bot.SendMessage(ctx, tu.Message(tu.ID(chatID), fmt.Sprintf("%s 不存在，上传失败", filePath)))
-		return
-	}
-	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil || stat.IsDir() {
-		_, _ = bot.SendMessage(ctx, tu.Message(tu.ID(chatID), fmt.Sprintf("%s 不是可上传文件", filePath)))
-		return
-	}
-
-	progressMsg, _ := bot.SendMessage(ctx, tu.Message(tu.ID(chatID), "上传中===> "+filePath))
-	reader := &uploadProgressReader{
-		Reader: file,
-		name:   filepath.Base(filePath),
-		total:  stat.Size(),
-		onProgress: func(current, total int64) {
-			if progressMsg == nil || total <= 0 {
-				return
-			}
-			_, _ = bot.EditMessageText(ctx, tu.EditMessageText(
-				tu.ID(chatID),
-				progressMsg.MessageID,
-				fmt.Sprintf("%s\n上传中: %.2f%%", filePath, float64(current)/float64(total)*100),
-			))
-		},
-	}
-
-	var sent *telego.Message
-	if strings.EqualFold(filepath.Ext(filePath), ".mp4") {
-		sent, err = bot.SendVideo(ctx, tu.Video(tu.ID(chatID), tu.File(reader)).WithSupportsStreaming())
-	} else {
-		sent, err = bot.SendDocument(ctx, tu.Document(tu.ID(chatID), tu.File(reader)))
-	}
-	if err != nil {
-		_, _ = bot.SendMessage(ctx, tu.Message(tu.ID(chatID), fmt.Sprintf("%s 上传失败：%v", filePath, err)))
-		return
-	}
-
-	if progressMsg != nil {
-		_ = bot.DeleteMessage(ctx, &telego.DeleteMessageParams{
-			ChatID:    tu.ID(chatID),
-			MessageID: progressMsg.MessageID,
-		})
-	}
-
-	if forwardID := config.Get().Bot.ForwardChatID; forwardID != 0 && sent != nil {
-		_, _ = bot.ForwardMessage(ctx, &telego.ForwardMessageParams{
-			ChatID:     tu.ID(forwardID),
-			FromChatID: tu.ID(chatID),
-			MessageID:  sent.MessageID,
-		})
-	}
-
-	if config.Get().Bot.DeleteUploadedFiles {
-		_ = os.Remove(filePath)
-	}
-}
-
-type uploadProgressReader struct {
-	io.Reader
-	name       string
-	total      int64
-	mu         sync.Mutex
-	current    int64
-	lastRatio  float64
-	lastUpdate time.Time
-	onProgress func(current, total int64)
-}
-
-func (r *uploadProgressReader) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	if n > 0 {
-		r.report(int64(n))
-	}
-	return n, err
-}
-
-func (r *uploadProgressReader) Name() string {
-	return r.name
-}
-
-func (r *uploadProgressReader) report(n int64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.current += n
-	if r.total <= 0 || r.onProgress == nil {
-		return
-	}
-
-	ratio := float64(r.current) / float64(r.total)
-	now := time.Now()
-	if ratio < 1 && ratio-r.lastRatio < 0.05 && now.Sub(r.lastUpdate) < 5*time.Second {
-		return
-	}
-	r.lastRatio = ratio
-	r.lastUpdate = now
-	r.onProgress(r.current, r.total)
 }
 
 func aria2WebSocketURL(raw string) (string, error) {

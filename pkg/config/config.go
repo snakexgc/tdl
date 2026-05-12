@@ -20,11 +20,8 @@ const (
 
 // BotConfig Bot 配置
 type BotConfig struct {
-	Token               string  `json:"token"`
-	AllowedUsers        []int64 `json:"allowed_users"`
-	UploadCompleted     bool    `json:"upload_completed"`
-	ForwardChatID       int64   `json:"forward_chat_id"`
-	DeleteUploadedFiles bool    `json:"delete_uploaded_files"`
+	Token        string  `json:"token"`
+	AllowedUsers []int64 `json:"allowed_users"`
 }
 
 type HTTPConfig struct {

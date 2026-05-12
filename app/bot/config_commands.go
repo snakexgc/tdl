@@ -44,9 +44,6 @@ var configurablePaths = []string{
 	"aria2.dir",
 	"aria2.timeout_seconds",
 	"bot.allowed_users",
-	"bot.upload_completed",
-	"bot.forward_chat_id",
-	"bot.delete_uploaded_files",
 }
 
 func handleConfigCommand(ctx *th.Context, msg *telego.Message, text string, afterSave func(*config.Config)) (bool, error) {
