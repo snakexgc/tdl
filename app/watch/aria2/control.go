@@ -3,6 +3,7 @@ package aria2
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -19,12 +20,18 @@ import (
 const aria2ControlBatchSize = 1000
 
 type ControlClient interface {
+	GetGlobalOptions(ctx context.Context) (map[string]string, error)
+	ChangeGlobalOption(ctx context.Context, options map[string]any) error
+	TellStatus(ctx context.Context, gid string) (DownloadStatus, error)
 	TellActive(ctx context.Context) ([]DownloadStatus, error)
 	TellWaiting(ctx context.Context, offset, num int) ([]DownloadStatus, error)
 	TellStopped(ctx context.Context, offset, num int) ([]DownloadStatus, error)
+	Pause(ctx context.Context, gid string) error
 	ForcePause(ctx context.Context, gid string) error
 	Unpause(ctx context.Context, gid string) error
 	AddURI(ctx context.Context, uri string, opts AddURIOptions) (string, error)
+	AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error)
+	Remove(ctx context.Context, gid string) error
 	RemoveDownloadResult(ctx context.Context, gid string) error
 }
 
@@ -117,6 +124,128 @@ func (c *Controller) Overview(ctx context.Context) (Overview, error) {
 	}
 	sortAria2TaskInfos(overview.RetryCandidates)
 	return overview, nil
+}
+
+func (c *Controller) GlobalOptions(ctx context.Context) (map[string]string, error) {
+	if c == nil || c.client == nil {
+		return nil, errors.New("aria2 controller is not initialized")
+	}
+	return c.client.GetGlobalOptions(ctx)
+}
+
+func (c *Controller) SetGlobalDir(ctx context.Context, dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return errors.New("aria2 download dir is empty")
+	}
+	if c == nil || c.client == nil {
+		return errors.New("aria2 controller is not initialized")
+	}
+	return c.client.ChangeGlobalOption(ctx, map[string]any{"dir": dir})
+}
+
+func (c *Controller) AddURL(ctx context.Context, uri string, opts AddURIOptions) (string, error) {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return "", errors.New("download url is empty")
+	}
+	if c == nil || c.client == nil {
+		return "", errors.New("aria2 controller is not initialized")
+	}
+	return c.client.AddURI(ctx, uri, opts)
+}
+
+func (c *Controller) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error) {
+	if c == nil || c.client == nil {
+		return "", errors.New("aria2 controller is not initialized")
+	}
+	return c.client.AddTorrent(ctx, data, opts)
+}
+
+func (c *Controller) TellStatus(ctx context.Context, gid string) (DownloadStatus, error) {
+	if c == nil || c.client == nil {
+		return DownloadStatus{}, errors.New("aria2 controller is not initialized")
+	}
+	return c.client.TellStatus(ctx, gid)
+}
+
+func (c *Controller) ActiveTasks(ctx context.Context) ([]DownloadStatus, error) {
+	if c == nil || c.client == nil {
+		return nil, errors.New("aria2 controller is not initialized")
+	}
+	tasks, err := c.client.TellActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sortDownloadStatuses(tasks)
+	return tasks, nil
+}
+
+func (c *Controller) WaitingTasks(ctx context.Context) ([]DownloadStatus, error) {
+	if c == nil || c.client == nil {
+		return nil, errors.New("aria2 controller is not initialized")
+	}
+	tasks, err := c.listWaiting(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sortDownloadStatuses(tasks)
+	return tasks, nil
+}
+
+func (c *Controller) StoppedTasks(ctx context.Context) ([]DownloadStatus, error) {
+	if c == nil || c.client == nil {
+		return nil, errors.New("aria2 controller is not initialized")
+	}
+	tasks, err := c.listStopped(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sortDownloadStatuses(tasks)
+	return tasks, nil
+}
+
+func (c *Controller) PauseTask(ctx context.Context, gid string) error {
+	if c == nil || c.client == nil {
+		return errors.New("aria2 controller is not initialized")
+	}
+	return c.client.Pause(ctx, gid)
+}
+
+func (c *Controller) UnpauseTask(ctx context.Context, gid string) error {
+	if c == nil || c.client == nil {
+		return errors.New("aria2 controller is not initialized")
+	}
+	return c.client.Unpause(ctx, gid)
+}
+
+func (c *Controller) RemoveTask(ctx context.Context, gid string) error {
+	if c == nil || c.client == nil {
+		return errors.New("aria2 controller is not initialized")
+	}
+	return c.client.Remove(ctx, gid)
+}
+
+func (c *Controller) ClearStopped(ctx context.Context) (ActionResult, error) {
+	tasks, err := c.StoppedTasks(ctx)
+	if err != nil {
+		return ActionResult{}, err
+	}
+
+	var result ActionResult
+	for _, task := range tasks {
+		if task.GID == "" {
+			result.Skipped++
+			continue
+		}
+		result.Matched++
+		if err := c.client.RemoveDownloadResult(ctx, task.GID); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
+			continue
+		}
+		result.Changed++
+	}
+	return result, nil
 }
 
 func (c *Controller) PauseAll(ctx context.Context) (ActionResult, error) {
@@ -348,6 +477,10 @@ func aria2TaskInfo(task DownloadStatus) TaskInfo {
 	}
 }
 
+func TaskInfoFromStatus(task DownloadStatus) TaskInfo {
+	return aria2TaskInfo(task)
+}
+
 func parseAria2Length(value string) int64 {
 	if value == "" {
 		return 0
@@ -357,6 +490,38 @@ func parseAria2Length(value string) int64 {
 		return 0
 	}
 	return parsed
+}
+
+func TaskName(task DownloadStatus) string {
+	if task.Bittorrent != nil && task.Bittorrent.Info != nil && strings.TrimSpace(task.Bittorrent.Info.Name) != "" {
+		return strings.TrimSpace(task.Bittorrent.Info.Name)
+	}
+
+	for _, file := range task.Files {
+		if strings.TrimSpace(file.Path) != "" {
+			name := filepath.Base(filepath.Clean(file.Path))
+			if name != "." && name != string(filepath.Separator) {
+				return name
+			}
+		}
+		for _, uri := range file.URIs {
+			if strings.TrimSpace(uri.URI) == "" {
+				continue
+			}
+			parsed, err := url.Parse(uri.URI)
+			if err == nil && parsed.Path != "" {
+				name := filepath.Base(parsed.Path)
+				if name != "." && name != string(filepath.Separator) {
+					return name
+				}
+			}
+			return uri.URI
+		}
+	}
+	if task.GID != "" {
+		return task.GID
+	}
+	return "(unknown)"
 }
 
 func normalizedAria2Status(status string) string {
@@ -405,6 +570,12 @@ func maybeAria2PathOptions(task DownloadStatus) (dir, out string) {
 }
 
 func sortAria2TaskInfos(values []TaskInfo) {
+	sort.SliceStable(values, func(i, j int) bool {
+		return values[i].GID < values[j].GID
+	})
+}
+
+func sortDownloadStatuses(values []DownloadStatus) {
 	sort.SliceStable(values, func(i, j int) bool {
 		return values[i].GID < values[j].GID
 	})

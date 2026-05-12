@@ -95,6 +95,9 @@ const sections = [
     fields: [
       ["bot.token", "机器人 Token", "password", "从 BotFather 获取；留空表示保持原 token。"],
       ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人，多个 ID 用逗号或换行分隔。"],
+      ["bot.upload_completed", "完成后上传", "bool", "aria2 任务完成后把本地文件上传回 Telegram；受 Bot API 文件大小限制。"],
+      ["bot.forward_chat_id", "上传后转发到", "number", "上传成功后转发到指定聊天 ID；填 0 表示不转发。"],
+      ["bot.delete_uploaded_files", "上传后删除文件", "bool", "上传成功后删除本地文件；请确认下载目录中没有需要保留的文件。"],
     ],
   },
 ];

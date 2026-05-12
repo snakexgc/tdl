@@ -89,6 +89,39 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 	}, reqBody.Params[2])
 }
 
+func TestAria2AddTorrentWithOptions(t *testing.T) {
+	t.Parallel()
+
+	var reqBody aria2RPCRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"torrent-gid"}`))
+	}))
+	defer srv.Close()
+
+	client := newAria2Client(config.Aria2Config{
+		RPCURL:         srv.URL,
+		Secret:         "secret",
+		TimeoutSeconds: 5,
+	})
+
+	gid, err := client.AddTorrent(context.Background(), []byte("torrent"), aria2AddURIOptions{
+		Dir: "downloads",
+		Out: "file.torrent",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "torrent-gid", gid)
+	require.Equal(t, "aria2.addTorrent", reqBody.Method)
+	require.Equal(t, "token:secret", reqBody.Params[0])
+	require.Equal(t, "dG9ycmVudA==", reqBody.Params[1])
+	require.Equal(t, []any{}, reqBody.Params[2])
+	require.Equal(t, map[string]any{
+		"dir": "downloads",
+		"out": "file.torrent",
+	}, reqBody.Params[3])
+}
+
 func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
 	t.Parallel()
 

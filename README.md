@@ -59,7 +59,10 @@
   },
   "bot": {
     "token": "55555555:xxxxxx", // Telegram 机器人 token
-    "allowed_users": [123456] // 允许的用户 ID 列表
+    "allowed_users": [123456], // 允许的用户 ID 列表
+    "upload_completed": false, // aria2 任务完成后是否上传回 Telegram
+    "forward_chat_id": 0, // 上传成功后转发到指定聊天 ID；0 表示不转发
+    "delete_uploaded_files": false // 上传成功后是否删除本地文件
   }
 }
 ```
@@ -86,6 +89,9 @@
 | `modules.watch`        | 监听下载模块；包含 Telegram 表情监听、下载链接和任务提交                                    |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
+| `bot.upload_completed` | aria2 任务完成后把本地文件上传回 Telegram；受 Bot API 文件大小限制，默认关闭                                  |
+| `bot.forward_chat_id`  | 上传成功后转发到指定聊天 ID；`0` 表示不转发                                             |
+| `bot.delete_uploaded_files` | 上传成功后删除本地文件；启用前请确认下载目录中没有需要保留的文件                                  |
 
 本地 KV 和 Telegram 登录数据固定使用 bolt 存储，保存在程序同目录的 `.tdl/` 文件夹中，不需要在 `config.json` 中配置。
 
@@ -104,6 +110,8 @@ Web 管理面板的“模块管理”可以在运行时启用或关闭功能。`
 Telegram 用户登录前需要先在 Web 面板填写一个用户名，tdl 会把这个用户名作为 `namespace` 保存对应的登录数据。用户名只允许英文字母，例如 `alice`。在“用户管理”里可以从 `.tdl` 目录中已有登录态的用户列表切换或删除用户；切换完成后程序会自动重启，让 WebUI、机器人和监听下载都加载到新的用户数据空间。
 
 Web 管理面板的“检查更新”页面会对比本地版本和 GitHub 最新 Release，并可下载更新后自动重启。若配置了 `proxy`，检查更新和下载更新都会走该代理。机器人也支持 `/update_tdl` 检查更新，按提示发送 `/update_tdl confirm` 后会自动下载、替换并重启当前程序。
+
+机器人私聊也可以直接管理 aria2：发送 `/start` 或 `/menu` 打开控制键盘；发送 HTTP/HTTPS 链接、磁力链接或 `.torrent` 文件会直接提交到 aria2；`/info` 查看 aria2 全局设置，`/path 绝对路径` 修改默认下载目录，`/web` 生成 AriaNg 在线控制地址。
 
 ### 第 2 步：启动程序
 

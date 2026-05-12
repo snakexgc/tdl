@@ -150,16 +150,57 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.Contains(t, records, "new-gid")
 }
 
+func TestTaskNamePrefersBittorrentInfoPathThenURI(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "Ubuntu ISO", TaskName(DownloadStatus{
+		Bittorrent: &BT{Info: &BTInfo{Name: "Ubuntu ISO"}},
+		Files:      filesWithURI("http://example.com/ignored.iso"),
+	}))
+	require.Equal(t, "file.bin", TaskName(DownloadStatus{
+		Files: []File{{Path: "/downloads/file.bin"}},
+	}))
+	require.Equal(t, "from-uri.mkv", TaskName(DownloadStatus{
+		Files: filesWithURI("https://example.com/videos/from-uri.mkv"),
+	}))
+}
+
 type fakeAria2ControlClient struct {
 	active         []aria2DownloadStatus
 	waiting        []aria2DownloadStatus
 	stopped        []aria2DownloadStatus
+	globalOptions  map[string]string
+	changedOptions []map[string]any
 	forcePaused    []string
+	paused         []string
 	unpaused       []string
+	removed        []string
 	removedResults []string
 	addedURIs      []string
+	addedTorrents  [][]byte
 	addedOptions   []aria2AddURIOptions
 	addedGID       string
+}
+
+func (f *fakeAria2ControlClient) GetGlobalOptions(ctx context.Context) (map[string]string, error) {
+	if f.globalOptions == nil {
+		return map[string]string{}, nil
+	}
+	return f.globalOptions, nil
+}
+
+func (f *fakeAria2ControlClient) ChangeGlobalOption(ctx context.Context, options map[string]any) error {
+	f.changedOptions = append(f.changedOptions, options)
+	return nil
+}
+
+func (f *fakeAria2ControlClient) TellStatus(ctx context.Context, gid string) (aria2DownloadStatus, error) {
+	for _, task := range append(append([]aria2DownloadStatus{}, f.active...), append(f.waiting, f.stopped...)...) {
+		if task.GID == gid {
+			return task, nil
+		}
+	}
+	return aria2DownloadStatus{}, nil
 }
 
 func (f *fakeAria2ControlClient) TellActive(ctx context.Context) ([]aria2DownloadStatus, error) {
@@ -193,6 +234,11 @@ func (f *fakeAria2ControlClient) ForcePause(ctx context.Context, gid string) err
 	return nil
 }
 
+func (f *fakeAria2ControlClient) Pause(ctx context.Context, gid string) error {
+	f.paused = append(f.paused, gid)
+	return nil
+}
+
 func (f *fakeAria2ControlClient) Unpause(ctx context.Context, gid string) error {
 	f.unpaused = append(f.unpaused, gid)
 	return nil
@@ -205,6 +251,20 @@ func (f *fakeAria2ControlClient) AddURI(ctx context.Context, uri string, opts ar
 		return "new-gid", nil
 	}
 	return f.addedGID, nil
+}
+
+func (f *fakeAria2ControlClient) AddTorrent(ctx context.Context, data []byte, opts aria2AddURIOptions) (string, error) {
+	f.addedTorrents = append(f.addedTorrents, append([]byte(nil), data...))
+	f.addedOptions = append(f.addedOptions, opts)
+	if f.addedGID == "" {
+		return "new-gid", nil
+	}
+	return f.addedGID, nil
+}
+
+func (f *fakeAria2ControlClient) Remove(ctx context.Context, gid string) error {
+	f.removed = append(f.removed, gid)
+	return nil
 }
 
 func (f *fakeAria2ControlClient) RemoveDownloadResult(ctx context.Context, gid string) error {

@@ -3,6 +3,7 @@ package aria2
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -191,6 +192,35 @@ func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (st
 	return result, nil
 }
 
+func (c *Client) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error) {
+	if len(data) == 0 {
+		return "", errors.New("torrent data is empty")
+	}
+
+	params := make([]any, 0, 2)
+	params = append(params, base64.StdEncoding.EncodeToString(data))
+	options := map[string]any{}
+	if opts.Dir != "" {
+		options["dir"] = opts.Dir
+	}
+	if opts.Out != "" {
+		options["out"] = opts.Out
+	}
+	if len(options) > 0 {
+		params = append(params, []string{})
+		params = append(params, options)
+	}
+
+	result, err := c.callString(ctx, "aria2.addTorrent", params)
+	if err != nil {
+		return "", err
+	}
+	if result == "" {
+		return "", errors.New("aria2 rpc returned empty gid")
+	}
+	return result, nil
+}
+
 func (c *Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) error {
 	if limit < 1 {
 		return errors.New("aria2 max concurrent downloads must be greater than 0")
@@ -210,15 +240,38 @@ func (c *Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) error
 	return nil
 }
 
-func (c *Client) GetGlobalDir(ctx context.Context) (string, error) {
+func (c *Client) ChangeGlobalOption(ctx context.Context, options map[string]any) error {
+	if len(options) == 0 {
+		return errors.New("aria2 global options are empty")
+	}
+
+	result, err := c.callString(ctx, "aria2.changeGlobalOption", []any{options})
+	if err != nil {
+		return err
+	}
+	if result != "OK" {
+		return fmt.Errorf("unexpected aria2 response %q", result)
+	}
+	return nil
+}
+
+func (c *Client) GetGlobalOptions(ctx context.Context) (map[string]string, error) {
 	raw, err := c.callRaw(ctx, "aria2.getGlobalOption", []any{})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var options map[string]string
 	if err := json.Unmarshal(raw, &options); err != nil {
-		return "", errors.Wrap(err, "decode aria2 global options")
+		return nil, errors.Wrap(err, "decode aria2 global options")
+	}
+	return options, nil
+}
+
+func (c *Client) GetGlobalDir(ctx context.Context) (string, error) {
+	options, err := c.GetGlobalOptions(ctx)
+	if err != nil {
+		return "", err
 	}
 	return options["dir"], nil
 }
@@ -228,12 +281,23 @@ type DownloadStatus struct {
 	Status          string `json:"status"`
 	TotalLength     string `json:"totalLength"`
 	CompletedLength string `json:"completedLength"`
+	DownloadSpeed   string `json:"downloadSpeed"`
+	Dir             string `json:"dir"`
 	ErrorCode       string `json:"errorCode"`
 	ErrorMessage    string `json:"errorMessage"`
 	Files           []File `json:"files"`
+	Bittorrent      *BT    `json:"bittorrent,omitempty"`
 }
 
 type aria2DownloadStatus = DownloadStatus
+
+type BT struct {
+	Info *BTInfo `json:"info,omitempty"`
+}
+
+type BTInfo struct {
+	Name string `json:"name,omitempty"`
+}
 
 type File struct {
 	Path            string `json:"path"`
@@ -250,7 +314,20 @@ type URI struct {
 
 type aria2URI = URI
 
-var aria2StatusKeys = []string{"gid", "status", "totalLength", "completedLength", "errorCode", "errorMessage", "files"}
+var aria2StatusKeys = []string{"gid", "status", "totalLength", "completedLength", "downloadSpeed", "dir", "errorCode", "errorMessage", "files", "bittorrent"}
+
+func (c *Client) TellStatus(ctx context.Context, gid string) (DownloadStatus, error) {
+	raw, err := c.callRaw(ctx, "aria2.tellStatus", []any{gid, aria2StatusKeys})
+	if err != nil {
+		return DownloadStatus{}, err
+	}
+
+	var result DownloadStatus
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return DownloadStatus{}, errors.Wrap(err, "decode aria2 task status")
+	}
+	return result, nil
+}
 
 func (c *Client) TellActive(ctx context.Context) ([]DownloadStatus, error) {
 	raw, err := c.callRaw(ctx, "aria2.tellActive", []any{aria2StatusKeys})
@@ -302,6 +379,17 @@ func (c *Client) ForcePause(ctx context.Context, gid string) error {
 	return nil
 }
 
+func (c *Client) Pause(ctx context.Context, gid string) error {
+	result, err := c.callString(ctx, "aria2.pause", []any{gid})
+	if err != nil {
+		return err
+	}
+	if result != gid {
+		return fmt.Errorf("unexpected aria2 pause response %q", result)
+	}
+	return nil
+}
+
 func (c *Client) Unpause(ctx context.Context, gid string) error {
 	result, err := c.callString(ctx, "aria2.unpause", []any{gid})
 	if err != nil {
@@ -309,6 +397,17 @@ func (c *Client) Unpause(ctx context.Context, gid string) error {
 	}
 	if result != gid {
 		return fmt.Errorf("unexpected aria2 unpause response %q", result)
+	}
+	return nil
+}
+
+func (c *Client) Remove(ctx context.Context, gid string) error {
+	result, err := c.callString(ctx, "aria2.remove", []any{gid})
+	if err != nil {
+		return err
+	}
+	if result != gid {
+		return fmt.Errorf("unexpected aria2 remove response %q", result)
 	}
 	return nil
 }

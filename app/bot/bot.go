@@ -149,6 +149,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	aria2Factory := func() *watch.Aria2Controller {
 		return watch.NewAria2Controller(config.Get(), kvd, nil)
 	}
+	go runAria2EventListener(ctx, bot, notifier, aria2Factory)
 	var requestReboot func()
 	onLoginSuccess := func(user *tg.User, namespace string) {
 		restart, err := saveBotNamespaceIfChanged(namespace)
@@ -241,6 +242,14 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		}
 	}
 	updateController := newTDLUpdateController(requestUpdate)
+	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
+		if !allowed.Contains(query.From.ID) {
+			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
+			return nil
+		}
+		return handleAria2Callback(ctx, query, aria2Factory)
+	}, th.AnyCallbackQuery())
+
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
 		if update.Message == nil || update.Message.From == nil {
 			return nil
@@ -330,8 +339,17 @@ func versionSummary() string {
 func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: []telego.BotCommand{
+			{Command: "start", Description: "开始使用并显示 aria2 控制键盘"},
+			{Command: "menu", Description: "显示 aria2 控制键盘"},
+			{Command: "help", Description: "查看 aria2 机器人帮助"},
+			{Command: "info", Description: "查看 aria2 设置信息"},
+			{Command: "web", Description: "获取 AriaNg 在线控制地址"},
+			{Command: "path", Description: "修改 aria2 默认下载目录"},
 			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
+			{Command: "aria2_active", Description: "查看正在下载的 aria2 任务"},
+			{Command: "aria2_waiting", Description: "查看等待或暂停的 aria2 任务"},
+			{Command: "aria2_stopped", Description: "查看已完成或停止的 aria2 任务"},
 			{Command: "aria2_overview", Description: "查看下载任务概况"},
 			{Command: "aria2_pause_all", Description: "暂停全部下载任务"},
 			{Command: "aria2_start_all", Description: "开始全部下载任务"},
@@ -534,8 +552,10 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
-	case "/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
-		"/update_tdl", "/aria2", "/aria2_help", "/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
+	case "/start", "/menu", "/help", "/info", "/web", "/path",
+		"/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
+		"/update_tdl", "/aria2", "/aria2_help", "/aria2_active", "/aria2_waiting", "/aria2_stopped",
+		"/aria2_overview", "/aria2_pause_all", "/aria2_start_all", "/aria2_retry",
 		"/clean_kv":
 		return true
 	default:

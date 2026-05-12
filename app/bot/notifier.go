@@ -56,6 +56,16 @@ func (n *botNotifier) UpdateChatIDs(chatIDs []int64) {
 	n.chatIDs = uniqueInt64s(chatIDs)
 }
 
+func (n *botNotifier) ChatIDs() []int64 {
+	if n == nil {
+		return nil
+	}
+
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return append([]int64(nil), n.chatIDs...)
+}
+
 func uniqueInt64s(values []int64) []int64 {
 	if len(values) == 0 {
 		return nil

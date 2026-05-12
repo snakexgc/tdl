@@ -5,6 +5,7 @@ go 1.25.8
 require (
 	github.com/bcicen/jstream v1.0.1
 	github.com/beevik/ntp v1.5.0
+	github.com/coder/websocket v1.8.14
 	github.com/expr-lang/expr v1.17.8
 	github.com/fatih/color v1.19.0
 	github.com/flytam/filenamify v1.2.0
@@ -39,7 +40,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/coder/websocket v1.8.14 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
