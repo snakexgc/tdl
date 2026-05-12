@@ -125,6 +125,68 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kvd := newMemoryTaskStorage()
+	store := newInternalTaskStore(kvd)
+	createdAt := time.Now()
+	records := []internalDownloadRecord{
+		{
+			ID:        "active",
+			TaskID:    "active",
+			FileName:  "active.mp4",
+			Total:     100,
+			Completed: 40,
+			Status:    InternalDownloadStatusActive,
+			CreatedAt: createdAt,
+		},
+		{
+			ID:        "queued",
+			TaskID:    "queued",
+			FileName:  "queued.mp4",
+			Total:     100,
+			Status:    InternalDownloadStatusQueued,
+			CreatedAt: createdAt,
+		},
+		{
+			ID:        "complete",
+			TaskID:    "complete",
+			FileName:  "complete.mp4",
+			Total:     100,
+			Completed: 100,
+			Status:    InternalDownloadStatusComplete,
+			CreatedAt: createdAt,
+		},
+	}
+	for _, record := range records {
+		require.NoError(t, store.Save(ctx, record))
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	paused, err := (&internalDownloader{store: store}).PauseForShutdown(canceledCtx)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"active", "queued"}, paused)
+
+	active, ok, err := store.Get(ctx, "active")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, InternalDownloadStatusPaused, active.Status)
+	require.Equal(t, int64(40), active.Completed)
+
+	queued, ok, err := store.Get(ctx, "queued")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, InternalDownloadStatusPaused, queued.Status)
+
+	complete, ok, err := store.Get(ctx, "complete")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, InternalDownloadStatusComplete, complete.Status)
+}
+
 func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) {
 	oldHome := consts.HomeDir
 	consts.HomeDir = t.TempDir()

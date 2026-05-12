@@ -17,6 +17,15 @@ func shouldRunInternalDownload(status string) bool {
 	}
 }
 
+func shouldPauseInternalDownloadForShutdown(status string) bool {
+	switch status {
+	case InternalDownloadStatusComplete, InternalDownloadStatusRemoved, InternalDownloadStatusPaused:
+		return false
+	default:
+		return true
+	}
+}
+
 func internalDownloadInfo(record internalDownloadRecord) InternalDownloadInfo {
 	return InternalDownloadInfo(record)
 }

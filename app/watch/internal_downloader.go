@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	internalDownloadQueueSize    = 100
-	internalDownloadPollInterval = 5 * time.Second
+	internalDownloadQueueSize            = 100
+	internalDownloadPollInterval         = 5 * time.Second
+	internalDownloadShutdownPauseTimeout = 5 * time.Second
 )
 
 type internalDownloader struct {
@@ -113,6 +114,35 @@ func (d *internalDownloader) Stop() {
 	case <-done:
 	case <-time.After(controllerStopTimeout):
 	}
+}
+
+func (d *internalDownloader) PauseForShutdown(ctx context.Context) ([]string, error) {
+	if d == nil || d.store == nil {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), internalDownloadShutdownPauseTimeout)
+	defer cancel()
+
+	records, err := d.store.Records(shutdownCtx)
+	if err != nil {
+		return nil, err
+	}
+	paused := make([]string, 0, len(records))
+	for _, record := range records {
+		if !shouldPauseInternalDownloadForShutdown(record.Status) {
+			continue
+		}
+		record.Status = InternalDownloadStatusPaused
+		record.Error = ""
+		if err := d.store.Save(shutdownCtx, record); err != nil {
+			return paused, err
+		}
+		paused = append(paused, record.ID)
+	}
+	return paused, nil
 }
 
 func (d *internalDownloader) Add(ctx context.Context, task *downloadTask, prepared preparedFileTask) (InternalDownloadInfo, error) {

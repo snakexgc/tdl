@@ -3,6 +3,7 @@ const state = {
   aria2Loaded: false,
   downloaderMode: "aria2",
   internalDownloads: [],
+  selectedInternalDownloads: new Set(),
   internalDownloadSamples: new Map(),
   internalDownloadPoll: null,
   internalDownloadLoading: false,
@@ -288,6 +289,26 @@ function bindKVTable() {
     runKVAction("delete", Array.from(state.selectedKV));
   });
 
+  document.getElementById("internal-select-visible").addEventListener("change", (event) => {
+    if (event.target.checked) {
+      state.internalDownloads.forEach((item) => {
+        const id = internalDownloadID(item);
+        if (id) state.selectedInternalDownloads.add(id);
+      });
+    } else {
+      state.selectedInternalDownloads.clear();
+    }
+    renderInternalDownloads();
+  });
+  document.getElementById("internal-select-all").addEventListener("click", () => selectInternalDownloads("all"));
+  document.getElementById("internal-select-complete").addEventListener("click", () => selectInternalDownloads("complete"));
+  document.getElementById("internal-select-unfinished").addEventListener("click", () => selectInternalDownloads("unfinished"));
+  document.getElementById("internal-select-error").addEventListener("click", () => selectInternalDownloads("error"));
+  document.getElementById("internal-select-clear").addEventListener("click", () => selectInternalDownloads("clear"));
+  document.getElementById("internal-start-selected").addEventListener("click", () => runInternalDownloadBulkAction("start"));
+  document.getElementById("internal-pause-selected").addEventListener("click", () => runInternalDownloadBulkAction("pause"));
+  document.getElementById("internal-delete-selected").addEventListener("click", () => runInternalDownloadBulkAction("delete"));
+
   document.getElementById("internal-download-body").addEventListener("click", async (event) => {
     const button = event.target.closest("[data-internal-action]");
     if (!button) return;
@@ -296,6 +317,17 @@ function bindKVTable() {
     if (!id) return;
     if (action === "delete" && !confirm(`删除下载任务 ${id}？未完成的本地临时文件会一并删除。`)) return;
     await runInternalDownloadAction(action, [id]);
+  });
+
+  document.getElementById("internal-download-body").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-internal-check]");
+    if (!checkbox) return;
+    if (checkbox.checked) {
+      state.selectedInternalDownloads.add(checkbox.dataset.internalCheck);
+    } else {
+      state.selectedInternalDownloads.delete(checkbox.dataset.internalCheck);
+    }
+    updateInternalSelectionState();
   });
 
   document.querySelectorAll("#kv-table .sort-button").forEach((button) => {
@@ -636,17 +668,20 @@ async function loadInternalDownloads(options = {}) {
   const body = document.getElementById("internal-download-body");
   if (!silent) {
     setInternalDownloadStatus("");
-    body.innerHTML = `<tr><td colspan="6" class="empty">正在加载...</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty">正在加载...</td></tr>`;
   }
   try {
     const data = await api("/api/internal-downloads");
     state.internalDownloads = updateInternalDownloadSpeeds(data.items || []);
+    pruneInternalDownloadSelection();
     renderInternalDownloads();
   } catch (error) {
     if (!silent) {
       state.internalDownloads = [];
       state.internalDownloadSamples.clear();
-      body.innerHTML = `<tr><td colspan="6" class="empty">加载失败</td></tr>`;
+      state.selectedInternalDownloads.clear();
+      body.innerHTML = `<tr><td colspan="7" class="empty">加载失败</td></tr>`;
+      updateInternalSelectionState();
     }
     setInternalDownloadStatus(error.message, "error");
   } finally {
@@ -657,17 +692,23 @@ async function loadInternalDownloads(options = {}) {
 function renderInternalDownloads() {
   const body = document.getElementById("internal-download-body");
   if (!state.internalDownloads.length) {
-    body.innerHTML = `<tr><td colspan="6" class="empty">没有内部下载任务</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty">没有内部下载任务</td></tr>`;
+    updateInternalSelectionState();
     return;
   }
   body.innerHTML = state.internalDownloads.map(renderInternalDownloadRow).join("");
+  updateInternalSelectionState();
+}
+
+function internalDownloadID(item) {
+  return item.id || item.task_id || item.file_name || "";
 }
 
 function updateInternalDownloadSpeeds(items) {
   const now = Date.now();
   const seen = new Set();
   items.forEach((item) => {
-    const id = item.id || item.task_id || item.file_name;
+    const id = internalDownloadID(item);
     if (!id) return;
     seen.add(id);
     const completed = Number(item.completed || 0);
@@ -706,6 +747,7 @@ function updateInternalDownloadSpeeds(items) {
 }
 
 function renderInternalDownloadRow(item) {
+  const id = internalDownloadID(item);
   const total = Number(item.total || 0);
   const completed = Number(item.completed || 0);
   const pct = total > 0 ? Math.min(100, Math.max(0, (completed / total) * 100)) : 0;
@@ -713,11 +755,13 @@ function renderInternalDownloadRow(item) {
   const error = item.error ? `<div class="subtle bad-text">${escapeHTML(item.error)}</div>` : "";
   const speed = Number(item.speed_bps || 0);
   const speedText = status === "active" ? `${formatBytes(speed)}/s` : "-";
+  const selected = state.selectedInternalDownloads.has(id) ? "checked" : "";
   return `
     <tr>
+      <td class="select-col"><input type="checkbox" data-internal-check="${escapeAttr(id)}" ${selected} aria-label="选择 ${escapeAttr(item.file_name || id)}"></td>
       <td>
-        <strong>${escapeHTML(item.file_name || item.id)}</strong>
-        <div class="mono subtle">${escapeHTML(item.id)}</div>
+        <strong>${escapeHTML(item.file_name || id)}</strong>
+        <div class="mono subtle">${escapeHTML(id)}</div>
       </td>
       <td><span class="pill ${internalStatusClass(status)}">${escapeHTML(internalStatusLabel(status))}</span>${error}</td>
       <td>
@@ -736,22 +780,56 @@ function renderInternalDownloadRow(item) {
       <td class="time-cell">${formatTime(item.updated_at || item.created_at)}</td>
       <td>
         <div class="row-actions">
-          ${status === "paused" || status === "error" ? `<button class="btn primary compact" data-internal-action="start" data-internal-id="${escapeAttr(item.id)}">开始</button>` : ""}
-          ${status !== "complete" && status !== "paused" ? `<button class="btn secondary compact" data-internal-action="pause" data-internal-id="${escapeAttr(item.id)}">暂停</button>` : ""}
-          <button class="btn danger compact" data-internal-action="delete" data-internal-id="${escapeAttr(item.id)}">删除</button>
+          ${status === "paused" || status === "error" ? `<button class="btn primary compact" data-internal-action="start" data-internal-id="${escapeAttr(id)}">开始</button>` : ""}
+          ${status !== "complete" && status !== "paused" ? `<button class="btn secondary compact" data-internal-action="pause" data-internal-id="${escapeAttr(id)}">暂停</button>` : ""}
+          <button class="btn danger compact" data-internal-action="delete" data-internal-id="${escapeAttr(id)}">删除</button>
         </div>
       </td>
     </tr>
   `;
 }
 
+function selectInternalDownloads(mode) {
+  state.selectedInternalDownloads.clear();
+  if (mode !== "clear") {
+    state.internalDownloads.forEach((item) => {
+      const id = internalDownloadID(item);
+      const status = item.status || "queued";
+      if (!id) return;
+      if (mode === "all" || mode === status || (mode === "unfinished" && status !== "complete")) {
+        state.selectedInternalDownloads.add(id);
+      }
+    });
+  }
+  renderInternalDownloads();
+  setInternalDownloadStatus(`已选中 ${state.selectedInternalDownloads.size} 个任务。`);
+}
+
+async function runInternalDownloadBulkAction(action) {
+  const ids = Array.from(state.selectedInternalDownloads);
+  if (!ids.length) {
+    setInternalDownloadStatus("请先选择需要处理的内部下载任务。", "error");
+    return;
+  }
+  if (action === "delete" && !confirm(`删除选中的 ${ids.length} 个下载任务？未完成的本地文件会一并删除。`)) return;
+  await runInternalDownloadAction(action, ids);
+}
+
 async function runInternalDownloadAction(action, ids) {
+  const uniqueIDs = Array.from(new Set(ids)).filter(Boolean);
+  if (!uniqueIDs.length) {
+    setInternalDownloadStatus("请先选择需要处理的内部下载任务。", "error");
+    return;
+  }
   setInternalDownloadStatus(internalActionPending(action));
   try {
     const data = await api("/api/internal-downloads/actions", {
       method: "POST",
-      body: JSON.stringify({ action, ids }),
+      body: JSON.stringify({ action, ids: uniqueIDs }),
     });
+    if (action === "delete") {
+      uniqueIDs.forEach((id) => state.selectedInternalDownloads.delete(id));
+    }
     await loadInternalDownloads();
     const result = data.result || {};
     const errors = result.errors && result.errors.length ? `；失败 ${result.errors.length} 项：${result.errors.join("；")}` : "";
@@ -800,6 +878,30 @@ function setInternalDownloadStatus(message, kind = "") {
   const status = document.getElementById("internal-download-status");
   status.className = `notice ${kind}`.trim();
   status.textContent = message || "";
+}
+
+function pruneInternalDownloadSelection() {
+  const ids = new Set(state.internalDownloads.map(internalDownloadID).filter(Boolean));
+  state.selectedInternalDownloads = new Set(Array.from(state.selectedInternalDownloads).filter((id) => ids.has(id)));
+}
+
+function updateInternalSelectionState() {
+  pruneInternalDownloadSelection();
+  const ids = state.internalDownloads.map(internalDownloadID).filter(Boolean);
+  const selectedVisible = ids.filter((id) => state.selectedInternalDownloads.has(id)).length;
+  const selectVisible = document.getElementById("internal-select-visible");
+  if (selectVisible) {
+    selectVisible.checked = ids.length > 0 && selectedVisible === ids.length;
+    selectVisible.indeterminate = selectedVisible > 0 && selectedVisible < ids.length;
+  }
+
+  const count = state.selectedInternalDownloads.size;
+  const countLabel = document.getElementById("internal-selection-count");
+  if (countLabel) countLabel.textContent = `已选 ${count} 项`;
+  ["internal-start-selected", "internal-pause-selected", "internal-delete-selected"].forEach((id) => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = count === 0;
+  });
 }
 
 async function loadKV() {

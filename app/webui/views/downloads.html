@@ -38,10 +38,26 @@
     <iframe id="aria2-frame" title="AriaNg 下载管理" hidden></iframe>
     <section class="internal-downloads" id="internal-downloads" hidden>
       <div class="notice" id="internal-download-status"></div>
+      <div class="internal-bulk-toolbar">
+        <div class="internal-bulk-group">
+          <button class="btn secondary compact" id="internal-select-all" type="button">全选</button>
+          <button class="btn secondary compact" id="internal-select-complete" type="button">选中已完成</button>
+          <button class="btn secondary compact" id="internal-select-unfinished" type="button">选中未完成</button>
+          <button class="btn secondary compact" id="internal-select-error" type="button">选中失败</button>
+          <button class="btn secondary compact" id="internal-select-clear" type="button">清空选择</button>
+        </div>
+        <div class="internal-bulk-group">
+          <span class="internal-selection-count" id="internal-selection-count">已选 0 项</span>
+          <button class="btn primary compact" id="internal-start-selected" type="button" disabled>开始选中</button>
+          <button class="btn secondary compact" id="internal-pause-selected" type="button" disabled>暂停选中</button>
+          <button class="btn danger compact" id="internal-delete-selected" type="button" disabled>删除选中</button>
+        </div>
+      </div>
       <div class="table-shell internal-table-shell">
         <table id="internal-download-table">
           <thead>
             <tr>
+              <th class="select-col"><input id="internal-select-visible" type="checkbox" aria-label="全选内部下载任务"></th>
               <th>文件</th>
               <th>状态</th>
               <th>进度</th>
@@ -51,7 +67,7 @@
             </tr>
           </thead>
           <tbody id="internal-download-body">
-            <tr><td colspan="6" class="empty">正在加载...</td></tr>
+            <tr><td colspan="7" class="empty">正在加载...</td></tr>
           </tbody>
         </table>
       </div>

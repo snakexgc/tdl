@@ -363,11 +363,36 @@ p {
 }
 
 .internal-table-shell {
-  max-height: calc(100% - 42px);
+  max-height: calc(100% - 94px);
 }
 
 #internal-download-table {
-  min-width: 1080px;
+  min-width: 1160px;
+}
+
+.internal-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.internal-bulk-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.internal-selection-count {
+  min-width: 72px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .aria2-guide {

@@ -161,18 +161,27 @@ func Run(ctx context.Context, opts Options) error {
 	runtime := newWatchRuntime(cfg, kvd, logctx.From(runCtx))
 	var pauseOnShutdownOnce sync.Once
 	pauseOnShutdown := func() {
-		if downloaderMode != config.DownloaderModeAria2 {
-			return
-		}
 		pauseOnShutdownOnce.Do(func() {
 			color.Yellow("⏹ Stopping watcher...")
-			paused, err := watcharia2.PauseTDLTasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
-			if err != nil {
-				color.Yellow("⚠️ Failed to pause tdl aria2 tasks before shutdown: %v", err)
-				return
-			}
-			if len(paused) > 0 {
-				color.Yellow("⏸ Paused %d tdl aria2 task(s) before shutdown", len(paused))
+			switch downloaderMode {
+			case config.DownloaderModeAria2:
+				paused, err := watcharia2.PauseTDLTasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+				if err != nil {
+					color.Yellow("⚠️ Failed to pause tdl aria2 tasks before shutdown: %v", err)
+					return
+				}
+				if len(paused) > 0 {
+					color.Yellow("⏸ Paused %d tdl aria2 task(s) before shutdown", len(paused))
+				}
+			case config.DownloaderModeInternal:
+				paused, err := runtime.internal.PauseForShutdown(runCtx)
+				if err != nil {
+					color.Yellow("⚠️ Failed to pause internal download tasks before shutdown: %v", err)
+					return
+				}
+				if len(paused) > 0 {
+					color.Yellow("⏸ Paused %d internal download task(s) before shutdown", len(paused))
+				}
 			}
 		})
 	}
