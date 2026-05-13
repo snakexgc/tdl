@@ -21,6 +21,7 @@ const state = {
   heartbeatTimer: null,
   heartbeatLastSeen: 0,
   heartbeatState: "checking",
+  usingDefaultCredentials: false,
 };
 
 const collator = new Intl.Collator("zh-Hans-CN", {
@@ -33,6 +34,7 @@ const heartbeatIntervalMS = 1000;
 const heartbeatOfflineMS = 3000;
 const heartbeatRequestTimeoutMS = 1500;
 const internalDownloadRefreshMS = 1000;
+const exclusiveListPairs = [["include", "exclude"]];
 
 const sections = [
   {
@@ -46,14 +48,15 @@ const sections = [
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
       ["download_dir", "下载目录规则", "text", "用于按群组、日期等自动分目录，例如 G/Y&M。"],
       ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
-      ["include", "只下载这些扩展名", "list", "例如 mp4,mkv；留空表示不限制。"],
-      ["exclude", "跳过这些扩展名", "list", "例如 png,jpg；留空表示不跳过。"],
+      ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
+      ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],
     ],
   },
   {
     title: "下载链接",
     fields: [
-      ["http.listen", "监听地址", "text", "tdl 提供下载链接的地址，例如 0.0.0.0:22334。"],
+      ["http.address", "监听地址", "text", "tdl 提供下载链接的监听地址，例如 0.0.0.0 或 127.0.0.1。"],
+      ["http.port", "监听端口", "number", "tdl 提供下载链接的监听端口，例如 22334。"],
       ["http.public_base_url", "对外访问地址", "text", "aria2 能访问到的 tdl 地址，不同机器时请填写局域网地址。"],
       ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
       ["http.buffer.mode", "下载缓冲", "select", "memory 适合多数场景；off 表示不预读。", ["memory", "off"]],
@@ -63,7 +66,8 @@ const sections = [
   {
     title: "Web 管理面板",
     fields: [
-      ["webui.listen", "访问地址", "text", "管理面板监听地址，例如 127.0.0.1:22335。修改后需要重启。"],
+      ["webui.address", "监听地址", "text", "管理面板监听地址，例如 0.0.0.0 或 127.0.0.1。修改后需要重启。"],
+      ["webui.port", "监听端口", "number", "管理面板监听端口，例如 22335。修改后需要重启。"],
       ["webui.username", "用户名", "text", "登录管理面板时使用的用户名。"],
       ["webui.password", "密码", "password", "管理面板登录密码；留空表示保持原密码。"],
     ],
@@ -94,7 +98,7 @@ const sections = [
     title: "机器人",
     fields: [
       ["bot.token", "机器人 Token", "password", "从 BotFather 获取；留空表示保持原 token。"],
-      ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人，多个 ID 用逗号或换行分隔。"],
+      ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人。"],
     ],
   },
 ];
@@ -195,6 +199,10 @@ function bindActions() {
   document.getElementById("reboot").addEventListener("click", reboot);
   document.getElementById("check-update").addEventListener("click", loadUpdateStatus);
   document.getElementById("apply-update").addEventListener("click", applyUpdate);
+  const credentialWarningAction = document.getElementById("credential-warning-action");
+  if (credentialWarningAction) {
+    credentialWarningAction.addEventListener("click", openCredentialSettings);
+  }
 }
 
 async function logout() {
@@ -473,9 +481,29 @@ async function loadStatus() {
     document.getElementById("runtime-version").textContent = `版本：${version.version || "-"}`;
     document.getElementById("runtime-namespace").textContent = `数据空间：${data.namespace || "-"}`;
     document.getElementById("runtime-watch").textContent = `监听：${data.watch_running ? "运行中" : "未运行"}`;
+    state.usingDefaultCredentials = Boolean(data.webui && data.webui.using_default_credentials);
+    renderCredentialWarning();
   } catch (error) {
     document.getElementById("runtime-watch").textContent = `状态：${error.message}`;
   }
+}
+
+function renderCredentialWarning() {
+  const banner = document.getElementById("credential-warning");
+  if (!banner) return;
+  banner.hidden = !state.usingDefaultCredentials;
+}
+
+async function openCredentialSettings() {
+  selectView("config");
+  await loadConfig();
+  requestAnimationFrame(() => {
+    const input = document.querySelector('#config-form [data-path="webui.username"]');
+    if (input) {
+      input.focus();
+      input.scrollIntoView({ block: "center" });
+    }
+  });
 }
 
 async function loadModules() {
@@ -1705,6 +1733,8 @@ function renderConfigForm() {
       </div>
     </section>
   `).join("");
+  initTagInputs(form);
+  updateExclusiveListFields();
 }
 
 function renderField(field) {
@@ -1712,20 +1742,20 @@ function renderField(field) {
   const value = getPath(state.config, path);
   let control = "";
   if (type === "select") {
-    control = `<select data-path="${escapeAttr(path)}" data-type="${type}">
+    control = `<select data-config-control data-path="${escapeAttr(path)}" data-type="${type}">
       ${(options || []).map((option) => `<option value="${escapeAttr(option)}" ${String(value) === option ? "selected" : ""}>${escapeHTML(option)}</option>`).join("")}
     </select>`;
   } else if (type === "bool") {
-    control = `<label class="checkbox-line"><input type="checkbox" data-path="${escapeAttr(path)}" data-type="${type}" ${value ? "checked" : ""}> 启用</label>`;
+    control = `<label class="checkbox-line"><input data-config-control type="checkbox" data-path="${escapeAttr(path)}" data-type="${type}" ${value ? "checked" : ""}> 启用</label>`;
   } else if (type === "list" || type === "intList") {
-    control = `<textarea data-path="${escapeAttr(path)}" data-type="${type}">${escapeHTML((value || []).join(", "))}</textarea>`;
+    control = renderTagInput(path, type, value || []);
   } else if (type === "password") {
-    control = `<input type="password" data-path="${escapeAttr(path)}" data-type="${type}" value="" placeholder="留空保持不变">`;
+    control = `<input data-config-control type="password" data-path="${escapeAttr(path)}" data-type="${type}" value="" placeholder="留空保持不变">`;
   } else {
-    control = `<input type="${type === "number" ? "number" : "text"}" data-path="${escapeAttr(path)}" data-type="${type}" value="${escapeAttr(value ?? "")}">`;
+    control = `<input data-config-control type="${type === "number" ? "number" : "text"}" data-path="${escapeAttr(path)}" data-type="${type}" value="${escapeAttr(value ?? "")}">`;
   }
   return `
-    <div class="field">
+    <div class="field" data-field-path="${escapeAttr(path)}">
       <label>${escapeHTML(label)}</label>
       ${control}
       <small>${escapeHTML(help || path)}</small>
@@ -1733,13 +1763,122 @@ function renderField(field) {
   `;
 }
 
+function renderTagInput(path, type, values) {
+  const tags = (values || []).map((value) => renderTagItem(value)).join("");
+  return `
+    <div class="tag-input" data-config-control data-path="${escapeAttr(path)}" data-type="${escapeAttr(type)}" aria-disabled="false">
+      <div class="tag-list" data-tag-list>${tags}</div>
+      <input class="tag-entry" data-tag-entry type="text" autocomplete="off" placeholder="添加词条">
+    </div>
+  `;
+}
+
+function renderTagItem(value) {
+  return `
+    <span class="tag-item" data-tag-value="${escapeAttr(value)}">
+      <span>${escapeHTML(value)}</span>
+      <button class="tag-remove" data-tag-remove type="button" aria-label="移除 ${escapeAttr(value)}">x</button>
+    </span>
+  `;
+}
+
+function initTagInputs(root) {
+  root.querySelectorAll(".tag-input").forEach((control) => {
+    const input = control.querySelector("[data-tag-entry]");
+    control.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-tag-remove]");
+      if (remove) {
+        remove.closest("[data-tag-value]")?.remove();
+        updateExclusiveListFields();
+        return;
+      }
+      if (!input.disabled) input.focus();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Tab") {
+        commitTagInput(control);
+        updateExclusiveListFields();
+        return;
+      }
+      if (event.key === "Enter" || event.key === ",") {
+        if (input.value.trim()) {
+          event.preventDefault();
+          commitTagInput(control);
+          updateExclusiveListFields();
+        }
+        return;
+      }
+      if (event.key === "Backspace" && !input.value) {
+        const tags = control.querySelectorAll("[data-tag-value]");
+        tags[tags.length - 1]?.remove();
+        updateExclusiveListFields();
+      }
+    });
+    input.addEventListener("input", updateExclusiveListFields);
+    input.addEventListener("blur", () => {
+      commitTagInput(control);
+      updateExclusiveListFields();
+    });
+  });
+}
+
+function commitPendingTagInputs() {
+  document.querySelectorAll("#config-form .tag-input").forEach(commitTagInput);
+}
+
+function commitTagInput(control) {
+  const input = control.querySelector("[data-tag-entry]");
+  if (!input || !input.value.trim()) return;
+  splitList(input.value).forEach((value) => addTagValue(control, value));
+  input.value = "";
+}
+
+function addTagValue(control, value) {
+  value = String(value || "").trim();
+  if (!value || tagValues(control).includes(value)) return;
+  control.querySelector("[data-tag-list]").insertAdjacentHTML("beforeend", renderTagItem(value));
+}
+
+function tagValues(control) {
+  return Array.from(control.querySelectorAll("[data-tag-value]")).map((tag) => tag.dataset.tagValue).filter(Boolean);
+}
+
+function listControlHasContent(control) {
+  if (!control) return false;
+  const pending = control.querySelector("[data-tag-entry]")?.value.trim();
+  return tagValues(control).length > 0 || Boolean(pending);
+}
+
+function updateExclusiveListFields() {
+  exclusiveListPairs.forEach(([leftPath, rightPath]) => {
+    const left = document.querySelector(`.tag-input[data-path="${leftPath}"]`);
+    const right = document.querySelector(`.tag-input[data-path="${rightPath}"]`);
+    const leftHas = listControlHasContent(left);
+    const rightHas = listControlHasContent(right);
+    setListControlDisabled(right, leftHas && !rightHas);
+    setListControlDisabled(left, rightHas && !leftHas);
+  });
+}
+
+function setListControlDisabled(control, disabled) {
+  if (!control) return;
+  control.classList.toggle("disabled", disabled);
+  control.setAttribute("aria-disabled", disabled ? "true" : "false");
+  control.querySelectorAll("input, button").forEach((item) => {
+    item.disabled = disabled;
+  });
+  const field = control.closest(".field");
+  if (field) field.classList.toggle("disabled", disabled);
+}
+
 async function saveConfig(event) {
   event.preventDefault();
+  commitPendingTagInputs();
   const status = document.getElementById("config-status");
   status.className = "notice";
   status.textContent = "正在保存...";
   const values = {};
-  document.querySelectorAll("#config-form [data-path]").forEach((input) => {
+  document.querySelectorAll("#config-form [data-config-control]").forEach((input) => {
     const path = input.dataset.path;
     const type = input.dataset.type;
     if (type === "password" && !input.value) return;
@@ -1768,6 +1907,11 @@ async function saveConfig(event) {
 }
 
 function fieldValue(input, type) {
+  if (input.classList.contains("tag-input")) {
+    const values = tagValues(input);
+    if (type === "intList") return values.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+    return values;
+  }
   if (type === "bool") return input.checked;
   if (type === "number") return Number(input.value || 0);
   if (type === "list") return splitList(input.value);

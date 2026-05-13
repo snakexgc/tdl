@@ -68,7 +68,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	if !webStarted && !manager.hasRunnableModule(config.Get()) {
 		manager.Shutdown()
-		return errors.New("please configure webui.listen, webui.username and webui.password, or configure bot.token")
+		return errors.New("please configure webui.address, webui.port, webui.username and webui.password, or configure bot.token")
 	}
 
 	<-runCtx.Done()
@@ -110,8 +110,8 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 
 func (m *Manager) StartWebUI(ctx context.Context) bool {
 	cfg := config.Get()
-	if cfg == nil || strings.TrimSpace(cfg.WebUI.Listen) == "" {
-		color.Yellow("Web 管理面板未启动：webui.listen 为空。")
+	if cfg == nil || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
+		color.Yellow("Web 管理面板未启动：webui.address 或 webui.port 为空。")
 		return false
 	}
 	if strings.TrimSpace(cfg.WebUI.Username) == "" || cfg.WebUI.Password == "" {
@@ -145,7 +145,7 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 		}
 	case <-time.After(200 * time.Millisecond):
 	}
-	color.Green("WebUI: http://%s", cfg.WebUI.Listen)
+	color.Green("WebUI: http://%s", config.WebUIListenAddr(cfg))
 	return true
 }
 

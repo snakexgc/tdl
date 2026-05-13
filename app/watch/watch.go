@@ -235,7 +235,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	proxyErrCh := make(chan error, 1)
-	if strings.TrimSpace(cfg.HTTP.Listen) != "" {
+	httpListen := config.HTTPListenAddr(cfg)
+	if strings.TrimSpace(httpListen) != "" {
 		go func() {
 			if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				select {
@@ -248,8 +249,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
-	if strings.TrimSpace(cfg.HTTP.Listen) != "" {
-		color.Green("   HTTP listen: %s", cfg.HTTP.Listen)
+	if strings.TrimSpace(httpListen) != "" {
+		color.Green("   HTTP listen: %s", httpListen)
 	}
 	if downloaderMode == config.DownloaderModeAria2 {
 		color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
@@ -496,8 +497,8 @@ func validateWatchConfig(cfg *config.Config) error {
 	}
 	switch config.EffectiveDownloaderMode(cfg) {
 	case config.DownloaderModeAria2:
-		if cfg.HTTP.Listen == "" {
-			return errors.New("http.listen is empty")
+		if strings.TrimSpace(config.HTTPListenAddr(cfg)) == "" {
+			return errors.New("http.address or http.port is empty")
 		}
 		if cfg.HTTP.PublicBaseURL == "" {
 			return errors.New("http.public_base_url is empty, please set it in config.json")

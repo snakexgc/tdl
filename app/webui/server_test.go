@@ -110,6 +110,54 @@ func TestRoutesAuthenticateWithWebSessionCookie(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `id="view-user"`)
 }
 
+func TestConfigAPIExposesSplitListenFields(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	previous, err := cloneConfig(cfg)
+	require.NoError(t, err)
+	defer func() {
+		*cfg = *previous
+	}()
+
+	cfg.HTTP.Listen = ""
+	cfg.HTTP.Address = "0.0.0.0"
+	cfg.HTTP.Port = 22334
+	cfg.WebUI.Listen = ""
+	cfg.WebUI.Address = "0.0.0.0"
+	cfg.WebUI.Port = 22335
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	handler := NewServer(Options{}).routes()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+webUITestUsername+`","password":"`+webUITestPassword+`"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotEmpty(t, rec.Result().Cookies())
+
+	req = httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req.AddCookie(rec.Result().Cookies()[0])
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	publicCfg, ok := body["config"].(map[string]any)
+	require.True(t, ok)
+	httpCfg, ok := publicCfg["http"].(map[string]any)
+	require.True(t, ok)
+	webUICfg, ok := publicCfg["webui"].(map[string]any)
+	require.True(t, ok)
+
+	require.Equal(t, "0.0.0.0", httpCfg["address"])
+	require.Equal(t, float64(22334), httpCfg["port"])
+	require.NotContains(t, httpCfg, "listen")
+	require.Equal(t, "0.0.0.0", webUICfg["address"])
+	require.Equal(t, float64(22335), webUICfg["port"])
+	require.NotContains(t, webUICfg, "listen")
+}
+
 func TestRoutesRejectUnauthenticatedAPIWithJSON(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()

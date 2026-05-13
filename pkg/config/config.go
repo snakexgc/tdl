@@ -3,15 +3,25 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/go-faster/errors"
 )
 
-const DefaultPoolSize = 8
+const (
+	DefaultPoolSize      = 8
+	DefaultHTTPAddress   = "0.0.0.0"
+	DefaultHTTPPort      = 22334
+	DefaultWebUIAddress  = "0.0.0.0"
+	DefaultWebUIPort     = 22335
+	DefaultWebUIUsername = "admin"
+	DefaultWebUIPassword = "admin"
+)
 
 const (
 	DownloaderModeAria2    = "aria2"
@@ -25,7 +35,9 @@ type BotConfig struct {
 }
 
 type HTTPConfig struct {
-	Listen               string           `json:"listen"`
+	Listen               string           `json:"listen,omitempty"`
+	Address              string           `json:"address"`
+	Port                 int              `json:"port"`
 	PublicBaseURL        string           `json:"public_base_url"`
 	DownloadLinkTTLHours int              `json:"download_link_ttl_hours"`
 	Buffer               HTTPBufferConfig `json:"buffer"`
@@ -37,7 +49,9 @@ type HTTPBufferConfig struct {
 }
 
 type WebUIConfig struct {
-	Listen   string `json:"listen"`
+	Listen   string `json:"listen,omitempty"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
@@ -92,7 +106,8 @@ func DefaultConfig() *Config {
 		Include:          []string{},
 		Exclude:          []string{},
 		HTTP: HTTPConfig{
-			Listen:               "0.0.0.0:8080",
+			Address:              DefaultHTTPAddress,
+			Port:                 DefaultHTTPPort,
 			PublicBaseURL:        "",
 			DownloadLinkTTLHours: 24,
 			Buffer: HTTPBufferConfig{
@@ -101,9 +116,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		WebUI: WebUIConfig{
-			Listen:   "127.0.0.1:22335",
-			Username: "admin",
-			Password: "",
+			Address:  DefaultWebUIAddress,
+			Port:     DefaultWebUIPort,
+			Username: DefaultWebUIUsername,
+			Password: DefaultWebUIPassword,
 		},
 		Modules: ModulesConfig{
 			Bot:   true,
@@ -170,6 +186,118 @@ func EffectiveDownloaderMode(cfg *Config) string {
 	return mode
 }
 
+func HTTPListenAddr(cfg *Config) string {
+	if cfg == nil {
+		return HTTPConfigListenAddr(HTTPConfig{})
+	}
+	return HTTPConfigListenAddr(cfg.HTTP)
+}
+
+func HTTPConfigListenAddr(cfg HTTPConfig) string {
+	address := DefaultHTTPAddress
+	port := DefaultHTTPPort
+	if strings.TrimSpace(cfg.Address) != "" {
+		address = strings.TrimSpace(cfg.Address)
+	}
+	if cfg.Port > 0 {
+		port = cfg.Port
+	}
+	return net.JoinHostPort(address, strconv.Itoa(port))
+}
+
+func WebUIListenAddr(cfg *Config) string {
+	address := DefaultWebUIAddress
+	port := DefaultWebUIPort
+	if cfg != nil {
+		if strings.TrimSpace(cfg.WebUI.Address) != "" {
+			address = strings.TrimSpace(cfg.WebUI.Address)
+		}
+		if cfg.WebUI.Port > 0 {
+			port = cfg.WebUI.Port
+		}
+	}
+	return net.JoinHostPort(address, strconv.Itoa(port))
+}
+
+func UsesDefaultWebUICredentials(cfg *Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.WebUI.Username) == DefaultWebUIUsername && cfg.WebUI.Password == DefaultWebUIPassword
+}
+
+func normalizeHTTPConfig(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	httpCfg := &cfg.HTTP
+	httpCfg.Address = strings.TrimSpace(httpCfg.Address)
+	if strings.TrimSpace(httpCfg.Listen) != "" {
+		address, port, err := splitLegacyListen("http.listen", httpCfg.Listen, DefaultHTTPAddress)
+		if err != nil {
+			return err
+		}
+		httpCfg.Address = address
+		httpCfg.Port = port
+		httpCfg.Listen = ""
+	}
+	if httpCfg.Address == "" {
+		httpCfg.Address = DefaultHTTPAddress
+	}
+	if httpCfg.Port == 0 {
+		httpCfg.Port = DefaultHTTPPort
+	}
+	if httpCfg.Port < 1 || httpCfg.Port > 65535 {
+		return fmt.Errorf("http.port must be between 1 and 65535")
+	}
+	return nil
+}
+
+func normalizeWebUIConfig(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	web := &cfg.WebUI
+	web.Address = strings.TrimSpace(web.Address)
+	if strings.TrimSpace(web.Listen) != "" {
+		address, port, err := splitLegacyListen("webui.listen", web.Listen, DefaultWebUIAddress)
+		if err != nil {
+			return err
+		}
+		web.Address = address
+		web.Port = port
+		web.Listen = ""
+	}
+	if web.Address == "" {
+		web.Address = DefaultWebUIAddress
+	}
+	if web.Port == 0 {
+		web.Port = DefaultWebUIPort
+	}
+	if web.Port < 1 || web.Port > 65535 {
+		return fmt.Errorf("webui.port must be between 1 and 65535")
+	}
+	web.Username = strings.TrimSpace(web.Username)
+	return nil
+}
+
+func splitLegacyListen(field, listen, defaultAddress string) (string, int, error) {
+	listen = strings.TrimSpace(listen)
+	host, portText, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "", 0, fmt.Errorf("%s must be host:port: %w", field, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("%s has invalid port %q", field, portText)
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = defaultAddress
+	}
+	return host, port, nil
+}
+
 func Validate(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config is nil")
@@ -185,6 +313,12 @@ func Validate(cfg *Config) error {
 		return err
 	}
 	cfg.Downloader.Mode = mode
+	if err := normalizeHTTPConfig(cfg); err != nil {
+		return err
+	}
+	if err := normalizeWebUIConfig(cfg); err != nil {
+		return err
+	}
 	return nil
 }
 

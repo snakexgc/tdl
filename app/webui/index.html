@@ -36,8 +36,17 @@
       </div>
     </aside>
 
-    <main class="main" id="view-host" aria-live="polite">
-      <div class="view-loading">正在载入管理面板...</div>
+    <main class="main">
+      <div class="credential-warning" id="credential-warning" role="alert" hidden>
+        <div>
+          <strong>正在使用默认 WebUI 管理员账号：admin / admin。</strong>
+          <span>请立刻修改用户名和密码：从侧边栏进入“配置文件”，填写新的用户名和密码，保存后重启TDL使用新凭据重新登录!</span>
+        </div>
+        <button class="btn danger" id="credential-warning-action" type="button">去修改</button>
+      </div>
+      <div id="view-host" aria-live="polite">
+        <div class="view-loading">正在载入管理面板...</div>
+      </div>
     </main>
   </div>
 

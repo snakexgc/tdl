@@ -5,7 +5,9 @@ services:
     restart: unless-stopped
     depends_on:
       - aria2-pro
-    network_mode: host
+    ports:
+      - "22335:22335"
+      - "22334:22334"
     volumes:
       - ./tdl:/data
 
@@ -13,7 +15,10 @@ services:
     image: p3terx/aria2-pro:latest
     container_name: aria2-pro
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "6800:6800"
+      - "6888:6888"
+      - "6888:6888/udp"
     logging:
       options:
         max-size: "1m"

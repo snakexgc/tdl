@@ -19,13 +19,20 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "custom", cfg.Namespace)
-	require.Equal(t, "0.0.0.0:8080", cfg.HTTP.Listen)
+	require.Empty(t, cfg.HTTP.Listen)
+	require.Equal(t, "0.0.0.0", cfg.HTTP.Address)
+	require.Equal(t, 22334, cfg.HTTP.Port)
+	require.Equal(t, "0.0.0.0:22334", HTTPListenAddr(cfg))
 	require.Equal(t, "memory", cfg.HTTP.Buffer.Mode)
 	require.Equal(t, 64, cfg.HTTP.Buffer.SizeMB)
 	require.Equal(t, 24, cfg.HTTP.DownloadLinkTTLHours)
-	require.Equal(t, "127.0.0.1:22335", cfg.WebUI.Listen)
+	require.Empty(t, cfg.WebUI.Listen)
+	require.Equal(t, "0.0.0.0", cfg.WebUI.Address)
+	require.Equal(t, 22335, cfg.WebUI.Port)
+	require.Equal(t, "0.0.0.0:22335", WebUIListenAddr(cfg))
 	require.Equal(t, "admin", cfg.WebUI.Username)
-	require.Empty(t, cfg.WebUI.Password)
+	require.Equal(t, "admin", cfg.WebUI.Password)
+	require.True(t, UsesDefaultWebUICredentials(cfg))
 	require.True(t, cfg.Modules.Bot)
 	require.True(t, cfg.Modules.Watch)
 	require.Equal(t, DownloaderModeAria2, cfg.Downloader.Mode)
@@ -33,6 +40,39 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Empty(t, cfg.TriggerReactions)
+}
+
+func TestLoadMigratesLegacyHTTPListen(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"http":{"listen":"127.0.0.1:23434","public_base_url":"http://127.0.0.1:23434"}}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	require.Empty(t, cfg.HTTP.Listen)
+	require.Equal(t, "127.0.0.1", cfg.HTTP.Address)
+	require.Equal(t, 23434, cfg.HTTP.Port)
+	require.Equal(t, "127.0.0.1:23434", HTTPListenAddr(cfg))
+}
+
+func TestLoadMigratesLegacyWebUIListen(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"webui":{"listen":"127.0.0.1:23456","username":"alice","password":"secret"}}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	require.Empty(t, cfg.WebUI.Listen)
+	require.Equal(t, "127.0.0.1", cfg.WebUI.Address)
+	require.Equal(t, 23456, cfg.WebUI.Port)
+	require.Equal(t, "127.0.0.1:23456", WebUIListenAddr(cfg))
+	require.False(t, UsesDefaultWebUICredentials(cfg))
 }
 
 func TestLoadNormalizesDownloaderMode(t *testing.T) {

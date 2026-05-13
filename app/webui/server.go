@@ -90,7 +90,7 @@ type Server struct {
 
 func Run(ctx context.Context, opts Options) error {
 	cfg := config.Get()
-	if cfg == nil || strings.TrimSpace(cfg.WebUI.Listen) == "" {
+	if cfg == nil || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
 		return nil
 	}
 	if strings.TrimSpace(cfg.WebUI.Username) == "" || cfg.WebUI.Password == "" {
@@ -104,7 +104,7 @@ func Run(ctx context.Context, opts Options) error {
 	server.startAria2SyncLoop(ctx)
 
 	httpServer := &http.Server{
-		Addr:    cfg.WebUI.Listen,
+		Addr:    config.WebUIListenAddr(cfg),
 		Handler: server.routes(),
 	}
 
@@ -298,6 +298,9 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
 		"user":          user,
+		"webui": map[string]any{
+			"using_default_credentials": config.UsesDefaultWebUICredentials(cfg),
+		},
 	})
 }
 
@@ -323,7 +326,10 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                        true,
+		"using_default_credentials": config.UsesDefaultWebUICredentials(cfg),
+	})
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
@@ -399,8 +405,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"namespace":     s.namespace(),
 		"watch_running": s.watchRunning(),
 		"webui": map[string]any{
-			"listen": cfg.WebUI.Listen,
-			"user":   cfg.WebUI.Username,
+			"listen":                    config.WebUIListenAddr(cfg),
+			"address":                   cfg.WebUI.Address,
+			"port":                      cfg.WebUI.Port,
+			"user":                      cfg.WebUI.Username,
+			"using_default_credentials": config.UsesDefaultWebUICredentials(cfg),
 		},
 		"aria2": map[string]any{
 			"rpc_url": cfg.Aria2.RPCURL,
@@ -410,6 +419,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"mode": config.EffectiveDownloaderMode(cfg),
 		},
 		"http": map[string]any{
+			"listen":          config.HTTPListenAddr(cfg),
+			"address":         cfg.HTTP.Address,
+			"port":            cfg.HTTP.Port,
 			"public_base_url": cfg.HTTP.PublicBaseURL,
 			"download_ttl":    cfg.HTTP.DownloadLinkTTLHours,
 		},
@@ -1948,7 +1960,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 func publicConfig(cfg *config.Config) *config.Config {
 	next, err := cloneConfig(cfg)
 	if err != nil {
-		return config.DefaultConfig()
+		next = config.DefaultConfig()
 	}
 	next.Bot.Token = ""
 	next.Aria2.Secret = ""

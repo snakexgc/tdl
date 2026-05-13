@@ -28,12 +28,14 @@ var configurablePaths = []string{
 	"trigger_reactions",
 	"include",
 	"exclude",
-	"http.listen",
+	"http.address",
+	"http.port",
 	"http.public_base_url",
 	"http.download_link_ttl_hours",
 	"http.buffer.mode",
 	"http.buffer.size_mb",
-	"webui.listen",
+	"webui.address",
+	"webui.port",
 	"webui.username",
 	"webui.password",
 	"modules.bot",
@@ -158,7 +160,7 @@ func cloneConfig(cfg *config.Config) (*config.Config, error) {
 func maskedConfig(cfg *config.Config) *config.Config {
 	next, err := cloneConfig(cfg)
 	if err != nil {
-		return config.DefaultConfig()
+		next = config.DefaultConfig()
 	}
 	if next.Bot.Token != "" {
 		next.Bot.Token = maskedStr

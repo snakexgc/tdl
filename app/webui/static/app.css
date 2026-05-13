@@ -202,6 +202,40 @@ textarea:focus-visible {
   padding: 26px;
 }
 
+.credential-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -26px -26px 22px;
+  padding: 14px 26px;
+  color: #ffffff;
+  background: #b42318;
+  border-bottom: 1px solid #7a2018;
+}
+
+.credential-warning div {
+  display: grid;
+  gap: 4px;
+  line-height: 1.45;
+}
+
+.credential-warning strong,
+.credential-warning span {
+  color: #ffffff;
+}
+
+.credential-warning .btn.danger {
+  flex: 0 0 auto;
+  border-color: rgba(255, 255, 255, 0.54);
+  background: #ffffff;
+  color: #9b1c14;
+}
+
+.credential-warning .btn.danger:hover {
+  background: #fff0ee;
+}
+
 .view {
   display: none;
 }
@@ -913,7 +947,8 @@ tr:last-child td {
 .field-inline select,
 .field input,
 .field select,
-.field textarea {
+.field textarea,
+.field .tag-input {
   width: 100%;
   min-height: 38px;
   border: 1px solid #c8d5cf;
@@ -927,8 +962,87 @@ tr:last-child td {
 .field-inline select:hover,
 .field input:hover,
 .field select:hover,
-.field textarea:hover {
+.field textarea:hover,
+.field .tag-input:hover {
   border-color: var(--line-strong);
+}
+
+.field .tag-input:focus-within {
+  box-shadow: var(--focus);
+  border-color: var(--primary);
+}
+
+.tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-input.disabled {
+  color: var(--muted);
+  background: #edf3f0;
+  border-color: var(--line);
+  cursor: not-allowed;
+  opacity: 0.74;
+}
+
+.field.disabled label,
+.field.disabled small {
+  color: var(--muted);
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tag-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 26px;
+  border: 1px solid #b9ded8;
+  border-radius: 8px;
+  padding: 2px 6px 2px 8px;
+  color: #074f48;
+  background: var(--primary-soft);
+  overflow-wrap: anywhere;
+}
+
+.tag-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  color: #0b5f57;
+  background: transparent;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.tag-remove:hover {
+  color: #ffffff;
+  background: var(--primary);
+}
+
+.tag-entry {
+  flex: 1 1 120px;
+  min-width: 92px;
+  min-height: 28px !important;
+  border: 0 !important;
+  padding: 4px 2px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tag-entry:disabled {
+  cursor: not-allowed;
 }
 
 .update-notes-shell {
@@ -1117,6 +1231,13 @@ tr:last-child td {
   .main {
     margin-left: 0;
     padding: 16px;
+  }
+
+  .credential-warning {
+    align-items: stretch;
+    flex-direction: column;
+    margin: -16px -16px 18px;
+    padding: 14px 16px;
   }
 
   .brand {

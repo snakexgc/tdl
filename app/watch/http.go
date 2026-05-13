@@ -502,7 +502,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 
 	p.stream = p.streamTask
 	p.server = &http.Server{
-		Addr:    cfg.Listen,
+		Addr:    config.HTTPConfigListenAddr(cfg),
 		Handler: p.routes(),
 	}
 
@@ -511,7 +511,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 
 func (p *downloadProxy) Start(ctx context.Context) error {
 	p.logger.Info("Starting HTTP download proxy",
-		zap.String("listen", p.cfg.Listen),
+		zap.String("listen", config.HTTPConfigListenAddr(p.cfg)),
 		zap.String("public_base_url", p.cfg.PublicBaseURL),
 		zap.Duration("download_link_ttl", p.tasks.ttl),
 		zap.String("buffer_mode", normalizeHTTPBufferMode(p.cfg.Buffer.Mode)),
