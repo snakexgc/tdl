@@ -101,7 +101,7 @@ func DefaultConfig() *Config {
 		PoolSize:         DefaultPoolSize,
 		Delay:            0,
 		ReconnectTimeout: 10,
-		DownloadDir:      "downloads",
+		DownloadDir:      "G\\Y&M",
 		TriggerReactions: []string{},
 		Include:          []string{},
 		Exclude:          []string{},

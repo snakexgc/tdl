@@ -39,6 +39,7 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
+	require.Equal(t, "G\\Y&M", cfg.DownloadDir)
 	require.Empty(t, cfg.TriggerReactions)
 }
 

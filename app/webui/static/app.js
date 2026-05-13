@@ -44,9 +44,9 @@ const sections = [
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
       ["pool_size", "下载并发", "number", "Telegram 连接池大小，也用于单个文件的分片下载并发；不确定时保持默认。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
-      ["ntp", "时间校准服务器", "text", "系统时间不准时填写，例如 pool.ntp.org。"],
+      ["ntp", "时间校准服务器", "text", "系统时间不准时填写，例如 time1.google.com。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
-      ["download_dir", "下载目录规则", "text", "用于按群组、日期等自动分目录，例如 G/Y&M。"],
+      ["download_dir", "下载目录规则", "text", "用于按群组、日期等自动分目录，例如 G\\Y&M。"],
       ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
       ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
       ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],
@@ -1765,12 +1765,19 @@ function renderField(field) {
 
 function renderTagInput(path, type, values) {
   const tags = (values || []).map((value) => renderTagItem(value)).join("");
+  const placeholder = tagInputPlaceholder(path, type);
   return `
     <div class="tag-input" data-config-control data-path="${escapeAttr(path)}" data-type="${escapeAttr(type)}" aria-disabled="false">
       <div class="tag-list" data-tag-list>${tags}</div>
-      <input class="tag-entry" data-tag-entry type="text" autocomplete="off" placeholder="添加词条">
+      <input class="tag-entry" data-tag-entry type="text" autocomplete="off" placeholder="${escapeAttr(placeholder)}">
     </div>
   `;
+}
+
+function tagInputPlaceholder(path, type) {
+  if (path === "trigger_reactions") return "添加表情";
+  if (type === "intList") return "添加 ID";
+  return "添加词条";
 }
 
 function renderTagItem(value) {
