@@ -1,7 +1,9 @@
 ## 快速开始
 
-### 第 1 步：配置
+**部署教程以出炉，可以根据教程进行部署：**
+https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 
+### Json配置细明
 
 ```json
 {
@@ -52,7 +54,7 @@
 }
 ```
 
-常用配置项：
+常用配置项及其说明：
 
 | 配置项                    | 说明                                                                                |
 | ---------------------- | --------------------------------------------------------------------------------- |
@@ -77,129 +79,6 @@
 | `modules.watch`        | 监听下载模块；包含 Telegram 表情监听、下载链接和任务提交                                    |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
-
-本地 KV 和 Telegram 登录数据固定使用 bolt 存储，保存在程序同目录的 `.tdl/` 文件夹中，不需要在 `config.json` 中配置。
-
-如果 aria2 运行在 Docker、NAS、WSL 或另一台机器上，`http.public_base_url` 不能写 `127.0.0.1`，需要写 aria2 所在环境能访问到 tdl 的局域网地址。
-
-`download_dir` 会和下载根目录组合使用。`downloader.mode=aria2` 时，若设置了 `aria2.dir`，tdl 会先尝试创建并校验该目录；若未设置，tdl 会从 aria2 的全局配置读取默认下载目录。`downloader.mode=internal` 时，tdl 会先尝试创建并校验 `aria2.dir`；如果没有权限或路径不可用，会在 tdl 程序同级目录创建 `docnload` 作为备用根目录。内部下载器固定同时下载 1 个文件、单文件 8 线程，不读取 `pool_size` 作为下载线程数。例如 `download_dir` 为 `Y&M/I/G` 时，Windows 下可能得到 `D:\Download\202604\12345\群组名`，Linux 下可能得到 `/root/download/202604/12345/群组名`。
-
-使用 aria2 模式时，tdl 对 aria2 暴露单条 HTTP 下载连接，文件内部仍会由 tdl 使用 `pool_size` 并发抓取 Telegram 分片。使用内部下载器时，tdl 直接写入本地文件，并会把未完成任务记录在 KV 中，程序异常退出后重启会继续未完成任务。
-
-`http.buffer.mode=memory` 会让当前活跃文件共享一块有上限的内存预读缓冲，用来降低 HTTP 顺序写出对 Telegram 分片抓取的反压。默认 `http.buffer.size_mb=64`；如果机器内存较小可设为 32，高带宽或 aria2 与 tdl 同机时可尝试 128。设置为 `off` 可回到旧的顺序流式行为。
-
-直接启动程序会打开 Web 管理面板，例如访问 `http://127.0.0.1:22335` 或服务器 IP 的 `22335` 端口。面板使用页面登录，不再依赖浏览器弹出的 Basic Auth 窗口。默认用户名和密码均为 `admin`；如果仍使用默认凭据登录，面板顶部会显示红色安全警告，并引导你到“配置文件 > Web 管理面板”修改用户名和密码。面板包含用户管理、配置文件、下载管理、KV 链接管理、模块管理和检查更新。下载管理会根据 `downloader.mode` 自动切换：aria2 模式内置 AriaNg，并通过 tdl 服务端代理读取 `aria2.rpc_url` / `aria2.secret`；internal 模式显示内部任务列表，可暂停、继续和删除任务。
-
-Web 管理面板的“模块管理”可以在运行时启用或关闭功能。`监听下载` 是一个整体模块，包含 Telegram 表情监听和下载任务提交；关闭该模块会停止这组功能，Web 管理面板仍会保持运行。
-
-Telegram 用户登录前需要先在 Web 面板填写一个用户名，tdl 会把这个用户名作为 `namespace` 保存对应的登录数据。用户名只允许英文字母，例如 `alice`。在“用户管理”里可以从 `.tdl` 目录中已有登录态的用户列表切换或删除用户；切换完成后程序会自动重启，让 WebUI、机器人和监听下载都加载到新的用户数据空间。
-
-Web 管理面板的“检查更新”页面会对比本地版本和 GitHub 最新 Release，并可下载更新后自动重启。若配置了 `proxy`，检查更新和下载更新都会走该代理。机器人也支持 `/update_tdl` 检查更新，按提示发送 `/update_tdl confirm` 后会自动下载、替换并重启当前程序。
-
-机器人私聊也可以直接管理 aria2：发送 `/start` 或 `/menu` 打开控制键盘；发送 HTTP/HTTPS 链接、磁力链接或 `.torrent` 文件会直接提交到 aria2；`/info` 查看 aria2 全局设置，`/path 绝对路径` 修改默认下载目录，`/web` 生成 AriaNg 在线控制地址。
-
-### 第 2 步：启动程序
-
-- 使用 `downloader.mode=aria2` 时，请先确保 aria2 已启动并开启 JSON-RPC；使用 `internal` 时不需要 aria2。
-- 直接运行程序。
-- 在 Windows 上可以直接双击启动，控制台窗口会保留用于查看运行日志。重启和更新后的再启动也会继续使用当前控制台输出。
-- 如果只配置了 `webui`，程序也可以正常启动管理面板；bot 和监听下载可以稍后在“模块管理”中启用。
-
-当机器人和监听下载模块都已配置并启用时，你会看到类似输出：
-
-```
-🤖 Bot @dl_bot (ID: 1234666) started
-👀 Watching for reactions... Press Ctrl+C to stop
-   HTTP listen: 0.0.0.0:22334
-   Public base URL: http://127.0.0.1:22334
-   aria2 RPC: http://127.0.0.1:6800/jsonrpc
-   Downloader mode: aria2
-   Output root: D:\downloads
-   Download dir template: G\Y&M
-   Telegram pool / per-file streams: 8
-   Download link TTL: 24h
-   HTTP buffer: memory (64 MiB per active file)
-   Max concurrent downloads: 1
-⚠️ http.public_base_url uses loopback address 127.0.0.1; this only works when aria2 runs on the same machine and network namespace
-🔄 Bot is running... Press Ctrl+C to stop
-```
-
-### 第 3 步：回表情
-
-打开任意 Telegram 客户端（桌面、手机、网页），找到一条带媒体的消息（图片、视频、文件等），**给它添加表情回应**。如果 `trigger_reactions` 为空，任意表情都可以触发；如果配置了表情列表，只有添加列表中的表情才会触发下载。
-
-tdl 会立刻检测到这个回应，并提交到当前下载器。aria2 模式会生成一个本地 HTTP 下载链接并通过 aria2 RPC 提交下载任务。终端会显示：
-
-```
-🚀 Submitted to aria2: msg 22372 -> downloads/video.mp4
-   URL: http://192.168.1.10:22334/download/abc123
-   GID: 2089b05ecca3d829
-```
-
-如果是相册（分组消息），回应其中任意一条，会自动提交**全部文件**。
-
-下载链接会按 Telegram 媒体 ID 生成稳定地址，并写入本地存储。默认保留 24 小时；这段时间内即使 `tdl watch` 异常退出后重启，aria2 仍可继续访问原链接断点续传。若 Telegram 文件引用过期，tdl 会尝试从原消息刷新引用；超过 `http.download_link_ttl_hours` 的链接会自动清理，避免 KV 持续增长。将 `http.download_link_ttl_hours` 设置为 `0` 时，链接永久有效且不会自动清理。
-
-按 `Ctrl+C` 停止监听。已下载的文件不受影响。
-
-## Docker 部署
-
-如果使用 aria2 模式，需要手动部署 Aria2 后再部署本项目；如果使用内部下载器，可不部署 Aria2。
-
-推荐使用Aria2为：https://p3terx.com/archives/docker-aria2-pro.html  
-
-当前Aria2支持Rclone上传，请按其教程进行配置即可。
-
-### 1. 准备配置目录
-
-在项目目录或服务器上的部署目录中创建配置和数据目录：
-
-```bash
-mkdir -p tdl
-cd tdl
-```
-
-获取docker-compose.yml文件：
-
-```bash
-wget https://raw.githubusercontent.com/snakexgc/tdl/refs/heads/master/docker-compose.yml -O docker-compose.yml
-```  
-
-### 2. 启动服务
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-启动后访问：
-
-- Web 管理面板：`http://服务器IP:22335`
-- tdl 下载代理端口：`22334`（映射到容器内默认 `http.port` 端口 `22334`）
-
-默认登录用户名和密码均为 `admin`。首次登录后请按顶部红色警告引导，进入“配置文件 > Web 管理面板”修改用户名和密码。
-
-如果使用 compose 中的 `aria2-pro`，在 Web 面板中将 `aria2.rpc_url` 设置为 `http://aria2-pro:6800/jsonrpc`，`aria2.secret` 设置为 compose 中的 `RPC_SECRET`。
-
-查看日志：
-
-```bash
-docker compose logs -f tdl
-```
-
-停止服务：
-
-```bash
-docker compose down
-```
-
-升级镜像：
-
-```bash
-docker compose down
-docker compose pull
-docker compose up -d
-```  
 
 ## 反馈
 [加入电报](https://t.me/+mHQOJCcxV64xMDE1)  
