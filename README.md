@@ -1,7 +1,10 @@
 ## 快速开始
 
-**部署教程以出炉，可以根据教程进行部署：**
-https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
+**部署教程已出炉，可以根据教程进行部署：**  
+
+https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/  
+
+当前教程还在不断完善，遇到问题欢迎在issues中或者电报群反馈！
 
 ### Json配置细明
 
