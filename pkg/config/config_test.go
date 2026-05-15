@@ -1,9 +1,13 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -145,4 +149,204 @@ func TestNormalizeNamespaceAllowsEnglishLetters(t *testing.T) {
 	ns, err := NormalizeNamespace(" Alice ")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", ns)
+}
+
+func TestLoadTrimsNTP(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"ntp":" time1.google.com "}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "time1.google.com", cfg.NTP)
+}
+
+func TestSelectStartupNTPPrefersWorkingConfiguredServer(t *testing.T) {
+	t.Parallel()
+
+	probe := newFakeNTPProbe(map[string][]fakeNTPProbeResult{
+		"custom.ntp": {{elapsed: 20 * time.Millisecond}},
+		"fast.ntp":   {{elapsed: time.Millisecond}},
+	})
+
+	selection := selectStartupNTP(context.Background(), " custom.ntp ", []string{"fast.ntp"}, probe.probe)
+
+	require.Equal(t, "custom.ntp", selection.Host)
+	require.Equal(t, "configured", selection.Source)
+	require.False(t, selection.ConfiguredFailed)
+	require.Equal(t, 1, probe.attempts("custom.ntp"))
+	require.Zero(t, probe.attempts("fast.ntp"))
+}
+
+func TestSelectStartupNTPFallsBackToFastestBuiltin(t *testing.T) {
+	t.Parallel()
+
+	timeoutErr := errors.New("timeout")
+	probe := newFakeNTPProbe(map[string][]fakeNTPProbeResult{
+		"custom.ntp": {
+			{err: timeoutErr},
+			{err: timeoutErr},
+			{err: timeoutErr},
+		},
+		"slow.ntp": {{elapsed: 50 * time.Millisecond}},
+		"fast.ntp": {{elapsed: 5 * time.Millisecond}},
+		"bad.ntp":  {{err: timeoutErr}},
+	})
+
+	selection := selectStartupNTP(context.Background(), "custom.ntp", []string{"slow.ntp", "fast.ntp", "bad.ntp"}, probe.probe)
+
+	require.Equal(t, "fast.ntp", selection.Host)
+	require.Equal(t, "builtin", selection.Source)
+	require.True(t, selection.ConfiguredFailed)
+	require.Equal(t, 3, probe.attempts("custom.ntp"))
+	require.Equal(t, 1, probe.attempts("slow.ntp"))
+	require.Equal(t, 1, probe.attempts("fast.ntp"))
+	require.Equal(t, 1, probe.attempts("bad.ntp"))
+}
+
+func TestSelectStartupNTPUsesSystemTimeWhenNoServerWorks(t *testing.T) {
+	t.Parallel()
+
+	timeoutErr := errors.New("timeout")
+	probe := newFakeNTPProbe(map[string][]fakeNTPProbeResult{
+		"custom.ntp": {
+			{err: timeoutErr},
+			{err: timeoutErr},
+			{err: timeoutErr},
+		},
+		"bad1.ntp": {{err: timeoutErr}},
+		"bad2.ntp": {{err: timeoutErr}},
+	})
+
+	selection := selectStartupNTP(context.Background(), "custom.ntp", []string{"bad1.ntp", "bad2.ntp"}, probe.probe)
+
+	require.Empty(t, selection.Host)
+	require.Equal(t, "system", selection.Source)
+	require.True(t, selection.ConfiguredFailed)
+	require.Equal(t, 3, probe.attempts("custom.ntp"))
+}
+
+func TestSelectFastestBuiltinNTPProbesConcurrently(t *testing.T) {
+	t.Parallel()
+
+	servers := []string{"slow.ntp", "fast.ntp", "middle.ntp"}
+	allStarted := make(chan struct{})
+	var closeAllStarted sync.Once
+	var mu sync.Mutex
+	started := map[string]struct{}{}
+
+	probe := func(ctx context.Context, host string, _ time.Duration) (time.Duration, error) {
+		mu.Lock()
+		started[host] = struct{}{}
+		if len(started) == len(servers) {
+			closeAllStarted.Do(func() {
+				close(allStarted)
+			})
+		}
+		mu.Unlock()
+
+		select {
+		case <-allStarted:
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+			return 0, errors.New("ntp probes were not concurrent")
+		}
+
+		switch host {
+		case "fast.ntp":
+			return time.Millisecond, nil
+		case "middle.ntp":
+			return 10 * time.Millisecond, nil
+		default:
+			return 50 * time.Millisecond, nil
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	selection := selectFastestBuiltinNTP(ctx, servers, probe)
+
+	require.Equal(t, "fast.ntp", selection.Host)
+	require.Equal(t, "builtin", selection.Source)
+}
+
+func TestSelectAndSaveStartupNTPSavesSelectedHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	probe := newFakeNTPProbe(map[string][]fakeNTPProbeResult{
+		"slow.ntp": {{elapsed: 50 * time.Millisecond}},
+		"fast.ntp": {{elapsed: 5 * time.Millisecond}},
+	})
+
+	oldProbe := probeNTP
+	oldBuiltin := BuiltinNTPServers
+	probeNTP = probe.probe
+	BuiltinNTPServers = []string{"slow.ntp", "fast.ntp"}
+
+	mu.Lock()
+	oldInstance := instance
+	oldConfigPath := configPath
+	instance = DefaultConfig()
+	configPath = path
+	mu.Unlock()
+
+	t.Cleanup(func() {
+		probeNTP = oldProbe
+		BuiltinNTPServers = oldBuiltin
+		mu.Lock()
+		instance = oldInstance
+		configPath = oldConfigPath
+		mu.Unlock()
+	})
+
+	selection, err := SelectAndSaveStartupNTP(context.Background())
+	require.NoError(t, err)
+	require.True(t, selection.Saved)
+	require.Equal(t, "fast.ntp", selection.Host)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "fast.ntp", cfg.NTP)
+}
+
+type fakeNTPProbeResult struct {
+	elapsed time.Duration
+	err     error
+}
+
+type fakeNTPProbe struct {
+	mu      sync.Mutex
+	results map[string][]fakeNTPProbeResult
+	calls   map[string]int
+}
+
+func newFakeNTPProbe(results map[string][]fakeNTPProbeResult) *fakeNTPProbe {
+	return &fakeNTPProbe{
+		results: results,
+		calls:   map[string]int{},
+	}
+}
+
+func (f *fakeNTPProbe) probe(_ context.Context, host string, _ time.Duration) (time.Duration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	index := f.calls[host]
+	f.calls[host]++
+	values := f.results[host]
+	if index >= len(values) {
+		return 0, errors.New("unexpected ntp probe")
+	}
+	result := values[index]
+	return result.elapsed, result.err
+}
+
+func (f *fakeNTPProbe) attempts(host string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[host]
 }

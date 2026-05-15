@@ -22,6 +22,9 @@ func NewBot() *cobra.Command {
 }
 
 func runBot(cmd *cobra.Command) error {
+	if err := ensureStartupNTP(cmd.Context()); err != nil {
+		return err
+	}
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
 		RequestReboot: bot.RequestReboot,
 		RequestUpdate: bot.RequestUpdate,

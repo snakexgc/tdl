@@ -128,7 +128,7 @@ func New() *cobra.Command {
 	cmd.PersistentFlags().Int(consts.FlagPoolSize, config.EffectivePoolSize(cfg), "Telegram connection pool size and per-file download workers")
 	cmd.PersistentFlags().Duration(consts.FlagDelay, time.Duration(cfg.Delay)*time.Second, "delay between each task, zero means no delay")
 
-	cmd.PersistentFlags().String(consts.FlagNTP, cfg.NTP, "ntp server host, if not set, use system time")
+	cmd.PersistentFlags().String(consts.FlagNTP, cfg.NTP, "ntp server host, if not set, fastest built-in server is selected on startup")
 	cmd.PersistentFlags().Duration(consts.FlagReconnectTimeout, time.Duration(cfg.ReconnectTimeout)*time.Second, "Telegram client reconnection backoff timeout, infinite if set to 0")
 
 	// completion

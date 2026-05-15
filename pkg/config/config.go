@@ -307,6 +307,7 @@ func Validate(cfg *Config) error {
 		return errors.Wrap(err, "validate namespace")
 	}
 	cfg.Namespace = namespace
+	cfg.NTP = strings.TrimSpace(cfg.NTP)
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
 	if err != nil {

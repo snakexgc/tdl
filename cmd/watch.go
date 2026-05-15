@@ -16,6 +16,9 @@ func NewWatch() *cobra.Command {
 		Long:    "Watch for message reactions in real-time. When you add a reaction to a message, its media will be submitted to the configured downloader automatically.",
 		GroupID: groupTools.ID,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := ensureStartupNTP(cmd.Context()); err != nil {
+				return err
+			}
 			opts.Threads = config.EffectivePoolSize(config.Get())
 			return watch.Run(cmd.Context(), opts)
 		},
