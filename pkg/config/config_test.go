@@ -23,6 +23,8 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "custom", cfg.Namespace)
+	require.Empty(t, cfg.ProxyUsername)
+	require.Empty(t, cfg.ProxyPassword)
 	require.Empty(t, cfg.HTTP.Listen)
 	require.Equal(t, "0.0.0.0", cfg.HTTP.Address)
 	require.Equal(t, 22334, cfg.HTTP.Port)
@@ -161,6 +163,38 @@ func TestLoadTrimsNTP(t *testing.T) {
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Equal(t, "time1.google.com", cfg.NTP)
+}
+
+func TestEffectiveProxyAddsConfiguredCredentials(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Proxy = "socks5://127.0.0.1:1080"
+	cfg.ProxyUsername = " alice "
+	cfg.ProxyPassword = "p@ss:word"
+
+	require.Equal(t, "socks5://alice:p%40ss%3Aword@127.0.0.1:1080", EffectiveProxy(cfg))
+}
+
+func TestEffectiveProxyKeepsInlineCredentials(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Proxy = "http://inline:secret@127.0.0.1:8080"
+	cfg.ProxyUsername = "alice"
+	cfg.ProxyPassword = "override"
+
+	require.Equal(t, "http://inline:secret@127.0.0.1:8080", EffectiveProxy(cfg))
+}
+
+func TestEffectiveProxyRequiresUsernameForSeparateCredentials(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Proxy = "http://127.0.0.1:8080"
+	cfg.ProxyPassword = "secret"
+
+	require.Equal(t, "http://127.0.0.1:8080", EffectiveProxy(cfg))
 }
 
 func TestSelectStartupNTPPrefersWorkingConfiguredServer(t *testing.T) {

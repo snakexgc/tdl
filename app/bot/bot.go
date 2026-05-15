@@ -612,7 +612,7 @@ func newHTTPClientWithProxy(proxyURL string) (*http.Client, error) {
 		}).DialContext,
 	}
 
-	switch u.Scheme {
+	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
 		// HTTP/HTTPS proxy: use Transport.Proxy
 		transport.Proxy = http.ProxyURL(u)

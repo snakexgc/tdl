@@ -1508,7 +1508,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	user, err := login.CheckSession(checkCtx, login.SessionOptions{
 		KV:               s.opts.NamespaceKV,
-		Proxy:            cfg.Proxy,
+		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	})
@@ -1908,7 +1908,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	info, err := updater.CheckLatest(r.Context(), config.Get().Proxy)
+	info, err := updater.CheckLatest(r.Context(), config.EffectiveProxy(config.Get()))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -1925,7 +1925,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("update is not available in this mode"))
 		return
 	}
-	plan, info, err := updater.DownloadLatest(r.Context(), config.Get().Proxy)
+	plan, info, err := updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.Get()))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -1965,6 +1965,7 @@ func publicConfig(cfg *config.Config) *config.Config {
 	next.Bot.Token = ""
 	next.Aria2.Secret = ""
 	next.WebUI.Password = ""
+	next.ProxyPassword = ""
 	return next
 }
 
@@ -1982,7 +1983,7 @@ func cloneConfig(cfg *config.Config) (*config.Config, error) {
 
 func isBlankSensitivePatch(path string, raw json.RawMessage) bool {
 	switch strings.ToLower(strings.TrimSpace(path)) {
-	case "bot.token", "aria2.secret", "webui.password":
+	case "bot.token", "aria2.secret", "webui.password", "proxy_password":
 	default:
 		return false
 	}

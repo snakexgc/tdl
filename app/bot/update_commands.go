@@ -28,7 +28,7 @@ func handleUpdateCommand(ctx *th.Context, msg *telego.Message, text string, cont
 	confirm := updateCommandConfirmed(text)
 	if !confirm {
 		checkCtx := context.WithoutCancel(ctx)
-		info, err := updater.CheckLatest(checkCtx, config.Get().Proxy)
+		info, err := updater.CheckLatest(checkCtx, config.EffectiveProxy(config.Get()))
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, "检查更新失败："+err.Error())
 		}
@@ -44,7 +44,7 @@ func handleUpdateCommand(ctx *th.Context, msg *telego.Message, text string, cont
 	}
 	_ = sendMessage(ctx, msg.Chat.ID, "正在下载更新，请稍候...")
 	downloadCtx := context.WithoutCancel(ctx)
-	plan, info, err := updater.DownloadLatest(downloadCtx, config.Get().Proxy)
+	plan, info, err := updater.DownloadLatest(downloadCtx, config.EffectiveProxy(config.Get()))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return true, sendMessage(ctx, msg.Chat.ID, "更新已取消。")

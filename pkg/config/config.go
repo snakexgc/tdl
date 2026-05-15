@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -75,6 +76,8 @@ type Aria2Config struct {
 // Config 全局配置结构
 type Config struct {
 	Proxy            string           `json:"proxy"`
+	ProxyUsername    string           `json:"proxy_username"`
+	ProxyPassword    string           `json:"proxy_password"`
 	Namespace        string           `json:"namespace"`
 	Debug            bool             `json:"debug"`
 	PoolSize         int              `json:"pool_size"`
@@ -160,6 +163,28 @@ func EffectivePoolSize(cfg *Config) int {
 		return DefaultPoolSize
 	}
 	return cfg.PoolSize
+}
+
+func EffectiveProxy(cfg *Config) string {
+	if cfg == nil {
+		return ""
+	}
+	proxyURL := strings.TrimSpace(cfg.Proxy)
+	username := strings.TrimSpace(cfg.ProxyUsername)
+	if proxyURL == "" || username == "" {
+		return proxyURL
+	}
+
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.User != nil {
+		return proxyURL
+	}
+	if cfg.ProxyPassword == "" {
+		u.User = url.User(username)
+	} else {
+		u.User = url.UserPassword(username, cfg.ProxyPassword)
+	}
+	return u.String()
 }
 
 func NormalizeDownloaderMode(mode string) (string, error) {
@@ -307,6 +332,8 @@ func Validate(cfg *Config) error {
 		return errors.Wrap(err, "validate namespace")
 	}
 	cfg.Namespace = namespace
+	cfg.Proxy = strings.TrimSpace(cfg.Proxy)
+	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
 	cfg.NTP = strings.TrimSpace(cfg.NTP)
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)

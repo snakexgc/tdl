@@ -35,12 +35,15 @@ const heartbeatOfflineMS = 3000;
 const heartbeatRequestTimeoutMS = 1500;
 const internalDownloadRefreshMS = 1000;
 const exclusiveListPairs = [["include", "exclude"]];
+const proxySchemes = ["socks5://", "socks5h://", "http://", "https://"];
 
 const sections = [
   {
     title: "基础",
     fields: [
-      ["proxy", "代理地址", "text", "需要代理访问 Telegram 或 GitHub 时填写，例如 http://127.0.0.1:10808。"],
+      ["proxy", "代理地址", "proxy", "选择代理协议后，只填写 IP 或域名加端口，例如 127.0.0.1:1080。"],
+      ["proxy_username", "代理用户名", "text", "代理需要认证时填写；没有认证时留空。"],
+      ["proxy_password", "代理密码", "password", "代理需要认证时填写；没有认证时留空，保存时留空表示保持原密码。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
       ["pool_size", "下载并发", "number", "Telegram 连接池大小，也用于单个文件的分片下载并发；不确定时保持默认。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
@@ -1745,6 +1748,8 @@ function renderField(field) {
     control = `<select data-config-control data-path="${escapeAttr(path)}" data-type="${type}">
       ${(options || []).map((option) => `<option value="${escapeAttr(option)}" ${String(value) === option ? "selected" : ""}>${escapeHTML(option)}</option>`).join("")}
     </select>`;
+  } else if (type === "proxy") {
+    control = renderProxyInput(path, value || "");
   } else if (type === "bool") {
     control = `<label class="checkbox-line"><input data-config-control type="checkbox" data-path="${escapeAttr(path)}" data-type="${type}" ${value ? "checked" : ""}> 启用</label>`;
   } else if (type === "list" || type === "intList") {
@@ -1761,6 +1766,49 @@ function renderField(field) {
       <small>${escapeHTML(help || path)}</small>
     </div>
   `;
+}
+
+function renderProxyInput(path, value) {
+  const proxy = parseProxyValue(value);
+  return `
+    <div class="proxy-control" data-config-control data-path="${escapeAttr(path)}" data-type="proxy">
+      <select data-proxy-scheme aria-label="代理协议">
+        ${proxySchemes.map((scheme) => `<option value="${escapeAttr(scheme)}" ${proxy.scheme === scheme ? "selected" : ""}>${escapeHTML(scheme)}</option>`).join("")}
+      </select>
+      <input data-proxy-address type="text" value="${escapeAttr(proxy.address)}" placeholder="127.0.0.1:1080" autocomplete="off">
+    </div>
+  `;
+}
+
+function parseProxyValue(value) {
+  value = String(value || "").trim();
+  const fallback = { scheme: proxySchemes[0], address: "" };
+  if (!value) return fallback;
+
+  const matched = proxySchemes.find((scheme) => value.toLowerCase().startsWith(scheme));
+  if (!matched) {
+    return { scheme: fallback.scheme, address: trimProxyAddress(value) };
+  }
+
+  try {
+    const parsed = new URL(value);
+    return {
+      scheme: `${parsed.protocol}//`,
+      address: parsed.host || trimProxyAddress(value.slice(matched.length)),
+    };
+  } catch {
+    return {
+      scheme: matched,
+      address: trimProxyAddress(value.slice(matched.length)),
+    };
+  }
+}
+
+function trimProxyAddress(value) {
+  value = String(value || "").trim();
+  const at = value.lastIndexOf("@");
+  if (at >= 0) value = value.slice(at + 1);
+  return value.replace(/^\/+/, "");
 }
 
 function renderTagInput(path, type, values) {
@@ -1919,11 +1967,21 @@ function fieldValue(input, type) {
     if (type === "intList") return values.map((value) => Number(value)).filter((value) => Number.isFinite(value));
     return values;
   }
+  if (input.classList.contains("proxy-control")) return proxyFieldValue(input);
   if (type === "bool") return input.checked;
   if (type === "number") return Number(input.value || 0);
   if (type === "list") return splitList(input.value);
   if (type === "intList") return splitList(input.value).map((value) => Number(value)).filter((value) => Number.isFinite(value));
   return input.value;
+}
+
+function proxyFieldValue(control) {
+  const scheme = control.querySelector("[data-proxy-scheme]")?.value || proxySchemes[0];
+  const rawAddress = control.querySelector("[data-proxy-address]")?.value || "";
+  const pasted = parseProxyValue(rawAddress);
+  const address = rawAddress.includes("://") ? pasted.address : trimProxyAddress(rawAddress);
+  if (!address) return "";
+  return `${rawAddress.includes("://") ? pasted.scheme : scheme}${address}`;
 }
 
 async function reboot() {

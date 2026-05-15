@@ -118,7 +118,7 @@ func New() *cobra.Command {
 
 	cmd.AddCommand(NewVersion(), NewWatch(), NewBot())
 
-	cmd.PersistentFlags().String(consts.FlagProxy, cfg.Proxy, "proxy address, format: protocol://username:password@host:port")
+	cmd.PersistentFlags().String(consts.FlagProxy, cfg.Proxy, "proxy address, supports socks5://, socks5h://, http:// and https://")
 	cmd.PersistentFlags().StringP(consts.FlagNamespace, "n", cfg.Namespace, "namespace for Telegram session")
 	cmd.PersistentFlags().Bool(consts.FlagDebug, cfg.Debug, "enable debug mode")
 

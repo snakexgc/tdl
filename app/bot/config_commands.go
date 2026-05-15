@@ -19,6 +19,8 @@ const maskedStr = "(hidden)"
 
 var configurablePaths = []string{
 	"proxy",
+	"proxy_username",
+	"proxy_password",
 	"debug",
 	"pool_size",
 	"delay",
@@ -108,6 +110,9 @@ func handleConfigSet(ctx *th.Context, chatID int64, payload string, afterSave fu
 	}
 
 	value, _ := getConfigValue(next, path)
+	if isSensitiveConfigPath(path) {
+		value = maskedStr
+	}
 	return sendMessage(ctx, chatID, fmt.Sprintf("配置已保存：%s = %s\n当前运行中的 watch 可能需要 /reboot 后完整生效。", path, formatJSON(value)))
 }
 
@@ -141,7 +146,7 @@ func isProtectedConfigPath(path string) bool {
 
 func isSensitiveConfigPath(path string) bool {
 	path = strings.ToLower(strings.TrimSpace(path))
-	return path == "aria2.secret" || path == "webui.password"
+	return path == "aria2.secret" || path == "webui.password" || path == "proxy_password"
 }
 
 func cloneConfig(cfg *config.Config) (*config.Config, error) {
@@ -170,6 +175,9 @@ func maskedConfig(cfg *config.Config) *config.Config {
 	}
 	if next.WebUI.Password != "" {
 		next.WebUI.Password = maskedStr
+	}
+	if next.ProxyPassword != "" {
+		next.ProxyPassword = maskedStr
 	}
 	return next
 }

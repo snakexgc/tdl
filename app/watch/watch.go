@@ -354,7 +354,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 	o := pkgtclient.Options{
 		KV:               kvd,
-		Proxy:            cfg.Proxy,
+		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
 		ReconnectTimeout: reconnectDelay,
 	}

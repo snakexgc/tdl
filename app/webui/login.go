@@ -221,7 +221,7 @@ func (m *webLoginManager) sessionOptions(kvd storage.Storage) login.SessionOptio
 	}
 	return login.SessionOptions{
 		KV:               kvd,
-		Proxy:            cfg.Proxy,
+		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	}

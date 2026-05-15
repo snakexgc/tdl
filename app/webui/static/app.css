@@ -967,6 +967,17 @@ tr:last-child td {
   border-color: var(--line-strong);
 }
 
+.proxy-control {
+  display: grid;
+  grid-template-columns: minmax(112px, 140px) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.proxy-control select,
+.proxy-control input {
+  min-width: 0;
+}
+
 .field .tag-input:focus-within {
   box-shadow: var(--focus);
   border-color: var(--primary);
@@ -1266,6 +1277,7 @@ tr:last-child td {
   }
 
   .field,
+  .proxy-control,
   .login-flow-head,
   .user-switch,
   .module-main,

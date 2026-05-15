@@ -266,7 +266,7 @@ func (m *Manager) StartBot() {
 		err := bot.Run(ctx, bot.Options{
 			Token:                 cfg.Bot.Token,
 			AllowedUsers:          cfg.Bot.AllowedUsers,
-			Proxy:                 cfg.Proxy,
+			Proxy:                 config.EffectiveProxy(cfg),
 			Namespace:             cfg.Namespace,
 			NTP:                   cfg.NTP,
 			ReconnectTimeout:      time.Duration(cfg.ReconnectTimeout) * time.Second,
@@ -439,7 +439,7 @@ func (m *Manager) checkSession(ctx context.Context) error {
 	defer cancel()
 	_, err := login.CheckSession(checkCtx, login.SessionOptions{
 		KV:               m.namespaceKV,
-		Proxy:            cfg.Proxy,
+		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	})
