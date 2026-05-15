@@ -85,7 +85,7 @@ const sections = [
   {
     title: "下载器",
     fields: [
-      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器，固定单文件 8 线程、同时 1 个文件。", ["aria2", "internal"]],
+      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器，单文件线程数由 pool_size 控制、同时 1 个文件。", ["aria2", "internal"]],
     ],
   },
   {

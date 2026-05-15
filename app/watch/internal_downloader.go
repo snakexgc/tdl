@@ -36,24 +36,36 @@ type internalDownloader struct {
 	queued  map[string]struct{}
 }
 
-func newInternalDownloader(proxy *downloadProxy, kvd storage.Storage, logger *zap.Logger, httpCfg config.HTTPConfig) *internalDownloader {
+func newInternalDownloader(proxy *downloadProxy, kvd storage.Storage, logger *zap.Logger, cfg *config.Config) *internalDownloader {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	limit := internalDownloadLimiter(proxy, cfg)
 	return &internalDownloader{
 		proxy:  proxy,
 		store:  newInternalTaskStore(kvd),
-		limit:  transfer.NewLimiter(maxConcurrentDownloads, internalDownloadThreads, httpMemoryBufferSlots(httpCfg.Buffer)),
+		limit:  limit,
 		logger: logger.Named("internal-downloader"),
 		queued: map[string]struct{}{},
 	}
 }
 
 func effectiveDownloadPoolSize(cfg *config.Config) int {
-	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
-		return internalDownloadThreads
-	}
 	return config.EffectivePoolSize(cfg)
+}
+
+func internalDownloadLimiter(proxy *downloadProxy, cfg *config.Config) *transfer.Limiter {
+	if proxy != nil && proxy.limiter != nil {
+		return proxy.limiter
+	}
+	if cfg == nil {
+		cfg = config.Get()
+	}
+	var httpCfg config.HTTPConfig
+	if cfg != nil {
+		httpCfg = cfg.HTTP
+	}
+	return transfer.NewLimiter(maxConcurrentDownloads, config.EffectivePoolSize(cfg), httpMemoryBufferSlots(httpCfg.Buffer))
 }
 
 func (d *internalDownloader) Start(ctx context.Context) error {
@@ -92,7 +104,15 @@ func (d *internalDownloader) Start(ctx context.Context) error {
 		d.loop(runCtx)
 	}()
 
-	return d.enqueuePending(ctx)
+	if err := d.requeueInterrupted(ctx); err != nil {
+		d.Stop()
+		return err
+	}
+	if err := d.enqueuePending(ctx); err != nil {
+		d.Stop()
+		return err
+	}
+	return nil
 }
 
 func (d *internalDownloader) Stop() {
@@ -209,6 +229,24 @@ func (d *internalDownloader) enqueuePending(ctx context.Context) error {
 	return nil
 }
 
+func (d *internalDownloader) requeueInterrupted(ctx context.Context) error {
+	records, err := d.store.Records(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.Status != InternalDownloadStatusActive {
+			continue
+		}
+		record.Status = InternalDownloadStatusQueued
+		record.Error = ""
+		if err := d.store.Save(ctx, record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *internalDownloader) queueID(id string) bool {
 	d.mu.Lock()
 	if !d.running || d.queue == nil {
@@ -250,6 +288,10 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		return
 	}
 
+	if d.proxy == nil || d.proxy.tasks == nil {
+		d.markError(ctx, record, errors.New("download proxy is not initialized"))
+		return
+	}
 	task, ok, err := d.proxy.tasks.Get(ctx, record.TaskID)
 	if err != nil {
 		d.markError(ctx, record, err)
@@ -287,6 +329,30 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		d.markComplete(ctx, record)
 		return
 	}
+
+	if d.limit == nil {
+		d.markError(ctx, record, errors.New("download limiter is not initialized"))
+		return
+	}
+	lease, err := d.limit.Acquire(ctx, record.ID)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		d.markError(ctx, record, err)
+		return
+	}
+	defer lease.Release()
+
+	latest, ok, err := d.store.Get(ctx, record.ID)
+	if err != nil {
+		d.markError(ctx, record, err)
+		return
+	}
+	if !ok || !shouldRunInternalDownload(latest.Status) {
+		return
+	}
+
 	record.Status = InternalDownloadStatusActive
 	record.Error = ""
 	if err := d.store.Save(ctx, record); err != nil {
@@ -304,17 +370,6 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		return
 	}
 
-	lease, err := d.limit.Acquire(ctx, record.ID)
-	if err != nil {
-		_ = file.Close()
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		d.markError(ctx, record, err)
-		return
-	}
-	defer lease.Release()
-
 	writer := &internalProgressWriter{
 		ctx:       ctx,
 		store:     d.store,
@@ -323,7 +378,11 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		completed: completed,
 		w:         file,
 	}
-	err = d.proxy.streamTask(ctx, task, lease, completed, record.Total-1, writer)
+	stream := d.proxy.stream
+	if stream == nil {
+		stream = d.proxy.streamTask
+	}
+	err = stream(ctx, task, lease, completed, record.Total-1, writer)
 	closeErr := file.Close()
 	if closeErr != nil && err == nil {
 		err = closeErr

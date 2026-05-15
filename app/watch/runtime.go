@@ -32,6 +32,6 @@ func newWatchRuntime(cfg *config.Config, kvd storage.Storage, logger *zap.Logger
 		aria2Tasks: aria2.NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		pools:      pools,
 	}
-	runtime.internal = newInternalDownloader(proxy, kvd, logger, cfg.HTTP)
+	runtime.internal = newInternalDownloader(proxy, kvd, logger, cfg)
 	return runtime
 }

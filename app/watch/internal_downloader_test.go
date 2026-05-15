@@ -1,7 +1,9 @@
 package watch
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,7 +11,9 @@ import (
 
 	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
+	"github.com/iyear/tdl/app/watch/transfer"
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
@@ -26,14 +30,22 @@ func TestValidateWatchConfigAllowsInternalModeWithoutAria2(t *testing.T) {
 	require.NoError(t, validateWatchConfig(cfg))
 }
 
-func TestInternalModeUsesFixedDownloadThreads(t *testing.T) {
+func TestInternalModeUsesConfiguredDownloadThreads(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.PoolSize = 1
+	cfg.PoolSize = 3
 
-	require.Equal(t, internalDownloadThreads, effectiveDownloadPoolSize(cfg))
+	require.Equal(t, 3, effectiveDownloadPoolSize(cfg))
+
+	runtime := newWatchRuntime(cfg, newMemoryTaskStorage(), nil)
+	require.True(t, runtime.proxy.limiter == runtime.internal.limit)
+
+	lease, err := runtime.internal.limit.Acquire(context.Background(), "document_1")
+	require.NoError(t, err)
+	require.Equal(t, 3, lease.MaxWorkers())
+	lease.Release()
 }
 
 func TestInternalRuntimeKeepsDownloadTasksWithoutTTL(t *testing.T) {
@@ -185,6 +197,123 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, InternalDownloadStatusComplete, complete.Status)
+}
+
+func TestInternalDownloaderRequeuesInterruptedActiveTasks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kvd := newMemoryTaskStorage()
+	store := newInternalTaskStore(kvd)
+	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+		ID:        "document_1",
+		TaskID:    "document_1",
+		FileName:  "video.mp4",
+		Total:     100,
+		Status:    InternalDownloadStatusActive,
+		CreatedAt: time.Now(),
+	}))
+
+	downloader := &internalDownloader{store: store}
+	require.NoError(t, downloader.requeueInterrupted(ctx))
+
+	record, ok, err := store.Get(ctx, "document_1")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, InternalDownloadStatusQueued, record.Status)
+}
+
+func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	kvd := newMemoryTaskStorage()
+	task := &downloadTask{
+		ID:        "document_42",
+		PeerID:    12345,
+		MessageID: 7,
+		Peer:      &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
+		FileName:  "video.mp4",
+		FileSize:  4,
+		CreatedAt: time.Now(),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{
+				ID:            42,
+				AccessHash:    99,
+				FileReference: []byte("ref"),
+			},
+			Name: "video.mp4",
+			Size: 4,
+			DC:   2,
+		},
+	}
+	tasks := newTaskStore(kvd, 0)
+	require.NoError(t, tasks.Add(ctx, task))
+
+	store := newInternalTaskStore(kvd)
+	target := filepath.Join(t.TempDir(), task.FileName)
+	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+		ID:        task.ID,
+		TaskID:    task.ID,
+		FileName:  task.FileName,
+		Dir:       filepath.Dir(target),
+		Out:       filepath.Base(target),
+		Path:      target,
+		Total:     task.FileSize,
+		Status:    InternalDownloadStatusQueued,
+		CreatedAt: time.Now(),
+	}))
+
+	limiter := transfer.NewLimiter(1, 2)
+	blockingLease, err := limiter.Acquire(ctx, "other")
+	require.NoError(t, err)
+
+	streamCalled := make(chan struct{})
+	done := make(chan struct{})
+	downloader := &internalDownloader{
+		proxy: &downloadProxy{
+			tasks:   tasks,
+			limiter: limiter,
+			stream: func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
+				close(streamCalled)
+				_, err := w.Write(bytes.Repeat([]byte("x"), int(end-start+1)))
+				return err
+			},
+		},
+		store:  store,
+		limit:  limiter,
+		logger: zap.NewNop(),
+	}
+
+	go func() {
+		downloader.runTask(ctx, task.ID)
+		close(done)
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	record, ok, err := store.Get(ctx, task.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, InternalDownloadStatusQueued, record.Status)
+	select {
+	case <-streamCalled:
+		t.Fatal("stream should wait until a file slot is available")
+	default:
+	}
+
+	blockingLease.Release()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("internal download did not finish after releasing file slot")
+	}
+	record, ok, err = store.Get(ctx, task.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, InternalDownloadStatusComplete, record.Status)
 }
 
 func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) {

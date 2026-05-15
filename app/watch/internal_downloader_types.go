@@ -13,8 +13,6 @@ const (
 	InternalDownloadStatusComplete = "complete"
 	InternalDownloadStatusError    = "error"
 	InternalDownloadStatusRemoved  = "removed"
-
-	internalDownloadThreads = 8
 )
 
 var (

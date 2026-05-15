@@ -10,7 +10,7 @@ import (
 
 func shouldRunInternalDownload(status string) bool {
 	switch status {
-	case "", InternalDownloadStatusQueued, InternalDownloadStatusActive, InternalDownloadStatusError:
+	case "", InternalDownloadStatusQueued, InternalDownloadStatusError:
 		return true
 	default:
 		return false
