@@ -18,11 +18,12 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "pool_size": 8, // Telegram 连接池大小，也用于单文件分片下载并发
   "delay": 0, // 两个下载任务之间的等待时间，单位秒
   "ntp": "", // NTP 服务器地址；留空时启动会自动选择最快的内置服务器并写回此项
-  "reconnect_timeout": 10, // 重连超时时间，单位秒
+  "reconnect_timeout": 3, // 重连超时时间，单位秒
   "download_dir": "G\\Y&M", // 下载目录模板，会拼接在下载根目录后
   "trigger_reactions": [], // 指定触发下载的表情，如 ["👍", "🔥"]；为空时任意表情都可以触发
   "include": [], // 只下载指定扩展名，如 `["mp4", "mp3"]`，与exclude互斥
   "exclude": ["png","jpg"], // 排除指定扩展名，如 `["png", "jpg"]`与include互斥
+  "file_size_mb": 0, // 文件大小过滤，单位 MB；0 表示不限制，小于该大小的文件会在后缀过滤后跳过
   "http": {
     "address": "0.0.0.0", // HTTP 下载代理监听地址
     "port": 22334, // HTTP 下载代理监听端口
@@ -71,6 +72,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `trigger_reactions`    | 触发下载的表情列表，如 `["👍", "🔥"]`；为空时任意表情都可以触发                                         |
 | `include`              | 只下载指定扩展名，如 `["mp4", "mp3"]`                                                       |
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
+| `file_size_mb`         | 文件大小过滤，单位 MB；`0` 表示不限制，小于该大小的文件会在 `include`/`exclude` 后跳过               |
 | `pool_size`            | Telegram 连接池大小，也用于单个文件的分片下载并发；默认 8 适合多数场景 |
 | `ntp`                  | NTP 时间校准服务器；留空时启动会检测内置服务器并保存最快可用项，已填写时会先按 3 秒超时重试 3 次 |
 | `http.address`         | tdl 下载代理监听地址；默认 `0.0.0.0`，修改后需要重启                                                         |

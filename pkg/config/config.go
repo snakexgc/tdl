@@ -88,6 +88,7 @@ type Config struct {
 	TriggerReactions []string         `json:"trigger_reactions"`
 	Include          []string         `json:"include"`
 	Exclude          []string         `json:"exclude"`
+	FileSizeMB       int64            `json:"file_size_mb"`
 	HTTP             HTTPConfig       `json:"http"`
 	WebUI            WebUIConfig      `json:"webui"`
 	Modules          ModulesConfig    `json:"modules"`
@@ -103,11 +104,12 @@ func DefaultConfig() *Config {
 		Debug:            false,
 		PoolSize:         DefaultPoolSize,
 		Delay:            0,
-		ReconnectTimeout: 10,
+		ReconnectTimeout: 3,
 		DownloadDir:      "G\\Y&M",
 		TriggerReactions: []string{},
 		Include:          []string{},
 		Exclude:          []string{},
+		FileSizeMB:       0,
 		HTTP: HTTPConfig{
 			Address:              DefaultHTTPAddress,
 			Port:                 DefaultHTTPPort,
@@ -336,6 +338,9 @@ func Validate(cfg *Config) error {
 	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
 	cfg.NTP = strings.TrimSpace(cfg.NTP)
 	cfg.PoolSize = EffectivePoolSize(cfg)
+	if cfg.FileSizeMB < 0 {
+		return errors.New("file_size_mb must be greater than or equal to 0")
+	}
 	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
 	if err != nil {
 		return err

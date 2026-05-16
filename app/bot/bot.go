@@ -152,7 +152,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	internalFactory := func() *watch.InternalDownloadController {
 		return watch.NewInternalDownloadController(kvd)
 	}
-	go runAria2EventListener(ctx, bot, notifier, aria2Factory)
+	go runAria2EventListener(ctx, notifier, aria2Factory)
 	var requestReboot func()
 	onLoginSuccess := func(user *tg.User, namespace string) {
 		restart, err := saveBotNamespaceIfChanged(namespace)

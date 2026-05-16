@@ -50,12 +50,15 @@ type Options struct {
 	TriggerReactions []string
 	Include          []string
 	Exclude          []string
+	FileSizeMB       int64
 	Notify           NotifyFunc
 }
 
 type NotifyFunc func(ctx context.Context, text string)
 
 const defaultFileTemplate = "{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}"
+
+const bytesPerMegabyte int64 = 1024 * 1024
 
 func DefaultOptions(cfg *config.Config) Options {
 	if cfg == nil {
@@ -69,6 +72,7 @@ func DefaultOptions(cfg *config.Config) Options {
 		TriggerReactions: append([]string(nil), cfg.TriggerReactions...),
 		Include:          append([]string(nil), cfg.Include...),
 		Exclude:          append([]string(nil), cfg.Exclude...),
+		FileSizeMB:       cfg.FileSizeMB,
 	}
 }
 
@@ -130,12 +134,16 @@ type Watcher struct {
 	triggerReactions map[string]struct{}
 	include          map[string]struct{}
 	exclude          map[string]struct{}
+	minFileSizeBytes int64
 }
 
 func Run(ctx context.Context, opts Options) error {
 	cfg := config.Get()
 	if err := validateWatchConfig(cfg); err != nil {
 		return err
+	}
+	if opts.FileSizeMB < 0 {
+		return errors.New("file_size_mb must be greater than or equal to 0")
 	}
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
@@ -272,6 +280,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	color.Green("   Max concurrent downloads: %d", maxConcurrentDownloads)
 	color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
+	if opts.FileSizeMB > 0 {
+		color.Green("   Min file size: %s (%d MB)", utils.Byte.FormatBinaryBytes(fileSizeMBToBytes(opts.FileSizeMB)), opts.FileSizeMB)
+	} else {
+		color.Green("   Min file size: unlimited")
+	}
 	if downloaderMode == config.DownloaderModeAria2 {
 		warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 	}
@@ -368,6 +381,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		triggerReactions: newTriggerReactionSet(opts.TriggerReactions),
 		include:          filterMap.New(opts.Include, addPrefixDot),
 		exclude:          filterMap.New(opts.Exclude, addPrefixDot),
+		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMB),
 	}
 
 	d.OnMessageReactions(w.onReaction)
@@ -973,7 +987,7 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 				continue
 			}
 			collection.total++
-			if !w.matchFilter(media.Name) {
+			if !w.matchFilter(media.Name, media.Size) {
 				color.Yellow("⏭ Skipping filtered (album): %s", media.Name)
 				collection.skipped++
 				continue
@@ -990,7 +1004,7 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 		return collection, nil
 	}
 	collection.total++
-	if !w.matchFilter(media.Name) {
+	if !w.matchFilter(media.Name, media.Size) {
 		color.Yellow("⏭ Skipping filtered: %s", media.Name)
 		collection.skipped++
 		return collection, nil
@@ -1000,7 +1014,14 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 	return collection, nil
 }
 
-func (w *Watcher) matchFilter(name string) bool {
+func (w *Watcher) matchFilter(name string, size int64) bool {
+	if !w.matchExtensionFilter(name) {
+		return false
+	}
+	return w.matchFileSizeFilter(size)
+}
+
+func (w *Watcher) matchExtensionFilter(name string) bool {
 	ext := filepath.Ext(name)
 	if len(w.include) > 0 {
 		if _, ok := w.include[ext]; !ok {
@@ -1013,6 +1034,21 @@ func (w *Watcher) matchFilter(name string) bool {
 		}
 	}
 	return true
+}
+
+func (w *Watcher) matchFileSizeFilter(size int64) bool {
+	return w.minFileSizeBytes <= 0 || size >= w.minFileSizeBytes
+}
+
+func fileSizeMBToBytes(mb int64) int64 {
+	if mb <= 0 {
+		return 0
+	}
+	const maxInt64 = int64(1<<63 - 1)
+	if mb > maxInt64/bytesPerMegabyte {
+		return maxInt64
+	}
+	return mb * bytesPerMegabyte
 }
 
 func (w *Watcher) resolvePeer(ctx context.Context, peerID int64) (tg.InputPeerClass, error) {

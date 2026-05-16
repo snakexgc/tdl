@@ -30,6 +30,7 @@ var configurablePaths = []string{
 	"trigger_reactions",
 	"include",
 	"exclude",
+	"file_size_mb",
 	"http.address",
 	"http.port",
 	"http.public_base_url",

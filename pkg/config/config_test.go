@@ -47,6 +47,7 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Equal(t, "G\\Y&M", cfg.DownloadDir)
 	require.Empty(t, cfg.TriggerReactions)
+	require.Zero(t, cfg.FileSizeMB)
 }
 
 func TestLoadMigratesLegacyHTTPListen(t *testing.T) {
@@ -143,6 +144,18 @@ func TestLoadRejectsInvalidNamespace(t *testing.T) {
 	_, err := Load(path)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "English letters only")
+}
+
+func TestLoadRejectsNegativeFileSizeMB(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"file_size_mb":-1}`), 0o644))
+
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "file_size_mb")
 }
 
 func TestNormalizeNamespaceAllowsEnglishLetters(t *testing.T) {
