@@ -95,6 +95,16 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 或者  
 [提issues](https://github.com/snakexgc/tdl/issues)  
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=snakexgc%2Ftdl&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=snakexgc/tdl&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=snakexgc/tdl&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=snakexgc/tdl&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## 协议
 
 AGPL-3.0 License
