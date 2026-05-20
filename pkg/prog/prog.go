@@ -20,7 +20,7 @@ func New(formatter progress.UnitsFormatter) progress.Writer {
 	}
 	width -= 50 // tail length
 	pw.SetTrackerLength(width / 5)
-	pw.SetMessageWidth(width * 3 / 5)
+	pw.SetMessageLength(width * 3 / 5)
 	pw.SetStyle(progress.StyleDefault)
 	pw.SetTrackerPosition(progress.PositionRight)
 	pw.SetUpdateFrequency(time.Millisecond * 100)

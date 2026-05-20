@@ -7,7 +7,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
-	"go.etcd.io/bbolt"
+	bberrors "go.etcd.io/bbolt/errors"
 
 	"github.com/iyear/tdl/app/bot"
 	"github.com/iyear/tdl/app/updater"
@@ -26,7 +26,7 @@ func main() {
 	defer cancel()
 
 	humanizeErrors := map[error]string{
-		bbolt.ErrTimeout: "Current database is used by another process, please terminate it first",
+		bberrors.ErrTimeout: "Current database is used by another process, please terminate it first",
 	}
 
 	if err := cmd.New().ExecuteContext(ctx); err != nil {
