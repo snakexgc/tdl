@@ -13,9 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
+	tgdownloader "github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
@@ -46,6 +48,37 @@ const (
 	downloadTaskIndexKey   = "watch.download.index"
 	defaultDownloadTaskTTL = 24 * time.Hour
 )
+
+var (
+	telegramDownloadedBytes atomic.Int64
+	httpBufferBytes         atomic.Int64
+)
+
+func TelegramDownloadedBytes() int64 {
+	return telegramDownloadedBytes.Load()
+}
+
+func HTTPBufferBytes() int64 {
+	n := httpBufferBytes.Load()
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func recordTelegramDownloadedBytes(n int) {
+	if n <= 0 {
+		return
+	}
+	telegramDownloadedBytes.Add(int64(n))
+}
+
+func recordHTTPBufferBytes(delta int64) {
+	if delta == 0 {
+		return
+	}
+	httpBufferBytes.Add(delta)
+}
 
 type downloadTask struct {
 	ID        string
@@ -912,6 +945,114 @@ func httpMemoryBufferSlots(cfg config.HTTPBufferConfig) int {
 }
 
 func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	if media := source.Media(); media != nil && start == 0 && end == media.Size-1 && lease != nil && lease.BufferSlots() > 0 {
+		return streamTelegramMediaBuffered(ctx, pool, source, lease, start, end, w)
+	}
+	return streamTelegramMediaDirect(ctx, pool, source, lease, start, end, w)
+}
+
+func streamTelegramMediaBuffered(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	logger := logctx.From(ctx)
+	if end < start {
+		return errors.New("invalid byte range")
+	}
+
+	media := source.Media()
+	if media == nil {
+		return errors.New("telegram media is unavailable")
+	}
+
+	maxWorkers := 1
+	bufferSlots := 1
+	if lease != nil {
+		maxWorkers = lease.MaxWorkers()
+		bufferSlots = lease.BufferSlots()
+	}
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	if bufferSlots < 1 {
+		bufferSlots = 1
+	}
+
+	threads := tutil.BestThreads(media.Size, maxWorkers)
+	if threads < 1 {
+		threads = 1
+	}
+
+	capacityBytes := int64(bufferSlots) * int64(downloadStreamPartSize)
+	if capacityBytes < int64(threads)*int64(downloadStreamPartSize) {
+		capacityBytes = int64(threads) * int64(downloadStreamPartSize)
+	}
+
+	logger.Info("Starting buffered Telegram media stream",
+		zap.Int("dc", media.DC),
+		zap.Int64("media_size", media.Size),
+		zap.Int64("start", start),
+		zap.Int64("end", end),
+		zap.Int("threads", threads),
+		zap.Int("max_workers", maxWorkers),
+		zap.Int64("buffer_bytes", capacityBytes))
+
+	for attempt := 0; ; attempt++ {
+		media = source.Media()
+		if media == nil {
+			return errors.New("telegram media is unavailable")
+		}
+
+		client := pool.Client(ctx, media.DC)
+		runCtx, cancel := context.WithCancel(ctx)
+		buffer := newTelegramDownloadBuffer(start, end, capacityBytes)
+		done := make(chan error, 1)
+
+		go func(media *tmedia.Media) {
+			wrapped := &bufferedTelegramClient{
+				Client: client,
+				lease:  lease,
+			}
+			_, err := tgdownloader.NewDownloader().
+				WithPartSize(downloadStreamPartSize).
+				WithRetryHandler(func(event tgdownloader.RetryEvent) {
+					logger.Debug("Retrying gotd downloader operation",
+						zap.String("operation", event.Operation),
+						zap.Int("attempt", event.Attempt),
+						zap.Error(event.Err))
+				}).
+				Download(wrapped, media.InputFileLoc).
+				WithThreads(threads).
+				Parallel(runCtx, buffer)
+			buffer.CloseWithError(err)
+			done <- err
+		}(media)
+
+		written, writeErr := buffer.WriteTo(runCtx, w)
+		cancel()
+		downloadErr := <-done
+
+		if writeErr == nil {
+			logger.Info("Buffered Telegram media stream completed",
+				zap.Int64("bytes_written", written))
+			return nil
+		}
+
+		if isRefreshableFileReferenceError(writeErr) && source.refresh != nil && written == 0 {
+			logger.Warn("Refreshing expired Telegram file reference before retrying buffered stream",
+				zap.Int("attempt", attempt+1),
+				zap.Error(writeErr))
+			if err := source.refreshMedia(ctx, media); err != nil {
+				return errors.Wrap(err, "refresh expired file reference")
+			}
+			continue
+		}
+
+		if downloadErr != nil && !errors.Is(downloadErr, context.Canceled) {
+			return errors.Wrap(downloadErr, "download telegram media")
+		}
+		return writeErr
+	}
+}
+
+func streamTelegramMediaDirect(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.Lease, start, end int64, w io.Writer) error {
 	logger := logctx.From(ctx)
 	if end < start {
 		return errors.New("invalid byte range")
@@ -1217,6 +1358,209 @@ func (s *telegramMediaSource) refreshMedia(ctx context.Context, current *tmedia.
 	return nil
 }
 
+type bufferedTelegramClient struct {
+	*tg.Client
+
+	lease *transfer.Lease
+}
+
+func (c *bufferedTelegramClient) UploadGetFile(ctx context.Context, request *tg.UploadGetFileRequest) (tg.UploadFileClass, error) {
+	if c.lease != nil {
+		if err := c.lease.AcquireWorker(ctx); err != nil {
+			return nil, err
+		}
+		defer c.lease.ReleaseWorker()
+	}
+	return c.Client.UploadGetFile(ctx, request)
+}
+
+type telegramDownloadBuffer struct {
+	start    int64
+	end      int64
+	capacity int64
+
+	mu         sync.Mutex
+	cond       *sync.Cond
+	chunks     map[int64][]byte
+	buffered   int64
+	readOffset int64
+	closed     bool
+	err        error
+}
+
+func newTelegramDownloadBuffer(start, end, capacity int64) *telegramDownloadBuffer {
+	if capacity < int64(downloadStreamPartSize) {
+		capacity = int64(downloadStreamPartSize)
+	}
+	b := &telegramDownloadBuffer{
+		start:      start,
+		end:        end,
+		capacity:   capacity,
+		chunks:     make(map[int64][]byte),
+		readOffset: start,
+	}
+	b.cond = sync.NewCond(&b.mu)
+	return b
+}
+
+func (b *telegramDownloadBuffer) WriteAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("invalid offset %d", off)
+	}
+	originalLen := len(p)
+	if originalLen == 0 {
+		return 0, nil
+	}
+
+	from := off
+	to := off + int64(len(p))
+	if to <= b.start || from > b.end {
+		return originalLen, nil
+	}
+	if from < b.start {
+		p = p[b.start-from:]
+		from = b.start
+	}
+	if to > b.end+1 {
+		p = p[:int(b.end+1-from)]
+		to = b.end + 1
+	}
+	if len(p) == 0 {
+		return originalLen, nil
+	}
+
+	chunk := append([]byte(nil), p...)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if to <= b.readOffset {
+		return originalLen, nil
+	}
+	if from < b.readOffset {
+		trim := int(b.readOffset - from)
+		chunk = chunk[trim:]
+		from = b.readOffset
+	}
+	chunkSize := int64(len(chunk))
+	for !b.closed && from != b.readOffset && b.buffered+chunkSize > b.capacity {
+		b.cond.Wait()
+	}
+	if b.closed {
+		if b.err != nil {
+			return 0, b.err
+		}
+		return 0, io.ErrClosedPipe
+	}
+
+	bufferDelta := chunkSize
+	if previous, ok := b.chunks[from]; ok {
+		b.buffered -= int64(len(previous))
+		bufferDelta -= int64(len(previous))
+	} else {
+		recordTelegramDownloadedBytes(len(chunk))
+	}
+	b.chunks[from] = chunk
+	b.buffered += chunkSize
+	recordHTTPBufferBytes(bufferDelta)
+	b.cond.Broadcast()
+
+	return originalLen, nil
+}
+
+func (b *telegramDownloadBuffer) CloseWithError(err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.closed = true
+	if err != nil && !errors.Is(err, context.Canceled) {
+		b.err = err
+	}
+	b.cond.Broadcast()
+}
+
+func (b *telegramDownloadBuffer) releaseBufferedLocked() {
+	if b.buffered <= 0 {
+		return
+	}
+	recordHTTPBufferBytes(-b.buffered)
+	b.buffered = 0
+	clear(b.chunks)
+}
+
+func (b *telegramDownloadBuffer) WriteTo(ctx context.Context, w io.Writer) (int64, error) {
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			b.mu.Lock()
+			b.cond.Broadcast()
+			b.mu.Unlock()
+		case <-ctxDone:
+		}
+	}()
+	defer close(ctxDone)
+
+	var written int64
+	for {
+		b.mu.Lock()
+		if b.readOffset > b.end {
+			b.mu.Unlock()
+			return written, nil
+		}
+		for {
+			if err := ctx.Err(); err != nil {
+				b.releaseBufferedLocked()
+				b.mu.Unlock()
+				return written, err
+			}
+			offset := b.readOffset
+			if chunk, ok := b.chunks[offset]; ok {
+				delete(b.chunks, offset)
+				b.buffered -= int64(len(chunk))
+				b.cond.Broadcast()
+				b.mu.Unlock()
+
+				if int64(len(chunk)) > b.end-offset+1 {
+					chunk = chunk[:int(b.end-offset+1)]
+				}
+				n, err := w.Write(chunk)
+				recordHTTPBufferBytes(-int64(len(chunk)))
+				written += int64(n)
+				b.mu.Lock()
+				b.readOffset += int64(n)
+				b.cond.Broadcast()
+				b.mu.Unlock()
+				if err != nil {
+					b.mu.Lock()
+					b.releaseBufferedLocked()
+					b.cond.Broadcast()
+					b.mu.Unlock()
+					return written, errors.Wrap(err, "write http response")
+				}
+				if n != len(chunk) {
+					b.mu.Lock()
+					b.releaseBufferedLocked()
+					b.cond.Broadcast()
+					b.mu.Unlock()
+					return written, io.ErrShortWrite
+				}
+				break
+			}
+			if b.closed {
+				err := b.err
+				b.releaseBufferedLocked()
+				b.mu.Unlock()
+				if err != nil {
+					return written, err
+				}
+				return written, io.ErrUnexpectedEOF
+			}
+			b.cond.Wait()
+		}
+	}
+}
+
 type telegramChunkRequest struct {
 	offset int64
 	limit  int
@@ -1254,6 +1598,7 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 			return nil, io.ErrUnexpectedEOF
 		}
 
+		recordTelegramDownloadedBytes(len(file.Bytes))
 		return append([]byte(nil), file.Bytes...), nil
 	}
 }

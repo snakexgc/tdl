@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
+	hostmem "github.com/shirou/gopsutil/v3/mem"
 
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/updater"
@@ -31,6 +32,7 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
 	"github.com/iyear/tdl/pkg/kv"
+	"github.com/iyear/tdl/pkg/ps"
 )
 
 //go:embed index.html login.html aria2ng.html static/* views/*
@@ -86,6 +88,10 @@ type Server struct {
 
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
+
+	dashboardMu         sync.Mutex
+	dashboardLastBytes  int64
+	dashboardLastSample time.Time
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -139,6 +145,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/aria2ng.html", s.authFunc(s.handleAsset("aria2ng.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("/aria2/jsonrpc", s.authFunc(s.handleAria2Proxy))
 	mux.HandleFunc("/api/heartbeat", s.authFunc(s.handleHeartbeat))
+	mux.HandleFunc("/api/dashboard", s.authFunc(s.handleDashboard))
 	mux.HandleFunc("/api/status", s.authFunc(s.handleStatus))
 	mux.HandleFunc("/api/aria2/check", s.authFunc(s.handleAria2Check))
 	mux.HandleFunc("/api/internal-downloads", s.authFunc(s.handleInternalDownloads))
@@ -395,6 +402,83 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+
+	cfg := config.Get()
+	now := time.Now()
+	metricErrors := map[string]string{}
+
+	cpuPercent, err := ps.GetSelfCPU(r.Context())
+	if err != nil {
+		metricErrors["cpu"] = err.Error()
+	}
+
+	var rss uint64
+	if memInfo, err := ps.GetSelfMem(r.Context()); err != nil {
+		metricErrors["memory"] = err.Error()
+	} else if memInfo != nil {
+		rss = memInfo.RSS
+	}
+
+	var memoryTotal uint64
+	var memoryPercent float64
+	if vm, err := hostmem.VirtualMemoryWithContext(r.Context()); err != nil {
+		metricErrors["memory_total"] = err.Error()
+	} else if vm != nil && vm.Total > 0 {
+		memoryTotal = vm.Total
+		memoryPercent = float64(rss) / float64(vm.Total) * 100
+	}
+
+	bufferBytes := uint64(watch.HTTPBufferBytes())
+	softwareBytes := rss
+	if bufferBytes <= rss {
+		softwareBytes = rss - bufferBytes
+	}
+
+	totalBytes := watch.TelegramDownloadedBytes()
+	gotdSpeed := s.telegramDownloadSpeed(totalBytes, now)
+	var aria2Speed int64
+	aria2Available := false
+	if cfg != nil {
+		speed, available, err := fetchAria2DownloadSpeed(r.Context(), cfg.Aria2)
+		aria2Speed = speed
+		aria2Available = available
+		if err != nil {
+			metricErrors["aria2"] = err.Error()
+		}
+	}
+
+	response := map[string]any{
+		"sampled_at": now.UTC().Format(time.RFC3339Nano),
+		"process": map[string]any{
+			"cpu_percent": cpuPercent,
+			"memory_rss":  rss,
+			"goroutines":  ps.GetGoroutineNum(),
+		},
+		"memory": map[string]any{
+			"total_bytes":    rss,
+			"software_bytes": softwareBytes,
+			"buffer_bytes":   bufferBytes,
+			"system_total":   memoryTotal,
+			"total_percent":  memoryPercent,
+		},
+		"download": map[string]any{
+			"gotd_bytes_total": totalBytes,
+			"gotd_speed_bps":   gotdSpeed,
+			"aria2_speed_bps":  aria2Speed,
+			"aria2_available":  aria2Available,
+		},
+	}
+	if len(metricErrors) > 0 {
+		response["errors"] = metricErrors
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, "GET")
@@ -427,6 +511,44 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"version": versionInfo(),
 	})
+}
+
+func (s *Server) telegramDownloadSpeed(totalBytes int64, sampledAt time.Time) float64 {
+	s.dashboardMu.Lock()
+	defer s.dashboardMu.Unlock()
+
+	if s.dashboardLastSample.IsZero() {
+		s.dashboardLastBytes = totalBytes
+		s.dashboardLastSample = sampledAt
+		return 0
+	}
+
+	elapsed := sampledAt.Sub(s.dashboardLastSample).Seconds()
+	delta := totalBytes - s.dashboardLastBytes
+	s.dashboardLastBytes = totalBytes
+	s.dashboardLastSample = sampledAt
+	if elapsed <= 0 || delta <= 0 {
+		return 0
+	}
+	return float64(delta) / elapsed
+}
+
+type aria2GlobalStat struct {
+	DownloadSpeed string `json:"downloadSpeed"`
+}
+
+func fetchAria2DownloadSpeed(ctx context.Context, cfg config.Aria2Config) (int64, bool, error) {
+	if strings.TrimSpace(cfg.RPCURL) == "" {
+		return 0, false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+
+	var stat aria2GlobalStat
+	if err := callAria2(ctx, cfg, "aria2.getGlobalStat", []any{}, &stat); err != nil {
+		return 0, true, err
+	}
+	return parseAria2Length(stat.DownloadSpeed), true, nil
 }
 
 type aria2CheckResult struct {

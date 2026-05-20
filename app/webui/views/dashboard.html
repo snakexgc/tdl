@@ -1,0 +1,56 @@
+<section class="view active" id="view-dashboard">
+  <header class="page-head">
+    <div>
+      <h1>仪表盘</h1>
+    </div>
+    <button class="btn secondary" id="refresh-dashboard" type="button">刷新</button>
+  </header>
+  <div class="notice" id="dashboard-status"></div>
+  <div class="dashboard-grid">
+    <section class="dashboard-card">
+      <div class="dashboard-card-head">
+        <div>
+          <h2>CPU</h2>
+          <p id="dashboard-cpu-meta">最近 30 秒</p>
+        </div>
+        <strong id="dashboard-cpu-value">-</strong>
+      </div>
+      <div class="dashboard-chart-shell">
+        <svg class="dashboard-chart" id="dashboard-cpu-chart" viewBox="0 0 640 160" preserveAspectRatio="none" role="img" aria-label="CPU 最近 30 秒曲线"></svg>
+      </div>
+    </section>
+    <section class="dashboard-card dashboard-card-speed">
+      <div class="dashboard-card-head">
+        <div>
+          <h2>下载速度</h2>
+          <p id="dashboard-speed-meta">gotd / aria2</p>
+        </div>
+        <strong id="dashboard-speed-value">-</strong>
+      </div>
+      <div class="dashboard-chart-shell">
+        <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" preserveAspectRatio="none" role="img" aria-label="下载速度最近 30 秒曲线"></svg>
+      </div>
+      <div class="dashboard-legend">
+        <span><i class="legend-gotd"></i>gotd</span>
+        <span><i class="legend-aria2"></i>aria2</span>
+      </div>
+    </section>
+    <section class="dashboard-card dashboard-card-wide">
+      <div class="dashboard-card-head">
+        <div>
+          <h2>内存</h2>
+          <p id="dashboard-memory-meta">总用量 / 软件用量 / HTTP buffer</p>
+        </div>
+        <strong id="dashboard-memory-value">-</strong>
+      </div>
+      <div class="dashboard-chart-shell">
+        <svg class="dashboard-chart" id="dashboard-memory-chart" viewBox="0 0 640 160" preserveAspectRatio="none" role="img" aria-label="内存最近 30 秒曲线"></svg>
+      </div>
+      <div class="dashboard-legend">
+        <span><i class="legend-total"></i>总用量</span>
+        <span><i class="legend-software"></i>软件用量</span>
+        <span><i class="legend-buffer"></i>HTTP buffer</span>
+      </div>
+    </section>
+  </div>
+</section>

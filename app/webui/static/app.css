@@ -367,6 +367,7 @@ p {
 .user-switch,
 .config-section,
 .module-card,
+.dashboard-card,
 .info-item,
 .update-notes-shell {
   background: var(--panel);
@@ -461,6 +462,137 @@ p {
 .guide-actions {
   justify-content: flex-start;
   margin-top: 24px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dashboard-card {
+  min-height: 244px;
+  padding: 14px;
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr) auto;
+  gap: 10px;
+}
+
+.dashboard-card-wide {
+  grid-column: 1 / -1;
+}
+
+.dashboard-card-speed {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.dashboard-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.dashboard-card-head h2 {
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.dashboard-card-head p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.dashboard-card-head strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 800;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-chart-shell {
+  position: relative;
+  width: 100%;
+  min-height: 160px;
+  overflow: visible;
+}
+
+.dashboard-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+}
+
+.dashboard-chart .grid-line {
+  stroke: rgba(98, 114, 108, 0.16);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .axis-line {
+  stroke: rgba(64, 80, 74, 0.68);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .axis-tick {
+  stroke: rgba(64, 80, 74, 0.5);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.dashboard-chart .series-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dashboard-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dashboard-legend i {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.legend-total,
+.legend-gotd {
+  background: #0b7f72;
+}
+
+.legend-software {
+  background: #6f5cc2;
+}
+
+.legend-buffer,
+.legend-aria2 {
+  background: #c47a16;
 }
 
 .table-shell {
@@ -1272,8 +1404,18 @@ tr:last-child td {
 
   .field-grid,
   .info-grid,
+  .dashboard-grid,
   .guide-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-card-wide {
+    grid-column: auto;
+  }
+
+  .dashboard-card-speed {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .field,

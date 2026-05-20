@@ -7,6 +7,9 @@ const state = {
   internalDownloadSamples: new Map(),
   internalDownloadPoll: null,
   internalDownloadLoading: false,
+  dashboardPoll: null,
+  dashboardLoading: false,
+  dashboardSamples: [],
   kvItems: [],
   selectedKV: new Set(),
   kvSort: { field: "created_at", dir: "desc" },
@@ -29,10 +32,11 @@ const collator = new Intl.Collator("zh-Hans-CN", {
   sensitivity: "base",
 });
 
-const views = ["user", "config", "downloads", "kv", "modules", "update"];
+const views = ["dashboard", "user", "config", "downloads", "kv", "modules", "update"];
 const heartbeatIntervalMS = 1000;
 const heartbeatOfflineMS = 3000;
 const heartbeatRequestTimeoutMS = 1500;
+const dashboardRefreshMS = 1000;
 const internalDownloadRefreshMS = 1000;
 const exclusiveListPairs = [["include", "exclude"]];
 const proxySchemes = ["socks5://", "socks5h://", "http://", "https://"];
@@ -156,16 +160,18 @@ function bindNavigation() {
 function selectView(view) {
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
+  if (view !== "dashboard") stopDashboardPolling();
   if (view !== "downloads") stopInternalDownloadPolling();
   loadViewData(view);
 }
 
 function loadActiveViewData() {
-  const view = document.querySelector(".nav-item.active")?.dataset.view || "user";
+  const view = document.querySelector(".nav-item.active")?.dataset.view || "dashboard";
   loadViewData(view);
 }
 
 function loadViewData(view) {
+  if (view === "dashboard") loadDashboard();
   if (view === "downloads") loadDownloads();
   if (view === "kv") loadKV();
   if (view === "user") {
@@ -179,6 +185,7 @@ function loadViewData(view) {
 
 function bindActions() {
   document.getElementById("logout").addEventListener("click", logout);
+  document.getElementById("refresh-dashboard").addEventListener("click", () => loadDashboard({ force: true }));
   document.getElementById("reload-aria2").addEventListener("click", () => loadDownloads(true));
   document.getElementById("aria2-retry-check").addEventListener("click", () => loadDownloads(true));
   document.getElementById("aria2-open-config").addEventListener("click", async () => {
@@ -215,6 +222,7 @@ async function logout() {
     state.heartbeatTimer = null;
   }
   stopInternalDownloadPolling();
+  stopDashboardPolling();
   try {
     await api("/api/auth/logout", { method: "POST", body: "{}" });
   } finally {
@@ -508,6 +516,218 @@ async function openCredentialSettings() {
       input.scrollIntoView({ block: "center" });
     }
   });
+}
+
+async function loadDashboard(options = {}) {
+  if (state.dashboardLoading) return;
+  state.dashboardLoading = true;
+  const silent = Boolean(options.silent);
+  if (!silent) setDashboardStatus("正在刷新...");
+  try {
+    const data = await api("/api/dashboard");
+    pushDashboardSample(data);
+    renderDashboard();
+    const sampledAt = data.sampled_at ? formatTime(data.sampled_at) : formatTime(new Date().toISOString());
+    const errors = data.errors ? Object.values(data.errors).filter(Boolean) : [];
+    setDashboardStatus(errors.length ? `部分指标读取失败：${errors.join("；")}` : `更新于 ${sampledAt}`, errors.length ? "warn" : "");
+    startDashboardPolling();
+  } catch (error) {
+    setDashboardStatus(error.message, "error");
+  } finally {
+    state.dashboardLoading = false;
+  }
+}
+
+function startDashboardPolling() {
+  if (state.dashboardPoll) return;
+  state.dashboardPoll = window.setInterval(() => {
+    const view = document.getElementById("view-dashboard");
+    if (!view || !view.classList.contains("active")) {
+      stopDashboardPolling();
+      return;
+    }
+    loadDashboard({ silent: true });
+  }, dashboardRefreshMS);
+}
+
+function stopDashboardPolling() {
+  if (!state.dashboardPoll) return;
+  window.clearInterval(state.dashboardPoll);
+  state.dashboardPoll = null;
+}
+
+function pushDashboardSample(data) {
+  const process = data.process || {};
+  const memory = data.memory || {};
+  const download = data.download || {};
+  const totalMemory = Number(memory.total_bytes ?? process.memory_rss ?? 0);
+  const bufferMemory = Number(memory.buffer_bytes ?? 0);
+  const softwareMemory = Number(memory.software_bytes ?? Math.max(0, totalMemory - bufferMemory));
+  const gotdSpeed = Number(download.gotd_speed_bps ?? download.speed_bps ?? 0);
+
+  state.dashboardSamples.push({
+    at: data.sampled_at ? new Date(data.sampled_at).getTime() : Date.now(),
+    cpu: Number(process.cpu_percent || 0),
+    goroutines: Number(process.goroutines || 0),
+    memoryTotal: totalMemory,
+    memorySoftware: softwareMemory,
+    memoryBuffer: bufferMemory,
+    memoryPercent: Number(memory.total_percent || process.memory_percent || 0),
+    gotdSpeed,
+    gotdTotal: Number(download.gotd_bytes_total ?? download.bytes_total ?? 0),
+    aria2Speed: Number(download.aria2_speed_bps || 0),
+    aria2Available: Boolean(download.aria2_available),
+  });
+  if (state.dashboardSamples.length > 30) {
+    state.dashboardSamples.splice(0, state.dashboardSamples.length - 30);
+  }
+}
+
+function renderDashboard() {
+  const latest = state.dashboardSamples[state.dashboardSamples.length - 1];
+  if (!latest) return;
+
+  setText("dashboard-cpu-value", formatPercent(latest.cpu));
+  setText("dashboard-cpu-meta", `${latest.goroutines} goroutines`);
+  setText("dashboard-memory-value", formatBytes(latest.memoryTotal));
+  setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 缓冲 ${formatBytes(latest.memoryBuffer)}`);
+  setText("dashboard-speed-value", `${formatBytes(latest.gotdSpeed)}/s`);
+  setText("dashboard-speed-meta", `aria2 ${formatBytes(latest.aria2Speed)}/s · gotd累计 ${formatBytes(latest.gotdTotal)}`);
+
+  renderSmoothChart("dashboard-cpu-chart", "dashboard-cpu-axis", [
+    { key: "cpu", color: "#0b7f72" },
+  ], { min: 0, formatter: formatPercent });
+
+  renderSmoothChart("dashboard-memory-chart", "dashboard-memory-axis", [
+    { key: "memoryTotal", color: "#0b7f72" },
+    { key: "memorySoftware", color: "#6f5cc2" },
+    { key: "memoryBuffer", color: "#c47a16" },
+  ], { min: 0, formatter: formatBytes });
+
+  renderSmoothChart("dashboard-speed-chart", "dashboard-speed-axis", [
+    { key: "gotdSpeed", color: "#0b7f72" },
+    { key: "aria2Speed", color: "#c47a16" },
+  ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
+}
+
+function renderSmoothChart(svgID, axisID, series, options = {}) {
+  const svg = document.getElementById(svgID);
+  const axis = document.getElementById(axisID);
+  if (!svg) return;
+  if (axis) axis.textContent = "";
+
+  const width = 640;
+  const height = 160;
+  const padding = { top: 12, right: 14, bottom: 28, left: 54 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const range = dashboardChartRange(series, options);
+  const slotCount = 30;
+  const slotOffset = Math.max(0, slotCount - state.dashboardSamples.length);
+  const formatter = options.formatter || ((value) => String(value));
+
+  const yFor = (value) => {
+    const ratio = (Number(value || 0) - range.min) / (range.max - range.min);
+    return padding.top + (1 - Math.min(1, Math.max(0, ratio))) * plotHeight;
+  };
+  const xFor = (index) => padding.left + ((slotOffset + index) / (slotCount - 1)) * plotWidth;
+
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const y = padding.top + ratio * plotHeight;
+    return `<line class="grid-line" x1="${padding.left}" y1="${y.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${y.toFixed(2)}"></line>`;
+  }).join("");
+
+  const axisValues = [range.max, range.min + (range.max - range.min) / 2, range.min];
+  const yAxisLabels = axisValues.map((value) => {
+    const y = yFor(value);
+    return [
+      `<line class="axis-tick" x1="${(padding.left - 4).toFixed(2)}" y1="${y.toFixed(2)}" x2="${padding.left.toFixed(2)}" y2="${y.toFixed(2)}"></line>`,
+      `<text class="axis-label" x="${(padding.left - 8).toFixed(2)}" y="${(y + 4).toFixed(2)}" text-anchor="end">${escapeHTML(formatter(value))}</text>`,
+    ].join("");
+  }).join("");
+  const xAxisY = padding.top + plotHeight;
+  const axisLines = [
+    `<line class="axis-line" x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${xAxisY.toFixed(2)}"></line>`,
+    `<line class="axis-line" x1="${padding.left}" y1="${xAxisY.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${xAxisY.toFixed(2)}"></line>`,
+    `<line class="axis-tick" x1="${padding.left}" y1="${xAxisY.toFixed(2)}" x2="${padding.left}" y2="${(xAxisY + 5).toFixed(2)}"></line>`,
+    `<line class="axis-tick" x1="${(width - padding.right).toFixed(2)}" y1="${xAxisY.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${(xAxisY + 5).toFixed(2)}"></line>`,
+    `<text class="axis-label" x="${padding.left}" y="${(height - 5).toFixed(2)}" text-anchor="start">30s</text>`,
+    `<text class="axis-label" x="${(width - padding.right).toFixed(2)}" y="${(height - 5).toFixed(2)}" text-anchor="end">现在</text>`,
+  ].join("");
+
+  const paths = series.map((item) => {
+    const points = state.dashboardSamples.map((sample, index) => ({
+      x: xFor(index),
+      y: yFor(sample[item.key]),
+    }));
+    if (!points.length) return "";
+    const d = smoothDashboardPath(points);
+    const point = points.length === 1 ? `<circle cx="${points[0].x.toFixed(2)}" cy="${points[0].y.toFixed(2)}" r="3.5" fill="${item.color}"></circle>` : "";
+    return `<path class="series-line" d="${d}" stroke="${item.color}"></path>${point}`;
+  }).join("");
+
+  svg.innerHTML = grid + axisLines + yAxisLabels + paths;
+}
+
+function dashboardChartRange(series, options = {}) {
+  const values = [];
+  state.dashboardSamples.forEach((sample) => {
+    series.forEach((item) => {
+      const value = Number(sample[item.key] || 0);
+      if (Number.isFinite(value)) values.push(value);
+    });
+  });
+  const configuredMin = Number(options.min ?? 0);
+  const min = Number.isFinite(configuredMin) ? configuredMin : 0;
+  const maxValue = Math.max(...values, min);
+  const max = niceCeil(Math.max(maxValue * 1.15, min + 1));
+  return { min, max: max <= min ? min + 1 : max };
+}
+
+function niceCeil(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const power = 10 ** Math.floor(Math.log10(value));
+  const scaled = value / power;
+  let nice = 10;
+  if (scaled <= 1) nice = 1;
+  else if (scaled <= 2) nice = 2;
+  else if (scaled <= 5) nice = 5;
+  return nice * power;
+}
+
+function smoothDashboardPath(points) {
+  const formatPoint = (point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
+  if (points.length === 1) return `M ${formatPoint(points[0])}`;
+  if (points.length === 2) {
+    const [a, b] = points;
+    const midX = (a.x + b.x) / 2;
+    return `M ${formatPoint(a)} C ${midX.toFixed(2)} ${a.y.toFixed(2)}, ${midX.toFixed(2)} ${b.y.toFixed(2)}, ${formatPoint(b)}`;
+  }
+
+  let d = `M ${formatPoint(points[0])}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const p0 = points[index - 1] || points[index];
+    const p1 = points[index];
+    const p2 = points[index + 1];
+    const p3 = points[index + 2] || p2;
+    const cp1 = {
+      x: p1.x + (p2.x - p0.x) / 6,
+      y: p1.y + (p2.y - p0.y) / 6,
+    };
+    const cp2 = {
+      x: p2.x - (p3.x - p1.x) / 6,
+      y: p2.y - (p3.y - p1.y) / 6,
+    };
+    d += ` C ${formatPoint(cp1)}, ${formatPoint(cp2)}, ${formatPoint(p2)}`;
+  }
+  return d;
+}
+
+function setDashboardStatus(message, kind = "") {
+  const status = document.getElementById("dashboard-status");
+  if (!status) return;
+  status.className = `notice ${kind}`.trim();
+  status.textContent = message || "";
 }
 
 async function loadModules() {
@@ -2011,6 +2231,18 @@ function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleString();
+}
+
+function setText(id, value) {
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.textContent = value;
+}
+
+function formatPercent(value) {
+  const percent = Number(value || 0);
+  if (!Number.isFinite(percent)) return "-";
+  return `${percent.toFixed(1)}%`;
 }
 
 function formatBytes(value) {

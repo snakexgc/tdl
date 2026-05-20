@@ -102,6 +102,14 @@ func TestRoutesAuthenticateWithWebSessionCookie(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"ok":true`)
 
+	req = httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"process"`)
+	require.Contains(t, rec.Body.String(), `"download"`)
+
 	req = httptest.NewRequest(http.MethodGet, "/views/user.html", nil)
 	req.AddCookie(sessionCookie)
 	rec = httptest.NewRecorder()
