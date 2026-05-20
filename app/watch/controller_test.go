@@ -61,3 +61,12 @@ func TestControllerStopWaitsForWatchShutdown(t *testing.T) {
 	}
 	require.False(t, controller.Running())
 }
+
+func TestControllerSubmitMessageLinkRequiresRunningWatcher(t *testing.T) {
+	controller := NewController(context.Background(), Options{Template: "test"}, nil)
+
+	_, err := controller.SubmitMessageLink(context.Background(), "https://t.me/example/1")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "监听下载未运行")
+}

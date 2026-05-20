@@ -22,6 +22,7 @@ type Controller struct {
 	done    chan struct{}
 	running bool
 	lastErr error
+	submit  chan messageLinkSubmission
 }
 
 func NewController(parent context.Context, opts Options, notify NotifyFunc) *Controller {
@@ -47,12 +48,15 @@ func (c *Controller) Start() bool {
 
 	ctx, cancel := context.WithCancel(c.parent)
 	done := make(chan struct{})
+	submit := make(chan messageLinkSubmission, 100)
 	opts := c.opts
 	opts.Notify = c.notify
+	opts.messageLinks = submit
 	c.running = true
 	c.cancel = cancel
 	c.done = done
 	c.lastErr = nil
+	c.submit = submit
 	c.mu.Unlock()
 
 	go func() {
@@ -68,6 +72,7 @@ func (c *Controller) Start() bool {
 			c.running = false
 			c.cancel = nil
 			c.done = nil
+			c.submit = nil
 			if err != nil && !stderrors.Is(err, context.Canceled) {
 				c.lastErr = err
 			}
@@ -122,4 +127,44 @@ func (c *Controller) LastError() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lastErr
+}
+
+func (c *Controller) SubmitMessageLink(ctx context.Context, link string) (MessageLinkSubmissionResult, error) {
+	link, err := ValidateTelegramMessageHTTPLink(link)
+	if err != nil {
+		return MessageLinkSubmissionResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.mu.Lock()
+	submit := c.submit
+	done := c.done
+	running := c.running
+	c.mu.Unlock()
+	if !running || submit == nil || done == nil {
+		return MessageLinkSubmissionResult{}, stderrors.New("监听下载未运行")
+	}
+
+	req := messageLinkSubmission{
+		link:  link,
+		reply: make(chan messageLinkSubmissionResponse, 1),
+	}
+	select {
+	case submit <- req:
+	case <-done:
+		return MessageLinkSubmissionResult{}, stderrors.New("监听下载已停止")
+	case <-ctx.Done():
+		return MessageLinkSubmissionResult{}, ctx.Err()
+	}
+
+	select {
+	case resp := <-req.reply:
+		return resp.result, resp.err
+	case <-done:
+		return MessageLinkSubmissionResult{}, stderrors.New("监听下载已停止")
+	case <-ctx.Done():
+		return MessageLinkSubmissionResult{}, ctx.Err()
+	}
 }

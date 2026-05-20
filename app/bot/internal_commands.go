@@ -101,7 +101,7 @@ func handleInternalDownloadCommand(
 func sendInternalDownloadMenu(ctx *th.Context, chatID int64, userID int64) error {
 	_, err := ctx.Bot().SendMessage(ctx, tu.Message(
 		tu.ID(chatID),
-		fmt.Sprintf("内部下载器控制面板已就绪。\n您的用户 ID：%d\n\n这里可查看、暂停、恢复和删除 watch 创建的内部下载任务。", userID),
+		fmt.Sprintf("内部下载器控制面板已就绪。\n您的用户 ID：%d\n\n这里可查看、暂停、恢复和删除 watch 创建的内部下载任务；发送 Telegram 消息链接可直接按 watch 流程提交下载。", userID),
 	).WithReplyMarkup(aria2ReplyKeyboard()))
 	return err
 }
@@ -116,11 +116,12 @@ func internalDownloadHelpMessage() string {
 		"/downloads_stopped 查看已完成/停止任务",
 		"/downloads_pause_all 暂停全部未完成任务",
 		"/downloads_start_all 开始全部已暂停/错误任务",
+		"发送 Telegram 消息链接，按 watch 流程下载消息中的文件",
 	}, "\n")
 }
 
 func internalDownloadBotHelpMessage(userID int64) string {
-	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n任务总览：/info\n当前下载器：internal\nADMIN_ID：%d", aria2MenuClose, userID)
+	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n任务总览：/info\n提交下载：发送 Telegram 消息链接\n当前下载器：internal\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
 func runInternalDownloadList(ctx context.Context, factory internalDownloadControllerFactory) ([]watch.InternalDownloadInfo, error) {

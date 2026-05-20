@@ -8,15 +8,6 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
-func TestExtractAria2Links(t *testing.T) {
-	links := extractAria2Links("hello\nhttps://example.com/a.zip\nmagnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=a\nhttps://example.com/a.zip")
-
-	require.Equal(t, []string{
-		"https://example.com/a.zip",
-		"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=a",
-	}, links)
-}
-
 func TestAriaNgURL(t *testing.T) {
 	require.Equal(t,
 		"http://ariang.js.org/#!/settings/rpc/set/ws/example.com/6800/jsonrpc/c2VjcmV0",

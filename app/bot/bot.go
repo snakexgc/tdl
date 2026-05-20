@@ -58,6 +58,7 @@ type watchControl interface {
 	Stop()
 	UpdateOptions(watch.Options)
 	Running() bool
+	SubmitMessageLink(context.Context, string) (watch.MessageLinkSubmissionResult, error)
 }
 
 func RebootRequested() bool {
@@ -265,7 +266,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, updateController, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
+			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -452,6 +453,7 @@ func handleAllowedMessage(
 	afterConfigSave func(*config.Config),
 	requestReboot func(),
 	updateController *tdlUpdateController,
+	watchCtrl watchControl,
 	aria2Factory aria2ControllerFactory,
 	internalFactory internalDownloadControllerFactory,
 	kvEngine kv.Storage,
@@ -482,6 +484,9 @@ func handleAllowedMessage(
 		return err
 	}
 	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
+		return err
+	}
+	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
 		return err
 	}
 

@@ -52,6 +52,7 @@ type Options struct {
 	Exclude          []string
 	FileSizeMB       int64
 	Notify           NotifyFunc
+	messageLinks     <-chan messageLinkSubmission
 }
 
 type NotifyFunc func(ctx context.Context, text string)
@@ -91,7 +92,13 @@ type downloadJob struct {
 	msgID  int
 	peerID int64
 	link   string
+	source string
 }
+
+const (
+	downloadJobSourceReaction    = "reaction"
+	downloadJobSourceMessageLink = "message_link"
+)
 
 const (
 	maxConcurrentDownloads = 1
@@ -131,6 +138,7 @@ type Watcher struct {
 
 	dedup            sync.Map
 	jobCh            chan downloadJob
+	messageLinks     <-chan messageLinkSubmission
 	triggerReactions map[string]struct{}
 	include          map[string]struct{}
 	exclude          map[string]struct{}
@@ -378,6 +386,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		tpl:              tpl,
 		runtime:          runtime,
 		jobCh:            make(chan downloadJob, 100),
+		messageLinks:     opts.messageLinks,
 		triggerReactions: newTriggerReactionSet(opts.TriggerReactions),
 		include:          filterMap.New(opts.Include, addPrefixDot),
 		exclude:          filterMap.New(opts.Exclude, addPrefixDot),
@@ -608,7 +617,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 	}
 
 	select {
-	case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink}:
+	case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
 	default:
 		logctx.From(ctx).Warn("Submission queue full, dropping job",
 			zap.Int64("peer_id", peerID),
@@ -688,7 +697,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	}
 
 	select {
-	case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink}:
+	case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
 	default:
 		logctx.From(ctx).Warn("Submission queue full, dropping job",
 			zap.Int64("peer_id", peerID),
@@ -877,89 +886,134 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 		select {
 		case <-ctx.Done():
 			return
+		case submission := <-w.messageLinks:
+			result, err := w.submitMessageLink(ctx, eg, submission.link)
+			submission.reply <- messageLinkSubmissionResponse{result: result, err: err}
 		case job := <-w.jobCh:
 			if ctx.Err() != nil {
 				return
 			}
-
-			logctx.From(ctx).Info("Dispatcher processing job",
-				zap.Int64("peer_id", job.peerID),
-				zap.Int("msg_id", job.msgID),
-				zap.Bool("peer_nil", job.peer == nil))
-
-			peer := job.peer
-			if peer == nil {
-				resolved, err := w.resolvePeer(ctx, job.peerID)
-				if err != nil {
-					logctx.From(ctx).Error("Failed to resolve peer",
-						zap.Int64("peer_id", job.peerID),
-						zap.Error(err))
-					color.Red("❌ Cannot resolve peer %d: %v", job.peerID, err)
-					w.notify(ctx, "无法解析消息来源，下载任务未提交。\n消息：%s\nPeer: %d\n错误：%v", job.link, job.peerID, err)
-					continue
-				}
-				peer = resolved
-			}
-
-			msg, err := tutil.GetSingleMessage(ctx, w.pool.Default(ctx), peer, job.msgID)
-			if err != nil {
-				logctx.From(ctx).Error("Failed to get message",
-					zap.Int("msg_id", job.msgID),
-					zap.Error(err))
-				color.Red("❌ Cannot get message %d: %v", job.msgID, err)
-				w.notify(ctx, "无法获取触发消息，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, job.msgID, err)
-				continue
-			}
-
-			collection, err := w.collectFiles(ctx, msg, peer, job.peerID)
-			if err != nil {
-				color.Red("❌ Failed to collect files for msg %d: %v", job.msgID, err)
-				w.notify(ctx, "解析消息媒体失败，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, job.msgID, err)
-				continue
-			}
-
-			prepared := make([]preparedFileTask, 0, len(collection.files))
-			for _, f := range collection.files {
-				task, skip, err := w.prepareSingle(ctx, f)
-				if err != nil {
-					color.Red("❌ Failed to prepare file for msg %d: %v", f.msg.ID, err)
-					w.notify(ctx, "准备下载任务失败，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, f.msg.ID, err)
-					continue
-				}
-				if skip {
-					collection.skipped++
-					continue
-				}
-				prepared = append(prepared, task)
-			}
-
-			w.notify(ctx, "监听到了新增回应触发。\n链接：%s\n文件总数：%d\n需要下载：%d\n跳过：%d", job.link, collection.total, len(prepared), collection.skipped)
-			if len(prepared) == 0 {
-				continue
-			}
-
-			for _, f := range prepared {
-				f := f
-				eg.Go(func() error {
-					if err := w.submitSingle(ctx, f); err != nil {
-						if !errors.Is(err, context.Canceled) {
-							logctx.From(ctx).Error("Submission failed",
-								zap.Int("msg_id", f.file.msg.ID),
-								zap.String("name", f.file.media.Name),
-								zap.Error(err))
-							color.Red("❌ Submission failed: msg %d (%s): %v", f.file.msg.ID, f.file.media.Name, err)
-							target := "aria2"
-							if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
-								target = "内部下载队列"
-							}
-							w.notify(ctx, "提交到%s失败。\n文件：%s\n消息 ID: %d\n错误：%v", target, f.file.media.Name, f.file.msg.ID, err)
-						}
-					}
-					return nil
-				})
-			}
+			_, _ = w.processDownloadJob(ctx, eg, job)
 		}
 	}
+}
+
+func (w *Watcher) submitMessageLink(ctx context.Context, eg *errgroup.Group, link string) (MessageLinkSubmissionResult, error) {
+	link, err := ValidateTelegramMessageHTTPLink(link)
+	if err != nil {
+		return MessageLinkSubmissionResult{Link: link}, err
+	}
+
+	peer, msgID, err := tutil.ParseMessageLink(ctx, w.manager, link)
+	if err != nil {
+		return MessageLinkSubmissionResult{Link: link}, errors.Wrap(err, "解析 Telegram 消息链接")
+	}
+
+	job := downloadJob{
+		peer:   peer.InputPeer(),
+		msgID:  msgID,
+		peerID: peer.ID(),
+		link:   link,
+		source: downloadJobSourceMessageLink,
+	}
+	return w.processDownloadJob(ctx, eg, job)
+}
+
+func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, job downloadJob) (MessageLinkSubmissionResult, error) {
+	result := MessageLinkSubmissionResult{
+		Link:      job.link,
+		PeerID:    job.peerID,
+		MessageID: job.msgID,
+	}
+	logctx.From(ctx).Info("Dispatcher processing job",
+		zap.Int64("peer_id", job.peerID),
+		zap.Int("msg_id", job.msgID),
+		zap.Bool("peer_nil", job.peer == nil),
+		zap.String("source", job.source))
+
+	peer := job.peer
+	if peer == nil {
+		resolved, err := w.resolvePeer(ctx, job.peerID)
+		if err != nil {
+			logctx.From(ctx).Error("Failed to resolve peer",
+				zap.Int64("peer_id", job.peerID),
+				zap.Error(err))
+			color.Red("❌ Cannot resolve peer %d: %v", job.peerID, err)
+			w.notify(ctx, "无法解析消息来源，下载任务未提交。\n消息：%s\nPeer: %d\n错误：%v", job.link, job.peerID, err)
+			return result, err
+		}
+		peer = resolved
+	}
+
+	msg, err := tutil.GetSingleMessage(ctx, w.pool.Default(ctx), peer, job.msgID)
+	if err != nil {
+		logctx.From(ctx).Error("Failed to get message",
+			zap.Int("msg_id", job.msgID),
+			zap.Error(err))
+		color.Red("❌ Cannot get message %d: %v", job.msgID, err)
+		w.notify(ctx, "无法获取触发消息，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, job.msgID, err)
+		return result, err
+	}
+
+	collection, err := w.collectFiles(ctx, msg, peer, job.peerID)
+	if err != nil {
+		color.Red("❌ Failed to collect files for msg %d: %v", job.msgID, err)
+		w.notify(ctx, "解析消息媒体失败，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, job.msgID, err)
+		return result, err
+	}
+	result.Total = collection.total
+
+	prepared := make([]preparedFileTask, 0, len(collection.files))
+	for _, f := range collection.files {
+		task, skip, err := w.prepareSingle(ctx, f)
+		if err != nil {
+			color.Red("❌ Failed to prepare file for msg %d: %v", f.msg.ID, err)
+			w.notify(ctx, "准备下载任务失败，下载任务未提交。\n消息：%s\n消息 ID: %d\n错误：%v", job.link, f.msg.ID, err)
+			continue
+		}
+		if skip {
+			collection.skipped++
+			continue
+		}
+		prepared = append(prepared, task)
+	}
+	result.Queued = len(prepared)
+	result.Skipped = collection.skipped
+
+	w.notify(ctx, "%s\n链接：%s\n文件总数：%d\n需要下载：%d\n跳过：%d", downloadJobNotice(job), job.link, collection.total, len(prepared), collection.skipped)
+	if len(prepared) == 0 {
+		return result, nil
+	}
+
+	for _, f := range prepared {
+		f := f
+		eg.Go(func() error {
+			if err := w.submitSingle(ctx, f); err != nil {
+				if !errors.Is(err, context.Canceled) {
+					logctx.From(ctx).Error("Submission failed",
+						zap.Int("msg_id", f.file.msg.ID),
+						zap.String("name", f.file.media.Name),
+						zap.Error(err))
+					color.Red("❌ Submission failed: msg %d (%s): %v", f.file.msg.ID, f.file.media.Name, err)
+					target := "aria2"
+					if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
+						target = "内部下载队列"
+					}
+					w.notify(ctx, "提交到%s失败。\n文件：%s\n消息 ID: %d\n错误：%v", target, f.file.media.Name, f.file.msg.ID, err)
+				}
+			}
+			return nil
+		})
+	}
+
+	return result, nil
+}
+
+func downloadJobNotice(job downloadJob) string {
+	if job.source == downloadJobSourceMessageLink {
+		return "收到 Telegram 消息链接，已进入下载流程。"
+	}
+	return "监听到了新增回应触发。"
 }
 
 func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.InputPeerClass, peerID int64) (fileCollection, error) {

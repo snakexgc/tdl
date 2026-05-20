@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-faster/errors"
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
@@ -149,9 +148,6 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2ActionResult("重试已停止任务", result))
 	default:
-		if handled, err := handleAria2Submission(ctx, msg, text, factory); handled || err != nil {
-			return handled, err
-		}
 		return false, nil
 	}
 }
@@ -216,29 +212,11 @@ func runAria2SetGlobalDir(ctx context.Context, factory aria2ControllerFactory, d
 	return factory().SetGlobalDir(cmdCtx, dir)
 }
 
-func runAria2AddURL(ctx context.Context, factory aria2ControllerFactory, uri string) (string, error) {
-	if factory == nil {
-		return "", fmt.Errorf("aria2 controller is not configured")
-	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
-	defer cancel()
-	return factory().AddURL(cmdCtx, uri, watch.Aria2AddURIOptions{})
-}
-
-func runAria2AddTorrent(ctx context.Context, factory aria2ControllerFactory, data []byte) (string, error) {
-	if factory == nil {
-		return "", fmt.Errorf("aria2 controller is not configured")
-	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
-	defer cancel()
-	return factory().AddTorrent(cmdCtx, data, watch.Aria2AddURIOptions{})
-}
-
 func sendAria2Menu(ctx *th.Context, chatID int64, userID int64) error {
 	menu := aria2ReplyKeyboard()
 	_, err := ctx.Bot().SendMessage(ctx, tu.Message(
 		tu.ID(chatID),
-		fmt.Sprintf("aria2 控制机器人已就绪。\n您的用户 ID：%d\n\n发送 HTTP/HTTPS 链接、磁力链接或 .torrent 文件即可添加下载。", userID),
+		fmt.Sprintf("aria2 控制机器人已就绪。\n您的用户 ID：%d\n\n发送 Telegram 消息链接即可按 watch 流程下载消息中的文件。", userID),
 	).WithReplyMarkup(menu))
 	return err
 }
@@ -329,48 +307,6 @@ func listActiveAndWaitingAria2Tasks(ctx context.Context, c *watch.Aria2Controlle
 	return append(active, waiting...), nil
 }
 
-func handleAria2Submission(ctx *th.Context, msg *telego.Message, text string, factory aria2ControllerFactory) (bool, error) {
-	if msg.Document != nil && isTorrentDocument(msg.Document) {
-		data, err := downloadTelegramFile(ctx, msg.Document.FileID)
-		if err != nil {
-			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("读取种子文件失败：%v", err))
-		}
-		gid, err := runAria2AddTorrent(ctx, factory, data)
-		if err != nil {
-			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("添加种子失败：%v", err))
-		}
-		return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("种子已提交到 aria2。\nGID: %s", gid))
-	}
-
-	links := extractAria2Links(text)
-	if len(links) == 0 {
-		return false, nil
-	}
-
-	var added []string
-	var failed []string
-	for _, link := range links {
-		gid, err := runAria2AddURL(ctx, factory, link)
-		if err != nil {
-			failed = append(failed, fmt.Sprintf("%s: %v", link, err))
-			continue
-		}
-		added = append(added, fmt.Sprintf("%s -> %s", gid, link))
-	}
-	return true, sendMessage(ctx, msg.Chat.ID, formatAria2AddResult(added, failed))
-}
-
-func downloadTelegramFile(ctx *th.Context, fileID string) ([]byte, error) {
-	file, err := ctx.Bot().GetFile(ctx, &telego.GetFileParams{FileID: fileID})
-	if err != nil {
-		return nil, err
-	}
-	if file.FilePath == "" {
-		return nil, errors.New("telegram did not return file_path")
-	}
-	return tu.DownloadFile(ctx.Bot().FileDownloadURL(file.FilePath))
-}
-
 func isTorrentDocument(doc *telego.Document) bool {
 	if doc == nil {
 		return false
@@ -379,31 +315,6 @@ func isTorrentDocument(doc *telego.Document) bool {
 		return true
 	}
 	return strings.EqualFold(path.Ext(doc.FileName), ".torrent")
-}
-
-func extractAria2Links(text string) []string {
-	fields := strings.Fields(text)
-	seen := map[string]struct{}{}
-	var links []string
-	for _, field := range fields {
-		field = strings.Trim(field, "<>()[]{}\"'")
-		if !isAria2DownloadLink(field) {
-			continue
-		}
-		if _, ok := seen[field]; ok {
-			continue
-		}
-		seen[field] = struct{}{}
-		links = append(links, field)
-	}
-	return links
-}
-
-func isAria2DownloadLink(value string) bool {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	return strings.HasPrefix(lower, "http://") ||
-		strings.HasPrefix(lower, "https://") ||
-		strings.HasPrefix(lower, "magnet:?xt=urn:btih:")
 }
 
 func aria2HelpMessage() string {
@@ -422,11 +333,12 @@ func aria2HelpMessage() string {
 		"/downloads_pause_all 暂停全部 TDL 任务",
 		"/downloads_start_all 开始全部已暂停的 TDL 任务",
 		"/aria2_retry 重试已停止且未完成的 TDL 任务",
+		"发送 Telegram 消息链接，按 watch 流程下载消息中的文件",
 	}, "\n")
 }
 
 func aria2BotHelpMessage(userID int64) string {
-	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n系统信息：/info\nAriaNg 地址：/web\n更换默认下载目录：/path 绝对路径\n直接添加任务：发送 HTTP/HTTPS 链接、磁力链接或 .torrent 文件\nADMIN_ID：%d", aria2MenuClose, userID)
+	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n系统信息：/info\nAriaNg 地址：/web\n更换默认下载目录：/path 绝对路径\n提交下载：发送 Telegram 消息链接\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
 func formatAria2GlobalOptions(options map[string]string) string {
@@ -560,22 +472,6 @@ func parseAria2Int(value string) int64 {
 		return 0
 	}
 	return n
-}
-
-func formatAria2AddResult(added, failed []string) string {
-	parts := []string{}
-	if len(added) > 0 {
-		parts = append(parts, fmt.Sprintf("已提交 %d 个任务：", len(added)))
-		parts = append(parts, firstStrings(added, 10)...)
-	}
-	if len(failed) > 0 {
-		parts = append(parts, fmt.Sprintf("失败 %d 个：", len(failed)))
-		parts = append(parts, firstStrings(failed, 5)...)
-	}
-	if len(parts) == 0 {
-		return "没有可提交的下载链接。"
-	}
-	return strings.Join(parts, "\n")
 }
 
 func truncateRunes(value string, limit int) string {
