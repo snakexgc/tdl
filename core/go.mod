@@ -6,7 +6,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/go-faster/errors v0.7.1
-	github.com/gotd/contrib v0.20.0
+	github.com/gotd/contrib v0.21.1
 	github.com/gotd/td v0.140.0
 	github.com/iyear/connectproxy v0.1.1
 	github.com/samber/lo v1.53.0
@@ -20,7 +20,7 @@ require (
 )
 
 require (
-	github.com/beevik/ntp v1.3.1 // indirect
+	github.com/beevik/ntp v1.4.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
