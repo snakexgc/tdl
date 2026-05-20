@@ -4,9 +4,62 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 TDL 管理面板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
+  <style>
+    .auth-bg-grid {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .auth-bg-grid::before {
+      content: "";
+      position: absolute;
+      inset: -50%;
+      background-image:
+        linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      animation: grid-drift 20s linear infinite;
+    }
+    @keyframes grid-drift {
+      from { transform: translate(0, 0); }
+      to { transform: translate(60px, 60px); }
+    }
+    .auth-bg-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.5;
+      animation: orb-float 8s ease-in-out infinite alternate;
+    }
+    .auth-bg-orb:nth-child(1) {
+      width: 300px; height: 300px;
+      top: 10%; left: 15%;
+      background: rgba(59, 130, 246, 0.15);
+    }
+    .auth-bg-orb:nth-child(2) {
+      width: 250px; height: 250px;
+      bottom: 15%; right: 10%;
+      background: rgba(139, 92, 246, 0.12);
+      animation-delay: -4s;
+    }
+    @keyframes orb-float {
+      from { transform: translateY(0) scale(1); }
+      to { transform: translateY(-30px) scale(1.05); }
+    }
+    .auth-shell { position: relative; z-index: 1; }
+  </style>
 </head>
 <body class="auth-page">
+  <div class="auth-bg-grid" aria-hidden="true">
+    <div class="auth-bg-orb"></div>
+    <div class="auth-bg-orb"></div>
+  </div>
   <main class="auth-shell">
     <section class="auth-panel" aria-labelledby="auth-title">
       <div class="auth-brand">

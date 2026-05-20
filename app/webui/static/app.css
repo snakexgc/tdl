@@ -482,11 +482,6 @@ p {
   grid-column: 1 / -1;
 }
 
-.dashboard-card-speed {
-  grid-column: 2;
-  grid-row: 1;
-}
-
 .dashboard-card-head {
   display: flex;
   align-items: flex-start;
@@ -549,7 +544,7 @@ p {
 
 .dashboard-chart .axis-label {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .dashboard-chart .series-line {
@@ -558,6 +553,43 @@ p {
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .hover-line {
+  stroke: rgba(64, 80, 74, 0.62);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .hover-point {
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .hover-tooltip-bg {
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  filter: drop-shadow(0 8px 18px rgba(24, 37, 32, 0.14));
+}
+
+.dashboard-chart .hover-tooltip-title {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-chart .hover-tooltip-text {
+  fill: var(--muted);
+  font-size: 11.5px;
+}
+
+.dashboard-chart .chart-hit-area {
+  cursor: crosshair;
+  fill: transparent;
+  pointer-events: all;
 }
 
 .dashboard-legend {
@@ -1411,11 +1443,6 @@ tr:last-child td {
 
   .dashboard-card-wide {
     grid-column: auto;
-  }
-
-  .dashboard-card-speed {
-    grid-column: auto;
-    grid-row: auto;
   }
 
   .field,

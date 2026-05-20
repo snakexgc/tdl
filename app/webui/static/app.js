@@ -595,18 +595,18 @@ function renderDashboard() {
   setText("dashboard-speed-meta", `aria2 ${formatBytes(latest.aria2Speed)}/s · gotd累计 ${formatBytes(latest.gotdTotal)}`);
 
   renderSmoothChart("dashboard-cpu-chart", "dashboard-cpu-axis", [
-    { key: "cpu", color: "#0b7f72" },
+    { key: "cpu", label: "CPU", color: "#0b7f72" },
   ], { min: 0, formatter: formatPercent });
 
   renderSmoothChart("dashboard-memory-chart", "dashboard-memory-axis", [
-    { key: "memoryTotal", color: "#0b7f72" },
-    { key: "memorySoftware", color: "#6f5cc2" },
-    { key: "memoryBuffer", color: "#c47a16" },
+    { key: "memoryTotal", label: "总用量", color: "#0b7f72" },
+    { key: "memorySoftware", label: "软件用量", color: "#6f5cc2" },
+    { key: "memoryBuffer", label: "HTTP buffer", color: "#c47a16" },
   ], { min: 0, formatter: formatBytes });
 
   renderSmoothChart("dashboard-speed-chart", "dashboard-speed-axis", [
-    { key: "gotdSpeed", color: "#0b7f72" },
-    { key: "aria2Speed", color: "#c47a16" },
+    { key: "gotdSpeed", label: "gotd", color: "#0b7f72" },
+    { key: "aria2Speed", label: "aria2", color: "#c47a16" },
   ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
 }
 
@@ -616,9 +616,13 @@ function renderSmoothChart(svgID, axisID, series, options = {}) {
   if (!svg) return;
   if (axis) axis.textContent = "";
 
-  const width = 640;
-  const height = 160;
-  const padding = { top: 12, right: 14, bottom: 28, left: 54 };
+  const bounds = svg.getBoundingClientRect();
+  const width = Math.max(320, Math.round(bounds.width || 640));
+  const height = Math.max(140, Math.round(bounds.height || 160));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.removeAttribute("preserveAspectRatio");
+
+  const padding = { top: 10, right: 12, bottom: 24, left: 74 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const range = dashboardChartRange(series, options);
@@ -665,8 +669,96 @@ function renderSmoothChart(svgID, axisID, series, options = {}) {
     const point = points.length === 1 ? `<circle cx="${points[0].x.toFixed(2)}" cy="${points[0].y.toFixed(2)}" r="3.5" fill="${item.color}"></circle>` : "";
     return `<path class="series-line" d="${d}" stroke="${item.color}"></path>${point}`;
   }).join("");
+  const hoverLayer = `<g class="chart-hover-layer"></g><rect class="chart-hit-area" x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight}"></rect>`;
 
-  svg.innerHTML = grid + axisLines + yAxisLabels + paths;
+  svg.innerHTML = grid + axisLines + yAxisLabels + paths + hoverLayer;
+  bindDashboardChartHover(svg, {
+    formatter,
+    height,
+    padding,
+    plotHeight,
+    plotWidth,
+    series,
+    slotCount,
+    slotOffset,
+    width,
+    xAxisY,
+    xFor,
+    yFor,
+  });
+}
+
+function bindDashboardChartHover(svg, chart) {
+  const hitArea = svg.querySelector(".chart-hit-area");
+  const hoverLayer = svg.querySelector(".chart-hover-layer");
+  if (!hitArea || !hoverLayer || !state.dashboardSamples.length) return;
+
+  hitArea.addEventListener("mousemove", (event) => {
+    const rect = svg.getBoundingClientRect();
+    const rawX = event.clientX - rect.left;
+    const x = Math.min(chart.width - chart.padding.right, Math.max(chart.padding.left, rawX));
+    const virtualIndex = ((x - chart.padding.left) / chart.plotWidth) * (chart.slotCount - 1) - chart.slotOffset;
+    const index = Math.min(state.dashboardSamples.length - 1, Math.max(0, Math.round(virtualIndex)));
+    renderDashboardChartHover(hoverLayer, chart, index);
+  });
+  hitArea.addEventListener("mouseleave", () => {
+    hoverLayer.innerHTML = "";
+  });
+}
+
+function renderDashboardChartHover(layer, chart, index) {
+  const sample = state.dashboardSamples[index];
+  if (!sample) return;
+
+  const pointX = chart.xFor(index);
+  const rows = chart.series.map((item) => ({
+    color: item.color,
+    label: item.label || item.key,
+    value: chart.formatter(sample[item.key] || 0),
+    y: chart.yFor(sample[item.key]),
+  }));
+  const title = dashboardSampleLabel(sample);
+  const labels = [title, ...rows.map((row) => `${row.label}: ${row.value}`)];
+  const tooltipWidth = Math.max(126, Math.min(260, Math.max(...labels.map(estimatedTextWidth)) + 30));
+  const tooltipHeight = 28 + rows.length * 18;
+  let tooltipX = pointX + 12;
+  if (tooltipX + tooltipWidth > chart.width - 6) {
+    tooltipX = pointX - tooltipWidth - 12;
+  }
+  tooltipX = Math.max(6, tooltipX);
+  const tooltipY = chart.padding.top + 6;
+
+  const points = rows.map((row) => (
+    `<circle class="hover-point" cx="${pointX.toFixed(2)}" cy="${row.y.toFixed(2)}" r="4.2" fill="${row.color}"></circle>`
+  )).join("");
+  const tooltipRows = rows.map((row, rowIndex) => {
+    const y = tooltipY + 40 + rowIndex * 18;
+    return [
+      `<circle cx="${(tooltipX + 12).toFixed(2)}" cy="${(y - 4).toFixed(2)}" r="3.4" fill="${row.color}"></circle>`,
+      `<text class="hover-tooltip-text" x="${(tooltipX + 22).toFixed(2)}" y="${y.toFixed(2)}">${escapeHTML(row.label)}: ${escapeHTML(row.value)}</text>`,
+    ].join("");
+  }).join("");
+
+  layer.innerHTML = [
+    `<line class="hover-line" x1="${pointX.toFixed(2)}" y1="${chart.padding.top}" x2="${pointX.toFixed(2)}" y2="${chart.xAxisY.toFixed(2)}"></line>`,
+    points,
+    `<g class="hover-tooltip">`,
+    `<rect class="hover-tooltip-bg" x="${tooltipX.toFixed(2)}" y="${tooltipY.toFixed(2)}" width="${tooltipWidth.toFixed(2)}" height="${tooltipHeight.toFixed(2)}" rx="7" ry="7"></rect>`,
+    `<text class="hover-tooltip-title" x="${(tooltipX + 12).toFixed(2)}" y="${(tooltipY + 20).toFixed(2)}">${escapeHTML(title)}</text>`,
+    tooltipRows,
+    `</g>`,
+  ].join("");
+}
+
+function dashboardSampleLabel(sample) {
+  const latest = state.dashboardSamples[state.dashboardSamples.length - 1];
+  if (!latest || !sample.at || !latest.at) return "采样点";
+  const seconds = Math.max(0, Math.round((latest.at - sample.at) / 1000));
+  return seconds === 0 ? "现在" : `${seconds}s 前`;
+}
+
+function estimatedTextWidth(text) {
+  return Array.from(String(text || "")).reduce((width, char) => width + (char.charCodeAt(0) > 255 ? 12 : 6.5), 0);
 }
 
 function dashboardChartRange(series, options = {}) {
@@ -718,9 +810,17 @@ function smoothDashboardPath(points) {
       x: p2.x - (p3.x - p1.x) / 6,
       y: p2.y - (p3.y - p1.y) / 6,
     };
+    const minY = Math.min(p1.y, p2.y);
+    const maxY = Math.max(p1.y, p2.y);
+    cp1.y = clampNumber(cp1.y, minY, maxY);
+    cp2.y = clampNumber(cp2.y, minY, maxY);
     d += ` C ${formatPoint(cp1)}, ${formatPoint(cp2)}, ${formatPoint(p2)}`;
   }
   return d;
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function setDashboardStatus(message, kind = "") {
