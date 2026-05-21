@@ -361,6 +361,7 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 			{Command: "downloads_pause_all", Description: "暂停全部下载任务"},
 			{Command: "downloads_start_all", Description: "开始全部下载任务"},
 			{Command: "aria2_retry", Description: "重试已停止的下载任务"},
+			{Command: "forward", Description: "回复 Telegram 消息链接并转发"},
 			{Command: "config", Description: "查看配置命令"},
 			{Command: "config_get", Description: "查看全部配置"},
 			{Command: "config_set", Description: "修改配置"},
@@ -486,6 +487,9 @@ func handleAllowedMessage(
 	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
 		return err
 	}
+	if handled, err := handleForwardCommand(ctx, msg, text, namespaceKV); handled || err != nil {
+		return err
+	}
 	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
 		return err
 	}
@@ -565,7 +569,7 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
 	case botCmdStart, botCmdMenu, botCmdHelp, botCmdInfo, botCmdWeb, botCmdPath,
-		"/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
+		botCmdForward, "/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
 		botCmdDownloads, botCmdDownloadsHelp, botCmdDownloadsActive, botCmdDownloadsWaiting, botCmdDownloadsStopped,
 		botCmdDownloadsOverview, botCmdDownloadsPauseAll, botCmdDownloadsStartAll,
 		botCmdInternal, botCmdInternalHelp, botCmdInternalActive, botCmdInternalWaiting, botCmdInternalStopped,

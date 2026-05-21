@@ -43,12 +43,19 @@ var configurablePaths = []string{
 	"webui.password",
 	"modules.bot",
 	"modules.watch",
+	"modules.forward",
 	"downloader.mode",
 	"aria2.rpc_url",
 	"aria2.secret",
 	"aria2.dir",
 	"aria2.timeout_seconds",
 	"bot.allowed_users",
+	"forward.mode",
+	"forward.target",
+	"forward.listen",
+	"forward.listen_comments",
+	"forward.silent",
+	"forward.dedupe_ttl_seconds",
 }
 
 func handleConfigCommand(ctx *th.Context, msg *telego.Message, text string, afterSave func(*config.Config)) (bool, error) {

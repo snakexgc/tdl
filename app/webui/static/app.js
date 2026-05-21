@@ -85,6 +85,7 @@ const sections = [
     fields: [
       ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
       ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到当前下载器。"],
+      ["modules.forward", "监听转发", "bool", "启用后监听 forward.listen 中的 Telegram 对象并转发新消息。"],
     ],
   },
   {
@@ -107,6 +108,17 @@ const sections = [
     fields: [
       ["bot.token", "机器人 Token", "password", "从 BotFather 获取；留空表示保持原 token。"],
       ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人。"],
+    ],
+  },
+  {
+    title: "转发",
+    fields: [
+      ["forward.mode", "转发模式", "select", "default 优先官方转发，失败或受保护内容自动降级 clone；clone 始终复制发送。", ["default", "clone"]],
+      ["forward.target", "默认目标", "text", "机器人 /forward 未指定目标、监听转发触发时使用；留空表示收藏夹。"],
+      ["forward.listen", "监听对象", "list", "添加频道、群、用户的 ID 或用户名；频道会尝试同步监听关联评论区。"],
+      ["forward.listen_comments", "监听频道评论", "bool", "开启后会读取频道关联讨论组 ID，并监听其中的评论消息；账号必须有权限访问该讨论组。"],
+      ["forward.silent", "静默转发", "bool", "开启后转发消息不触发通知。"],
+      ["forward.dedupe_ttl_seconds", "去重时间", "number", "监听转发的消息/相册去重时间，单位秒。"],
     ],
   },
 ];

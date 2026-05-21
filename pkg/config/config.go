@@ -29,6 +29,11 @@ const (
 	DownloaderModeInternal = "internal"
 )
 
+const (
+	ForwardModeDefault = "default"
+	ForwardModeClone   = "clone"
+)
+
 // BotConfig Bot 配置
 type BotConfig struct {
 	Token        string  `json:"token"`
@@ -58,8 +63,9 @@ type WebUIConfig struct {
 }
 
 type ModulesConfig struct {
-	Bot   bool `json:"bot"`
-	Watch bool `json:"watch"`
+	Bot     bool `json:"bot"`
+	Watch   bool `json:"watch"`
+	Forward bool `json:"forward"`
 }
 
 type DownloaderConfig struct {
@@ -71,6 +77,15 @@ type Aria2Config struct {
 	Secret         string `json:"secret"`
 	Dir            string `json:"dir"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+type ForwardConfig struct {
+	Mode             string   `json:"mode"`
+	Target           string   `json:"target"`
+	Listen           []string `json:"listen"`
+	ListenComments   bool     `json:"listen_comments"`
+	Silent           bool     `json:"silent"`
+	DedupeTTLSeconds int      `json:"dedupe_ttl_seconds"`
 }
 
 // Config 全局配置结构
@@ -95,6 +110,7 @@ type Config struct {
 	Downloader       DownloaderConfig `json:"downloader"`
 	Aria2            Aria2Config      `json:"aria2"`
 	Bot              BotConfig        `json:"bot"`
+	Forward          ForwardConfig    `json:"forward"`
 }
 
 // DefaultConfig 返回默认配置
@@ -127,8 +143,9 @@ func DefaultConfig() *Config {
 			Password: DefaultWebUIPassword,
 		},
 		Modules: ModulesConfig{
-			Bot:   true,
-			Watch: true,
+			Bot:     true,
+			Watch:   true,
+			Forward: false,
 		},
 		Downloader: DownloaderConfig{
 			Mode: DownloaderModeAria2,
@@ -142,6 +159,14 @@ func DefaultConfig() *Config {
 		Bot: BotConfig{
 			Token:        "",
 			AllowedUsers: []int64{},
+		},
+		Forward: ForwardConfig{
+			Mode:             ForwardModeDefault,
+			Target:           "",
+			Listen:           []string{},
+			ListenComments:   true,
+			Silent:           false,
+			DedupeTTLSeconds: 600,
 		},
 	}
 }
@@ -211,6 +236,37 @@ func EffectiveDownloaderMode(cfg *Config) string {
 		return DownloaderModeAria2
 	}
 	return mode
+}
+
+func NormalizeForwardMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" || mode == "direct" {
+		return ForwardModeDefault, nil
+	}
+	switch mode {
+	case ForwardModeDefault, ForwardModeClone:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("forward.mode must be %q or %q", ForwardModeDefault, ForwardModeClone)
+	}
+}
+
+func EffectiveForwardMode(cfg *Config) string {
+	if cfg == nil {
+		return ForwardModeDefault
+	}
+	mode, err := NormalizeForwardMode(cfg.Forward.Mode)
+	if err != nil {
+		return ForwardModeDefault
+	}
+	return mode
+}
+
+func EffectiveForwardDedupeTTL(cfg *Config) int {
+	if cfg == nil || cfg.Forward.DedupeTTLSeconds <= 0 {
+		return 600
+	}
+	return cfg.Forward.DedupeTTLSeconds
 }
 
 func HTTPListenAddr(cfg *Config) string {
@@ -346,6 +402,16 @@ func Validate(cfg *Config) error {
 		return err
 	}
 	cfg.Downloader.Mode = mode
+	forwardMode, err := NormalizeForwardMode(cfg.Forward.Mode)
+	if err != nil {
+		return err
+	}
+	cfg.Forward.Mode = forwardMode
+	cfg.Forward.Target = strings.TrimSpace(cfg.Forward.Target)
+	cfg.Forward.Listen = normalizeStringList(cfg.Forward.Listen)
+	if cfg.Forward.DedupeTTLSeconds < 0 {
+		return errors.New("forward.dedupe_ttl_seconds must be greater than or equal to 0")
+	}
 	if err := normalizeHTTPConfig(cfg); err != nil {
 		return err
 	}
@@ -353,6 +419,26 @@ func Validate(cfg *Config) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeStringList(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 var (

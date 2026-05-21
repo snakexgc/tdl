@@ -23,7 +23,10 @@ import (
 	"github.com/iyear/tdl/pkg/kv"
 )
 
-const moduleStopTimeout = 10 * time.Second
+const (
+	moduleStopTimeout      = 10 * time.Second
+	moduleStatusNotStarted = "未启动"
+)
 
 type Options struct {
 	RequestReboot func()
@@ -40,13 +43,15 @@ type Manager struct {
 	requestReboot func()
 	requestUpdate func(updater.Plan)
 
-	mu        sync.Mutex
-	notify    watch.NotifyFunc
-	botCancel context.CancelFunc
-	botDone   chan struct{}
-	botStatus string
-	botErr    error
-	watchMode string
+	mu             sync.Mutex
+	notify         watch.NotifyFunc
+	botCancel      context.CancelFunc
+	botDone        chan struct{}
+	botStatus      string
+	botErr         error
+	watchMode      string
+	watchEnabled   bool
+	forwardEnabled bool
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -96,13 +101,15 @@ func wrapUpdateShutdown(cancel context.CancelFunc, fn func(updater.Plan)) func(u
 
 func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Storage, opts Options) *Manager {
 	manager := &Manager{
-		parent:        ctx,
-		kvEngine:      engine,
-		namespaceKV:   namespaceKV,
-		requestReboot: opts.RequestReboot,
-		requestUpdate: opts.RequestUpdate,
-		botStatus:     "未启动",
-		watchMode:     config.EffectiveDownloaderMode(config.Get()),
+		parent:         ctx,
+		kvEngine:       engine,
+		namespaceKV:    namespaceKV,
+		requestReboot:  opts.RequestReboot,
+		requestUpdate:  opts.RequestUpdate,
+		botStatus:      moduleStatusNotStarted,
+		watchMode:      config.EffectiveDownloaderMode(config.Get()),
+		watchEnabled:   config.Get() != nil && config.Get().Modules.Watch,
+		forwardEnabled: config.Get() != nil && config.Get().Modules.Forward,
 	}
 	manager.watchCtrl = watch.NewController(ctx, watch.DefaultOptions(config.Get()), manager.Notify)
 	return manager
@@ -157,16 +164,23 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 	nextWatchMode := config.EffectiveDownloaderMode(cfg)
 	m.mu.Lock()
 	prevWatchMode := m.watchMode
+	prevWatchEnabled := m.watchEnabled
+	prevForwardEnabled := m.forwardEnabled
 	m.watchMode = nextWatchMode
+	m.watchEnabled = cfg.Modules.Watch
+	m.forwardEnabled = cfg.Modules.Forward
 	m.mu.Unlock()
-	restartWatch := prevWatchMode != "" && prevWatchMode != nextWatchMode && m.watchCtrl.Running()
+	restartWatch := m.watchCtrl.Running() &&
+		((prevWatchMode != "" && prevWatchMode != nextWatchMode) ||
+			prevWatchEnabled != cfg.Modules.Watch ||
+			prevForwardEnabled != cfg.Modules.Forward)
 
 	if cfg.Modules.Bot {
 		m.StartBot()
 	} else {
 		go m.StopBot()
 	}
-	if cfg.Modules.Watch {
+	if cfg.Modules.Watch || cfg.Modules.Forward {
 		if restartWatch {
 			go func() {
 				m.StopWatch()
@@ -194,6 +208,7 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 		},
 		m.botState(cfg),
 		m.watchState(cfg),
+		m.forwardState(cfg),
 	}
 }
 
@@ -209,6 +224,8 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		next.Modules.Bot = enabled
 	case "watch":
 		next.Modules.Watch = enabled
+	case "forward":
+		next.Modules.Forward = enabled
 	case "webui":
 		return webui.ModuleState{}, errors.New("webui cannot be disabled from the web panel")
 	default:
@@ -231,9 +248,28 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		if enabled {
 			_ = m.StartWatch(ctx)
 		} else {
-			m.StopWatch()
+			if !next.Modules.Forward {
+				m.StopWatch()
+			} else if m.watchCtrl.Running() {
+				go func() {
+					m.StopWatch()
+					_ = m.StartWatch(context.Background())
+				}()
+			}
 		}
 		return m.watchState(next), nil
+	case "forward":
+		if enabled {
+			_ = m.StartWatch(ctx)
+		} else if !next.Modules.Watch {
+			m.StopWatch()
+		} else if m.watchCtrl.Running() {
+			go func() {
+				m.StopWatch()
+				_ = m.StartWatch(context.Background())
+			}()
+		}
+		return m.forwardState(next), nil
 	default:
 		return webui.ModuleState{}, fmt.Errorf("unknown module %q", id)
 	}
@@ -326,7 +362,7 @@ func (m *Manager) StopBot() {
 
 func (m *Manager) StartWatch(ctx context.Context) error {
 	cfg := config.Get()
-	if cfg == nil || !cfg.Modules.Watch {
+	if cfg == nil || (!cfg.Modules.Watch && !cfg.Modules.Forward) {
 		return nil
 	}
 	if m.watchCtrl.Running() {
@@ -365,10 +401,11 @@ func (m *Manager) setNotifier(notify watch.NotifyFunc) {
 }
 
 func (m *Manager) onLoginSuccess(_ *tg.User) {
-	if config.Get().Modules.Watch {
+	cfg := config.Get()
+	if cfg.Modules.Watch || cfg.Modules.Forward {
 		go func() {
 			if err := m.StartWatch(context.Background()); err != nil {
-				m.Notify(context.Background(), "登录成功，但监听下载未启动："+err.Error())
+				m.Notify(context.Background(), "登录成功，但监听服务未启动："+err.Error())
 			}
 		}()
 	}
@@ -384,7 +421,7 @@ func (m *Manager) botState(cfg *config.Config) webui.ModuleState {
 		cfg = config.Get()
 	}
 	if status == "" {
-		status = "未启动"
+		status = moduleStatusNotStarted
 	}
 	if cfg != nil && cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) == "" {
 		status = "已启用，等待填写 Bot Token。"
@@ -408,8 +445,8 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 		cfg = config.Get()
 	}
 	running := m.watchCtrl.Running()
-	status := "未启动"
-	if running {
+	status := moduleStatusNotStarted
+	if running && cfg != nil && cfg.Modules.Watch {
 		status = "运行中"
 	} else if err := m.watchCtrl.LastError(); err != nil {
 		status = "已停止：" + err.Error()
@@ -421,7 +458,31 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 		Name:        "监听下载",
 		Description: "监听 Telegram 表情触发，并把任务提交到当前下载器。",
 		Enabled:     cfg != nil && cfg.Modules.Watch,
-		Running:     running,
+		Running:     running && cfg != nil && cfg.Modules.Watch,
+		CanToggle:   true,
+		Status:      status,
+	}
+}
+
+func (m *Manager) forwardState(cfg *config.Config) webui.ModuleState {
+	if cfg == nil {
+		cfg = config.Get()
+	}
+	running := m.watchCtrl.Running()
+	status := moduleStatusNotStarted
+	if running && cfg != nil && cfg.Modules.Forward {
+		status = "运行中"
+	} else if err := m.watchCtrl.LastError(); err != nil {
+		status = "已停止：" + err.Error()
+	} else if cfg != nil && cfg.Modules.Forward {
+		status = "已启用，等待 Telegram 用户登录或启动。"
+	}
+	return webui.ModuleState{
+		ID:          "forward",
+		Name:        "监听转发",
+		Description: "监听配置的 Telegram 对象，并按 forward.mode 转发到默认目标；频道会尝试自动监听关联评论区。",
+		Enabled:     cfg != nil && cfg.Modules.Forward,
+		Running:     running && cfg != nil && cfg.Modules.Forward,
 		CanToggle:   true,
 		Status:      status,
 	}
@@ -450,7 +511,7 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 	if cfg == nil {
 		return false
 	}
-	return cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != ""
+	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.Watch || cfg.Modules.Forward
 }
 
 func (m *Manager) setBotStopped(status string, err error) {

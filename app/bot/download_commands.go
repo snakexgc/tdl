@@ -10,12 +10,13 @@ import (
 )
 
 const (
-	botCmdStart = "/start"
-	botCmdMenu  = "/menu"
-	botCmdHelp  = "/help"
-	botCmdInfo  = "/info"
-	botCmdWeb   = "/web"
-	botCmdPath  = "/path"
+	botCmdStart   = "/start"
+	botCmdMenu    = "/menu"
+	botCmdHelp    = "/help"
+	botCmdInfo    = "/info"
+	botCmdWeb     = "/web"
+	botCmdPath    = "/path"
+	botCmdForward = "/forward"
 
 	botCmdDownloads         = "/downloads"
 	botCmdDownloadsHelp     = "/downloads_help"

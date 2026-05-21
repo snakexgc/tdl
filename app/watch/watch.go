@@ -43,16 +43,24 @@ import (
 )
 
 type Options struct {
-	Dir              string
-	Template         string
-	SkipSame         bool
-	Threads          int
-	TriggerReactions []string
-	Include          []string
-	Exclude          []string
-	FileSizeMB       int64
-	Notify           NotifyFunc
-	messageLinks     <-chan messageLinkSubmission
+	Dir                   string
+	Template              string
+	SkipSame              bool
+	Threads               int
+	Download              bool
+	TriggerReactions      []string
+	Include               []string
+	Exclude               []string
+	FileSizeMB            int64
+	Forward               bool
+	ForwardMode           string
+	ForwardTarget         string
+	ForwardListen         []string
+	ForwardListenComments bool
+	ForwardSilent         bool
+	ForwardDedupeTTL      time.Duration
+	Notify                NotifyFunc
+	messageLinks          <-chan messageLinkSubmission
 }
 
 type NotifyFunc func(ctx context.Context, text string)
@@ -67,13 +75,21 @@ func DefaultOptions(cfg *config.Config) Options {
 	}
 
 	return Options{
-		Dir:              cfg.DownloadDir,
-		Template:         defaultFileTemplate,
-		Threads:          config.EffectivePoolSize(cfg),
-		TriggerReactions: append([]string(nil), cfg.TriggerReactions...),
-		Include:          append([]string(nil), cfg.Include...),
-		Exclude:          append([]string(nil), cfg.Exclude...),
-		FileSizeMB:       cfg.FileSizeMB,
+		Dir:                   cfg.DownloadDir,
+		Template:              defaultFileTemplate,
+		Threads:               config.EffectivePoolSize(cfg),
+		Download:              cfg.Modules.Watch,
+		TriggerReactions:      append([]string(nil), cfg.TriggerReactions...),
+		Include:               append([]string(nil), cfg.Include...),
+		Exclude:               append([]string(nil), cfg.Exclude...),
+		FileSizeMB:            cfg.FileSizeMB,
+		Forward:               cfg.Modules.Forward,
+		ForwardMode:           config.EffectiveForwardMode(cfg),
+		ForwardTarget:         cfg.Forward.Target,
+		ForwardListen:         append([]string(nil), cfg.Forward.Listen...),
+		ForwardListenComments: cfg.Forward.ListenComments,
+		ForwardSilent:         cfg.Forward.Silent,
+		ForwardDedupeTTL:      time.Duration(config.EffectiveForwardDedupeTTL(cfg)) * time.Second,
 	}
 }
 
@@ -143,11 +159,26 @@ type Watcher struct {
 	include          map[string]struct{}
 	exclude          map[string]struct{}
 	minFileSizeBytes int64
+	forward          *forwardRuntime
 }
 
 func Run(ctx context.Context, opts Options) error {
 	cfg := config.Get()
-	if err := validateWatchConfig(cfg); err != nil {
+	if opts.Download {
+		if err := validateWatchConfig(cfg); err != nil {
+			return err
+		}
+	}
+	if !opts.Download && !opts.Forward {
+		return errors.New("watch has no enabled work: enable modules.watch or modules.forward")
+	}
+	if opts.Forward && strings.TrimSpace(opts.ForwardTarget) == "" {
+		color.Yellow("⚠️ forward.target is empty; watched forwards will be sent to Saved Messages")
+	}
+	if opts.Forward && len(opts.ForwardListen) == 0 {
+		color.Yellow("⚠️ modules.forward is enabled but forward.listen is empty")
+	}
+	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
 		return err
 	}
 	if opts.FileSizeMB < 0 {
@@ -216,43 +247,45 @@ func Run(ctx context.Context, opts Options) error {
 
 	poolSize := effectiveDownloadPoolSize(cfg)
 
-	switch downloaderMode {
-	case config.DownloaderModeAria2:
-		if err := waitForAria2(runCtx, runtime.aria2, maxConcurrentDownloads, watcharia2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
+	if opts.Download {
+		switch downloaderMode {
+		case config.DownloaderModeAria2:
+			if err := waitForAria2(runCtx, runtime.aria2, maxConcurrentDownloads, watcharia2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return errors.Wrap(err, "configure aria2 max concurrent downloads")
 			}
-			return errors.Wrap(err, "configure aria2 max concurrent downloads")
-		}
-		logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
-			zap.Int("limit", maxConcurrentDownloads))
-		outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
-		if err != nil {
-			if opts.Notify != nil {
-				opts.Notify(runCtx, fmt.Sprintf("aria2 下载目录异常：%v", err))
+			logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
+				zap.Int("limit", maxConcurrentDownloads))
+			outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
+			if err != nil {
+				if opts.Notify != nil {
+					opts.Notify(runCtx, fmt.Sprintf("aria2 下载目录异常：%v", err))
+				}
+				return errors.Wrap(err, "prepare aria2 output root")
 			}
-			return errors.Wrap(err, "prepare aria2 output root")
-		}
-		runtime.outputRoot = outputRoot
-		runtime.ensureOutputDirs = ensureOutputDirs
-	case config.DownloaderModeInternal:
-		outputRoot, fallback, err := prepareInternalOutputRoot(cfg)
-		if err != nil {
-			if opts.Notify != nil {
-				opts.Notify(runCtx, fmt.Sprintf("内部下载目录异常：%v", err))
+			runtime.outputRoot = outputRoot
+			runtime.ensureOutputDirs = ensureOutputDirs
+		case config.DownloaderModeInternal:
+			outputRoot, fallback, err := prepareInternalOutputRoot(cfg)
+			if err != nil {
+				if opts.Notify != nil {
+					opts.Notify(runCtx, fmt.Sprintf("内部下载目录异常：%v", err))
+				}
+				return errors.Wrap(err, "prepare internal output root")
 			}
-			return errors.Wrap(err, "prepare internal output root")
+			if fallback {
+				color.Yellow("⚠️ aria2.dir 不可用，内部下载器将使用备用目录：%s", outputRoot)
+			}
+			runtime.outputRoot = outputRoot
+			runtime.ensureOutputDirs = true
 		}
-		if fallback {
-			color.Yellow("⚠️ aria2.dir 不可用，内部下载器将使用备用目录：%s", outputRoot)
-		}
-		runtime.outputRoot = outputRoot
-		runtime.ensureOutputDirs = true
 	}
 
 	proxyErrCh := make(chan error, 1)
 	httpListen := config.HTTPListenAddr(cfg)
-	if strings.TrimSpace(httpListen) != "" {
+	if opts.Download && strings.TrimSpace(httpListen) != "" {
 		go func() {
 			if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				select {
@@ -264,36 +297,52 @@ func Run(ctx context.Context, opts Options) error {
 		}()
 	}
 
-	color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
-	if strings.TrimSpace(httpListen) != "" {
+	if opts.Download && opts.Forward {
+		color.Green("👀 Watching for reactions and forward sources... Press Ctrl+C to stop")
+	} else if opts.Forward {
+		color.Green("👀 Watching forward sources... Press Ctrl+C to stop")
+	} else {
+		color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
+	}
+	if opts.Download && strings.TrimSpace(httpListen) != "" {
 		color.Green("   HTTP listen: %s", httpListen)
 	}
-	if downloaderMode == config.DownloaderModeAria2 {
+	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 		color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
 		color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
 	}
-	color.Green("   Downloader mode: %s", downloaderMode)
-	color.Green("   Output root: %s", runtime.outputRoot)
-	color.Green("   Download dir template: %s", opts.Dir)
+	if opts.Download {
+		color.Green("   Downloader mode: %s", downloaderMode)
+		color.Green("   Output root: %s", runtime.outputRoot)
+		color.Green("   Download dir template: %s", opts.Dir)
+	}
 	color.Green("   Telegram pool / per-file streams: %d", poolSize)
-	if cfg.HTTP.DownloadLinkTTLHours <= 0 {
-		color.Green("   Download link TTL: permanent")
-	} else {
-		color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
+	if opts.Download {
+		if cfg.HTTP.DownloadLinkTTLHours <= 0 {
+			color.Green("   Download link TTL: permanent")
+		} else {
+			color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
+		}
+		if normalizeHTTPBufferMode(cfg.HTTP.Buffer.Mode) == httpBufferModeMemory {
+			color.Green("   HTTP buffer: memory (%d MiB per active file)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
+		} else {
+			color.Green("   HTTP buffer: off")
+		}
+		color.Green("   Max concurrent downloads: %d", maxConcurrentDownloads)
+		color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
+		if opts.FileSizeMB > 0 {
+			color.Green("   Min file size: %s (%d MB)", utils.Byte.FormatBinaryBytes(fileSizeMBToBytes(opts.FileSizeMB)), opts.FileSizeMB)
+		} else {
+			color.Green("   Min file size: unlimited")
+		}
 	}
-	if normalizeHTTPBufferMode(cfg.HTTP.Buffer.Mode) == httpBufferModeMemory {
-		color.Green("   HTTP buffer: memory (%d MiB per active file)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
-	} else {
-		color.Green("   HTTP buffer: off")
+	if opts.Forward {
+		color.Green("   Forward mode: %s", opts.ForwardMode)
+		color.Green("   Forward target: %s", forwardTargetLabel(opts.ForwardTarget))
+		color.Green("   Forward listen: %s", formatForwardListen(opts.ForwardListen))
+		color.Green("   Forward comments: %t", opts.ForwardListenComments)
 	}
-	color.Green("   Max concurrent downloads: %d", maxConcurrentDownloads)
-	color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
-	if opts.FileSizeMB > 0 {
-		color.Green("   Min file size: %s (%d MB)", utils.Byte.FormatBinaryBytes(fileSizeMBToBytes(opts.FileSizeMB)), opts.FileSizeMB)
-	} else {
-		color.Green("   Min file size: unlimited")
-	}
-	if downloaderMode == config.DownloaderModeAria2 {
+	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 		warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 	}
 
@@ -337,7 +386,7 @@ func Run(ctx context.Context, opts Options) error {
 		}
 
 		color.Yellow("⚠️ Watcher disconnected: %v", err)
-		if downloaderMode == config.DownloaderModeAria2 {
+		if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 			newPausedGIDs, pauseErr := watcharia2.SuspendTDLTasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 			if pauseErr != nil {
 				if errors.Is(pauseErr, context.Canceled) {
@@ -393,9 +442,15 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMB),
 	}
 
-	d.OnMessageReactions(w.onReaction)
-	d.OnEditMessage(w.onEditMessage)
-	d.OnEditChannelMessage(w.onEditChannelMessage)
+	if opts.Download {
+		d.OnMessageReactions(w.onReaction)
+		d.OnEditMessage(w.onEditMessage)
+		d.OnEditChannelMessage(w.onEditChannelMessage)
+	}
+	if opts.Forward {
+		d.OnNewMessage(w.onNewMessageForward)
+		d.OnNewChannelMessage(w.onNewChannelMessageForward)
+	}
 	d.OnFallback(func(ctx context.Context, e tg.Entities, update tg.UpdateClass) error {
 		updateType := fmt.Sprintf("%T", update)
 		logctx.From(ctx).Info("Unhandled update received",
@@ -428,6 +483,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 		w.pool = pool
 		w.manager = peers.Options{Storage: storage.NewPeers(kvd)}.Build(pool.Default(ctx))
+		w.configureForward(ctx)
 
 		self, err := client.Self(ctx)
 		if err != nil {
@@ -458,7 +514,9 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 		eg, egCtx := errgroup.WithContext(ctx)
 		eg.SetLimit(maxConcurrentDownloads)
-		go w.dispatcher(egCtx, eg)
+		if opts.Download {
+			go w.dispatcher(egCtx, eg)
+		}
 
 		<-ctx.Done()
 
@@ -829,6 +887,34 @@ func formatTriggerReactions(values []string) string {
 		return "any"
 	}
 	return strings.Join(normalized, ", ")
+}
+
+func formatForwardListen(values []string) string {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return "(empty)"
+	}
+	return strings.Join(normalized, ", ")
+}
+
+func forwardTargetLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Saved Messages"
+	}
+	return value
 }
 
 func reactionEmoji(r tg.ReactionClass) string {
