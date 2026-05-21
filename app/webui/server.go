@@ -809,17 +809,18 @@ type persistentDownloadTask struct {
 }
 
 type aria2TaskRecord struct {
-	GID         string    `json:"gid"`
-	TaskID      string    `json:"task_id"`
-	DownloadURL string    `json:"download_url"`
-	Dir         string    `json:"dir"`
-	Out         string    `json:"out"`
-	Connections int       `json:"connections"`
-	CreatedAt   time.Time `json:"created_at"`
-	Status      string    `json:"status"`
-	Total       int64     `json:"total"`
-	Completed   int64     `json:"completed"`
-	Error       string    `json:"error,omitempty"`
+	GID          string    `json:"gid"`
+	TaskID       string    `json:"task_id"`
+	DownloadURL  string    `json:"download_url"`
+	Dir          string    `json:"dir"`
+	Out          string    `json:"out"`
+	Connections  int       `json:"connections"`
+	TransferMode string    `json:"transfer_mode,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	Status       string    `json:"status"`
+	Total        int64     `json:"total"`
+	Completed    int64     `json:"completed"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type aria2Status struct {
@@ -1192,8 +1193,12 @@ func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pair
 
 	publicBaseURL := ""
 	threads := config.EffectiveThreads(cfg)
+	connections := 1
+	transferMode := config.HTTPTransferModeSourceParallel
 	if cfg != nil {
 		publicBaseURL = cfg.HTTP.PublicBaseURL
+		connections = config.HTTPRangeConnectionsFor(cfg.HTTP, threads)
+		transferMode = config.EffectiveHTTPTransferMode(cfg)
 	}
 	targetsByID, targetsByURL := downloadLinkTargets(pairs, cfg)
 	if len(targetsByID) == 0 {
@@ -1220,17 +1225,18 @@ func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pair
 		}
 		total, completed := aria2Lengths(status)
 		record := aria2TaskRecord{
-			GID:         status.GID,
-			TaskID:      target.TaskID,
-			DownloadURL: downloadURL,
-			Dir:         dir,
-			Out:         out,
-			Connections: threads,
-			CreatedAt:   time.Now(),
-			Status:      normalizedAria2Status(status.Status),
-			Total:       total,
-			Completed:   completed,
-			Error:       strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage),
+			GID:          status.GID,
+			TaskID:       target.TaskID,
+			DownloadURL:  downloadURL,
+			Dir:          dir,
+			Out:          out,
+			Connections:  connections,
+			TransferMode: transferMode,
+			CreatedAt:    time.Now(),
+			Status:       normalizedAria2Status(status.Status),
+			Total:        total,
+			Completed:    completed,
+			Error:        strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage),
 		}
 
 		records[key] = record
@@ -1483,6 +1489,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	cfg := config.Get()
 	threads := config.EffectiveThreads(cfg)
 	limit := config.EffectiveLimit(cfg)
+	connections := config.HTTPRangeConnectionsFor(cfg.HTTP, threads)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 	internalController := s.internalDownloadController()
 	aria2Configured := false
@@ -1530,20 +1537,21 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			aria2Configured = true
 		}
 		link := downloadURL(cfg.HTTP.PublicBaseURL, task.ID)
-		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName)
+		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName, connections)
 		if err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
 			continue
 		}
 		if err := s.saveAria2Record(ctx, aria2TaskRecord{
-			GID:         gid,
-			TaskID:      task.ID,
-			DownloadURL: link,
-			Dir:         cfg.Aria2.Dir,
-			Out:         task.FileName,
-			Connections: threads,
-			CreatedAt:   time.Now(),
+			GID:          gid,
+			TaskID:       task.ID,
+			DownloadURL:  link,
+			Dir:          cfg.Aria2.Dir,
+			Out:          task.FileName,
+			Connections:  connections,
+			TransferMode: config.EffectiveHTTPTransferMode(cfg),
+			CreatedAt:    time.Now(),
 		}); err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: persist aria2 record: %v", id, err))
@@ -1555,16 +1563,15 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	return result
 }
 
-func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string) (string, error) {
+func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string, connections int) (string, error) {
 	options := map[string]any{
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
 		"auto-file-renaming":        "false",
-		"split":                     "1",
-		"max-connection-per-server": "1",
 		"user-agent":                "tdl-webui-aria2",
 	}
+	applyTDLAria2HTTPConnectionOptions(options, connections)
 	if cfg.Dir != "" {
 		options["dir"] = cfg.Dir
 	}
@@ -1579,6 +1586,20 @@ func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string) (
 		return "", errors.New("aria2 returned empty gid")
 	}
 	return gid, nil
+}
+
+func applyTDLAria2HTTPConnectionOptions(options map[string]any, connections int) {
+	if connections < 1 {
+		connections = 1
+	}
+	value := strconv.Itoa(connections)
+	options["split"] = value
+	options["max-connection-per-server"] = value
+	if connections > 1 {
+		options["min-split-size"] = "1M"
+		return
+	}
+	delete(options, "min-split-size")
 }
 
 func configureAria2MaxConcurrentDownloads(ctx context.Context, cfg config.Aria2Config, limit int) error {
@@ -2252,7 +2273,8 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cfg.Aria2.Secret != "" || bytes.Contains(body, []byte("/download/")) {
-		body, err = rewriteAria2ProxyRequest(body, cfg.HTTP.PublicBaseURL, cfg.Aria2.Secret)
+		connections := config.HTTPRangeConnectionsFor(cfg.HTTP, config.EffectiveThreads(cfg))
+		body, err = rewriteAria2ProxyRequest(body, cfg.HTTP.PublicBaseURL, cfg.Aria2.Secret, connections)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -2283,10 +2305,10 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func injectAria2Secret(body []byte, secret string) ([]byte, error) {
-	return rewriteAria2ProxyRequest(body, "", secret)
+	return rewriteAria2ProxyRequest(body, "", secret, 1)
 }
 
-func rewriteAria2ProxyRequest(body []byte, publicBaseURL, secret string) ([]byte, error) {
+func rewriteAria2ProxyRequest(body []byte, publicBaseURL, secret string, connections int) ([]byte, error) {
 	var payload any
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
@@ -2299,11 +2321,11 @@ func rewriteAria2ProxyRequest(body []byte, publicBaseURL, secret string) ([]byte
 	}
 	switch value := payload.(type) {
 	case map[string]any:
-		rewriteAria2RequestObject(value, publicBaseURL, token)
+		rewriteAria2RequestObject(value, publicBaseURL, token, connections)
 	case []any:
 		for _, item := range value {
 			if obj, ok := item.(map[string]any); ok {
-				rewriteAria2RequestObject(obj, publicBaseURL, token)
+				rewriteAria2RequestObject(obj, publicBaseURL, token, connections)
 			}
 		}
 	default:
@@ -2316,8 +2338,8 @@ func rewriteAria2ProxyRequest(body []byte, publicBaseURL, secret string) ([]byte
 	return next, nil
 }
 
-func rewriteAria2RequestObject(request map[string]any, publicBaseURL, token string) {
-	normalizeAria2AddURIRequest(request, publicBaseURL)
+func rewriteAria2RequestObject(request map[string]any, publicBaseURL, token string, connections int) {
+	normalizeAria2AddURIRequest(request, publicBaseURL, connections)
 	if token != "" {
 		addAria2Token(request, token)
 	}
@@ -2376,7 +2398,7 @@ func prependAria2TokenParam(request map[string]any, token string) {
 	request["params"] = append([]any{token}, params...)
 }
 
-func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string) {
+func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string, connections int) {
 	method, _ := request["method"].(string)
 	if method == "system.multicall" {
 		params, _ := request["params"].([]any)
@@ -2395,7 +2417,7 @@ func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string) {
 		}
 		for _, call := range calls {
 			if obj, ok := call.(map[string]any); ok {
-				normalizeAria2MulticallAddURIRequest(obj, publicBaseURL)
+				normalizeAria2MulticallAddURIRequest(obj, publicBaseURL, connections)
 			}
 		}
 		return
@@ -2403,18 +2425,18 @@ func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string) {
 	if method != "aria2.addUri" {
 		return
 	}
-	normalizeAria2AddURIParams(request, publicBaseURL)
+	normalizeAria2AddURIParams(request, publicBaseURL, connections)
 }
 
-func normalizeAria2MulticallAddURIRequest(request map[string]any, publicBaseURL string) {
+func normalizeAria2MulticallAddURIRequest(request map[string]any, publicBaseURL string, connections int) {
 	method, _ := request["methodName"].(string)
 	if method != "aria2.addUri" {
 		return
 	}
-	normalizeAria2AddURIParams(request, publicBaseURL)
+	normalizeAria2AddURIParams(request, publicBaseURL, connections)
 }
 
-func normalizeAria2AddURIParams(request map[string]any, publicBaseURL string) {
+func normalizeAria2AddURIParams(request map[string]any, publicBaseURL string, connections int) {
 	params, _ := request["params"].([]any)
 	paramStart := 0
 	if len(params) > 0 {
@@ -2443,9 +2465,7 @@ func normalizeAria2AddURIParams(request map[string]any, publicBaseURL string) {
 			params = append(params, options)
 		}
 	}
-	options["split"] = "1"
-	options["max-connection-per-server"] = "1"
-	delete(options, "min-split-size")
+	applyTDLAria2HTTPConnectionOptions(options, connections)
 	request["params"] = params
 }
 

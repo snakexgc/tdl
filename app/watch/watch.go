@@ -352,9 +352,13 @@ func Run(ctx context.Context, opts Options) error {
 			color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
 		}
 		if normalizeHTTPBufferMode(cfg.HTTP.Buffer.Mode) == httpBufferModeMemory {
-			color.Green("   HTTP buffer: memory (%d MiB per active file)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
+			color.Green("   HTTP buffer: memory (%d MiB per active session)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
 		} else {
 			color.Green("   HTTP buffer: off")
+		}
+		color.Green("   HTTP transfer mode: %s", config.EffectiveHTTPTransferMode(cfg))
+		if downloaderMode == config.DownloaderModeAria2 {
+			color.Green("   HTTP range connections: %d", config.EffectiveHTTPRangeConnections(cfg))
 		}
 		color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
 		if opts.FileSizeMB > 0 {
@@ -600,6 +604,9 @@ func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, lim
 }
 
 func validateWatchConfig(cfg *config.Config) error {
+	if _, err := config.NormalizeHTTPTransferMode(cfg.HTTP.TransferMode); err != nil {
+		return err
+	}
 	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
 		return err
 	}
@@ -1263,13 +1270,14 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 }
 
 func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) error {
+	cfg := config.Get()
 	file := prepared.file
 	task, err := w.runtime.proxy.NewTask(ctx, file.peerID, file.msg.ID, file.peer, prepared.fileName, file.media.Size, file.media)
 	if err != nil {
 		return errors.Wrap(err, "register download task")
 	}
 
-	if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
+	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 		if _, err := w.runtime.internal.Add(ctx, task, prepared); err != nil {
 			return errors.Wrap(err, "queue internal download")
 		}
@@ -1290,21 +1298,24 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return errors.Wrap(err, "build download url")
 	}
 
+	connections := config.HTTPRangeConnectionsFor(cfg.HTTP, w.opts.Threads)
 	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, watcharia2.AddURIOptions{
-		Dir: prepared.dir,
-		Out: prepared.out,
+		Dir:         prepared.dir,
+		Out:         prepared.out,
+		Connections: connections,
 	})
 	if err != nil {
 		return errors.Wrap(err, "submit to aria2")
 	}
 	if err := w.runtime.aria2Tasks.Add(ctx, watcharia2.TaskRecord{
-		GID:         gid,
-		TaskID:      task.ID,
-		DownloadURL: downloadURL,
-		Dir:         prepared.dir,
-		Out:         prepared.out,
-		Connections: w.opts.Threads,
-		CreatedAt:   time.Now(),
+		GID:          gid,
+		TaskID:       task.ID,
+		DownloadURL:  downloadURL,
+		Dir:          prepared.dir,
+		Out:          prepared.out,
+		Connections:  connections,
+		TransferMode: config.EffectiveHTTPTransferMode(cfg),
+		CreatedAt:    time.Now(),
 	}); err != nil {
 		logctx.From(ctx).Warn("Failed to register aria2 task",
 			zap.String("gid", gid),

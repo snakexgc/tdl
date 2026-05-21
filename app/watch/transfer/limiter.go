@@ -8,6 +8,7 @@ import (
 type Limiter struct {
 	fileTokens  chan struct{}
 	perFileMax  int
+	requestMax  int
 	bufferSlots int
 
 	mu    sync.Mutex
@@ -29,17 +30,22 @@ type Lease struct {
 	state   *limitState
 }
 
-func NewLimiter(maxFiles, perFileMax int, bufferSlots ...int) *Limiter {
+func NewLimiter(maxFiles, perFileMax int, options ...int) *Limiter {
 	maxFiles = normalizeLimit(maxFiles)
 	perFileMax = normalizeLimit(perFileMax)
 	normalizedBufferSlots := 0
-	if len(bufferSlots) > 0 {
-		normalizedBufferSlots = normalizeBufferSlots(bufferSlots[0])
+	if len(options) > 0 {
+		normalizedBufferSlots = normalizeBufferSlots(options[0])
+	}
+	requestMax := perFileMax
+	if len(options) > 1 {
+		requestMax = normalizeLimit(options[1])
 	}
 
 	l := &Limiter{
 		fileTokens:  make(chan struct{}, maxFiles),
 		perFileMax:  perFileMax,
+		requestMax:  requestMax,
 		bufferSlots: normalizedBufferSlots,
 		files:       make(map[string]*limitState),
 	}
@@ -142,7 +148,7 @@ func (l *Limiter) acquireFile(ctx context.Context, taskID string) (*limitState, 
 		l.mu.Lock()
 		state := l.files[taskID]
 		if state == nil {
-			state = newLimitState(l.perFileMax, l.bufferSlots)
+			state = newLimitState(l.perFileMax, l.bufferSlots, l.requestMax)
 			l.files[taskID] = state
 		}
 		if !registered {
@@ -228,13 +234,15 @@ func (l *Limiter) releaseInterest(taskID string) {
 	}
 }
 
-func newLimitState(perFileMax, bufferSlots int) *limitState {
+func newLimitState(perFileMax, bufferSlots, requestMax int) *limitState {
 	state := &limitState{
-		requestTokens: make(chan struct{}, perFileMax),
+		requestTokens: make(chan struct{}, requestMax),
 		workerTokens:  make(chan struct{}, perFileMax),
 	}
-	for i := 0; i < perFileMax; i++ {
+	for i := 0; i < requestMax; i++ {
 		state.requestTokens <- struct{}{}
+	}
+	for i := 0; i < perFileMax; i++ {
 		state.workerTokens <- struct{}{}
 	}
 	if bufferSlots > 0 {

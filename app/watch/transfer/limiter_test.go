@@ -100,6 +100,53 @@ func TestLimiterLimitsPerFileRequests(t *testing.T) {
 	}
 }
 
+func TestLimiterSeparatesRequestAndWorkerSlots(t *testing.T) {
+	t.Parallel()
+
+	limiter := NewLimiter(2, 4, 0, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	lease, err := limiter.Acquire(ctx, "file-a")
+	require.NoError(t, err)
+
+	for i := 0; i < 4; i++ {
+		require.NoError(t, lease.AcquireWorker(ctx))
+		defer lease.ReleaseWorker()
+	}
+
+	acquired := make(chan *Lease, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		next, err := limiter.Acquire(ctx, "file-a")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		acquired <- next
+	}()
+
+	select {
+	case next := <-acquired:
+		next.Release()
+		t.Fatal("second request should wait for the request slot")
+	case err := <-errCh:
+		t.Fatalf("unexpected acquire error: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	lease.Release()
+
+	select {
+	case next := <-acquired:
+		next.Release()
+	case err := <-errCh:
+		t.Fatalf("unexpected acquire error after releasing request slot: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("second request did not acquire slot after release")
+	}
+}
+
 func TestLeaseLimitsConcurrentWorkers(t *testing.T) {
 	t.Parallel()
 

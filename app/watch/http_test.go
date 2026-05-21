@@ -526,6 +526,64 @@ func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
 	require.GreaterOrEqual(t, invoker.callCount(0), 2)
 }
 
+func TestDownloadSessionDeduplicatesConcurrentRangeChunk(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:  payload,
+		delay: 50 * time.Millisecond,
+	}
+	client := tg.NewClient(invoker)
+	pools := &poolHolder{}
+	pools.Set(testDownloadPool{client: client})
+	proxy := newDownloadProxy(config.HTTPConfig{
+		TransferMode:     config.HTTPTransferModeClientRange,
+		RangeConnections: 2,
+	}, 1, 2, pools, nil, nil)
+	task := &downloadTask{
+		ID:       "task-1",
+		FileName: "file.bin",
+		FileSize: int64(len(payload)),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{},
+			Size:         int64(len(payload)),
+			DC:           2,
+		},
+	}
+
+	lease1, err := proxy.limiter.Acquire(context.Background(), task.ID)
+	require.NoError(t, err)
+	defer lease1.Release()
+	lease2, err := proxy.limiter.Acquire(context.Background(), task.ID)
+	require.NoError(t, err)
+	defer lease2.Release()
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	var out1, out2 bytes.Buffer
+	go func() {
+		<-start
+		errCh <- proxy.streamTask(context.Background(), task, lease1, 0, 1023, &out1)
+	}()
+	go func() {
+		<-start
+		errCh <- proxy.streamTask(context.Background(), task, lease2, 100, 900, &out2)
+	}()
+	close(start)
+
+	require.NoError(t, <-errCh)
+	require.NoError(t, <-errCh)
+	require.Equal(t, payload[:1024], out1.Bytes())
+	require.Equal(t, payload[100:901], out2.Bytes())
+	require.Equal(t, 1, invoker.callCount(0))
+	require.Equal(t, 1, invoker.totalCalls())
+}
+
 type recordingUploadInvoker struct {
 	mu          sync.Mutex
 	data        []byte

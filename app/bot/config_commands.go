@@ -37,6 +37,8 @@ var configurablePaths = []string{
 	"http.port",
 	"http.public_base_url",
 	"http.download_link_ttl_hours",
+	"http.transfer_mode",
+	"http.range_connections",
 	"http.buffer.mode",
 	"http.buffer.size_mb",
 	"webui.address",

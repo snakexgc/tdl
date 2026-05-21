@@ -442,7 +442,7 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 	gid, err := addAria2URI(context.Background(), config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 5,
-	}, "http://127.0.0.1:22334/download/document_1", "video.mp4")
+	}, "http://127.0.0.1:22334/download/document_1", "video.mp4", 1)
 	require.NoError(t, err)
 	require.Equal(t, "gid-1", gid)
 	require.Equal(t, "aria2.addUri", reqBody.Method)
@@ -458,6 +458,29 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 		"auto-file-renaming":        "false",
 		"user-agent":                "tdl-webui-aria2",
 	}, reqBody.Params[1])
+}
+
+func TestAddAria2URISubmitsClientRangeConnections(t *testing.T) {
+	var reqBody struct {
+		Method string `json:"method"`
+		Params []any  `json:"params"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":"gid-1"}`))
+	}))
+	defer srv.Close()
+
+	_, err := addAria2URI(context.Background(), config.Aria2Config{
+		RPCURL:         srv.URL,
+		TimeoutSeconds: 5,
+	}, "http://127.0.0.1:22334/download/document_1", "video.mp4", 4)
+	require.NoError(t, err)
+	options := reqBody.Params[1].(map[string]any)
+	require.Equal(t, "4", options["split"])
+	require.Equal(t, "4", options["max-connection-per-server"])
+	require.Equal(t, "1M", options["min-split-size"])
 }
 
 func TestConfigureAria2MaxConcurrentDownloads(t *testing.T) {
@@ -523,7 +546,7 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 		]
 	}`)
 
-	next, err := rewriteAria2ProxyRequest(body, "http://127.0.0.1:22334", "")
+	next, err := rewriteAria2ProxyRequest(body, "http://127.0.0.1:22334", "", 1)
 	require.NoError(t, err)
 
 	var decoded map[string]any
@@ -533,6 +556,30 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 	require.Equal(t, "1", options["split"])
 	require.Equal(t, "1", options["max-connection-per-server"])
 	require.NotContains(t, options, "min-split-size")
+	require.Equal(t, "video.mp4", options["out"])
+}
+
+func TestRewriteAria2ProxyRequestNormalizesTDLAddURIClientRange(t *testing.T) {
+	body := []byte(`{
+		"jsonrpc":"2.0",
+		"id":"retry",
+		"method":"aria2.addUri",
+		"params":[
+			["http://127.0.0.1:22334/download/document_1"],
+			{"split":"1","max-connection-per-server":"1","out":"video.mp4"}
+		]
+	}`)
+
+	next, err := rewriteAria2ProxyRequest(body, "http://127.0.0.1:22334", "", 4)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(next, &decoded))
+	params := decoded["params"].([]any)
+	options := params[1].(map[string]any)
+	require.Equal(t, "4", options["split"])
+	require.Equal(t, "4", options["max-connection-per-server"])
+	require.Equal(t, "1M", options["min-split-size"])
 	require.Equal(t, "video.mp4", options["out"])
 }
 
@@ -547,7 +594,7 @@ func TestRewriteAria2ProxyRequestLeavesExternalAddURI(t *testing.T) {
 		]
 	}`)
 
-	next, err := rewriteAria2ProxyRequest(body, "http://127.0.0.1:22334", "")
+	next, err := rewriteAria2ProxyRequest(body, "http://127.0.0.1:22334", "", 4)
 	require.NoError(t, err)
 
 	var decoded map[string]any

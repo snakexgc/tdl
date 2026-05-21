@@ -69,8 +69,10 @@ const sections = [
       ["http.port", "监听端口", "number", "tdl 提供下载链接的监听端口，例如 22334。"],
       ["http.public_base_url", "对外访问地址", "text", "aria2 能访问到的 tdl 地址，不同机器时请填写局域网地址。"],
       ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
-      ["http.buffer.mode", "下载缓冲", "select", "memory 适合多数场景；off 表示不预读。", ["memory", "off"]],
-      ["http.buffer.size_mb", "缓冲大小", "number", "每个活跃文件可使用的内存上限，单位 MiB。"],
+      ["http.transfer_mode", "传输模式", "select", "source_parallel 为默认单 Range 模式；client_range 允许 aria2 多 Range。", ["source_parallel", "client_range"]],
+      ["http.range_connections", "Range 连接数", "number", "仅 client_range 生效；填 0 表示 min(threads, 4)。"],
+      ["http.buffer.mode", "下载缓冲", "select", "memory 为每个活跃任务保留共享 chunk cache；off 表示只保留正在传输的分片。", ["memory", "off"]],
+      ["http.buffer.size_mb", "缓冲大小", "number", "每个活跃任务 session 可使用的共享内存上限，单位 MiB。"],
     ],
   },
   {

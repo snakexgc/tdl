@@ -19,8 +19,9 @@ import (
 const aria2BoolTrue = "true"
 
 type AddURIOptions struct {
-	Dir string
-	Out string
+	Dir         string
+	Out         string
+	Connections int
 }
 
 type aria2AddURIOptions = AddURIOptions
@@ -167,11 +168,7 @@ func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (st
 	if opts.Out != "" {
 		options["out"] = opts.Out
 	}
-	// tdl streams Telegram chunks concurrently itself. Letting aria2 split the
-	// same tdl URL into multiple HTTP ranges adds failure surface without adding
-	// Telegram-side concurrency.
-	options["split"] = "1"
-	options["max-connection-per-server"] = "1"
+	applyTDLHTTPConnectionOptions(options, opts.Connections)
 	options["continue"] = aria2BoolTrue
 	options["allow-piece-length-change"] = aria2BoolTrue
 	options["allow-overwrite"] = aria2BoolTrue
@@ -190,6 +187,20 @@ func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (st
 	}
 
 	return result, nil
+}
+
+func applyTDLHTTPConnectionOptions(options map[string]any, connections int) {
+	if connections < 1 {
+		connections = 1
+	}
+	value := strconv.Itoa(connections)
+	options["split"] = value
+	options["max-connection-per-server"] = value
+	if connections > 1 {
+		options["min-split-size"] = "1M"
+		return
+	}
+	delete(options, "min-split-size")
 }
 
 func (c *Client) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error) {

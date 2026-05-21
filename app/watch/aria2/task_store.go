@@ -19,17 +19,18 @@ const (
 )
 
 type TaskRecord struct {
-	GID         string    `json:"gid"`
-	TaskID      string    `json:"task_id"`
-	DownloadURL string    `json:"download_url"`
-	Dir         string    `json:"dir"`
-	Out         string    `json:"out"`
-	Connections int       `json:"connections"`
-	CreatedAt   time.Time `json:"created_at"`
-	Status      string    `json:"status"`
-	Total       int64     `json:"total"`
-	Completed   int64     `json:"completed"`
-	Error       string    `json:"error,omitempty"`
+	GID          string    `json:"gid"`
+	TaskID       string    `json:"task_id"`
+	DownloadURL  string    `json:"download_url"`
+	Dir          string    `json:"dir"`
+	Out          string    `json:"out"`
+	Connections  int       `json:"connections"`
+	TransferMode string    `json:"transfer_mode,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	Status       string    `json:"status"`
+	Total        int64     `json:"total"`
+	Completed    int64     `json:"completed"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type aria2TaskRecord = TaskRecord

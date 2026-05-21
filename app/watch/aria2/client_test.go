@@ -55,6 +55,32 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	}, reqBody.Params[1])
 }
 
+func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
+	t.Parallel()
+
+	var reqBody aria2RPCRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+	}))
+	defer srv.Close()
+
+	client := newAria2Client(config.Aria2Config{
+		RPCURL:         srv.URL,
+		TimeoutSeconds: 5,
+	})
+
+	_, err := client.AddURI(context.Background(), "http://example.com/file", aria2AddURIOptions{
+		Connections: 4,
+	})
+	require.NoError(t, err)
+	options := reqBody.Params[1].(map[string]any)
+	require.Equal(t, "4", options["split"])
+	require.Equal(t, "4", options["max-connection-per-server"])
+	require.Equal(t, "1M", options["min-split-size"])
+}
+
 func TestAria2AddURIWithSecret(t *testing.T) {
 	t.Parallel()
 

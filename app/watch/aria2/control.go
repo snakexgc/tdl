@@ -328,8 +328,9 @@ func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 			next.Dir, next.Out = maybeAria2PathOptions(task)
 		}
 		gid, err := c.client.AddURI(ctx, downloadURL, AddURIOptions{
-			Dir: next.Dir,
-			Out: next.Out,
+			Dir:         next.Dir,
+			Out:         next.Out,
+			Connections: taskRecordHTTPConnections(next),
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
@@ -358,6 +359,17 @@ func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 		result.Changed++
 	}
 	return result, nil
+}
+
+func taskRecordHTTPConnections(record TaskRecord) int {
+	mode, err := config.NormalizeHTTPTransferMode(record.TransferMode)
+	if err != nil || mode != config.HTTPTransferModeClientRange {
+		return 1
+	}
+	if record.Connections < 1 {
+		return 1
+	}
+	return record.Connections
 }
 
 func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[string]TaskRecord, error) {

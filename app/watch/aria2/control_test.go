@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/iyear/tdl/pkg/config"
 )
 
 func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing.T) {
@@ -141,13 +143,23 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.Equal(t, 1, retried.Matched)
 	require.Equal(t, 1, retried.Changed)
 	require.Equal(t, []string{"http://127.0.0.1:8080/download/document_1"}, client.addedURIs)
-	require.Equal(t, []aria2AddURIOptions{{Dir: "downloads", Out: "video.mp4"}}, client.addedOptions)
+	require.Equal(t, []aria2AddURIOptions{{Dir: "downloads", Out: "video.mp4", Connections: 1}}, client.addedOptions)
 	require.Equal(t, []string{"registered-error"}, client.removedResults)
 
 	records, err := store.Records(ctx)
 	require.NoError(t, err)
 	require.NotContains(t, records, "registered-error")
 	require.Contains(t, records, "new-gid")
+}
+
+func TestTaskRecordHTTPConnectionsRequiresClientRangeMode(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 1, taskRecordHTTPConnections(TaskRecord{Connections: 6}))
+	require.Equal(t, 6, taskRecordHTTPConnections(TaskRecord{
+		Connections:  6,
+		TransferMode: config.HTTPTransferModeClientRange,
+	}))
 }
 
 func TestTaskNamePrefersBittorrentInfoPathThenURI(t *testing.T) {
