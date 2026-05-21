@@ -34,6 +34,7 @@ type internalDownloader struct {
 	done    chan struct{}
 	queue   chan string
 	queued  map[string]struct{}
+	active  map[string]struct{}
 }
 
 func newInternalDownloader(proxy *downloadProxy, kvd storage.Storage, logger *zap.Logger, cfg *config.Config) *internalDownloader {
@@ -47,11 +48,16 @@ func newInternalDownloader(proxy *downloadProxy, kvd storage.Storage, logger *za
 		limit:  limit,
 		logger: logger.Named("internal-downloader"),
 		queued: map[string]struct{}{},
+		active: map[string]struct{}{},
 	}
 }
 
-func effectiveDownloadPoolSize(cfg *config.Config) int {
-	return config.EffectivePoolSize(cfg)
+func effectiveDownloadThreads(cfg *config.Config) int {
+	return config.EffectiveThreads(cfg)
+}
+
+func effectiveDownloadLimit(cfg *config.Config) int {
+	return config.EffectiveLimit(cfg)
 }
 
 func internalDownloadLimiter(proxy *downloadProxy, cfg *config.Config) *transfer.Limiter {
@@ -65,7 +71,7 @@ func internalDownloadLimiter(proxy *downloadProxy, cfg *config.Config) *transfer
 	if cfg != nil {
 		httpCfg = cfg.HTTP
 	}
-	return transfer.NewLimiter(maxConcurrentDownloads, config.EffectivePoolSize(cfg), httpMemoryBufferSlots(httpCfg.Buffer))
+	return transfer.NewLimiter(effectiveDownloadLimit(cfg), effectiveDownloadThreads(cfg), httpMemoryBufferSlots(httpCfg.Buffer))
 }
 
 func (d *internalDownloader) Start(ctx context.Context) error {
@@ -88,6 +94,7 @@ func (d *internalDownloader) Start(ctx context.Context) error {
 	d.done = done
 	d.queue = make(chan string, internalDownloadQueueSize)
 	d.queued = map[string]struct{}{}
+	d.active = map[string]struct{}{}
 	d.mu.Unlock()
 
 	go func() {
@@ -99,6 +106,7 @@ func (d *internalDownloader) Start(ctx context.Context) error {
 			d.done = nil
 			d.queue = nil
 			d.queued = map[string]struct{}{}
+			d.active = map[string]struct{}{}
 			d.mu.Unlock()
 		}()
 		d.loop(runCtx)
@@ -197,6 +205,8 @@ func (d *internalDownloader) Add(ctx context.Context, task *downloadTask, prepar
 func (d *internalDownloader) loop(ctx context.Context) {
 	ticker := time.NewTicker(internalDownloadPollInterval)
 	defer ticker.Stop()
+	var wg sync.WaitGroup
+	defer wg.Wait()
 
 	for {
 		select {
@@ -207,11 +217,15 @@ func (d *internalDownloader) loop(ctx context.Context) {
 				d.logger.Warn("Failed to enqueue pending internal downloads", zap.Error(err))
 			}
 		case id := <-d.queue:
-			d.markDequeued(id)
-			if id == "" {
+			if !d.markRunning(id) {
 				continue
 			}
-			d.runTask(ctx, id)
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				defer d.markStopped(id)
+				d.runTask(ctx, id)
+			}(id)
 		}
 	}
 }
@@ -257,6 +271,10 @@ func (d *internalDownloader) queueID(id string) bool {
 		d.mu.Unlock()
 		return true
 	}
+	if _, ok := d.active[id]; ok {
+		d.mu.Unlock()
+		return true
+	}
 	d.queued[id] = struct{}{}
 	queue := d.queue
 	d.mu.Unlock()
@@ -272,9 +290,23 @@ func (d *internalDownloader) queueID(id string) bool {
 	}
 }
 
-func (d *internalDownloader) markDequeued(id string) {
+func (d *internalDownloader) markRunning(id string) bool {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	delete(d.queued, id)
+	if id == "" {
+		return false
+	}
+	if _, ok := d.active[id]; ok {
+		return false
+	}
+	d.active[id] = struct{}{}
+	return true
+}
+
+func (d *internalDownloader) markStopped(id string) {
+	d.mu.Lock()
+	delete(d.active, id)
 	d.mu.Unlock()
 }
 

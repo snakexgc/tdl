@@ -18,11 +18,12 @@ type watchRuntime struct {
 	ensureOutputDirs bool
 }
 
-func newWatchRuntime(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *watchRuntime {
+func newWatchRuntime(cfg *config.Config, opts Options, kvd storage.Storage, logger *zap.Logger) *watchRuntime {
 	pools := &poolHolder{}
-	poolSize := effectiveDownloadPoolSize(cfg)
+	limit := effectiveWatchOptionLimit(opts.Limit, cfg)
+	threads := effectiveWatchOptionThreads(opts.Threads, cfg)
 
-	proxy := newDownloadProxy(cfg.HTTP, 1, poolSize, pools, kvd, logger)
+	proxy := newDownloadProxy(cfg.HTTP, limit, threads, pools, kvd, logger)
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 		proxy.tasks.ttl = 0
 	}

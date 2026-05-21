@@ -62,11 +62,11 @@ func RunLinks(ctx context.Context, opts SessionOptions, req Request) (Result, er
 	if len(req.Links) == 0 {
 		return Result{}, errors.New("no Telegram message links to forward")
 	}
-	if opts.PoolSize <= 0 {
+	if opts.PoolSize < 0 {
 		opts.PoolSize = config.DefaultPoolSize
 	}
 	if opts.Threads <= 0 {
-		opts.Threads = opts.PoolSize
+		opts.Threads = config.DefaultThreads
 	}
 	if !req.Grouped {
 		req.Grouped = true
@@ -159,7 +159,7 @@ func Run(ctx context.Context, pool dcpool.Pool, elems []forwarder.Elem, threads 
 		progress = NopProgress{}
 	}
 	if threads <= 0 {
-		threads = config.DefaultPoolSize
+		threads = config.DefaultThreads
 	}
 	fw := forwarder.New(forwarder.Options{
 		Pool:     pool,
@@ -218,7 +218,7 @@ func FromTelegramClient(ctx context.Context, c *telegram.Client, kvd storage.Sto
 	if kvd == nil {
 		return nil, nil, nil, errors.New("session storage is nil")
 	}
-	if poolSize <= 0 {
+	if poolSize < 0 {
 		poolSize = config.DefaultPoolSize
 	}
 	pool := dcpool.NewPool(c, int64(poolSize), coretclient.NewDefaultMiddlewares(ctx, reconnectTimeout)...)

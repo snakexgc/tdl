@@ -5,6 +5,7 @@ import (
 
 	"github.com/iyear/tdl/app/watch"
 	"github.com/iyear/tdl/pkg/config"
+	"github.com/iyear/tdl/pkg/consts"
 )
 
 func NewWatch() *cobra.Command {
@@ -19,7 +20,10 @@ func NewWatch() *cobra.Command {
 			if err := ensureStartupNTP(cmd.Context()); err != nil {
 				return err
 			}
-			opts.Threads = config.EffectivePoolSize(config.Get())
+			cfg := config.Get()
+			opts.Threads = effectiveWatchThreads(persistentIntFlag(cmd, consts.FlagThreads, config.EffectiveThreads(cfg)))
+			opts.Limit = effectiveWatchLimit(persistentIntFlag(cmd, consts.FlagLimit, config.EffectiveLimit(cfg)))
+			opts.PoolSize = effectiveWatchPoolSize(persistentIntFlag(cmd, consts.FlagPoolSize, config.EffectivePoolSize(cfg)), cfg)
 			return watch.Run(cmd.Context(), opts)
 		},
 	}
@@ -41,4 +45,36 @@ func NewWatch() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive(include, exclude)
 
 	return cmd
+}
+
+func persistentIntFlag(cmd *cobra.Command, name string, fallback int) int {
+	if cmd == nil || cmd.Root() == nil || cmd.Root().PersistentFlags() == nil {
+		return fallback
+	}
+	value, err := cmd.Root().PersistentFlags().GetInt(name)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func effectiveWatchThreads(value int) int {
+	if value < 1 {
+		return config.DefaultThreads
+	}
+	return value
+}
+
+func effectiveWatchLimit(value int) int {
+	if value < 1 {
+		return config.DefaultLimit
+	}
+	return value
+}
+
+func effectiveWatchPoolSize(value int, cfg *config.Config) int {
+	if value < 0 {
+		return config.EffectivePoolSize(cfg)
+	}
+	return value
 }

@@ -49,7 +49,9 @@ const sections = [
       ["proxy_username", "代理用户名", "text", "代理需要认证时填写；没有认证时留空。"],
       ["proxy_password", "代理密码", "password", "代理需要认证时填写；没有认证时留空，保存时留空表示保持原密码。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
-      ["pool_size", "下载并发", "number", "Telegram 连接池大小，也用于单个文件的分片下载并发；不确定时保持默认。"],
+      ["threads", "单文件线程数", "number", "与 tdl --threads 一致，限制单个文件最多同时使用多少个分片请求；小文件会自动降低实际线程数。"],
+      ["limit", "并发下载数", "number", "与 tdl --limit 一致，限制同时下载的文件任务数量。"],
+      ["pool_size", "DC 连接池大小", "number", "与 tdl --pool 一致，限制每个 Telegram DC 的连接池大小；填 0 表示无限。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
@@ -91,7 +93,7 @@ const sections = [
   {
     title: "下载器",
     fields: [
-      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器，单文件线程数由 pool_size 控制、同时 1 个文件。", ["aria2", "internal"]],
+      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器；并发下载数由 limit 控制，单文件线程数由 threads 控制。", ["aria2", "internal"]],
     ],
   },
   {

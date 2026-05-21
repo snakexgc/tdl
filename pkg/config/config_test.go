@@ -44,6 +44,8 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, DownloaderModeAria2, cfg.Downloader.Mode)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
+	require.Equal(t, DefaultThreads, cfg.Threads)
+	require.Equal(t, DefaultLimit, cfg.Limit)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Equal(t, "G\\Y&M", cfg.DownloadDir)
 	require.Empty(t, cfg.TriggerReactions)
@@ -108,16 +110,18 @@ func TestLoadRejectsInvalidDownloaderMode(t *testing.T) {
 	require.Contains(t, err.Error(), "downloader.mode")
 }
 
-func TestLoadIgnoresLegacyThreadsAndLimit(t *testing.T) {
+func TestLoadKeepsTransferConcurrencyConfig(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"threads":4,"limit":2,"pool_size":6}`), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(`{"threads":7,"limit":3,"pool_size":0}`), 0o644))
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	require.Equal(t, 6, cfg.PoolSize)
+	require.Equal(t, 7, cfg.Threads)
+	require.Equal(t, 3, cfg.Limit)
+	require.Zero(t, cfg.PoolSize)
 }
 
 func TestLoadHTTPBufferConfig(t *testing.T) {

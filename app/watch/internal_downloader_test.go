@@ -35,11 +35,14 @@ func TestInternalModeUsesConfiguredDownloadThreads(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.PoolSize = 3
+	cfg.Threads = 3
+	cfg.Limit = 2
+	opts := DefaultOptions(cfg)
 
-	require.Equal(t, 3, effectiveDownloadPoolSize(cfg))
+	require.Equal(t, 3, effectiveDownloadThreads(cfg))
+	require.Equal(t, 2, effectiveDownloadLimit(cfg))
 
-	runtime := newWatchRuntime(cfg, newMemoryTaskStorage(), nil)
+	runtime := newWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
 	require.True(t, runtime.proxy.limiter == runtime.internal.limit)
 
 	lease, err := runtime.internal.limit.Acquire(context.Background(), "document_1")
@@ -55,7 +58,7 @@ func TestInternalRuntimeKeepsDownloadTasksWithoutTTL(t *testing.T) {
 	cfg.Downloader.Mode = config.DownloaderModeInternal
 	cfg.HTTP.DownloadLinkTTLHours = 1
 
-	runtime := newWatchRuntime(cfg, newMemoryTaskStorage(), nil)
+	runtime := newWatchRuntime(cfg, DefaultOptions(cfg), newMemoryTaskStorage(), nil)
 
 	require.Zero(t, runtime.proxy.tasks.ttl)
 }

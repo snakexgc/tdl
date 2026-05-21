@@ -15,6 +15,8 @@ import (
 )
 
 const (
+	DefaultThreads       = 4
+	DefaultLimit         = 2
 	DefaultPoolSize      = 8
 	DefaultHTTPAddress   = "0.0.0.0"
 	DefaultHTTPPort      = 22334
@@ -95,6 +97,8 @@ type Config struct {
 	ProxyPassword    string           `json:"proxy_password"`
 	Namespace        string           `json:"namespace"`
 	Debug            bool             `json:"debug"`
+	Threads          int              `json:"threads"`
+	Limit            int              `json:"limit"`
 	PoolSize         int              `json:"pool_size"`
 	Delay            int              `json:"delay"`
 	NTP              string           `json:"ntp"`
@@ -118,6 +122,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		Namespace:        "default",
 		Debug:            false,
+		Threads:          DefaultThreads,
+		Limit:            DefaultLimit,
 		PoolSize:         DefaultPoolSize,
 		Delay:            0,
 		ReconnectTimeout: 3,
@@ -185,8 +191,22 @@ func NormalizeNamespace(namespace string) (string, error) {
 	return namespace, nil
 }
 
+func EffectiveThreads(cfg *Config) int {
+	if cfg == nil || cfg.Threads < 1 {
+		return DefaultThreads
+	}
+	return cfg.Threads
+}
+
+func EffectiveLimit(cfg *Config) int {
+	if cfg == nil || cfg.Limit < 1 {
+		return DefaultLimit
+	}
+	return cfg.Limit
+}
+
 func EffectivePoolSize(cfg *Config) int {
-	if cfg == nil || cfg.PoolSize < 1 {
+	if cfg == nil || cfg.PoolSize < 0 {
 		return DefaultPoolSize
 	}
 	return cfg.PoolSize
@@ -393,6 +413,8 @@ func Validate(cfg *Config) error {
 	cfg.Proxy = strings.TrimSpace(cfg.Proxy)
 	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
 	cfg.NTP = strings.TrimSpace(cfg.NTP)
+	cfg.Threads = EffectiveThreads(cfg)
+	cfg.Limit = EffectiveLimit(cfg)
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	if cfg.FileSizeMB < 0 {
 		return errors.New("file_size_mb must be greater than or equal to 0")

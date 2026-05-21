@@ -46,7 +46,9 @@ type Options struct {
 	Dir                   string
 	Template              string
 	SkipSame              bool
+	PoolSize              int
 	Threads               int
+	Limit                 int
 	Download              bool
 	TriggerReactions      []string
 	Include               []string
@@ -77,7 +79,9 @@ func DefaultOptions(cfg *config.Config) Options {
 	return Options{
 		Dir:                   cfg.DownloadDir,
 		Template:              defaultFileTemplate,
-		Threads:               config.EffectivePoolSize(cfg),
+		PoolSize:              config.EffectivePoolSize(cfg),
+		Threads:               config.EffectiveThreads(cfg),
+		Limit:                 config.EffectiveLimit(cfg),
 		Download:              cfg.Modules.Watch,
 		TriggerReactions:      append([]string(nil), cfg.TriggerReactions...),
 		Include:               append([]string(nil), cfg.Include...),
@@ -91,6 +95,27 @@ func DefaultOptions(cfg *config.Config) Options {
 		ForwardSilent:         cfg.Forward.Silent,
 		ForwardDedupeTTL:      time.Duration(config.EffectiveForwardDedupeTTL(cfg)) * time.Second,
 	}
+}
+
+func effectiveWatchOptionThreads(value int, cfg *config.Config) int {
+	if value < 1 {
+		return config.EffectiveThreads(cfg)
+	}
+	return value
+}
+
+func effectiveWatchOptionLimit(value int, cfg *config.Config) int {
+	if value < 1 {
+		return config.EffectiveLimit(cfg)
+	}
+	return value
+}
+
+func effectiveWatchOptionPoolSize(value int, cfg *config.Config) int {
+	if value < 0 {
+		return config.EffectivePoolSize(cfg)
+	}
+	return value
 }
 
 type fileTemplate struct {
@@ -114,10 +139,6 @@ type downloadJob struct {
 const (
 	downloadJobSourceReaction    = "reaction"
 	downloadJobSourceMessageLink = "message_link"
-)
-
-const (
-	maxConcurrentDownloads = 1
 )
 
 type aria2ConcurrentDownloadSetter interface {
@@ -184,6 +205,9 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.FileSizeMB < 0 {
 		return errors.New("file_size_mb must be greater than or equal to 0")
 	}
+	opts.Threads = effectiveWatchOptionThreads(opts.Threads, cfg)
+	opts.Limit = effectiveWatchOptionLimit(opts.Limit, cfg)
+	opts.PoolSize = effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	tpl, err := template.New("watch").
@@ -205,7 +229,7 @@ func Run(ctx context.Context, opts Options) error {
 	signalCtx, stopSignalNotify := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignalNotify()
 
-	runtime := newWatchRuntime(cfg, kvd, logctx.From(runCtx))
+	runtime := newWatchRuntime(cfg, opts, kvd, logctx.From(runCtx))
 	var pauseOnShutdownOnce sync.Once
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
@@ -245,19 +269,17 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
-	poolSize := effectiveDownloadPoolSize(cfg)
-
 	if opts.Download {
 		switch downloaderMode {
 		case config.DownloaderModeAria2:
-			if err := waitForAria2(runCtx, runtime.aria2, maxConcurrentDownloads, watcharia2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
+			if err := waitForAria2(runCtx, runtime.aria2, opts.Limit, watcharia2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
 				return errors.Wrap(err, "configure aria2 max concurrent downloads")
 			}
 			logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
-				zap.Int("limit", maxConcurrentDownloads))
+				zap.Int("limit", opts.Limit))
 			outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
 			if err != nil {
 				if opts.Notify != nil {
@@ -316,8 +338,14 @@ func Run(ctx context.Context, opts Options) error {
 		color.Green("   Output root: %s", runtime.outputRoot)
 		color.Green("   Download dir template: %s", opts.Dir)
 	}
-	color.Green("   Telegram pool / per-file streams: %d", poolSize)
+	poolSizeLabel := fmt.Sprintf("%d", opts.PoolSize)
+	if opts.PoolSize == 0 {
+		poolSizeLabel = "unlimited"
+	}
+	color.Green("   Telegram DC pool size: %s", poolSizeLabel)
 	if opts.Download {
+		color.Green("   Per-file threads: %d", opts.Threads)
+		color.Green("   Max concurrent downloads: %d", opts.Limit)
 		if cfg.HTTP.DownloadLinkTTLHours <= 0 {
 			color.Green("   Download link TTL: permanent")
 		} else {
@@ -328,7 +356,6 @@ func Run(ctx context.Context, opts Options) error {
 		} else {
 			color.Green("   HTTP buffer: off")
 		}
-		color.Green("   Max concurrent downloads: %d", maxConcurrentDownloads)
 		color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
 		if opts.FileSizeMB > 0 {
 			color.Green("   Min file size: %s (%d MB)", utils.Byte.FormatBinaryBytes(fileSizeMBToBytes(opts.FileSizeMB)), opts.FileSizeMB)
@@ -419,7 +446,7 @@ func Run(ctx context.Context, opts Options) error {
 
 func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime, pausedAria2GIDs []string) (resumed bool, rerr error) {
 	cfg := config.Get()
-	poolSize := effectiveDownloadPoolSize(cfg)
+	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	o := pkgtclient.Options{
@@ -513,7 +540,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		}()
 
 		eg, egCtx := errgroup.WithContext(ctx)
-		eg.SetLimit(maxConcurrentDownloads)
+		eg.SetLimit(effectiveWatchOptionLimit(opts.Limit, cfg))
 		if opts.Download {
 			go w.dispatcher(egCtx, eg)
 		}

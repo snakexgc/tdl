@@ -460,6 +460,27 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 	}, reqBody.Params[1])
 }
 
+func TestConfigureAria2MaxConcurrentDownloads(t *testing.T) {
+	var reqBody struct {
+		Method string `json:"method"`
+		Params []any  `json:"params"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":"OK"}`))
+	}))
+	defer srv.Close()
+
+	err := configureAria2MaxConcurrentDownloads(context.Background(), config.Aria2Config{
+		RPCURL:         srv.URL,
+		TimeoutSeconds: 5,
+	}, 3)
+	require.NoError(t, err)
+	require.Equal(t, "aria2.changeGlobalOption", reqBody.Method)
+	require.Equal(t, []any{map[string]any{"max-concurrent-downloads": "3"}}, reqBody.Params)
+}
+
 func TestCheckAria2RequiresRPCURL(t *testing.T) {
 	result := checkAria2(context.Background(), config.Aria2Config{})
 

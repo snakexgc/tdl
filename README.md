@@ -15,7 +15,9 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "proxy_password": "", // 代理密码；没有认证时留空
   "namespace": "default", // 当前用户的数据空间；由 Web 登录或切换用户维护，只允许英文字母
   "debug": false, // 是否开启调试模式
-  "pool_size": 8, // Telegram 连接池大小，也用于单文件分片下载并发
+  "threads": 4, // 单个文件最多同时使用的分片请求数，小文件会自动降低实际线程数
+  "limit": 2, // 同时下载的文件任务数量
+  "pool_size": 8, // Telegram 每个 DC 的连接池大小；0 表示无限
   "delay": 0, // 两个下载任务之间的等待时间，单位秒
   "ntp": "", // NTP 服务器地址；留空时启动会自动选择最快的内置服务器并写回此项
   "reconnect_timeout": 3, // 重连超时时间，单位秒
@@ -73,7 +75,9 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `include`              | 只下载指定扩展名，如 `["mp4", "mp3"]`                                                       |
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
 | `file_size_mb`         | 文件大小过滤，单位 MB；`0` 表示不限制，小于该大小的文件会在 `include`/`exclude` 后跳过               |
-| `pool_size`            | Telegram 连接池大小，也用于单个文件的分片下载并发；默认 8 适合多数场景 |
+| `threads`              | 单个文件最多同时使用的分片请求数；默认 4，小文件会自动降低实际线程数 |
+| `limit`                | 同时下载的文件任务数量；默认 2 |
+| `pool_size`            | Telegram 每个 DC 的连接池大小；默认 8，设置为 0 表示无限；通常保持不小于 `limit * threads` |
 | `ntp`                  | NTP 时间校准服务器；留空时启动会检测内置服务器并保存最快可用项，已填写时会先按 3 秒超时重试 3 次 |
 | `http.address`         | tdl 下载代理监听地址；默认 `0.0.0.0`，修改后需要重启                                                         |
 | `http.port`            | tdl 下载代理监听端口；默认 `22334`，修改后需要重启                                                         |

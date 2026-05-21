@@ -60,7 +60,7 @@ func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, nam
 		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 		PoolSize:         config.EffectivePoolSize(cfg),
-		Threads:          config.EffectivePoolSize(cfg),
+		Threads:          config.EffectiveThreads(cfg),
 	}, appforward.Request{
 		Links:   normalized,
 		To:      target,

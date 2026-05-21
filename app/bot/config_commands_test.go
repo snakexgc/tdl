@@ -11,6 +11,8 @@ import (
 func TestConfigSetValueUpdatesNestedFields(t *testing.T) {
 	cfg := config.DefaultConfig()
 
+	require.NoError(t, setConfigValue(cfg, "threads", "6"))
+	require.NoError(t, setConfigValue(cfg, "limit", "3"))
 	require.NoError(t, setConfigValue(cfg, "pool_size", "5"))
 	require.NoError(t, setConfigValue(cfg, "proxy_username", "alice"))
 	require.NoError(t, setConfigValue(cfg, "proxy_password", "secret"))
@@ -24,6 +26,8 @@ func TestConfigSetValueUpdatesNestedFields(t *testing.T) {
 	require.NoError(t, setConfigValue(cfg, "modules.watch", "false"))
 	require.NoError(t, setConfigValue(cfg, "downloader.mode", "internal"))
 
+	require.Equal(t, 6, cfg.Threads)
+	require.Equal(t, 3, cfg.Limit)
 	require.Equal(t, 5, cfg.PoolSize)
 	require.Equal(t, "alice", cfg.ProxyUsername)
 	require.Equal(t, "secret", cfg.ProxyPassword)
@@ -53,8 +57,8 @@ func TestConfigStoragePathIsNotConfigurable(t *testing.T) {
 	require.Contains(t, err.Error(), "未知配置项")
 }
 
-func TestConfigurablePathsDoNotExposeNamespace(t *testing.T) {
+func TestConfigurablePathsExposeDownloadConcurrencyButNotNamespace(t *testing.T) {
 	require.NotContains(t, configurablePaths, "namespace")
-	require.NotContains(t, configurablePaths, "threads")
-	require.NotContains(t, configurablePaths, "limit")
+	require.Contains(t, configurablePaths, "threads")
+	require.Contains(t, configurablePaths, "limit")
 }

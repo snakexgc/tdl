@@ -1191,7 +1191,7 @@ func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pair
 	}
 
 	publicBaseURL := ""
-	poolSize := config.EffectivePoolSize(cfg)
+	threads := config.EffectiveThreads(cfg)
 	if cfg != nil {
 		publicBaseURL = cfg.HTTP.PublicBaseURL
 	}
@@ -1225,7 +1225,7 @@ func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pair
 			DownloadURL: downloadURL,
 			Dir:         dir,
 			Out:         out,
-			Connections: poolSize,
+			Connections: threads,
 			CreatedAt:   time.Now(),
 			Status:      normalizedAria2Status(status.Status),
 			Total:       total,
@@ -1481,8 +1481,11 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	}
 	pairs := meta[s.namespace()]
 	cfg := config.Get()
-	poolSize := config.EffectivePoolSize(cfg)
+	threads := config.EffectiveThreads(cfg)
+	limit := config.EffectiveLimit(cfg)
+	downloaderMode := config.EffectiveDownloaderMode(cfg)
 	internalController := s.internalDownloadController()
+	aria2Configured := false
 
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
@@ -1509,7 +1512,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 		if task.ID == "" {
 			task.ID = id
 		}
-		if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
+		if downloaderMode == config.DownloaderModeInternal {
 			if _, err := internalController.AddLink(ctx, cfg, task.ID); err != nil {
 				result.Skipped++
 				result.Errors = appendInternalDownloadError(result.Errors, id, data, err)
@@ -1517,6 +1520,14 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			}
 			result.Added++
 			continue
+		}
+		if !aria2Configured {
+			if err := configureAria2MaxConcurrentDownloads(ctx, cfg.Aria2, limit); err != nil {
+				result.Skipped++
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: configure aria2 max concurrent downloads: %v", id, err))
+				continue
+			}
+			aria2Configured = true
 		}
 		link := downloadURL(cfg.HTTP.PublicBaseURL, task.ID)
 		gid, err := addAria2URI(ctx, cfg.Aria2, link, task.FileName)
@@ -1531,7 +1542,7 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			DownloadURL: link,
 			Dir:         cfg.Aria2.Dir,
 			Out:         task.FileName,
-			Connections: poolSize,
+			Connections: threads,
 			CreatedAt:   time.Now(),
 		}); err != nil {
 			result.Skipped++
@@ -1568,6 +1579,24 @@ func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string) (
 		return "", errors.New("aria2 returned empty gid")
 	}
 	return gid, nil
+}
+
+func configureAria2MaxConcurrentDownloads(ctx context.Context, cfg config.Aria2Config, limit int) error {
+	if limit < 1 {
+		return errors.New("limit must be greater than 0")
+	}
+	var result string
+	if err := callAria2(ctx, cfg, "aria2.changeGlobalOption", []any{
+		map[string]any{
+			"max-concurrent-downloads": strconv.Itoa(limit),
+		},
+	}, &result); err != nil {
+		return err
+	}
+	if result != "OK" {
+		return fmt.Errorf("unexpected aria2 response %q", result)
+	}
+	return nil
 }
 
 func (s *Server) saveAria2Record(ctx context.Context, record aria2TaskRecord) error {
