@@ -25,6 +25,7 @@ import (
 	"github.com/gotd/td/tg"
 	hostmem "github.com/shirou/gopsutil/v3/mem"
 
+	httpdl "github.com/iyear/tdl/app/http"
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/app/watch"
@@ -39,8 +40,8 @@ import (
 var assets embed.FS
 
 const (
-	downloadTaskKeyPrefix = "watch.download."
-	downloadTaskIndexKey  = "watch.download.index"
+	downloadTaskKeyPrefix = httpdl.DownloadTaskKeyPrefix
+	downloadTaskIndexKey  = httpdl.DownloadTaskIndexKey
 	aria2TaskKeyPrefix    = "watch.aria2.task."
 	aria2TaskIndexKey     = "watch.aria2.index"
 
@@ -433,13 +434,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		memoryPercent = float64(rss) / float64(vm.Total) * 100
 	}
 
-	bufferBytes := uint64(watch.HTTPBufferBytes())
+	bufferBytes := uint64(httpdl.HTTPBufferBytes())
 	softwareBytes := rss
 	if bufferBytes <= rss {
 		softwareBytes = rss - bufferBytes
 	}
 
-	totalBytes := watch.TelegramDownloadedBytes()
+	totalBytes := httpdl.TelegramDownloadedBytes()
 	gotdSpeed := s.telegramDownloadSpeed(totalBytes, now)
 	var aria2Speed int64
 	aria2Available := false
@@ -1089,7 +1090,7 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 		s.markDownloadTaskDownloaded(ctx, taskID)
 	}
 
-	ttl := downloadLinkTTL(config.Get().HTTP)
+	ttl := httpdl.LinkTTL(config.Get().HTTP)
 	if ttl > 0 && len(downloadIndex) > 0 {
 		dlChanged := false
 		for taskID, createdAt := range downloadIndex {
@@ -1130,13 +1131,6 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
-	if cfg.DownloadLinkTTLHours <= 0 {
-		return 0
-	}
-	return time.Duration(cfg.DownloadLinkTTLHours) * time.Hour
 }
 
 func (s *Server) loadAria2Records() (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {

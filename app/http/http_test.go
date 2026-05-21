@@ -1,4 +1,4 @@
-package watch
+package httpdl
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
-	"github.com/iyear/tdl/app/watch/transfer"
+	"github.com/iyear/tdl/app/http/transfer"
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/core/tmedia"
@@ -315,14 +315,13 @@ func TestDownloadHandlerHead(t *testing.T) {
 	require.Equal(t, "10", rec.Result().Header.Get("Content-Length"))
 }
 
-func TestValidateWatchConfigRejectsInvalidBufferMode(t *testing.T) {
+func TestValidateBufferConfigRejectsInvalidBufferMode(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:8080"
 	cfg.HTTP.Buffer.Mode = "disk"
 
-	err := validateWatchConfig(cfg)
+	err := validateHTTPBufferConfig(cfg.HTTP.Buffer)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "http.buffer.mode")
 }

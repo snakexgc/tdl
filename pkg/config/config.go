@@ -74,6 +74,7 @@ type WebUIConfig struct {
 type ModulesConfig struct {
 	Bot     bool `json:"bot"`
 	Watch   bool `json:"watch"`
+	HTTP    bool `json:"http"`
 	Forward bool `json:"forward"`
 }
 
@@ -160,6 +161,7 @@ func DefaultConfig() *Config {
 		Modules: ModulesConfig{
 			Bot:     true,
 			Watch:   true,
+			HTTP:    true,
 			Forward: false,
 		},
 		Downloader: DownloaderConfig{

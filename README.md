@@ -46,7 +46,9 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   },
   "modules": {
     "bot": true, // Telegram 机器人控制模块
-    "watch": true // 监听下载模块：表情监听、下载链接和任务提交
+    "watch": true, // 监听下载模块：表情监听和任务提交
+    "http": true, // HTTP 下载代理模块：提供 /download 文件流链接
+    "forward": false // 监听转发模块
   },
   "downloader": {
     "mode": "aria2" // 下载器模式：aria2 或 internal
@@ -94,7 +96,9 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `webui.username`       | Web 管理面板用户名                                                               |
 | `webui.password`       | Web 管理面板密码；默认 `admin`，首次登录后请立刻修改                                                |
 | `modules.bot`          | Telegram 机器人控制模块；关闭后不再接收机器人私聊命令                                             |
-| `modules.watch`        | 监听下载模块；包含 Telegram 表情监听、下载链接和任务提交                                    |
+| `modules.watch`        | 监听下载模块；负责 Telegram 表情监听和任务提交                                    |
+| `modules.http`         | HTTP 下载代理模块；提供 `/download` 文件流链接，aria2 下载器依赖该模块 |
+| `modules.forward`      | 监听转发模块；监听配置的 Telegram 对象并转发新消息 |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
 

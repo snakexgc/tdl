@@ -51,6 +51,7 @@ type Manager struct {
 	botErr         error
 	watchMode      string
 	watchEnabled   bool
+	httpEnabled    bool
 	forwardEnabled bool
 }
 
@@ -109,6 +110,7 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		botStatus:      moduleStatusNotStarted,
 		watchMode:      config.EffectiveDownloaderMode(config.Get()),
 		watchEnabled:   config.Get() != nil && config.Get().Modules.Watch,
+		httpEnabled:    config.Get() != nil && config.Get().Modules.HTTP,
 		forwardEnabled: config.Get() != nil && config.Get().Modules.Forward,
 	}
 	manager.watchCtrl = watch.NewController(ctx, watch.DefaultOptions(config.Get()), manager.Notify)
@@ -165,14 +167,17 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 	m.mu.Lock()
 	prevWatchMode := m.watchMode
 	prevWatchEnabled := m.watchEnabled
+	prevHTTPEnabled := m.httpEnabled
 	prevForwardEnabled := m.forwardEnabled
 	m.watchMode = nextWatchMode
 	m.watchEnabled = cfg.Modules.Watch
+	m.httpEnabled = cfg.Modules.HTTP
 	m.forwardEnabled = cfg.Modules.Forward
 	m.mu.Unlock()
 	restartWatch := m.watchCtrl.Running() &&
 		((prevWatchMode != "" && prevWatchMode != nextWatchMode) ||
 			prevWatchEnabled != cfg.Modules.Watch ||
+			prevHTTPEnabled != cfg.Modules.HTTP ||
 			prevForwardEnabled != cfg.Modules.Forward)
 
 	if cfg.Modules.Bot {
@@ -208,6 +213,7 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 		},
 		m.botState(cfg),
 		m.watchState(cfg),
+		m.httpState(cfg),
 		m.forwardState(cfg),
 	}
 }
@@ -224,6 +230,8 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		next.Modules.Bot = enabled
 	case "watch":
 		next.Modules.Watch = enabled
+	case "http":
+		next.Modules.HTTP = enabled
 	case "forward":
 		next.Modules.Forward = enabled
 	case "webui":
@@ -258,6 +266,16 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 			}
 		}
 		return m.watchState(next), nil
+	case "http":
+		if m.watchCtrl.Running() {
+			go func() {
+				m.StopWatch()
+				_ = m.StartWatch(context.Background())
+			}()
+		} else if enabled && next.Modules.Watch {
+			_ = m.StartWatch(ctx)
+		}
+		return m.httpState(next), nil
 	case "forward":
 		if enabled {
 			_ = m.StartWatch(ctx)
@@ -459,6 +477,37 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 		Description: "监听 Telegram 表情触发，并把任务提交到当前下载器。",
 		Enabled:     cfg != nil && cfg.Modules.Watch,
 		Running:     running && cfg != nil && cfg.Modules.Watch,
+		CanToggle:   true,
+		Status:      status,
+	}
+}
+
+func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
+	if cfg == nil {
+		cfg = config.Get()
+	}
+	enabled := cfg != nil && cfg.Modules.HTTP
+	running := m.watchCtrl.Running() && cfg != nil && cfg.Modules.Watch && cfg.Modules.HTTP && strings.TrimSpace(config.HTTPListenAddr(cfg)) != ""
+	status := moduleStatusNotStarted
+	if running {
+		status = "运行中：" + config.HTTPListenAddr(cfg)
+	} else if !enabled {
+		status = "已关闭"
+	} else if cfg != nil && !cfg.Modules.Watch {
+		status = "已启用，等待监听下载模块启动。"
+	} else if err := m.watchCtrl.LastError(); err != nil {
+		status = "已停止：" + err.Error()
+	} else if cfg != nil && config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2 && strings.TrimSpace(cfg.HTTP.PublicBaseURL) == "" {
+		status = "已启用，等待填写 http.public_base_url。"
+	} else {
+		status = "已启用，等待启动。"
+	}
+	return webui.ModuleState{
+		ID:          "http",
+		Name:        "HTTP 下载代理",
+		Description: "提供 /download 链接、Range 下载和内存缓冲；aria2 下载器依赖该模块获取文件流。",
+		Enabled:     enabled,
+		Running:     running,
 		CanToggle:   true,
 		Status:      status,
 	}

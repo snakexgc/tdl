@@ -89,6 +89,7 @@ const sections = [
     fields: [
       ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
       ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到当前下载器。"],
+      ["modules.http", "HTTP 下载代理", "bool", "启用后提供 /download 文件流链接；aria2 下载器依赖该模块。"],
       ["modules.forward", "监听转发", "bool", "启用后监听 forward.listen 中的 Telegram 对象并转发新消息。"],
     ],
   },

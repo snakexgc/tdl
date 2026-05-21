@@ -41,6 +41,7 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.True(t, UsesDefaultWebUICredentials(cfg))
 	require.True(t, cfg.Modules.Bot)
 	require.True(t, cfg.Modules.Watch)
+	require.True(t, cfg.Modules.HTTP)
 	require.Equal(t, DownloaderModeAria2, cfg.Downloader.Mode)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)

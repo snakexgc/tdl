@@ -1,4 +1,4 @@
-package watch
+package httpdl
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/iyear/tdl/app/watch/transfer"
+	"github.com/iyear/tdl/app/http/transfer"
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
 	"github.com/iyear/tdl/core/storage"
@@ -48,6 +48,19 @@ const (
 	defaultDownloadTaskTTL = 24 * time.Hour
 	downloadSessionIdleTTL = 2 * time.Minute
 )
+
+const (
+	DownloadTaskKeyPrefix = downloadTaskKeyPrefix
+	DownloadTaskIndexKey  = downloadTaskIndexKey
+	BufferModeOff         = httpBufferModeOff
+	BufferModeMemory      = httpBufferModeMemory
+)
+
+type Task = downloadTask
+type TaskStore = taskStore
+type PoolHolder = poolHolder
+type Proxy = downloadProxy
+type TaskStreamer = taskStreamer
 
 var (
 	telegramDownloadedBytes atomic.Int64
@@ -292,6 +305,10 @@ func newTaskStore(kv storage.Storage, ttl ...time.Duration) *taskStore {
 	}
 }
 
+func NewTaskStore(kv storage.Storage, ttl ...time.Duration) *TaskStore {
+	return newTaskStore(kv, ttl...)
+}
+
 func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -379,6 +396,22 @@ func (s *taskStore) CleanupExpired(ctx context.Context, now time.Time) error {
 	defer s.mu.Unlock()
 
 	return s.cleanupExpiredLocked(ctx, now)
+}
+
+func (s *taskStore) TTL() time.Duration {
+	if s == nil {
+		return 0
+	}
+	return s.ttl
+}
+
+func (s *taskStore) SetTTL(ttl time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ttl = ttl
 }
 
 func (s *taskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {
@@ -642,6 +675,55 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 	}
 
 	return p
+}
+
+func NewProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *PoolHolder, kv storage.Storage, logger *zap.Logger) *Proxy {
+	return newDownloadProxy(cfg, maxFiles, maxPerFile, pools, kv, logger)
+}
+
+func (p *downloadProxy) Tasks() *TaskStore {
+	if p == nil {
+		return nil
+	}
+	return p.tasks
+}
+
+func (p *downloadProxy) Limiter() *transfer.Limiter {
+	if p == nil {
+		return nil
+	}
+	return p.limiter
+}
+
+func (p *downloadProxy) SetTaskTTL(ttl time.Duration) {
+	if p == nil || p.tasks == nil {
+		return
+	}
+	p.tasks.SetTTL(ttl)
+}
+
+func (p *downloadProxy) SetStream(stream TaskStreamer) {
+	if p == nil {
+		return
+	}
+	p.stream = stream
+}
+
+func (p *downloadProxy) StreamTask(ctx context.Context, task *Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	if p == nil {
+		return errors.New("download proxy is not initialized")
+	}
+	return p.streamTask(ctx, task, lease, start, end, w)
+}
+
+func (p *downloadProxy) Stream(ctx context.Context, task *Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	if p == nil {
+		return errors.New("download proxy is not initialized")
+	}
+	if p.stream != nil {
+		return p.stream(ctx, task, lease, start, end, w)
+	}
+	return p.streamTask(ctx, task, lease, start, end, w)
 }
 
 func (p *downloadProxy) Start(ctx context.Context) error {
@@ -1009,6 +1091,10 @@ func downloadTaskStorageKey(id string) string {
 	return downloadTaskKeyPrefix + id
 }
 
+func TaskStorageKey(id string) string {
+	return downloadTaskStorageKey(id)
+}
+
 func buildDownloadURL(baseURL, taskID string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -1023,11 +1109,19 @@ func buildDownloadURL(baseURL, taskID string) (string, error) {
 	return u.String(), nil
 }
 
+func BuildDownloadURL(baseURL, taskID string) (string, error) {
+	return buildDownloadURL(baseURL, taskID)
+}
+
 func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
 	if cfg.DownloadLinkTTLHours <= 0 {
 		return 0
 	}
 	return time.Duration(cfg.DownloadLinkTTLHours) * time.Hour
+}
+
+func LinkTTL(cfg config.HTTPConfig) time.Duration {
+	return downloadLinkTTL(cfg)
 }
 
 func validateHTTPBufferConfig(cfg config.HTTPBufferConfig) error {
@@ -1042,6 +1136,10 @@ func validateHTTPBufferConfig(cfg config.HTTPBufferConfig) error {
 	return nil
 }
 
+func ValidateBufferConfig(cfg config.HTTPBufferConfig) error {
+	return validateHTTPBufferConfig(cfg)
+}
+
 func normalizeHTTPBufferMode(mode string) string {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
@@ -1050,11 +1148,19 @@ func normalizeHTTPBufferMode(mode string) string {
 	return mode
 }
 
+func NormalizeBufferMode(mode string) string {
+	return normalizeHTTPBufferMode(mode)
+}
+
 func normalizedHTTPBufferSizeMB(cfg config.HTTPBufferConfig) int {
 	if cfg.SizeMB < 1 {
 		return 1
 	}
 	return cfg.SizeMB
+}
+
+func NormalizedBufferSizeMB(cfg config.HTTPBufferConfig) int {
+	return normalizedHTTPBufferSizeMB(cfg)
 }
 
 func httpMemoryBufferSlots(cfg config.HTTPBufferConfig) int {
@@ -1068,6 +1174,10 @@ func httpMemoryBufferSlots(cfg config.HTTPBufferConfig) int {
 		return 1
 	}
 	return slots
+}
+
+func MemoryBufferSlots(cfg config.HTTPBufferConfig) int {
+	return httpMemoryBufferSlots(cfg)
 }
 
 func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.Lease, start, end int64, w io.Writer) error {

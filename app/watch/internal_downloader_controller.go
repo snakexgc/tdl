@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	httpdl "github.com/iyear/tdl/app/http"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
 )
@@ -57,7 +58,7 @@ func (c *InternalDownloadController) AddLink(ctx context.Context, cfg *config.Co
 		return InternalDownloadInfo{}, errors.New("invalid download task id")
 	}
 
-	task, ok, err := newTaskStore(c.kv, 0).Get(ctx, taskID)
+	task, ok, err := httpdl.NewTaskStore(c.kv, 0).Get(ctx, taskID)
 	if err != nil {
 		return InternalDownloadInfo{}, err
 	}

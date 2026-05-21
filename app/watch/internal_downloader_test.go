@@ -13,7 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/app/watch/transfer"
+	httpdl "github.com/iyear/tdl/app/http"
+	"github.com/iyear/tdl/app/http/transfer"
 	"github.com/iyear/tdl/core/tmedia"
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
@@ -43,7 +44,7 @@ func TestInternalModeUsesConfiguredDownloadThreads(t *testing.T) {
 	require.Equal(t, 2, effectiveDownloadLimit(cfg))
 
 	runtime := newWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
-	require.True(t, runtime.proxy.limiter == runtime.internal.limit)
+	require.True(t, runtime.proxy.Limiter() == runtime.internal.limit)
 
 	lease, err := runtime.internal.limit.Acquire(context.Background(), "document_1")
 	require.NoError(t, err)
@@ -60,7 +61,7 @@ func TestInternalRuntimeKeepsDownloadTasksWithoutTTL(t *testing.T) {
 
 	runtime := newWatchRuntime(cfg, DefaultOptions(cfg), newMemoryTaskStorage(), nil)
 
-	require.Zero(t, runtime.proxy.tasks.ttl)
+	require.Zero(t, runtime.proxy.Tasks().TTL())
 }
 
 func TestPrepareInternalOutputRootUsesConfiguredWritableDir(t *testing.T) {
@@ -233,7 +234,7 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 	defer cancel()
 
 	kvd := newMemoryTaskStorage()
-	task := &downloadTask{
+	task := &httpdl.Task{
 		ID:        "document_42",
 		PeerID:    12345,
 		MessageID: 7,
@@ -252,7 +253,7 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 			DC:   2,
 		},
 	}
-	tasks := newTaskStore(kvd, 0)
+	tasks := httpdl.NewTaskStore(kvd, 0)
 	require.NoError(t, tasks.Add(ctx, task))
 
 	store := newInternalTaskStore(kvd)
@@ -269,24 +270,20 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 		CreatedAt: time.Now(),
 	}))
 
-	limiter := transfer.NewLimiter(1, 2)
-	blockingLease, err := limiter.Acquire(ctx, "other")
-	require.NoError(t, err)
-
 	streamCalled := make(chan struct{})
 	done := make(chan struct{})
+	proxy := httpdl.NewProxy(config.HTTPConfig{}, 1, 2, &httpdl.PoolHolder{}, kvd, nil)
+	blockingLease, err := proxy.Limiter().Acquire(ctx, "other")
+	require.NoError(t, err)
+	proxy.SetStream(func(ctx context.Context, task *httpdl.Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
+		close(streamCalled)
+		_, err := w.Write(bytes.Repeat([]byte("x"), int(end-start+1)))
+		return err
+	})
 	downloader := &internalDownloader{
-		proxy: &downloadProxy{
-			tasks:   tasks,
-			limiter: limiter,
-			stream: func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
-				close(streamCalled)
-				_, err := w.Write(bytes.Repeat([]byte("x"), int(end-start+1)))
-				return err
-			},
-		},
+		proxy:  proxy,
 		store:  store,
-		limit:  limiter,
+		limit:  proxy.Limiter(),
 		logger: zap.NewNop(),
 	}
 
@@ -326,7 +323,7 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
-	task := &downloadTask{
+	task := &httpdl.Task{
 		ID:        "document_42",
 		PeerID:    12345,
 		MessageID: 7,
@@ -345,7 +342,7 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 			DC:   2,
 		},
 	}
-	require.NoError(t, newTaskStore(kvd, 0).Add(ctx, task))
+	require.NoError(t, httpdl.NewTaskStore(kvd, 0).Add(ctx, task))
 
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal

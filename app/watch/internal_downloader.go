@@ -11,7 +11,8 @@ import (
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/app/watch/transfer"
+	httpdl "github.com/iyear/tdl/app/http"
+	"github.com/iyear/tdl/app/http/transfer"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
 )
@@ -23,7 +24,7 @@ const (
 )
 
 type internalDownloader struct {
-	proxy  *downloadProxy
+	proxy  *httpdl.Proxy
 	store  *internalTaskStore
 	limit  *transfer.Limiter
 	logger *zap.Logger
@@ -37,7 +38,7 @@ type internalDownloader struct {
 	active  map[string]struct{}
 }
 
-func newInternalDownloader(proxy *downloadProxy, kvd storage.Storage, logger *zap.Logger, cfg *config.Config) *internalDownloader {
+func newInternalDownloader(proxy *httpdl.Proxy, kvd storage.Storage, logger *zap.Logger, cfg *config.Config) *internalDownloader {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -60,9 +61,9 @@ func effectiveDownloadLimit(cfg *config.Config) int {
 	return config.EffectiveLimit(cfg)
 }
 
-func internalDownloadLimiter(proxy *downloadProxy, cfg *config.Config) *transfer.Limiter {
-	if proxy != nil && proxy.limiter != nil {
-		return proxy.limiter
+func internalDownloadLimiter(proxy *httpdl.Proxy, cfg *config.Config) *transfer.Limiter {
+	if proxy != nil && proxy.Limiter() != nil {
+		return proxy.Limiter()
 	}
 	if cfg == nil {
 		cfg = config.Get()
@@ -71,7 +72,7 @@ func internalDownloadLimiter(proxy *downloadProxy, cfg *config.Config) *transfer
 	if cfg != nil {
 		httpCfg = cfg.HTTP
 	}
-	return transfer.NewLimiter(effectiveDownloadLimit(cfg), effectiveDownloadThreads(cfg), httpMemoryBufferSlots(httpCfg.Buffer))
+	return transfer.NewLimiter(effectiveDownloadLimit(cfg), effectiveDownloadThreads(cfg), httpdl.MemoryBufferSlots(httpCfg.Buffer))
 }
 
 func (d *internalDownloader) Start(ctx context.Context) error {
@@ -173,7 +174,7 @@ func (d *internalDownloader) PauseForShutdown(ctx context.Context) ([]string, er
 	return paused, nil
 }
 
-func (d *internalDownloader) Add(ctx context.Context, task *downloadTask, prepared preparedFileTask) (InternalDownloadInfo, error) {
+func (d *internalDownloader) Add(ctx context.Context, task *httpdl.Task, prepared preparedFileTask) (InternalDownloadInfo, error) {
 	if d == nil || task == nil {
 		return InternalDownloadInfo{}, errors.New("internal downloader is not initialized")
 	}
@@ -320,11 +321,11 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		return
 	}
 
-	if d.proxy == nil || d.proxy.tasks == nil {
+	if d.proxy == nil || d.proxy.Tasks() == nil {
 		d.markError(ctx, record, errors.New("download proxy is not initialized"))
 		return
 	}
-	task, ok, err := d.proxy.tasks.Get(ctx, record.TaskID)
+	task, ok, err := d.proxy.Tasks().Get(ctx, record.TaskID)
 	if err != nil {
 		d.markError(ctx, record, err)
 		return
@@ -410,11 +411,7 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		completed: completed,
 		w:         file,
 	}
-	stream := d.proxy.stream
-	if stream == nil {
-		stream = d.proxy.streamTask
-	}
-	err = stream(ctx, task, lease, completed, record.Total-1, writer)
+	err = d.proxy.Stream(ctx, task, lease, completed, record.Total-1, writer)
 	closeErr := file.Close()
 	if closeErr != nil && err == nil {
 		err = closeErr

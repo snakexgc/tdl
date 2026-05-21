@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	httpdl "github.com/iyear/tdl/app/http"
 	watcharia2 "github.com/iyear/tdl/app/watch/aria2"
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
@@ -199,7 +200,7 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Forward && len(opts.ForwardListen) == 0 {
 		color.Yellow("⚠️ modules.forward is enabled but forward.listen is empty")
 	}
-	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
+	if err := httpdl.ValidateBufferConfig(cfg.HTTP.Buffer); err != nil {
 		return err
 	}
 	if opts.FileSizeMB < 0 {
@@ -307,7 +308,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	proxyErrCh := make(chan error, 1)
 	httpListen := config.HTTPListenAddr(cfg)
-	if opts.Download && strings.TrimSpace(httpListen) != "" {
+	if opts.Download && cfg.Modules.HTTP && strings.TrimSpace(httpListen) != "" {
 		go func() {
 			if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				select {
@@ -326,7 +327,7 @@ func Run(ctx context.Context, opts Options) error {
 	} else {
 		color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
 	}
-	if opts.Download && strings.TrimSpace(httpListen) != "" {
+	if opts.Download && cfg.Modules.HTTP && strings.TrimSpace(httpListen) != "" {
 		color.Green("   HTTP listen: %s", httpListen)
 	}
 	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
@@ -351,8 +352,8 @@ func Run(ctx context.Context, opts Options) error {
 		} else {
 			color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
 		}
-		if normalizeHTTPBufferMode(cfg.HTTP.Buffer.Mode) == httpBufferModeMemory {
-			color.Green("   HTTP buffer: memory (%d MiB per active session)", normalizedHTTPBufferSizeMB(cfg.HTTP.Buffer))
+		if httpdl.NormalizeBufferMode(cfg.HTTP.Buffer.Mode) == httpdl.BufferModeMemory {
+			color.Green("   HTTP buffer: memory (%d MiB per active session)", httpdl.NormalizedBufferSizeMB(cfg.HTTP.Buffer))
 		} else {
 			color.Green("   HTTP buffer: off")
 		}
@@ -607,11 +608,14 @@ func validateWatchConfig(cfg *config.Config) error {
 	if _, err := config.NormalizeHTTPTransferMode(cfg.HTTP.TransferMode); err != nil {
 		return err
 	}
-	if err := validateHTTPBufferConfig(cfg.HTTP.Buffer); err != nil {
+	if err := httpdl.ValidateBufferConfig(cfg.HTTP.Buffer); err != nil {
 		return err
 	}
 	switch config.EffectiveDownloaderMode(cfg) {
 	case config.DownloaderModeAria2:
+		if !cfg.Modules.HTTP {
+			return errors.New("modules.http must be enabled when downloader.mode is aria2")
+		}
 		if strings.TrimSpace(config.HTTPListenAddr(cfg)) == "" {
 			return errors.New("http.address or http.port is empty")
 		}

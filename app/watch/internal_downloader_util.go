@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	httpdl "github.com/iyear/tdl/app/http"
 	"github.com/iyear/tdl/core/storage"
 )
 
@@ -51,7 +52,7 @@ func markPersistentDownloadTaskDownloaded(ctx context.Context, kvd storage.Stora
 	if kvd == nil || taskID == "" {
 		return
 	}
-	key := downloadTaskStorageKey(taskID)
+	key := httpdl.TaskStorageKey(taskID)
 	data, err := kvd.Get(ctx, key)
 	if err != nil {
 		return

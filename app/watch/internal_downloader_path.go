@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	httpdl "github.com/iyear/tdl/app/http"
 	"github.com/iyear/tdl/core/util/tutil"
 	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/consts"
@@ -87,7 +88,7 @@ func prepareInternalPartialFile(path string, total int64) (int64, error) {
 	return size, nil
 }
 
-func internalDownloadDirData(task *downloadTask) downloadDirData {
+func internalDownloadDirData(task *httpdl.Task) downloadDirData {
 	id := strconv.FormatInt(task.PeerID, 10)
 	if id == "0" && task.Peer != nil {
 		id = strconv.FormatInt(tutil.GetInputPeerID(task.Peer), 10)
