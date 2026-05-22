@@ -25,6 +25,7 @@ const (
 	DefaultWebUIUsername = "admin"
 	DefaultWebUIPassword = "admin"
 	DefaultFilename      = "{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}"
+	DefaultFilenameMax   = 180
 )
 
 const (
@@ -114,6 +115,7 @@ type Config struct {
 	ReconnectTimeout int              `json:"reconnect_timeout"`
 	DownloadDir      string           `json:"download_dir"`
 	Filename         string           `json:"filename"`
+	FilenameMax      int              `json:"filename_max_length"`
 	TriggerReactions []string         `json:"trigger_reactions"`
 	Include          []string         `json:"include"`
 	Exclude          []string         `json:"exclude"`
@@ -139,6 +141,7 @@ func DefaultConfig() *Config {
 		ReconnectTimeout: 3,
 		DownloadDir:      "G\\Y&M",
 		Filename:         DefaultFilename,
+		FilenameMax:      DefaultFilenameMax,
 		TriggerReactions: []string{},
 		Include:          []string{},
 		Exclude:          []string{},
@@ -257,6 +260,13 @@ func EffectiveFilename(cfg *Config) string {
 		return DefaultFilename
 	}
 	return filename
+}
+
+func EffectiveFilenameMax(cfg *Config) int {
+	if cfg == nil || cfg.FilenameMax <= 0 {
+		return DefaultFilenameMax
+	}
+	return cfg.FilenameMax
 }
 
 func NormalizeDownloaderMode(mode string) (string, error) {
@@ -504,6 +514,7 @@ func Validate(cfg *Config) error {
 	cfg.Limit = EffectiveLimit(cfg)
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	cfg.Filename = EffectiveFilename(cfg)
+	cfg.FilenameMax = EffectiveFilenameMax(cfg)
 	if cfg.FileSizeMB < 0 {
 		return errors.New("file_size_mb must be greater than or equal to 0")
 	}

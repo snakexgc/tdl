@@ -46,6 +46,7 @@ import (
 type Options struct {
 	Dir                   string
 	Template              string
+	FilenameMaxLength     int
 	SkipSame              bool
 	PoolSize              int
 	Threads               int
@@ -125,6 +126,7 @@ func DefaultOptions(cfg *config.Config) Options {
 	return Options{
 		Dir:                   cfg.DownloadDir,
 		Template:              fileNameConfigTemplate(config.EffectiveFilename(cfg)),
+		FilenameMaxLength:     config.EffectiveFilenameMax(cfg),
 		PoolSize:              config.EffectivePoolSize(cfg),
 		Threads:               config.EffectiveThreads(cfg),
 		Limit:                 config.EffectiveLimit(cfg),
@@ -1430,30 +1432,65 @@ func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt t
 	if groupedID, ok := msg.GetGroupedID(); ok {
 		albumID = fmt.Sprint(groupedID)
 	}
-	var toName bytes.Buffer
-	if err := w.tpl.Execute(&toName, &fileTemplate{
-		DialogID:         dialogID,
-		MessageID:        msg.ID,
-		TriggerMessageID: triggerMessageID,
-		MessageDate:      int64(msg.Date),
-		FileName:         media.Name,
-		FileCaption:      msg.Message,
-		MessageTitle:     messageTitle,
-		PeerName:         peerName,
-		AlbumID:          albumID,
-		F:                safePathSegment(media.Name),
-		I:                safePathSegment(messageTitle),
-		G:                safePathSegment(peerName),
-		P:                fmt.Sprint(dialogID),
-		S:                fmt.Sprint(msg.ID),
-		R:                fmt.Sprint(triggerMessageID),
-		A:                safePathSegment(albumID),
-		FileSize:         utils.Byte.FormatBinaryBytes(media.Size),
-		DownloadDate:     downloadedAt.Unix(),
-	}); err != nil {
-		return "", errors.Wrap(err, "execute template")
+	render := func(messageTitleMax int) (string, error) {
+		var toName bytes.Buffer
+		if err := w.tpl.Execute(&toName, &fileTemplate{
+			DialogID:         dialogID,
+			MessageID:        msg.ID,
+			TriggerMessageID: triggerMessageID,
+			MessageDate:      int64(msg.Date),
+			FileName:         media.Name,
+			FileCaption:      msg.Message,
+			MessageTitle:     messageTitle,
+			PeerName:         peerName,
+			AlbumID:          albumID,
+			F:                safePathSegment(media.Name),
+			I:                safeMessageTitleSegmentWithMax(messageTitle, messageTitleMax),
+			G:                safePathSegment(peerName),
+			P:                fmt.Sprint(dialogID),
+			S:                fmt.Sprint(msg.ID),
+			R:                fmt.Sprint(triggerMessageID),
+			A:                safePathSegment(albumID),
+			FileSize:         utils.Byte.FormatBinaryBytes(media.Size),
+			DownloadDate:     downloadedAt.Unix(),
+		}); err != nil {
+			return "", errors.Wrap(err, "execute template")
+		}
+		return toName.String(), nil
 	}
-	return toName.String(), nil
+
+	rendered, err := render(safeMessageTitleMaxRunes)
+	if err != nil {
+		return "", err
+	}
+	maxLength := w.opts.FilenameMaxLength
+	if maxLength <= 0 || renderedNameLeafRuneLen(rendered) <= maxLength {
+		return rendered, nil
+	}
+
+	if strings.Contains(w.opts.Template, ".I") {
+		best := ""
+		found := false
+		for low, high := 0, safeMessageTitleMaxRunes; low <= high; {
+			mid := (low + high) / 2
+			candidate, err := render(mid)
+			if err != nil {
+				return "", err
+			}
+			if renderedNameLeafRuneLen(candidate) <= maxLength {
+				best = candidate
+				found = true
+				low = mid + 1
+			} else {
+				high = mid - 1
+			}
+		}
+		if found {
+			return best, nil
+		}
+	}
+
+	return limitRenderedNameLeaf(rendered, maxLength), nil
 }
 
 func addPrefixDot(v string) string {

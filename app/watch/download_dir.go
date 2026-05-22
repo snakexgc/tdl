@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flytam/filenamify"
 	"github.com/go-faster/errors"
@@ -34,6 +35,13 @@ type downloadDirData struct {
 }
 
 var windowsDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+
+const (
+	safeMessageTitleMaxRunes  = 80
+	safeMessageTitleHeadRunes = 48
+	safeMessageTitleTailRunes = 30
+	safeMessageTitleMarker    = "隐藏"
+)
 
 func prepareAria2OutputRoot(ctx context.Context, client aria2GlobalDirGetter, cfg *config.Config) (root string, ensureDirs bool, err error) {
 	if cfg == nil {
@@ -182,7 +190,7 @@ func downloadTemplateValue(r rune, data downloadDirData) (string, bool) {
 	case 'F':
 		return data.FileName, true
 	case 'I':
-		return data.MessageTitle, true
+		return safeMessageTitleSegment(data.MessageTitle), true
 	case 'G':
 		return data.Name, true
 	case 'P':
@@ -214,6 +222,99 @@ func safePathSegment(value string) string {
 		return "invalid-filename"
 	}
 	return safe
+}
+
+func safeMessageTitleSegment(value string) string {
+	return safeMessageTitleSegmentWithMax(value, safeMessageTitleMaxRunes)
+}
+
+func safeMessageTitleSegmentWithMax(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return limitFileNameRunes([]rune("untitled"), maxRunes)
+	}
+
+	runes := make([]rune, 0, len(value))
+	for _, r := range value {
+		if isMessageTitleFilenameRune(r) {
+			runes = append(runes, r)
+		}
+	}
+	if len(runes) == 0 {
+		return limitFileNameRunes([]rune("untitled"), maxRunes)
+	}
+	return limitFileNameRunes(runes, maxRunes)
+}
+
+func isMessageTitleFilenameRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') ||
+		(r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') ||
+		unicode.Is(unicode.Han, r)
+}
+
+func renderedNameLeafRuneLen(rendered string) int {
+	_, leaf := splitRenderedNameLeaf(rendered)
+	return len([]rune(leaf))
+}
+
+func limitRenderedNameLeaf(rendered string, maxLength int) string {
+	prefix, leaf := splitRenderedNameLeaf(rendered)
+	return prefix + limitFileNameSegment(leaf, maxLength)
+}
+
+func splitRenderedNameLeaf(rendered string) (prefix, leaf string) {
+	lastSlash := strings.LastIndexAny(rendered, `/\`)
+	if lastSlash < 0 {
+		return "", rendered
+	}
+	return rendered[:lastSlash+1], rendered[lastSlash+1:]
+}
+
+func limitFileNameSegment(name string, maxLength int) string {
+	if maxLength <= 0 {
+		return ""
+	}
+	if len([]rune(name)) <= maxLength {
+		return name
+	}
+
+	ext := filepath.Ext(name)
+	extRunes := []rune(ext)
+	if ext != "" && len(extRunes) < maxLength {
+		base := strings.TrimSuffix(name, ext)
+		baseMax := maxLength - len(extRunes)
+		return limitFileNameRunes([]rune(base), baseMax) + ext
+	}
+
+	return limitFileNameRunes([]rune(name), maxLength)
+}
+
+func limitFileNameRunes(runes []rune, maxRunes int) string {
+	if maxRunes <= 0 || len(runes) == 0 {
+		return ""
+	}
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+
+	marker := []rune(safeMessageTitleMarker)
+	if maxRunes <= len(marker)+1 {
+		return string(runes[:maxRunes])
+	}
+
+	available := maxRunes - len(marker)
+	tail := min(safeMessageTitleTailRunes, available/2)
+	head := min(safeMessageTitleHeadRunes, available-tail)
+	if head+tail < available {
+		head += available - head - tail
+	}
+
+	return string(runes[:head]) + safeMessageTitleMarker + string(runes[len(runes)-tail:])
 }
 
 func resolveTargetPath(baseDir, renderedName string) (dir, out, fullPath string) {

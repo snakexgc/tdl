@@ -30,6 +30,7 @@ var configurablePaths = []string{
 	"reconnect_timeout",
 	"download_dir",
 	"filename",
+	"filename_max_length",
 	"trigger_reactions",
 	"include",
 	"exclude",
@@ -150,7 +151,7 @@ func configHelpMessage() string {
 	paths := append([]string(nil), configurablePaths...)
 	sort.Strings(paths)
 
-	return fmt.Sprintf("配置命令：\n/config_get 查看全部配置\n/config_get 配置项 查看单项配置\n/config_set 配置项 值 保存配置\n/reboot 重启程序并重新加载配置\n\n值支持 JSON；字符串也可以直接写。\ndownload_dir 与 filename 使用同一组模板变量：F 原始文件名、I 触发消息文字、G 群组或频道名称、P 来源 ID、S 媒体消息 ID、R 触发消息 ID、A 相册 ID、Y/M/D 日期。/ 或 \\ 分层，& 连接同层，例如 G/Y&M 或 G-I-F。\n配置文件：%s\n\n可设置配置项：\n%s", config.GetPath(), strings.Join(paths, "\n"))
+	return fmt.Sprintf("配置命令：\n/config_get 查看全部配置\n/config_get 配置项 查看单项配置\n/config_set 配置项 值 保存配置\n/reboot 重启程序并重新加载配置\n\n值支持 JSON；字符串也可以直接写。\ndownload_dir 与 filename 使用同一组模板变量：F 原始文件名、I 触发消息文字、G 群组或频道名称、P 来源 ID、S 媒体消息 ID、R 触发消息 ID、A 相册 ID、Y/M/D 日期。I 只保留中英文数字，超过 80 个字符时保留头尾并用“隐藏”代替中间内容；filename_max_length 限制最终文件名长度，优先缩短 I。/ 或 \\ 分层，& 连接同层，例如 G/Y&M 或 G-I-F。\n配置文件：%s\n\n可设置配置项：\n%s", config.GetPath(), strings.Join(paths, "\n"))
 }
 
 func isProtectedConfigPath(path string) bool {
