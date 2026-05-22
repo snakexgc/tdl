@@ -47,6 +47,8 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 		"out":                       "file.bin",
 		"split":                     "1",
 		"max-connection-per-server": "1",
+		"min-split-size":            "1024K",
+		"piece-length":              "1024K",
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
@@ -78,7 +80,8 @@ func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
 	options := reqBody.Params[1].(map[string]any)
 	require.Equal(t, "4", options["split"])
 	require.Equal(t, "4", options["max-connection-per-server"])
-	require.Equal(t, "1M", options["min-split-size"])
+	require.Equal(t, "1024K", options["min-split-size"])
+	require.Equal(t, "1024K", options["piece-length"])
 }
 
 func TestAria2AddURIWithSecret(t *testing.T) {
@@ -107,6 +110,8 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"split":                     "1",
 		"max-connection-per-server": "1",
+		"min-split-size":            "1024K",
+		"piece-length":              "1024K",
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",

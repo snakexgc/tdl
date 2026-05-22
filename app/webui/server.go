@@ -47,6 +47,7 @@ const (
 	aria2TaskIndexKey     = "watch.aria2.index"
 
 	aria2StatusComplete = "complete"
+	tdlAria2PieceSize   = "1024K"
 
 	userSessionKey = "session"
 	userAppKey     = "app"
@@ -1610,11 +1611,8 @@ func applyTDLAria2HTTPConnectionOptions(options map[string]any, connections int)
 	value := strconv.Itoa(connections)
 	options["split"] = value
 	options["max-connection-per-server"] = value
-	if connections > 1 {
-		options["min-split-size"] = "1M"
-		return
-	}
-	delete(options, "min-split-size")
+	options["min-split-size"] = tdlAria2PieceSize
+	options["piece-length"] = tdlAria2PieceSize
 }
 
 func configureAria2MaxConcurrentDownloads(ctx context.Context, cfg config.Aria2Config, limit int) error {

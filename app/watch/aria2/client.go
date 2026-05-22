@@ -16,7 +16,10 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
-const aria2BoolTrue = "true"
+const (
+	aria2BoolTrue     = "true"
+	tdlAria2PieceSize = "1024K"
+)
 
 type AddURIOptions struct {
 	Dir         string
@@ -196,11 +199,8 @@ func applyTDLHTTPConnectionOptions(options map[string]any, connections int) {
 	value := strconv.Itoa(connections)
 	options["split"] = value
 	options["max-connection-per-server"] = value
-	if connections > 1 {
-		options["min-split-size"] = "1M"
-		return
-	}
-	delete(options, "min-split-size")
+	options["min-split-size"] = tdlAria2PieceSize
+	options["piece-length"] = tdlAria2PieceSize
 }
 
 func (c *Client) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error) {

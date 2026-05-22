@@ -452,6 +452,8 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 		"out":                       "video.mp4",
 		"split":                     "1",
 		"max-connection-per-server": "1",
+		"min-split-size":            "1024K",
+		"piece-length":              "1024K",
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
@@ -480,7 +482,8 @@ func TestAddAria2URISubmitsClientRangeConnections(t *testing.T) {
 	options := reqBody.Params[1].(map[string]any)
 	require.Equal(t, "4", options["split"])
 	require.Equal(t, "4", options["max-connection-per-server"])
-	require.Equal(t, "1M", options["min-split-size"])
+	require.Equal(t, "1024K", options["min-split-size"])
+	require.Equal(t, "1024K", options["piece-length"])
 }
 
 func TestConfigureAria2MaxConcurrentDownloads(t *testing.T) {
@@ -542,7 +545,7 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 		"method":"aria2.addUri",
 		"params":[
 			["http://127.0.0.1:22334/download/document_1"],
-			{"split":"8","max-connection-per-server":"8","min-split-size":"1M","out":"video.mp4"}
+			{"split":"8","max-connection-per-server":"8","min-split-size":"2M","piece-length":"2M","out":"video.mp4"}
 		]
 	}`)
 
@@ -555,7 +558,8 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 	options := params[1].(map[string]any)
 	require.Equal(t, "1", options["split"])
 	require.Equal(t, "1", options["max-connection-per-server"])
-	require.NotContains(t, options, "min-split-size")
+	require.Equal(t, "1024K", options["min-split-size"])
+	require.Equal(t, "1024K", options["piece-length"])
 	require.Equal(t, "video.mp4", options["out"])
 }
 
@@ -579,7 +583,8 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURIClientRange(t *testing.T) {
 	options := params[1].(map[string]any)
 	require.Equal(t, "4", options["split"])
 	require.Equal(t, "4", options["max-connection-per-server"])
-	require.Equal(t, "1M", options["min-split-size"])
+	require.Equal(t, "1024K", options["min-split-size"])
+	require.Equal(t, "1024K", options["piece-length"])
 	require.Equal(t, "video.mp4", options["out"])
 }
 
