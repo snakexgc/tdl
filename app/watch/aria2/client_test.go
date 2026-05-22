@@ -49,6 +49,7 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 		"max-connection-per-server": "1",
 		"min-split-size":            "1024K",
 		"piece-length":              "1024K",
+		"timeout":                   "600",
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
@@ -82,6 +83,7 @@ func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
 	require.Equal(t, "4", options["max-connection-per-server"])
 	require.Equal(t, "1024K", options["min-split-size"])
 	require.Equal(t, "1024K", options["piece-length"])
+	require.Equal(t, "600", options["timeout"])
 }
 
 func TestAria2AddURIWithSecret(t *testing.T) {
@@ -112,6 +114,7 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 		"max-connection-per-server": "1",
 		"min-split-size":            "1024K",
 		"piece-length":              "1024K",
+		"timeout":                   "600",
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",

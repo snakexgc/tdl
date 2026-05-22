@@ -577,6 +577,8 @@ function pushDashboardSample(data) {
   const process = data.process || {};
   const memory = data.memory || {};
   const download = data.download || {};
+  const httpMetrics = data.http || {};
+  const aria2 = data.aria2 || {};
   const totalMemory = Number(memory.total_bytes ?? process.memory_rss ?? 0);
   const bufferMemory = Number(memory.buffer_bytes ?? 0);
   const retainedMemory = Number(memory.heap_retained_idle_bytes ?? 0);
@@ -594,8 +596,15 @@ function pushDashboardSample(data) {
     memoryPercent: Number(memory.total_percent || process.memory_percent || 0),
     gotdSpeed,
     gotdTotal: Number(download.gotd_bytes_total ?? download.bytes_total ?? 0),
-    aria2Speed: Number(download.aria2_speed_bps || 0),
-    aria2Available: Boolean(download.aria2_available),
+    aria2Speed: Number(aria2.speed_bps ?? download.aria2_speed_bps ?? 0),
+    aria2Available: Boolean(aria2.available ?? download.aria2_available),
+    activeChunks: Number(httpMetrics.active_chunk_requests ?? download.active_chunk_requests ?? 0),
+    fileErrors: Number(httpMetrics.telegram_file_errors ?? download.telegram_file_errors ?? 0),
+    fileErrors10s: Number(httpMetrics.telegram_file_errors_10s ?? download.telegram_file_errors_10s ?? 0),
+    aria2Tasks: Number(aria2.task_count ?? download.aria2_task_count ?? 0),
+    aria2ActiveTasks: Number(aria2.active_tasks ?? download.aria2_active_tasks ?? 0),
+    aria2WaitingTasks: Number(aria2.waiting_tasks ?? download.aria2_waiting_tasks ?? 0),
+    aria2StoppedTasks: Number(aria2.stopped_tasks ?? download.aria2_stopped_tasks ?? 0),
   });
   if (state.dashboardSamples.length > 30) {
     state.dashboardSamples.splice(0, state.dashboardSamples.length - 30);
@@ -612,6 +621,15 @@ function renderDashboard() {
   setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 缓冲 ${formatBytes(latest.memoryBuffer)} · 保留堆 ${formatBytes(latest.memoryRetained)}`);
   setText("dashboard-speed-value", `${formatBytes(latest.gotdSpeed)}/s`);
   setText("dashboard-speed-meta", `aria2 ${formatBytes(latest.aria2Speed)}/s · gotd累计 ${formatBytes(latest.gotdTotal)}`);
+  setText("dashboard-active-chunks-value", formatCount(latest.activeChunks));
+  setText("dashboard-file-errors-value", formatCount(latest.fileErrors));
+  setText("dashboard-file-errors-10s-value", formatCount(latest.fileErrors10s));
+  setText("dashboard-aria2-tasks-value", formatCount(latest.aria2Tasks));
+  setText(
+    "dashboard-aria2-tasks-meta",
+    `aria2：活动 ${formatCount(latest.aria2ActiveTasks)} · 等待 ${formatCount(latest.aria2WaitingTasks)} · 停止 ${formatCount(latest.aria2StoppedTasks)}`
+  );
+  renderDashboardStatBars(latest);
 
   renderSmoothChart("dashboard-cpu-chart", "dashboard-cpu-axis", [
     { key: "cpu", label: "CPU", color: "#0b7f72" },
@@ -628,6 +646,28 @@ function renderDashboard() {
     { key: "gotdSpeed", label: "gotd", color: "#0b7f72" },
     { key: "aria2Speed", label: "aria2", color: "#c47a16" },
   ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
+}
+
+function renderDashboardStatBars(latest) {
+  const max = Math.max(
+    1,
+    Number(latest.activeChunks || 0),
+    Number(latest.fileErrors10s || 0),
+    Number(latest.fileErrors || 0),
+    Number(latest.aria2Tasks || 0)
+  );
+  setDashboardStatBar("dashboard-active-chunks-bar", latest.activeChunks, max);
+  setDashboardStatBar("dashboard-file-errors-10s-bar", latest.fileErrors10s, max);
+  setDashboardStatBar("dashboard-file-errors-bar", latest.fileErrors, max);
+  setDashboardStatBar("dashboard-aria2-tasks-bar", latest.aria2Tasks, max);
+}
+
+function setDashboardStatBar(id, value, max) {
+  const target = document.getElementById(id);
+  if (!target) return;
+  const numeric = Math.max(0, Number(value || 0));
+  const percent = max > 0 ? Math.min(100, Math.max(2, (numeric / max) * 100)) : 0;
+  target.style.width = numeric > 0 ? `${percent}%` : "0";
 }
 
 function renderSmoothChart(svgID, axisID, series, options = {}) {
@@ -867,6 +907,7 @@ async function loadModules() {
 
 function renderModules() {
   const target = document.getElementById("module-list");
+  renderModuleOverview();
   if (!state.modules.length) {
     target.innerHTML = `<div class="empty compact-empty">没有可管理的模块</div>`;
     return;
@@ -877,30 +918,103 @@ function renderModules() {
   });
 }
 
+function renderModuleOverview() {
+  const target = document.getElementById("module-overview");
+  if (!target) return;
+  if (!state.modules.length) {
+    target.hidden = true;
+    target.innerHTML = "";
+    return;
+  }
+
+  const total = state.modules.length;
+  const enabled = state.modules.filter((module) => module.enabled).length;
+  const running = state.modules.filter((module) => module.running).length;
+  const attention = state.modules.filter((module) => {
+    const health = moduleHealth(module);
+    return health.kind === "waiting" || health.kind === "error";
+  }).length;
+  const off = state.modules.filter((module) => !module.enabled).length;
+  const cards = [
+    ["enabled", "已启用", enabled, `共 ${total} 个模块`],
+    ["running", "运行中", running, "正在提供服务"],
+    ["attention", "需关注", attention, "已启用但未运行"],
+    ["off", "已关闭", off, "当前停用"],
+  ];
+
+  target.innerHTML = cards.map(([kind, label, value, hint]) => `
+    <div class="module-summary module-summary-${kind}">
+      <span>${escapeHTML(label)}</span>
+      <strong>${escapeHTML(value)}</strong>
+      <small>${escapeHTML(hint)}</small>
+    </div>
+  `).join("");
+  target.hidden = false;
+}
+
 function renderModuleCard(module) {
-  const running = module.running ? "运行中" : "未运行";
-  const enabled = module.enabled ? "已启用" : "已关闭";
+  const health = moduleHealth(module);
   const nextEnabled = !module.enabled;
   const toggleText = module.enabled ? "关闭" : "启用";
   const disabled = module.can_toggle ? "" : "disabled";
+  const enabledLabel = module.enabled ? "已启用" : "已关闭";
+  const runningLabel = module.running ? "运行中" : "未运行";
+  const runningKind = moduleRunningStateKind(module, health);
   return `
-    <section class="module-card">
-      <div class="module-main">
-        <div>
-          <h2>${escapeHTML(module.name || module.id)}</h2>
-          <p>${escapeHTML(module.description || "")}</p>
+    <section class="module-card module-card-${escapeAttr(health.kind)}">
+      <div class="module-layout">
+        <div class="module-state-stack" aria-label="模块状态">
+          <div class="module-state-tile module-state-${module.enabled ? "enabled" : "disabled"}">
+            <span>启用</span>
+            <strong>${enabledLabel}</strong>
+          </div>
+          <div class="module-state-tile module-state-${runningKind}">
+            <span>运行</span>
+            <strong>${runningLabel}</strong>
+          </div>
         </div>
-        <div class="module-badges">
-          <span class="pill ${module.enabled ? "" : "warn"}">${enabled}</span>
-          <span class="pill ${module.running ? "" : "warn"}">${running}</span>
+        <div class="module-content">
+          <div class="module-main">
+            <div>
+              <div class="module-title-line">
+                <h2>${escapeHTML(module.name || module.id)}</h2>
+                <span class="module-health-badge module-health-${escapeAttr(health.kind)}">${escapeHTML(health.label)}</span>
+              </div>
+              <p>${escapeHTML(module.description || "")}</p>
+            </div>
+          </div>
+          <div class="module-foot">
+            <div class="module-status">
+              <span>当前状态</span>
+              <strong>${escapeHTML(module.status || "-")}</strong>
+            </div>
+            <button class="btn ${module.enabled ? "danger" : "primary"}" data-module-toggle="${escapeAttr(module.id)}" data-next-enabled="${nextEnabled}" ${disabled}>${toggleText}</button>
+          </div>
         </div>
-      </div>
-      <div class="module-foot">
-        <div class="module-status">${escapeHTML(module.status || "-")}</div>
-        <button class="btn ${module.enabled ? "danger" : "primary"}" data-module-toggle="${escapeAttr(module.id)}" data-next-enabled="${nextEnabled}" ${disabled}>${toggleText}</button>
       </div>
     </section>
   `;
+}
+
+function moduleRunningStateKind(module, health) {
+  if (module.running) return "running";
+  if (health.kind === "error") return "error";
+  if (module.enabled) return "waiting";
+  return "stopped";
+}
+
+function moduleHealth(module) {
+  const status = String(module.status || "").trim();
+  if (module.running) {
+    return { kind: "running", label: "运行中", detail: "已启用并正在工作" };
+  }
+  if (!module.enabled) {
+    return { kind: "off", label: "已关闭", detail: "模块当前停用" };
+  }
+  if (/失败|错误|异常|超时|已停止|error/i.test(status)) {
+    return { kind: "error", label: "异常停止", detail: "已启用但没有运行" };
+  }
+  return { kind: "waiting", label: "待启动", detail: "已启用但没有运行" };
 }
 
 async function toggleModule(id, enabled) {
@@ -2363,6 +2477,12 @@ function formatPercent(value) {
   const percent = Number(value || 0);
   if (!Number.isFinite(percent)) return "-";
   return `${percent.toFixed(1)}%`;
+}
+
+function formatCount(value) {
+  const count = Number(value || 0);
+  if (!Number.isFinite(count)) return "-";
+  return Math.max(0, Math.trunc(count)).toLocaleString();
 }
 
 function formatBytes(value) {

@@ -454,6 +454,7 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 		"max-connection-per-server": "1",
 		"min-split-size":            "1024K",
 		"piece-length":              "1024K",
+		"timeout":                   "600",
 		"continue":                  "true",
 		"allow-piece-length-change": "true",
 		"allow-overwrite":           "true",
@@ -484,6 +485,7 @@ func TestAddAria2URISubmitsClientRangeConnections(t *testing.T) {
 	require.Equal(t, "4", options["max-connection-per-server"])
 	require.Equal(t, "1024K", options["min-split-size"])
 	require.Equal(t, "1024K", options["piece-length"])
+	require.Equal(t, "600", options["timeout"])
 }
 
 func TestConfigureAria2MaxConcurrentDownloads(t *testing.T) {
@@ -560,6 +562,7 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 	require.Equal(t, "1", options["max-connection-per-server"])
 	require.Equal(t, "1024K", options["min-split-size"])
 	require.Equal(t, "1024K", options["piece-length"])
+	require.Equal(t, "600", options["timeout"])
 	require.Equal(t, "video.mp4", options["out"])
 }
 
@@ -585,6 +588,7 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURIClientRange(t *testing.T) {
 	require.Equal(t, "4", options["max-connection-per-server"])
 	require.Equal(t, "1024K", options["min-split-size"])
 	require.Equal(t, "1024K", options["piece-length"])
+	require.Equal(t, "600", options["timeout"])
 	require.Equal(t, "video.mp4", options["out"])
 }
 

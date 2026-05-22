@@ -37,7 +37,53 @@
         <span><i class="legend-retained"></i>保留堆</span>
       </div>
     </section>
-    <section class="dashboard-card dashboard-card-wide">
+    <section class="dashboard-card dashboard-pull-card">
+      <div class="dashboard-card-head dashboard-card-head-plain">
+        <div>
+          <h2>拉取状态</h2>
+          <p id="dashboard-aria2-tasks-meta">aria2：活动 0 · 等待 0 · 停止 0</p>
+        </div>
+      </div>
+      <div class="dashboard-stat-bars">
+        <div class="dashboard-stat-row">
+          <div class="dashboard-stat-line">
+            <span>活跃分片请求</span>
+            <strong id="dashboard-active-chunks-value">-</strong>
+          </div>
+          <div class="dashboard-stat-track">
+            <i class="dashboard-stat-fill" id="dashboard-active-chunks-bar"></i>
+          </div>
+        </div>
+        <div class="dashboard-stat-row">
+          <div class="dashboard-stat-line">
+            <span>近10秒错误</span>
+            <strong id="dashboard-file-errors-10s-value">-</strong>
+          </div>
+          <div class="dashboard-stat-track">
+            <i class="dashboard-stat-fill dashboard-stat-fill-danger" id="dashboard-file-errors-10s-bar"></i>
+          </div>
+        </div>
+        <div class="dashboard-stat-row">
+          <div class="dashboard-stat-line">
+            <span>错误总数</span>
+            <strong id="dashboard-file-errors-value">-</strong>
+          </div>
+          <div class="dashboard-stat-track">
+            <i class="dashboard-stat-fill dashboard-stat-fill-warning" id="dashboard-file-errors-bar"></i>
+          </div>
+        </div>
+        <div class="dashboard-stat-row">
+          <div class="dashboard-stat-line">
+            <span>aria2任务数</span>
+            <strong id="dashboard-aria2-tasks-value">-</strong>
+          </div>
+          <div class="dashboard-stat-track">
+            <i class="dashboard-stat-fill dashboard-stat-fill-muted" id="dashboard-aria2-tasks-bar"></i>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="dashboard-card">
       <div class="dashboard-card-head">
         <div>
           <h2>下载速度</h2>

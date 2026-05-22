@@ -32,6 +32,28 @@ func TestBuildDownloadURL(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8080/base/download/task-1", got)
 }
 
+func TestTelegramFileMetricsTrackActiveRequests(t *testing.T) {
+	before := ActiveTelegramFileRequests()
+
+	finish := beginTelegramFileRequest()
+	require.Equal(t, before+1, ActiveTelegramFileRequests())
+
+	finish()
+	require.Equal(t, before, ActiveTelegramFileRequests())
+}
+
+func TestTelegramFileMetricsTrackReportableErrors(t *testing.T) {
+	totalBefore := TelegramFileErrorCount()
+	windowBefore := TelegramFileErrorCountSince(10 * time.Second)
+
+	reportTelegramFileError(context.Background(), nil, context.Canceled)
+	require.Equal(t, totalBefore, TelegramFileErrorCount())
+
+	reportTelegramFileError(context.Background(), nil, fmt.Errorf("boom"))
+	require.Equal(t, totalBefore+1, TelegramFileErrorCount())
+	require.GreaterOrEqual(t, TelegramFileErrorCountSince(10*time.Second), windowBefore+1)
+}
+
 func TestTaskStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 

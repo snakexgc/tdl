@@ -46,8 +46,9 @@ const (
 	aria2TaskKeyPrefix    = "watch.aria2.task."
 	aria2TaskIndexKey     = "watch.aria2.index"
 
-	aria2StatusComplete = "complete"
-	tdlAria2PieceSize   = "1024K"
+	aria2StatusComplete    = "complete"
+	tdlAria2PieceSize      = "1024K"
+	tdlAria2TimeoutSeconds = "600"
 
 	userSessionKey = "session"
 	userAppKey     = "app"
@@ -459,12 +460,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	totalBytes := httpdl.TelegramDownloadedBytes()
 	gotdSpeed := s.telegramDownloadSpeed(totalBytes, now)
-	var aria2Speed int64
-	aria2Available := false
+	activeChunkRequests := httpdl.ActiveTelegramFileRequests()
+	telegramFileErrors := httpdl.TelegramFileErrorCount()
+	telegramFileErrors10s := httpdl.TelegramFileErrorCountSince(10 * time.Second)
+	var aria2Stat aria2DashboardStat
 	if cfg != nil {
-		speed, available, err := fetchAria2DownloadSpeed(r.Context(), cfg.Aria2)
-		aria2Speed = speed
-		aria2Available = available
+		stat, err := fetchAria2DashboardStat(r.Context(), cfg.Aria2)
+		aria2Stat = stat
 		if err != nil {
 			metricErrors["aria2"] = err.Error()
 		}
@@ -490,10 +492,30 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"total_percent":            memoryPercent,
 		},
 		"download": map[string]any{
-			"gotd_bytes_total": totalBytes,
-			"gotd_speed_bps":   gotdSpeed,
-			"aria2_speed_bps":  aria2Speed,
-			"aria2_available":  aria2Available,
+			"gotd_bytes_total":         totalBytes,
+			"gotd_speed_bps":           gotdSpeed,
+			"aria2_speed_bps":          aria2Stat.DownloadSpeedBPS,
+			"aria2_available":          aria2Stat.Available,
+			"active_chunk_requests":    activeChunkRequests,
+			"telegram_file_errors":     telegramFileErrors,
+			"telegram_file_errors_10s": telegramFileErrors10s,
+			"aria2_task_count":         aria2Stat.TotalTasks(),
+			"aria2_active_tasks":       aria2Stat.ActiveTasks,
+			"aria2_waiting_tasks":      aria2Stat.WaitingTasks,
+			"aria2_stopped_tasks":      aria2Stat.StoppedTasks,
+		},
+		"http": map[string]any{
+			"active_chunk_requests":    activeChunkRequests,
+			"telegram_file_errors":     telegramFileErrors,
+			"telegram_file_errors_10s": telegramFileErrors10s,
+		},
+		"aria2": map[string]any{
+			"available":     aria2Stat.Available,
+			"speed_bps":     aria2Stat.DownloadSpeedBPS,
+			"task_count":    aria2Stat.TotalTasks(),
+			"active_tasks":  aria2Stat.ActiveTasks,
+			"waiting_tasks": aria2Stat.WaitingTasks,
+			"stopped_tasks": aria2Stat.StoppedTasks,
 		},
 	}
 	if len(metricErrors) > 0 {
@@ -558,20 +580,42 @@ func (s *Server) telegramDownloadSpeed(totalBytes int64, sampledAt time.Time) fl
 
 type aria2GlobalStat struct {
 	DownloadSpeed string `json:"downloadSpeed"`
+	NumActive     string `json:"numActive"`
+	NumWaiting    string `json:"numWaiting"`
+	NumStopped    string `json:"numStopped"`
 }
 
-func fetchAria2DownloadSpeed(ctx context.Context, cfg config.Aria2Config) (int64, bool, error) {
+type aria2DashboardStat struct {
+	Available        bool
+	DownloadSpeedBPS int64
+	ActiveTasks      int64
+	WaitingTasks     int64
+	StoppedTasks     int64
+}
+
+func (s aria2DashboardStat) TotalTasks() int64 {
+	return s.ActiveTasks + s.WaitingTasks + s.StoppedTasks
+}
+
+func fetchAria2DashboardStat(ctx context.Context, cfg config.Aria2Config) (aria2DashboardStat, error) {
+	var result aria2DashboardStat
 	if strings.TrimSpace(cfg.RPCURL) == "" {
-		return 0, false, nil
+		return result, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 
 	var stat aria2GlobalStat
 	if err := callAria2(ctx, cfg, "aria2.getGlobalStat", []any{}, &stat); err != nil {
-		return 0, true, err
+		result.Available = true
+		return result, err
 	}
-	return parseAria2Length(stat.DownloadSpeed), true, nil
+	result.Available = true
+	result.DownloadSpeedBPS = parseAria2Length(stat.DownloadSpeed)
+	result.ActiveTasks = parseAria2Length(stat.NumActive)
+	result.WaitingTasks = parseAria2Length(stat.NumWaiting)
+	result.StoppedTasks = parseAria2Length(stat.NumStopped)
+	return result, nil
 }
 
 type aria2CheckResult struct {
@@ -1613,6 +1657,7 @@ func applyTDLAria2HTTPConnectionOptions(options map[string]any, connections int)
 	options["max-connection-per-server"] = value
 	options["min-split-size"] = tdlAria2PieceSize
 	options["piece-length"] = tdlAria2PieceSize
+	options["timeout"] = tdlAria2TimeoutSeconds
 }
 
 func configureAria2MaxConcurrentDownloads(ctx context.Context, cfg config.Aria2Config, limit int) error {

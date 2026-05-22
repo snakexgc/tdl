@@ -10,13 +10,14 @@ import (
 )
 
 type watchRuntime struct {
-	proxy            *httpdl.Proxy
-	aria2            *aria2.Client
-	aria2Tasks       *aria2.TaskStore
-	internal         *internalDownloader
-	pools            *httpdl.PoolHolder
-	outputRoot       string
-	ensureOutputDirs bool
+	proxy                *httpdl.Proxy
+	aria2                *aria2.Client
+	aria2Tasks           *aria2.TaskStore
+	telegramErrRegulator *aria2.TelegramErrorRegulator
+	internal             *internalDownloader
+	pools                *httpdl.PoolHolder
+	outputRoot           string
+	ensureOutputDirs     bool
 }
 
 func newWatchRuntime(cfg *config.Config, opts Options, kvd storage.Storage, logger *zap.Logger) *watchRuntime {

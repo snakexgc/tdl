@@ -16,7 +16,7 @@ import (
 
 const (
 	DefaultThreads       = 4
-	DefaultLimit         = 2
+	DefaultLimit         = 1
 	DefaultPoolSize      = 8
 	DefaultHTTPAddress   = "0.0.0.0"
 	DefaultHTTPPort      = 22334

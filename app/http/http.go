@@ -49,6 +49,7 @@ const (
 	defaultDownloadTaskTTL = 24 * time.Hour
 	downloadSessionIdleTTL = 2 * time.Minute
 	httpBufferRetentionTTL = 5 * time.Second
+	telegramFileErrorTTL   = time.Minute
 )
 
 const (
@@ -68,9 +69,17 @@ type Proxy = downloadProxy
 
 type TaskStreamer = taskStreamer
 
+type TelegramFileErrorReporter interface {
+	ReportTelegramFileError(ctx context.Context, err error)
+}
+
 var (
 	telegramDownloadedBytes atomic.Int64
 	httpBufferBytes         atomic.Int64
+	activeTelegramRequests  atomic.Int64
+	telegramFileErrors      atomic.Int64
+	telegramFileErrorMu     sync.Mutex
+	telegramFileErrorTimes  []time.Time
 	httpBufferFreeMu        sync.Mutex
 	httpBufferFreeTimer     *time.Timer
 )
@@ -87,6 +96,42 @@ func HTTPBufferBytes() int64 {
 	return n
 }
 
+func ActiveTelegramFileRequests() int64 {
+	n := activeTelegramRequests.Load()
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func TelegramFileErrorCount() int64 {
+	n := telegramFileErrors.Load()
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func TelegramFileErrorCountSince(window time.Duration) int64 {
+	if window <= 0 {
+		return 0
+	}
+	now := time.Now()
+	cutoff := now.Add(-window)
+
+	telegramFileErrorMu.Lock()
+	defer telegramFileErrorMu.Unlock()
+
+	pruneTelegramFileErrorTimesLocked(now.Add(-telegramFileErrorTTL))
+	var count int64
+	for _, at := range telegramFileErrorTimes {
+		if !at.Before(cutoff) {
+			count++
+		}
+	}
+	return count
+}
+
 func recordTelegramDownloadedBytes(n int) {
 	if n <= 0 {
 		return
@@ -99,6 +144,38 @@ func recordHTTPBufferBytes(delta int64) {
 		return
 	}
 	httpBufferBytes.Add(delta)
+}
+
+func beginTelegramFileRequest() func() {
+	activeTelegramRequests.Add(1)
+	return func() {
+		if activeTelegramRequests.Add(-1) < 0 {
+			activeTelegramRequests.Store(0)
+		}
+	}
+}
+
+func recordTelegramFileError() {
+	telegramFileErrors.Add(1)
+	now := time.Now()
+
+	telegramFileErrorMu.Lock()
+	defer telegramFileErrorMu.Unlock()
+
+	telegramFileErrorTimes = append(telegramFileErrorTimes, now)
+	pruneTelegramFileErrorTimesLocked(now.Add(-telegramFileErrorTTL))
+}
+
+func pruneTelegramFileErrorTimesLocked(cutoff time.Time) {
+	idx := 0
+	for idx < len(telegramFileErrorTimes) && telegramFileErrorTimes[idx].Before(cutoff) {
+		idx++
+	}
+	if idx == 0 {
+		return
+	}
+	copy(telegramFileErrorTimes, telegramFileErrorTimes[idx:])
+	telegramFileErrorTimes = telegramFileErrorTimes[:len(telegramFileErrorTimes)-idx]
 }
 
 func requestHTTPBufferMemoryReturn() {
@@ -712,6 +789,7 @@ type downloadSession struct {
 	cacheTTL        time.Duration
 	manager         *sessionManager
 	logger          *zap.Logger
+	reporter        TelegramFileErrorReporter
 
 	mu          sync.Mutex
 	active      int
@@ -737,6 +815,28 @@ func newDownloadSession(taskID string, source *telegramMediaSource, pools *poolH
 	}
 }
 
+func (s *downloadSession) SetTelegramFileErrorReporter(reporter TelegramFileErrorReporter) {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.reporter = reporter
+}
+
+func (s *downloadSession) telegramFileErrorReporter() TelegramFileErrorReporter {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.reporter
+}
+
 type downloadProxy struct {
 	cfg      config.HTTPConfig
 	tasks    *taskStore
@@ -746,6 +846,9 @@ type downloadProxy struct {
 	stream   taskStreamer
 	limiter  *transfer.Limiter
 	logger   *zap.Logger
+
+	reporterMu sync.RWMutex
+	reporter   TelegramFileErrorReporter
 }
 
 func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *poolHolder, kv storage.Storage, logger *zap.Logger) *downloadProxy {
@@ -803,6 +906,28 @@ func (p *downloadProxy) SetStream(stream TaskStreamer) {
 		return
 	}
 	p.stream = stream
+}
+
+func (p *downloadProxy) SetTelegramFileErrorReporter(reporter TelegramFileErrorReporter) {
+	if p == nil {
+		return
+	}
+
+	p.reporterMu.Lock()
+	defer p.reporterMu.Unlock()
+
+	p.reporter = reporter
+}
+
+func (p *downloadProxy) telegramFileErrorReporter() TelegramFileErrorReporter {
+	if p == nil {
+		return nil
+	}
+
+	p.reporterMu.RLock()
+	defer p.reporterMu.RUnlock()
+
+	return p.reporter
 }
 
 func (p *downloadProxy) StreamTask(ctx context.Context, task *Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
@@ -1110,6 +1235,7 @@ func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, leas
 	}
 
 	session := p.sessions.Get(task, refresh)
+	session.SetTelegramFileErrorReporter(p.telegramFileErrorReporter())
 	return session.Stream(streamCtx, lease, start, end, w)
 }
 
@@ -1455,6 +1581,7 @@ func (s *downloadSession) Stream(ctx context.Context, lease *transfer.Lease, sta
 	results := make(chan downloadChunkResult, resultCapacity)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	reporter := s.telegramFileErrorReporter()
 
 	logger.Info("Starting shared Telegram media stream",
 		zap.Int("dc", media.DC),
@@ -1492,7 +1619,7 @@ func (s *downloadSession) Stream(ctx context.Context, lease *transfer.Lease, sta
 						return nil
 					}
 
-					key, raw, err := s.acquireChunk(gctx, pool, lease, job.req)
+					key, raw, err := s.acquireChunk(gctx, pool, lease, reporter, job.req)
 					if err != nil {
 						return err
 					}
@@ -1605,7 +1732,7 @@ func (s *downloadSession) Stream(ctx context.Context, lease *transfer.Lease, sta
 	return nil
 }
 
-func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, req telegramChunkRequest) (downloadChunkKey, []byte, error) {
+func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, reporter TelegramFileErrorReporter, req telegramChunkRequest) (downloadChunkKey, []byte, error) {
 	key := downloadChunkKey(req)
 	for {
 		s.mu.Lock()
@@ -1629,7 +1756,7 @@ func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, le
 				return key, nil, err
 			}
 
-			data, err := s.source.FetchChunk(ctx, pool, lease, req)
+			data, err := s.source.FetchChunk(ctx, pool, lease, reporter, req)
 
 			s.mu.Lock()
 			entry.lastUsed = time.Now()
@@ -1902,7 +2029,7 @@ func (s *telegramMediaSource) refreshFunc() func(ctx context.Context) (*tmedia.M
 	return s.refresh
 }
 
-func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, req telegramChunkRequest) ([]byte, error) {
+func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, reporter TelegramFileErrorReporter, req telegramChunkRequest) ([]byte, error) {
 	for {
 		media := s.Media()
 		if media == nil {
@@ -1924,12 +2051,27 @@ func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, 
 		}
 		refresh := s.refreshFunc()
 		if !isRefreshableFileReferenceError(err) || refresh == nil {
+			reportTelegramFileError(ctx, reporter, err)
 			return nil, err
 		}
 		if err := s.refreshMedia(ctx, media); err != nil {
 			return nil, err
 		}
 	}
+}
+
+func reportTelegramFileError(ctx context.Context, reporter TelegramFileErrorReporter, err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	recordTelegramFileError()
+	if reporter == nil {
+		return
+	}
+	reporter.ReportTelegramFileError(ctx, err)
 }
 
 func (s *telegramMediaSource) refreshMedia(ctx context.Context, current *tmedia.Media) error {
@@ -1971,7 +2113,9 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 		}
 		req.SetPrecise(true)
 
+		finish := beginTelegramFileRequest()
 		resp, err := client.UploadGetFile(ctx, req)
+		finish()
 		if flood, waitErr := tgerr.FloodWait(ctx, err); waitErr != nil {
 			if flood || tgerr.Is(waitErr, tg.ErrTimeout) {
 				logger.Debug("Retrying telegram file chunk",

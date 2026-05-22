@@ -281,6 +281,10 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
 				zap.Int("limit", opts.Limit))
+			runtime.telegramErrRegulator = watcharia2.NewTelegramErrorRegulator(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			runtime.proxy.SetTelegramFileErrorReporter(runtime.telegramErrRegulator)
+			go runtime.telegramErrRegulator.Run(runCtx)
+
 			outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
 			if err != nil {
 				if opts.Notify != nil {

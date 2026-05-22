@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	aria2BoolTrue     = "true"
-	tdlAria2PieceSize = "1024K"
+	aria2BoolTrue          = "true"
+	tdlAria2PieceSize      = "1024K"
+	tdlAria2TimeoutSeconds = "600"
 )
 
 type AddURIOptions struct {
@@ -201,6 +202,7 @@ func applyTDLHTTPConnectionOptions(options map[string]any, connections int) {
 	options["max-connection-per-server"] = value
 	options["min-split-size"] = tdlAria2PieceSize
 	options["piece-length"] = tdlAria2PieceSize
+	options["timeout"] = tdlAria2TimeoutSeconds
 }
 
 func (c *Client) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error) {
