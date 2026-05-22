@@ -42,7 +42,7 @@ func TestFileNameConfigTemplateAliases(t *testing.T) {
 		fileNameConfigTemplate("G-I-P-S-R-F"),
 	)
 	require.Equal(t,
-		config.DefaultFilename,
+		`{{ .P }}_{{ .S }}_{{ filenamify .FileName }}`,
 		fileNameConfigTemplate(config.DefaultFilename),
 	)
 }

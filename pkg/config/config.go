@@ -24,7 +24,7 @@ const (
 	DefaultWebUIPort     = 22335
 	DefaultWebUIUsername = "admin"
 	DefaultWebUIPassword = "admin"
-	DefaultFilename      = "{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}"
+	DefaultFilename      = "P_S_F"
 	DefaultFilenameMax   = 180
 )
 
