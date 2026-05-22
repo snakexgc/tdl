@@ -68,9 +68,54 @@ type Options struct {
 
 type NotifyFunc func(ctx context.Context, text string)
 
-const defaultFileTemplate = "{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}"
-
 const bytesPerMegabyte int64 = 1024 * 1024
+
+func fileNameConfigTemplate(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || strings.Contains(pattern, "{{") {
+		return pattern
+	}
+
+	var b strings.Builder
+	for _, r := range pattern {
+		if r == '&' {
+			continue
+		}
+		if tpl := fileNameTemplateAlias(r); tpl != "" {
+			b.WriteString(tpl)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func fileNameTemplateAlias(r rune) string {
+	switch r {
+	case 'F':
+		return `{{ filenamify .FileName }}`
+	case 'I':
+		return `{{ .I }}`
+	case 'G':
+		return `{{ .G }}`
+	case 'P':
+		return `{{ .P }}`
+	case 'S':
+		return `{{ .S }}`
+	case 'R':
+		return `{{ .R }}`
+	case 'A':
+		return `{{ .A }}`
+	case 'Y':
+		return `{{ formatDate .DownloadDate "2006" }}`
+	case 'M':
+		return `{{ formatDate .DownloadDate "01" }}`
+	case 'D':
+		return `{{ formatDate .DownloadDate "02" }}`
+	default:
+		return ""
+	}
+}
 
 func DefaultOptions(cfg *config.Config) Options {
 	if cfg == nil {
@@ -79,7 +124,7 @@ func DefaultOptions(cfg *config.Config) Options {
 
 	return Options{
 		Dir:                   cfg.DownloadDir,
-		Template:              defaultFileTemplate,
+		Template:              fileNameConfigTemplate(config.EffectiveFilename(cfg)),
 		PoolSize:              config.EffectivePoolSize(cfg),
 		Threads:               config.EffectiveThreads(cfg),
 		Limit:                 config.EffectiveLimit(cfg),
@@ -120,13 +165,24 @@ func effectiveWatchOptionPoolSize(value int, cfg *config.Config) int {
 }
 
 type fileTemplate struct {
-	DialogID     int64
-	MessageID    int
-	MessageDate  int64
-	FileName     string
-	FileCaption  string
-	FileSize     string
-	DownloadDate int64
+	DialogID         int64
+	MessageID        int
+	TriggerMessageID int
+	MessageDate      int64
+	FileName         string
+	FileCaption      string
+	MessageTitle     string
+	PeerName         string
+	AlbumID          string
+	F                string
+	I                string
+	G                string
+	P                string
+	S                string
+	R                string
+	A                string
+	FileSize         string
+	DownloadDate     int64
 }
 
 type downloadJob struct {
@@ -147,10 +203,11 @@ type aria2ConcurrentDownloadSetter interface {
 }
 
 type fileTask struct {
-	msg    *tg.Message
-	media  *tmedia.Media
-	peer   tg.InputPeerClass
-	peerID int64
+	msg        *tg.Message
+	triggerMsg *tg.Message
+	media      *tmedia.Media
+	peer       tg.InputPeerClass
+	peerID     int64
 }
 
 type fileCollection struct {
@@ -1174,7 +1231,7 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 				collection.skipped++
 				continue
 			}
-			collection.files = append(collection.files, fileTask{msg: m, media: media, peer: peer, peerID: peerID})
+			collection.files = append(collection.files, fileTask{msg: m, triggerMsg: msg, media: media, peer: peer, peerID: peerID})
 		}
 
 		return collection, nil
@@ -1192,7 +1249,7 @@ func (w *Watcher) collectFiles(ctx context.Context, msg *tg.Message, peer tg.Inp
 		return collection, nil
 	}
 
-	collection.files = append(collection.files, fileTask{msg: msg, media: media, peer: peer, peerID: peerID})
+	collection.files = append(collection.files, fileTask{msg: msg, triggerMsg: msg, media: media, peer: peer, peerID: peerID})
 	return collection, nil
 }
 
@@ -1248,12 +1305,12 @@ func (w *Watcher) resolvePeer(ctx context.Context, peerID int64) (tg.InputPeerCl
 
 func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFileTask, bool, error) {
 	dialogID := tutil.GetInputPeerID(file.peer)
-	fileName, err := w.renderFileName(dialogID, file.msg, file.media)
+	data := w.downloadDirData(ctx, file)
+	fileName, err := w.renderFileName(dialogID, data.Name, data.Time, file.msg, file.triggerMsg, file.media)
 	if err != nil {
 		return preparedFileTask{}, false, err
 	}
 
-	data := w.downloadDirData(ctx, file)
 	baseDir := joinTargetPath(w.runtime.outputRoot, renderDownloadDir(w.opts.Dir, data)...)
 	dir, out, fullPath := resolveTargetPath(baseDir, fileName)
 	if w.runtime.ensureOutputDirs && dir != "" {
@@ -1356,16 +1413,43 @@ func (w *Watcher) notify(ctx context.Context, format string, args ...interface{}
 	go w.opts.Notify(context.WithoutCancel(ctx), text)
 }
 
-func (w *Watcher) renderFileName(dialogID int64, msg *tg.Message, media *tmedia.Media) (string, error) {
+func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt time.Time, msg, triggerMsg *tg.Message, media *tmedia.Media) (string, error) {
+	if triggerMsg == nil {
+		triggerMsg = msg
+	}
+	if downloadedAt.IsZero() {
+		downloadedAt = time.Now()
+	}
+	messageTitle := ""
+	triggerMessageID := 0
+	if triggerMsg != nil {
+		messageTitle = strings.TrimSpace(triggerMsg.Message)
+		triggerMessageID = triggerMsg.ID
+	}
+	albumID := ""
+	if groupedID, ok := msg.GetGroupedID(); ok {
+		albumID = fmt.Sprint(groupedID)
+	}
 	var toName bytes.Buffer
 	if err := w.tpl.Execute(&toName, &fileTemplate{
-		DialogID:     dialogID,
-		MessageID:    msg.ID,
-		MessageDate:  int64(msg.Date),
-		FileName:     media.Name,
-		FileCaption:  msg.Message,
-		FileSize:     utils.Byte.FormatBinaryBytes(media.Size),
-		DownloadDate: time.Now().Unix(),
+		DialogID:         dialogID,
+		MessageID:        msg.ID,
+		TriggerMessageID: triggerMessageID,
+		MessageDate:      int64(msg.Date),
+		FileName:         media.Name,
+		FileCaption:      msg.Message,
+		MessageTitle:     messageTitle,
+		PeerName:         peerName,
+		AlbumID:          albumID,
+		F:                safePathSegment(media.Name),
+		I:                safePathSegment(messageTitle),
+		G:                safePathSegment(peerName),
+		P:                fmt.Sprint(dialogID),
+		S:                fmt.Sprint(msg.ID),
+		R:                fmt.Sprint(triggerMessageID),
+		A:                safePathSegment(albumID),
+		FileSize:         utils.Byte.FormatBinaryBytes(media.Size),
+		DownloadDate:     downloadedAt.Unix(),
 	}); err != nil {
 		return "", errors.Wrap(err, "execute template")
 	}

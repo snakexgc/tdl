@@ -27,7 +27,7 @@ func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	}()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
 	cfg.Aria2.Dir = t.TempDir()
-	cfg.DownloadDir = "I"
+	cfg.DownloadDir = "P"
 
 	createdAt := time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC)
 	taskData := []byte(`{
@@ -80,7 +80,7 @@ func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.
 		cfg.DownloadDir = oldDownloadDir
 	}()
 	cfg.Aria2.Dir = t.TempDir()
-	cfg.DownloadDir = "I"
+	cfg.DownloadDir = "P"
 
 	taskData := []byte(`{
 		"id":"document_42",

@@ -347,7 +347,7 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
 	cfg.Aria2.Dir = ""
-	cfg.DownloadDir = "I/Y&M"
+	cfg.DownloadDir = "P/Y&M"
 
 	info, err := NewInternalDownloadController(kvd).AddLink(ctx, cfg, task.ID)
 	require.NoError(t, err)

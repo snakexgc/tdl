@@ -49,6 +49,7 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, DefaultLimit, cfg.Limit)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Equal(t, "G\\Y&M", cfg.DownloadDir)
+	require.Equal(t, DefaultFilename, cfg.Filename)
 	require.Empty(t, cfg.TriggerReactions)
 	require.Zero(t, cfg.FileSizeMB)
 }

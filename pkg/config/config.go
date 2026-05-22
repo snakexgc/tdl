@@ -24,6 +24,7 @@ const (
 	DefaultWebUIPort     = 22335
 	DefaultWebUIUsername = "admin"
 	DefaultWebUIPassword = "admin"
+	DefaultFilename      = "{{ .DialogID }}_{{ .MessageID }}_{{ filenamify .FileName }}"
 )
 
 const (
@@ -112,6 +113,7 @@ type Config struct {
 	NTP              string           `json:"ntp"`
 	ReconnectTimeout int              `json:"reconnect_timeout"`
 	DownloadDir      string           `json:"download_dir"`
+	Filename         string           `json:"filename"`
 	TriggerReactions []string         `json:"trigger_reactions"`
 	Include          []string         `json:"include"`
 	Exclude          []string         `json:"exclude"`
@@ -136,6 +138,7 @@ func DefaultConfig() *Config {
 		Delay:            0,
 		ReconnectTimeout: 3,
 		DownloadDir:      "G\\Y&M",
+		Filename:         DefaultFilename,
 		TriggerReactions: []string{},
 		Include:          []string{},
 		Exclude:          []string{},
@@ -243,6 +246,17 @@ func EffectiveProxy(cfg *Config) string {
 		u.User = url.UserPassword(username, cfg.ProxyPassword)
 	}
 	return u.String()
+}
+
+func EffectiveFilename(cfg *Config) string {
+	if cfg == nil {
+		return DefaultFilename
+	}
+	filename := strings.TrimSpace(cfg.Filename)
+	if filename == "" {
+		return DefaultFilename
+	}
+	return filename
 }
 
 func NormalizeDownloaderMode(mode string) (string, error) {
@@ -489,6 +503,7 @@ func Validate(cfg *Config) error {
 	cfg.Threads = EffectiveThreads(cfg)
 	cfg.Limit = EffectiveLimit(cfg)
 	cfg.PoolSize = EffectivePoolSize(cfg)
+	cfg.Filename = EffectiveFilename(cfg)
 	if cfg.FileSizeMB < 0 {
 		return errors.New("file_size_mb must be greater than or equal to 0")
 	}

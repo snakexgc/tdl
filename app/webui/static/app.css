@@ -576,6 +576,10 @@ p {
   background: #c47a16;
 }
 
+.dashboard-stat-fill-aria2-active {
+  background: #2f7cba;
+}
+
 .dashboard-stat-fill-muted {
   background: #6a7380;
 }

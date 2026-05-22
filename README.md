@@ -6,9 +6,9 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 
 当前教程还在不断完善，遇到问题欢迎在issues中或者电报群反馈！
 
-### Json配置细明
+### JSON 配置说明
 
-```json
+```jsonc
 {
   "proxy": "socks5://127.0.0.1:1080", // 代理地址，如 socks5://127.0.0.1:1080 或 http://127.0.0.1:10808
   "proxy_username": "", // 代理用户名；没有认证时留空
@@ -22,6 +22,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "ntp": "", // NTP 服务器地址；留空时启动会自动选择最快的内置服务器并写回此项
   "reconnect_timeout": 3, // 重连超时时间，单位秒
   "download_dir": "G\\Y&M", // 下载目录模板，会拼接在下载根目录后
+  "filename": "P_S_F", // 文件名模板；与 download_dir 使用同一组变量
   "trigger_reactions": [], // 指定触发下载的表情，如 ["👍", "🔥"]；为空时任意表情都可以触发
   "include": [], // 只下载指定扩展名，如 `["mp4", "mp3"]`，与exclude互斥
   "exclude": ["png","jpg"], // 排除指定扩展名，如 `["png", "jpg"]`与include互斥
@@ -74,7 +75,8 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `proxy_username`       | 代理用户名；代理不需要认证时留空。如果 `proxy` 地址中已经包含认证信息，此项不会覆盖地址内的用户名 |
 | `proxy_password`       | 代理密码；代理不需要认证时留空。如果 `proxy` 地址中已经包含认证信息，此项不会覆盖地址内的密码 |
 | `namespace`            | 当前用户的数据空间；登录前填写用户名或在 Web 面板切换用户时自动更新，只允许英文字母                            |
-| `download_dir`         | 下载目录模板，会拼接在下载根目录后；支持 `G` 名称、`I` ID、`Y` 年、`M` 月、`D` 日，`/` 或 `\` 分层，`&` 连接同层 |
+| `download_dir`         | 下载目录模板，会拼接在下载根目录后；与 `filename` 使用同一组变量，`/` 或 `\` 分层，`&` 连接同层，例如 `G/Y&M` |
+| `filename`             | 文件名模板；与 `download_dir` 使用同一组变量，例如 `P_S_F` 或 `G-I-F`；仍兼容原有 Go template 写法 |
 | `trigger_reactions`    | 触发下载的表情列表，如 `["👍", "🔥"]`；为空时任意表情都可以触发                                         |
 | `include`              | 只下载指定扩展名，如 `["mp4", "mp3"]`                                                       |
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
@@ -101,6 +103,29 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `modules.forward`      | 监听转发模块；监听配置的 Telegram 对象并转发新消息 |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
+
+`download_dir` 和 `filename` 可用变量：
+
+| 变量 | 含义 |
+| --- | --- |
+| `F` | 原始文件名，包含扩展名 |
+| `I` | 触发下载的那条消息文字内容 |
+| `G` | 聊天、群组或频道的对外显示名称 |
+| `P` | 聊天、群组或频道 ID |
+| `S` | 当前媒体消息 ID |
+| `R` | 触发消息 ID |
+| `A` | 相册/媒体组 ID，没有时为空 |
+| `Y` | 年，例如 `2026` |
+| `M` | 月，例如 `05` |
+| `D` | 日，例如 `22` |
+
+示例：
+
+| 配置 | 效果 |
+| --- | --- |
+| `download_dir = "G/Y&M"` | 按群组/频道名称、年月分目录 |
+| `filename = "P_S_F"` | 使用来源 ID、消息 ID、原文件名组成文件名 |
+| `filename = "G-I-F"` | 使用群组/频道名称、触发消息文字、原文件名组成文件名 |
 
 ## 反馈
 [加入电报](https://t.me/+mHQOJCcxV64xMDE1)  

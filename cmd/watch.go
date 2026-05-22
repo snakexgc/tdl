@@ -33,7 +33,7 @@ func NewWatch() *cobra.Command {
 		exclude = "exclude"
 	)
 
-	cmd.Flags().StringVarP(&opts.Dir, "dir", "d", config.Get().DownloadDir, "download directory")
+	cmd.Flags().StringVarP(&opts.Dir, "dir", "d", config.Get().DownloadDir, "download directory template")
 	cmd.Flags().StringVar(&opts.Template, "template",
 		opts.Template,
 		"download file name template")

@@ -55,7 +55,8 @@ const sections = [
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
-      ["download_dir", "下载目录规则", "text", "用于按群组、日期等自动分目录，例如 G\\Y&M。"],
+      ["download_dir", "下载目录规则", "text", "目录模板；可用 G 名称、P 来源 ID、I 触发消息文字、F 原始文件名、S/R 消息 ID、A 相册 ID、Y/M/D 日期，例如 G\\Y&M。"],
+      ["filename", "文件名规则", "text", "文件名模板；与 download_dir 使用同一组变量，例如 G-I-F。"],
       ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
       ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
       ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],
@@ -624,7 +625,9 @@ function renderDashboard() {
   setText("dashboard-active-chunks-value", formatCount(latest.activeChunks));
   setText("dashboard-file-errors-value", formatCount(latest.fileErrors));
   setText("dashboard-file-errors-10s-value", formatCount(latest.fileErrors10s));
-  setText("dashboard-aria2-tasks-value", formatCount(latest.aria2Tasks));
+  setText("dashboard-aria2-active-value", formatCount(latest.aria2ActiveTasks));
+  setText("dashboard-aria2-waiting-value", formatCount(latest.aria2WaitingTasks));
+  setText("dashboard-aria2-stopped-value", formatCount(latest.aria2StoppedTasks));
   setText(
     "dashboard-aria2-tasks-meta",
     `aria2：活动 ${formatCount(latest.aria2ActiveTasks)} · 等待 ${formatCount(latest.aria2WaitingTasks)} · 停止 ${formatCount(latest.aria2StoppedTasks)}`
@@ -654,12 +657,16 @@ function renderDashboardStatBars(latest) {
     Number(latest.activeChunks || 0),
     Number(latest.fileErrors10s || 0),
     Number(latest.fileErrors || 0),
-    Number(latest.aria2Tasks || 0)
+    Number(latest.aria2ActiveTasks || 0),
+    Number(latest.aria2WaitingTasks || 0),
+    Number(latest.aria2StoppedTasks || 0)
   );
   setDashboardStatBar("dashboard-active-chunks-bar", latest.activeChunks, max);
   setDashboardStatBar("dashboard-file-errors-10s-bar", latest.fileErrors10s, max);
   setDashboardStatBar("dashboard-file-errors-bar", latest.fileErrors, max);
-  setDashboardStatBar("dashboard-aria2-tasks-bar", latest.aria2Tasks, max);
+  setDashboardStatBar("dashboard-aria2-active-bar", latest.aria2ActiveTasks, max);
+  setDashboardStatBar("dashboard-aria2-waiting-bar", latest.aria2WaitingTasks, max);
+  setDashboardStatBar("dashboard-aria2-stopped-bar", latest.aria2StoppedTasks, max);
 }
 
 function setDashboardStatBar(id, value, max) {

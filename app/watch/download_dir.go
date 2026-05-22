@@ -23,9 +23,14 @@ type aria2GlobalDirGetter interface {
 }
 
 type downloadDirData struct {
-	ID   string
-	Name string
-	Time time.Time
+	ID               string
+	Name             string
+	MessageTitle     string
+	MessageID        string
+	TriggerMessageID string
+	FileName         string
+	AlbumID          string
+	Time             time.Time
 }
 
 var windowsDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
@@ -77,10 +82,37 @@ func (w *Watcher) downloadDirData(ctx context.Context, file fileTask) downloadDi
 		}
 	}
 
+	triggerMsg := file.triggerMsg
+	if triggerMsg == nil {
+		triggerMsg = file.msg
+	}
+	messageTitle := ""
+	triggerMessageID := ""
+	if triggerMsg != nil {
+		messageTitle = strings.TrimSpace(triggerMsg.Message)
+		triggerMessageID = strconv.Itoa(triggerMsg.ID)
+	}
+	messageID := ""
+	albumID := ""
+	if file.msg != nil {
+		messageID = strconv.Itoa(file.msg.ID)
+		if groupedID, ok := file.msg.GetGroupedID(); ok {
+			albumID = strconv.FormatInt(groupedID, 10)
+		}
+	}
+	fileName := ""
+	if file.media != nil {
+		fileName = file.media.Name
+	}
 	return downloadDirData{
-		ID:   id,
-		Name: safePathSegment(name),
-		Time: time.Now(),
+		ID:               id,
+		Name:             safePathSegment(name),
+		MessageTitle:     messageTitle,
+		MessageID:        messageID,
+		TriggerMessageID: triggerMessageID,
+		FileName:         fileName,
+		AlbumID:          albumID,
+		Time:             time.Now(),
 	}
 }
 
@@ -133,24 +165,43 @@ func renderDownloadDir(pattern string, data downloadDirData) []string {
 func renderDownloadDirSegment(segment string, data downloadDirData) string {
 	var b strings.Builder
 	for _, r := range segment {
-		switch r {
-		case '&':
+		if r == '&' {
 			continue
-		case 'G':
-			b.WriteString(data.Name)
-		case 'I':
-			b.WriteString(data.ID)
-		case 'Y':
-			fmt.Fprintf(&b, "%04d", data.Time.Year())
-		case 'M':
-			fmt.Fprintf(&b, "%02d", int(data.Time.Month()))
-		case 'D':
-			fmt.Fprintf(&b, "%02d", data.Time.Day())
-		default:
+		}
+		if value, ok := downloadTemplateValue(r, data); ok {
+			b.WriteString(value)
+		} else {
 			b.WriteRune(r)
 		}
 	}
 	return b.String()
+}
+
+func downloadTemplateValue(r rune, data downloadDirData) (string, bool) {
+	switch r {
+	case 'F':
+		return data.FileName, true
+	case 'I':
+		return data.MessageTitle, true
+	case 'G':
+		return data.Name, true
+	case 'P':
+		return data.ID, true
+	case 'S':
+		return data.MessageID, true
+	case 'R':
+		return data.TriggerMessageID, true
+	case 'A':
+		return data.AlbumID, true
+	case 'Y':
+		return fmt.Sprintf("%04d", data.Time.Year()), true
+	case 'M':
+		return fmt.Sprintf("%02d", int(data.Time.Month())), true
+	case 'D':
+		return fmt.Sprintf("%02d", data.Time.Day()), true
+	default:
+		return "", false
+	}
 }
 
 func safePathSegment(value string) string {

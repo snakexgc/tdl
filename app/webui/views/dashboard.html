@@ -33,21 +33,20 @@
       <div class="dashboard-legend">
         <span><i class="legend-total"></i>总用量</span>
         <span><i class="legend-software"></i>软件用量</span>
-        <span><i class="legend-buffer"></i>HTTP buffer</span>
+        <span><i class="legend-buffer"></i>HTTP 缓冲区</span>
         <span><i class="legend-retained"></i>保留堆</span>
       </div>
     </section>
     <section class="dashboard-card dashboard-pull-card">
       <div class="dashboard-card-head dashboard-card-head-plain">
         <div>
-          <h2>拉取状态</h2>
-          <p id="dashboard-aria2-tasks-meta">aria2：活动 0 · 等待 0 · 停止 0</p>
+          <h2>下载状态</h2>
         </div>
       </div>
       <div class="dashboard-stat-bars">
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>活跃分片请求</span>
+            <span>活跃分片请求数</span>
             <strong id="dashboard-active-chunks-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
@@ -56,7 +55,7 @@
         </div>
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>近10秒错误</span>
+            <span>近10秒错误请求数</span>
             <strong id="dashboard-file-errors-10s-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
@@ -74,11 +73,29 @@
         </div>
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>aria2任务数</span>
-            <strong id="dashboard-aria2-tasks-value">-</strong>
+            <span>aria2活动任务数</span>
+            <strong id="dashboard-aria2-active-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill dashboard-stat-fill-muted" id="dashboard-aria2-tasks-bar"></i>
+            <i class="dashboard-stat-fill dashboard-stat-fill-aria2-active" id="dashboard-aria2-active-bar"></i>
+          </div>
+        </div>
+        <div class="dashboard-stat-row">
+          <div class="dashboard-stat-line">
+            <span>aria2等待任务数</span>
+            <strong id="dashboard-aria2-waiting-value">-</strong>
+          </div>
+          <div class="dashboard-stat-track">
+            <i class="dashboard-stat-fill dashboard-stat-fill-warning" id="dashboard-aria2-waiting-bar"></i>
+          </div>
+        </div>
+        <div class="dashboard-stat-row">
+          <div class="dashboard-stat-line">
+            <span>aria2已停止任务数</span>
+            <strong id="dashboard-aria2-stopped-value">-</strong>
+          </div>
+          <div class="dashboard-stat-track">
+            <i class="dashboard-stat-fill dashboard-stat-fill-muted" id="dashboard-aria2-stopped-bar"></i>
           </div>
         </div>
       </div>

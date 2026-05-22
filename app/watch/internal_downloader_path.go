@@ -97,8 +97,11 @@ func internalDownloadDirData(task *httpdl.Task) downloadDirData {
 		id = task.ID
 	}
 	return downloadDirData{
-		ID:   id,
-		Name: safePathSegment(id),
-		Time: time.Now(),
+		ID:               id,
+		Name:             safePathSegment(id),
+		MessageID:        strconv.Itoa(task.MessageID),
+		TriggerMessageID: strconv.Itoa(task.MessageID),
+		FileName:         task.FileName,
+		Time:             time.Now(),
 	}
 }
