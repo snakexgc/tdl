@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +48,7 @@ const (
 	downloadTaskIndexKey   = "watch.download.index"
 	defaultDownloadTaskTTL = 24 * time.Hour
 	downloadSessionIdleTTL = 2 * time.Minute
+	httpBufferRetentionTTL = 5 * time.Second
 )
 
 const (
@@ -57,14 +59,20 @@ const (
 )
 
 type Task = downloadTask
+
 type TaskStore = taskStore
+
 type PoolHolder = poolHolder
+
 type Proxy = downloadProxy
+
 type TaskStreamer = taskStreamer
 
 var (
 	telegramDownloadedBytes atomic.Int64
 	httpBufferBytes         atomic.Int64
+	httpBufferFreeMu        sync.Mutex
+	httpBufferFreeTimer     *time.Timer
 )
 
 func TelegramDownloadedBytes() int64 {
@@ -91,6 +99,22 @@ func recordHTTPBufferBytes(delta int64) {
 		return
 	}
 	httpBufferBytes.Add(delta)
+}
+
+func requestHTTPBufferMemoryReturn() {
+	httpBufferFreeMu.Lock()
+	defer httpBufferFreeMu.Unlock()
+
+	if httpBufferFreeTimer != nil {
+		return
+	}
+	httpBufferFreeTimer = time.AfterFunc(250*time.Millisecond, func() {
+		debug.FreeOSMemory()
+
+		httpBufferFreeMu.Lock()
+		httpBufferFreeTimer = nil
+		httpBufferFreeMu.Unlock()
+	})
 }
 
 type downloadTask struct {
@@ -547,10 +571,11 @@ type sessionManager struct {
 	sessions        map[string]*downloadSession
 	pools           *poolHolder
 	cacheLimitBytes int64
+	cacheTTL        time.Duration
 	logger          *zap.Logger
 }
 
-func newSessionManager(pools *poolHolder, cacheLimitBytes int64, logger *zap.Logger) *sessionManager {
+func newSessionManager(pools *poolHolder, cacheLimitBytes int64, cacheTTL time.Duration, logger *zap.Logger) *sessionManager {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -558,6 +583,7 @@ func newSessionManager(pools *poolHolder, cacheLimitBytes int64, logger *zap.Log
 		sessions:        make(map[string]*downloadSession),
 		pools:           pools,
 		cacheLimitBytes: cacheLimitBytes,
+		cacheTTL:        cacheTTL,
 		logger:          logger,
 	}
 }
@@ -569,7 +595,7 @@ func (m *sessionManager) Get(task *downloadTask, refresh func(ctx context.Contex
 	session := m.sessions[task.ID]
 	if session == nil {
 		source := &telegramMediaSource{media: task.Media, refresh: refresh}
-		session = newDownloadSession(task.ID, source, m.pools, m.cacheLimitBytes, m.logger)
+		session = newDownloadSession(task.ID, source, m.pools, m.cacheLimitBytes, m.cacheTTL, m, m.logger)
 		m.sessions[task.ID] = session
 		return session
 	}
@@ -598,18 +624,84 @@ func (m *sessionManager) CleanupIdle(now time.Time, ttl time.Duration) int {
 	return len(expired)
 }
 
+func (m *sessionManager) prepareBufferAcquire(now time.Time) {
+	if m == nil || m.cacheLimitBytes <= 0 {
+		return
+	}
+	if m.releaseExpiredBuffers(now) > 0 {
+		requestHTTPBufferMemoryReturn()
+	}
+	if HTTPBufferBytes() < m.cacheLimitBytes {
+		return
+	}
+	if m.evictOldestBuffer() {
+		requestHTTPBufferMemoryReturn()
+	}
+}
+
+func (m *sessionManager) releaseExpiredBuffers(now time.Time) int {
+	sessions := m.snapshotSessions()
+	released := 0
+	for _, session := range sessions {
+		released += session.expireChunks(now)
+	}
+	return released
+}
+
+func (m *sessionManager) evictOldestBuffer() bool {
+	type candidate struct {
+		session *downloadSession
+		key     downloadChunkKey
+		usedAt  time.Time
+	}
+
+	var oldest candidate
+	for _, session := range m.snapshotSessions() {
+		key, usedAt, ok := session.oldestEvictableChunk()
+		if !ok {
+			continue
+		}
+		if oldest.session == nil || usedAt.Before(oldest.usedAt) {
+			oldest = candidate{
+				session: session,
+				key:     key,
+				usedAt:  usedAt,
+			}
+		}
+	}
+	if oldest.session == nil {
+		return false
+	}
+	return oldest.session.evictChunkIfAvailable(oldest.key)
+}
+
+func (m *sessionManager) snapshotSessions() []*downloadSession {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sessions := make([]*downloadSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
 type downloadChunkKey struct {
 	offset int64
 	limit  int
 }
 
 type downloadSessionChunk struct {
-	done      chan struct{}
-	data      []byte
-	refs      int
-	waiters   int
-	lastUsed  time.Time
-	accounted bool
+	done          chan struct{}
+	data          []byte
+	refs          int
+	waiters       int
+	lastUsed      time.Time
+	accounted     bool
+	releaseBuffer func()
 }
 
 type downloadSession struct {
@@ -617,6 +709,8 @@ type downloadSession struct {
 	source          *telegramMediaSource
 	pools           *poolHolder
 	cacheLimitBytes int64
+	cacheTTL        time.Duration
+	manager         *sessionManager
 	logger          *zap.Logger
 
 	mu          sync.Mutex
@@ -626,7 +720,7 @@ type downloadSession struct {
 	cachedBytes int64
 }
 
-func newDownloadSession(taskID string, source *telegramMediaSource, pools *poolHolder, cacheLimitBytes int64, logger *zap.Logger) *downloadSession {
+func newDownloadSession(taskID string, source *telegramMediaSource, pools *poolHolder, cacheLimitBytes int64, cacheTTL time.Duration, manager *sessionManager, logger *zap.Logger) *downloadSession {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -635,6 +729,8 @@ func newDownloadSession(taskID string, source *telegramMediaSource, pools *poolH
 		source:          source,
 		pools:           pools,
 		cacheLimitBytes: cacheLimitBytes,
+		cacheTTL:        cacheTTL,
+		manager:         manager,
 		logger:          logger,
 		lastUsed:        time.Now(),
 		chunks:          make(map[downloadChunkKey]*downloadSessionChunk),
@@ -663,7 +759,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 		cfg:      cfg,
 		tasks:    newTaskStore(kv, downloadLinkTTL(cfg)),
 		pools:    pools,
-		sessions: newSessionManager(pools, int64(bufferSlots)*int64(downloadStreamPartSize), logger.Named("watch-http-session")),
+		sessions: newSessionManager(pools, int64(bufferSlots)*int64(downloadStreamPartSize), httpBufferRetentionTTL, logger.Named("watch-http-session")),
 		limiter:  transfer.NewLimiter(maxFiles, maxPerFile, bufferSlots, requestSlots),
 		logger:   logger.Named("watch-http"),
 	}
@@ -785,6 +881,7 @@ func (p *downloadProxy) startSessionCleanupLoop(ctx context.Context) {
 	cleanup := func() {
 		if n := p.sessions.CleanupIdle(time.Now(), downloadSessionIdleTTL); n > 0 {
 			p.logger.Debug("Cleaned idle HTTP download sessions", zap.Int("count", n))
+			requestHTTPBufferMemoryReturn()
 		}
 	}
 
@@ -1183,7 +1280,7 @@ func MemoryBufferSlots(cfg config.HTTPBufferConfig) int {
 func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.Lease, start, end int64, w io.Writer) error {
 	holder := &poolHolder{}
 	holder.Set(pool)
-	session := newDownloadSession("ad-hoc", source, holder, sessionCacheLimitBytesFromLease(lease), logctx.From(ctx))
+	session := newDownloadSession("ad-hoc", source, holder, sessionCacheLimitBytesFromLease(lease), httpBufferRetentionTTL, nil, logctx.From(ctx))
 	return session.Stream(ctx, lease, start, end, w)
 }
 
@@ -1294,10 +1391,15 @@ func (s *downloadSession) IsIdle(now time.Time, ttl time.Duration) bool {
 
 func (s *downloadSession) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	released := 0
 	for key, entry := range s.chunks {
-		s.deleteChunkLocked(key, entry)
+		if s.deleteChunkLocked(key, entry) {
+			released++
+		}
+	}
+	s.mu.Unlock()
+	if released > 0 {
+		requestHTTPBufferMemoryReturn()
 	}
 }
 
@@ -1362,7 +1464,8 @@ func (s *downloadSession) Stream(ctx context.Context, lease *transfer.Lease, sta
 		zap.Int("workers", workers),
 		zap.Int("buffer_slots", bufferSlots),
 		zap.Int("chunks", len(jobs)),
-		zap.Int64("cache_limit_bytes", s.cacheLimitBytes))
+		zap.Int64("global_cache_limit_bytes", s.cacheLimitBytes),
+		zap.Duration("cache_ttl", s.cacheTTL))
 
 	g, gctx := errgroup.WithContext(ctx)
 	jobsCh := make(chan downloadChunkJob)
@@ -1503,7 +1606,7 @@ func (s *downloadSession) Stream(ctx context.Context, lease *transfer.Lease, sta
 }
 
 func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, req telegramChunkRequest) (downloadChunkKey, []byte, error) {
-	key := downloadChunkKey{offset: req.offset, limit: req.limit}
+	key := downloadChunkKey(req)
 	for {
 		s.mu.Lock()
 		entry := s.chunks[key]
@@ -1515,11 +1618,25 @@ func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, le
 			s.chunks[key] = entry
 			s.mu.Unlock()
 
+			releaseBuffer, err := s.acquireCacheBuffer(ctx, lease)
+			if err != nil {
+				s.mu.Lock()
+				if current := s.chunks[key]; current == entry {
+					delete(s.chunks, key)
+					close(entry.done)
+				}
+				s.mu.Unlock()
+				return key, nil, err
+			}
+
 			data, err := s.source.FetchChunk(ctx, pool, lease, req)
 
 			s.mu.Lock()
 			entry.lastUsed = time.Now()
 			if err != nil {
+				if releaseBuffer != nil {
+					releaseBuffer()
+				}
 				delete(s.chunks, key)
 				close(entry.done)
 				s.mu.Unlock()
@@ -1527,13 +1644,13 @@ func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, le
 			}
 			entry.data = data
 			entry.refs = 1
-			if len(data) > 0 {
+			entry.releaseBuffer = releaseBuffer
+			if len(data) > 0 && releaseBuffer != nil {
 				entry.accounted = true
 				s.cachedBytes += int64(len(data))
 				recordHTTPBufferBytes(int64(len(data)))
 			}
 			close(entry.done)
-			s.evictLocked()
 			s.mu.Unlock()
 			return key, data, nil
 		}
@@ -1580,12 +1697,49 @@ func (s *downloadSession) acquireChunk(ctx context.Context, pool dcpool.Pool, le
 	}
 }
 
+func (s *downloadSession) acquireCacheBuffer(ctx context.Context, lease *transfer.Lease) (func(), error) {
+	if s.cacheLimitBytes <= 0 || lease == nil || lease.BufferSlots() <= 0 {
+		return nil, nil
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if release, ok := lease.TryAcquireBuffer(); ok {
+			return release, nil
+		}
+		s.releaseBufferPressure(time.Now())
+		if release, ok := lease.TryAcquireBuffer(); ok {
+			return release, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *downloadSession) releaseBufferPressure(now time.Time) {
+	if s.manager != nil {
+		s.manager.prepareBufferAcquire(now)
+		return
+	}
+	if s.expireChunks(now) > 0 {
+		requestHTTPBufferMemoryReturn()
+		return
+	}
+	if s.evictOldestChunk() {
+		requestHTTPBufferMemoryReturn()
+	}
+}
+
 func (s *downloadSession) releaseChunk(key downloadChunkKey) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	entry := s.chunks[key]
 	if entry == nil {
+		s.mu.Unlock()
 		return
 	}
 	if entry.refs > 0 {
@@ -1593,43 +1747,120 @@ func (s *downloadSession) releaseChunk(key downloadChunkKey) {
 	}
 	entry.lastUsed = time.Now()
 	if entry.refs > 0 {
+		s.mu.Unlock()
 		return
 	}
 	if entry.waiters > 0 {
+		s.mu.Unlock()
 		return
 	}
-	if s.cacheLimitBytes <= 0 {
-		s.deleteChunkLocked(key, entry)
+	if s.cacheLimitBytes <= 0 || !entry.accounted || s.cacheTTL <= 0 {
+		deleted := s.deleteChunkLocked(key, entry)
+		s.mu.Unlock()
+		if deleted {
+			requestHTTPBufferMemoryReturn()
+		}
 		return
 	}
-	s.evictLocked()
+	usedAt := entry.lastUsed
+	s.mu.Unlock()
+	s.scheduleChunkExpiry(key, usedAt)
 }
 
-func (s *downloadSession) evictLocked() {
-	if s.cacheLimitBytes <= 0 {
+func (s *downloadSession) scheduleChunkExpiry(key downloadChunkKey, usedAt time.Time) {
+	if s.cacheTTL <= 0 {
 		return
 	}
-	for s.cachedBytes > s.cacheLimitBytes {
-		var oldestKey downloadChunkKey
-		var oldest *downloadSessionChunk
-		for key, entry := range s.chunks {
-			if entry.refs > 0 || entry.waiters > 0 || !entry.accounted {
-				continue
-			}
-			if oldest == nil || entry.lastUsed.Before(oldest.lastUsed) {
-				oldestKey = key
-				oldest = entry
-			}
+	time.AfterFunc(s.cacheTTL, func() {
+		if s.expireChunkIfUnused(key, usedAt, time.Now()) {
+			requestHTTPBufferMemoryReturn()
 		}
-		if oldest == nil {
-			return
-		}
-		s.deleteChunkLocked(oldestKey, oldest)
-	}
+	})
 }
 
-func (s *downloadSession) deleteChunkLocked(key downloadChunkKey, entry *downloadSessionChunk) {
+func (s *downloadSession) expireChunkIfUnused(key downloadChunkKey, usedAt, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry := s.chunks[key]
+	if entry == nil || !s.chunkExpired(entry, usedAt, now) {
+		return false
+	}
+	return s.deleteChunkLocked(key, entry)
+}
+
+func (s *downloadSession) expireChunks(now time.Time) int {
+	if s.cacheTTL <= 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	released := 0
+	for key, entry := range s.chunks {
+		if !s.chunkExpired(entry, entry.lastUsed, now) {
+			continue
+		}
+		if s.deleteChunkLocked(key, entry) {
+			released++
+		}
+	}
+	return released
+}
+
+func (s *downloadSession) chunkExpired(entry *downloadSessionChunk, usedAt, now time.Time) bool {
+	if entry.refs > 0 || entry.waiters > 0 || !entry.accounted {
+		return false
+	}
+	if entry.lastUsed.After(usedAt) {
+		return false
+	}
+	return !entry.lastUsed.Add(s.cacheTTL).After(now)
+}
+
+func (s *downloadSession) oldestEvictableChunk() (downloadChunkKey, time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var oldestKey downloadChunkKey
+	var oldest *downloadSessionChunk
+	for key, entry := range s.chunks {
+		if entry.refs > 0 || entry.waiters > 0 || !entry.accounted {
+			continue
+		}
+		if oldest == nil || entry.lastUsed.Before(oldest.lastUsed) {
+			oldestKey = key
+			oldest = entry
+		}
+	}
+	if oldest == nil {
+		return downloadChunkKey{}, time.Time{}, false
+	}
+	return oldestKey, oldest.lastUsed, true
+}
+
+func (s *downloadSession) evictChunkIfAvailable(key downloadChunkKey) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry := s.chunks[key]
+	if entry == nil || entry.refs > 0 || entry.waiters > 0 || !entry.accounted {
+		return false
+	}
+	return s.deleteChunkLocked(key, entry)
+}
+
+func (s *downloadSession) evictOldestChunk() bool {
+	key, _, ok := s.oldestEvictableChunk()
+	if !ok {
+		return false
+	}
+	return s.evictChunkIfAvailable(key)
+}
+
+func (s *downloadSession) deleteChunkLocked(key downloadChunkKey, entry *downloadSessionChunk) bool {
 	delete(s.chunks, key)
+	released := false
 	if entry.accounted {
 		n := int64(len(entry.data))
 		s.cachedBytes -= n
@@ -1637,7 +1868,14 @@ func (s *downloadSession) deleteChunkLocked(key downloadChunkKey, entry *downloa
 			s.cachedBytes = 0
 		}
 		recordHTTPBufferBytes(-n)
+		released = true
 	}
+	if entry.releaseBuffer != nil {
+		entry.releaseBuffer()
+		entry.releaseBuffer = nil
+	}
+	entry.data = nil
+	return released
 }
 
 func (s *telegramMediaSource) Media() *tmedia.Media {
@@ -1755,7 +1993,9 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 		}
 
 		recordTelegramDownloadedBytes(len(file.Bytes))
-		return append([]byte(nil), file.Bytes...), nil
+		// gotd already decodes UploadFile.Bytes into an owned slice; avoid copying
+		// every 1 MiB chunk again before it enters the session cache.
+		return file.Bytes, nil
 	}
 }
 

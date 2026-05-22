@@ -71,8 +71,8 @@ const sections = [
       ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
       ["http.transfer_mode", "传输模式", "select", "source_parallel 为默认单 Range 模式；client_range 允许 aria2 多 Range。", ["source_parallel", "client_range"]],
       ["http.range_connections", "Range 连接数", "number", "仅 client_range 生效；填 0 表示 min(threads, 4)。"],
-      ["http.buffer.mode", "下载缓冲", "select", "memory 为每个活跃任务保留共享 chunk cache；off 表示只保留正在传输的分片。", ["memory", "off"]],
-      ["http.buffer.size_mb", "缓冲大小", "number", "每个活跃任务 session 可使用的共享内存上限，单位 MiB。"],
+      ["http.buffer.mode", "下载缓冲", "select", "memory 为所有 HTTP 下载共享 chunk cache；off 表示只保留正在传输的分片。", ["memory", "off"]],
+      ["http.buffer.size_mb", "缓冲大小", "number", "所有 HTTP 下载合计可使用的共享内存上限，单位 MiB；已读分片最多保留 5 秒。"],
     ],
   },
   {
@@ -579,6 +579,7 @@ function pushDashboardSample(data) {
   const download = data.download || {};
   const totalMemory = Number(memory.total_bytes ?? process.memory_rss ?? 0);
   const bufferMemory = Number(memory.buffer_bytes ?? 0);
+  const retainedMemory = Number(memory.heap_retained_idle_bytes ?? 0);
   const softwareMemory = Number(memory.software_bytes ?? Math.max(0, totalMemory - bufferMemory));
   const gotdSpeed = Number(download.gotd_speed_bps ?? download.speed_bps ?? 0);
 
@@ -589,6 +590,7 @@ function pushDashboardSample(data) {
     memoryTotal: totalMemory,
     memorySoftware: softwareMemory,
     memoryBuffer: bufferMemory,
+    memoryRetained: retainedMemory,
     memoryPercent: Number(memory.total_percent || process.memory_percent || 0),
     gotdSpeed,
     gotdTotal: Number(download.gotd_bytes_total ?? download.bytes_total ?? 0),
@@ -607,7 +609,7 @@ function renderDashboard() {
   setText("dashboard-cpu-value", formatPercent(latest.cpu));
   setText("dashboard-cpu-meta", `${latest.goroutines} goroutines`);
   setText("dashboard-memory-value", formatBytes(latest.memoryTotal));
-  setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 缓冲 ${formatBytes(latest.memoryBuffer)}`);
+  setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 缓冲 ${formatBytes(latest.memoryBuffer)} · 保留堆 ${formatBytes(latest.memoryRetained)}`);
   setText("dashboard-speed-value", `${formatBytes(latest.gotdSpeed)}/s`);
   setText("dashboard-speed-meta", `aria2 ${formatBytes(latest.aria2Speed)}/s · gotd累计 ${formatBytes(latest.gotdTotal)}`);
 
@@ -619,6 +621,7 @@ function renderDashboard() {
     { key: "memoryTotal", label: "总用量", color: "#0b7f72" },
     { key: "memorySoftware", label: "软件用量", color: "#6f5cc2" },
     { key: "memoryBuffer", label: "HTTP buffer", color: "#c47a16" },
+    { key: "memoryRetained", label: "保留堆", color: "#6a7380" },
   ], { min: 0, formatter: formatBytes });
 
   renderSmoothChart("dashboard-speed-chart", "dashboard-speed-axis", [

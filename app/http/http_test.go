@@ -493,6 +493,96 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 	require.Equal(t, payload, out.Bytes())
 }
 
+func TestDownloadSessionExpiresReleasedMemoryBuffer(t *testing.T) {
+	payload := make([]byte, downloadStreamPartSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{data: payload}
+	client := tg.NewClient(invoker)
+	pools := &poolHolder{}
+	pools.Set(testDownloadPool{client: client})
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	session := newDownloadSession("task-1", &telegramMediaSource{media: media}, pools, int64(downloadStreamPartSize), 25*time.Millisecond, nil, nil)
+	lease, err := transfer.NewLimiter(1, 1, 1).Acquire(context.Background(), "task-1")
+	require.NoError(t, err)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	require.NoError(t, session.Stream(context.Background(), lease, 0, int64(len(payload)-1), &out))
+	require.Equal(t, payload, out.Bytes())
+	require.Equal(t, 1, sessionChunkCount(session))
+
+	require.Eventually(t, func() bool {
+		return sessionChunkCount(session) == 0 && sessionCachedBytes(session) == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestDownloadProxyUsesGlobalMemoryBufferLimit(t *testing.T) {
+	payload := make([]byte, downloadStreamPartSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{data: payload}
+	client := tg.NewClient(invoker)
+	pools := &poolHolder{}
+	pools.Set(testDownloadPool{client: client})
+	proxy := newDownloadProxy(config.HTTPConfig{
+		Buffer: config.HTTPBufferConfig{
+			Mode:   httpBufferModeMemory,
+			SizeMB: 1,
+		},
+	}, 2, 1, pools, nil, nil)
+	taskOne := &downloadTask{
+		ID:       "task-1",
+		FileName: "one.bin",
+		FileSize: int64(len(payload)),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{},
+			Size:         int64(len(payload)),
+			DC:           2,
+		},
+	}
+	taskTwo := &downloadTask{
+		ID:       "task-2",
+		FileName: "two.bin",
+		FileSize: int64(len(payload)),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{},
+			Size:         int64(len(payload)),
+			DC:           2,
+		},
+	}
+
+	leaseOne, err := proxy.limiter.Acquire(context.Background(), taskOne.ID)
+	require.NoError(t, err)
+	var outOne bytes.Buffer
+	require.NoError(t, proxy.streamTask(context.Background(), taskOne, leaseOne, 0, int64(len(payload)-1), &outOne))
+	leaseOne.Release()
+	require.Equal(t, payload, outOne.Bytes())
+	sessionOne := proxy.sessions.Get(taskOne, nil)
+	defer sessionOne.Close()
+	require.Equal(t, 1, sessionChunkCount(sessionOne))
+
+	leaseTwo, err := proxy.limiter.Acquire(context.Background(), taskTwo.ID)
+	require.NoError(t, err)
+	var outTwo bytes.Buffer
+	require.NoError(t, proxy.streamTask(context.Background(), taskTwo, leaseTwo, 0, int64(len(payload)-1), &outTwo))
+	leaseTwo.Release()
+	require.Equal(t, payload, outTwo.Bytes())
+	sessionTwo := proxy.sessions.Get(taskTwo, nil)
+	defer sessionTwo.Close()
+
+	require.Equal(t, 0, sessionChunkCount(sessionOne))
+	require.Equal(t, 1, sessionChunkCount(sessionTwo))
+}
+
 func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
 	t.Parallel()
 
@@ -746,6 +836,20 @@ func (i *recordingUploadInvoker) allRequestsStayWithinTelegramFragment() bool {
 	}
 
 	return true
+}
+
+func sessionChunkCount(session *downloadSession) int {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	return len(session.chunks)
+}
+
+func sessionCachedBytes(session *downloadSession) int64 {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	return session.cachedBytes
 }
 
 type testDownloadPool struct {

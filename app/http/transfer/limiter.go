@@ -6,10 +6,10 @@ import (
 )
 
 type Limiter struct {
-	fileTokens  chan struct{}
-	perFileMax  int
-	requestMax  int
-	bufferSlots int
+	fileTokens   chan struct{}
+	bufferTokens chan struct{}
+	perFileMax   int
+	requestMax   int
 
 	mu    sync.Mutex
 	files map[string]*limitState
@@ -21,7 +21,6 @@ type limitState struct {
 	ready         chan struct{}
 	requestTokens chan struct{}
 	workerTokens  chan struct{}
-	bufferTokens  chan struct{}
 }
 
 type Lease struct {
@@ -43,14 +42,19 @@ func NewLimiter(maxFiles, perFileMax int, options ...int) *Limiter {
 	}
 
 	l := &Limiter{
-		fileTokens:  make(chan struct{}, maxFiles),
-		perFileMax:  perFileMax,
-		requestMax:  requestMax,
-		bufferSlots: normalizedBufferSlots,
-		files:       make(map[string]*limitState),
+		fileTokens: make(chan struct{}, maxFiles),
+		perFileMax: perFileMax,
+		requestMax: requestMax,
+		files:      make(map[string]*limitState),
 	}
 	for i := 0; i < maxFiles; i++ {
 		l.fileTokens <- struct{}{}
+	}
+	if normalizedBufferSlots > 0 {
+		l.bufferTokens = make(chan struct{}, normalizedBufferSlots)
+		for i := 0; i < normalizedBufferSlots; i++ {
+			l.bufferTokens <- struct{}{}
+		}
 	}
 
 	return l
@@ -119,26 +123,42 @@ func (l *Lease) MaxWorkers() int {
 }
 
 func (l *Lease) BufferSlots() int {
-	if l == nil || l.state == nil || l.state.bufferTokens == nil {
+	if l == nil || l.limiter == nil || l.limiter.bufferTokens == nil {
 		return 0
 	}
-	return cap(l.state.bufferTokens)
+	return cap(l.limiter.bufferTokens)
 }
 
 func (l *Lease) AcquireBuffer(ctx context.Context) (func(), error) {
-	if l == nil || l.state == nil || l.state.bufferTokens == nil {
+	if l == nil || l.limiter == nil || l.limiter.bufferTokens == nil {
 		return nil, nil
 	}
-	if err := acquireToken(ctx, l.state.bufferTokens); err != nil {
+	if err := acquireToken(ctx, l.limiter.bufferTokens); err != nil {
 		return nil, err
 	}
 
+	return l.releaseBufferToken(), nil
+}
+
+func (l *Lease) TryAcquireBuffer() (func(), bool) {
+	if l == nil || l.limiter == nil || l.limiter.bufferTokens == nil {
+		return nil, true
+	}
+	select {
+	case <-l.limiter.bufferTokens:
+		return l.releaseBufferToken(), true
+	default:
+		return nil, false
+	}
+}
+
+func (l *Lease) releaseBufferToken() func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			releaseToken(l.state.bufferTokens)
+			releaseToken(l.limiter.bufferTokens)
 		})
-	}, nil
+	}
 }
 
 func (l *Limiter) acquireFile(ctx context.Context, taskID string) (*limitState, error) {
@@ -148,7 +168,7 @@ func (l *Limiter) acquireFile(ctx context.Context, taskID string) (*limitState, 
 		l.mu.Lock()
 		state := l.files[taskID]
 		if state == nil {
-			state = newLimitState(l.perFileMax, l.bufferSlots, l.requestMax)
+			state = newLimitState(l.perFileMax, l.requestMax)
 			l.files[taskID] = state
 		}
 		if !registered {
@@ -234,7 +254,7 @@ func (l *Limiter) releaseInterest(taskID string) {
 	}
 }
 
-func newLimitState(perFileMax, bufferSlots, requestMax int) *limitState {
+func newLimitState(perFileMax, requestMax int) *limitState {
 	state := &limitState{
 		requestTokens: make(chan struct{}, requestMax),
 		workerTokens:  make(chan struct{}, perFileMax),
@@ -244,12 +264,6 @@ func newLimitState(perFileMax, bufferSlots, requestMax int) *limitState {
 	}
 	for i := 0; i < perFileMax; i++ {
 		state.workerTokens <- struct{}{}
-	}
-	if bufferSlots > 0 {
-		state.bufferTokens = make(chan struct{}, bufferSlots)
-		for i := 0; i < bufferSlots; i++ {
-			state.bufferTokens <- struct{}{}
-		}
 	}
 
 	return state

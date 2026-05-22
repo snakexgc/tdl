@@ -353,7 +353,7 @@ func Run(ctx context.Context, opts Options) error {
 			color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
 		}
 		if httpdl.NormalizeBufferMode(cfg.HTTP.Buffer.Mode) == httpdl.BufferModeMemory {
-			color.Green("   HTTP buffer: memory (%d MiB per active session)", httpdl.NormalizedBufferSizeMB(cfg.HTTP.Buffer))
+			color.Green("   HTTP buffer: memory (%d MiB shared, 5s retention)", httpdl.NormalizedBufferSizeMB(cfg.HTTP.Buffer))
 		} else {
 			color.Green("   HTTP buffer: off")
 		}

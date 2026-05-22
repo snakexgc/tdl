@@ -488,7 +488,7 @@ func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
 	}
 	enabled := cfg != nil && cfg.Modules.HTTP
 	running := m.watchCtrl.Running() && cfg != nil && cfg.Modules.Watch && cfg.Modules.HTTP && strings.TrimSpace(config.HTTPListenAddr(cfg)) != ""
-	status := moduleStatusNotStarted
+	var status string
 	if running {
 		status = "运行中：" + config.HTTPListenAddr(cfg)
 	} else if !enabled {

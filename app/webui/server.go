@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -424,6 +425,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	} else if memInfo != nil {
 		rss = memInfo.RSS
 	}
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	retainedIdleBytes := memStats.HeapIdle
+	if retainedIdleBytes >= memStats.HeapReleased {
+		retainedIdleBytes -= memStats.HeapReleased
+	} else {
+		retainedIdleBytes = 0
+	}
 
 	var memoryTotal uint64
 	var memoryPercent float64
@@ -435,9 +444,16 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bufferBytes := uint64(httpdl.HTTPBufferBytes())
-	softwareBytes := rss
+	var softwareBytes uint64
 	if bufferBytes <= rss {
 		softwareBytes = rss - bufferBytes
+	} else {
+		softwareBytes = 0
+	}
+	if retainedIdleBytes <= softwareBytes {
+		softwareBytes -= retainedIdleBytes
+	} else {
+		softwareBytes = 0
 	}
 
 	totalBytes := httpdl.TelegramDownloadedBytes()
@@ -461,11 +477,16 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"goroutines":  ps.GetGoroutineNum(),
 		},
 		"memory": map[string]any{
-			"total_bytes":    rss,
-			"software_bytes": softwareBytes,
-			"buffer_bytes":   bufferBytes,
-			"system_total":   memoryTotal,
-			"total_percent":  memoryPercent,
+			"total_bytes":              rss,
+			"software_bytes":           softwareBytes,
+			"buffer_bytes":             bufferBytes,
+			"heap_alloc_bytes":         memStats.Alloc,
+			"heap_sys_bytes":           memStats.HeapSys,
+			"heap_idle_bytes":          memStats.HeapIdle,
+			"heap_released_bytes":      memStats.HeapReleased,
+			"heap_retained_idle_bytes": retainedIdleBytes,
+			"system_total":             memoryTotal,
+			"total_percent":            memoryPercent,
 		},
 		"download": map[string]any{
 			"gotd_bytes_total": totalBytes,

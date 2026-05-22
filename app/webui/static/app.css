@@ -627,6 +627,10 @@ p {
   background: #c47a16;
 }
 
+.legend-retained {
+  background: #6a7380;
+}
+
 .table-shell {
   overflow: auto;
 }

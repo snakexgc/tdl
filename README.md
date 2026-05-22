@@ -35,7 +35,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
     "range_connections": 0, // client_range 下 aria2 Range 连接数；0 表示 min(threads, 4)
     "buffer": {
       "mode": "memory", // HTTP 下载缓冲模式：memory 或 off
-      "size_mb": 64 // 每个活跃任务 session 的共享 chunk cache 上限，单位 MiB
+      "size_mb": 64 // 所有 HTTP 下载共享的 chunk cache 总上限，单位 MiB；已读分片最多保留 5 秒
     }
   },
   "webui": {
@@ -89,8 +89,8 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `http.download_link_ttl_hours` | 下载链接有效期，单位小时；默认 24，设置为 0 时永久有效且不自动清理                                       |
 | `http.transfer_mode`   | HTTP 传输模式；默认 `source_parallel` 让 aria2 单连接、tdl 内部并发拉 Telegram；`client_range` 允许 aria2 多 Range |
 | `http.range_connections` | `client_range` 下 aria2 Range 连接数；`0` 或负数表示 `min(threads, 4)`，实际不会超过 `threads` |
-| `http.buffer.mode`     | HTTP 下载缓冲模式；`memory` 为每个活跃任务 session 维护共享 chunk cache，`off` 不做额外预读缓存 |
-| `http.buffer.size_mb`  | `memory` 模式下每个活跃任务 session 的共享缓冲上限；默认 64，内存紧张可设 32，高带宽可设 128 |
+| `http.buffer.mode`     | HTTP 下载缓冲模式；`memory` 为所有 HTTP 下载维护共享 chunk cache，`off` 不做额外预读缓存 |
+| `http.buffer.size_mb`  | `memory` 模式下所有 HTTP 下载合计可使用的共享缓冲上限；已读分片最多保留 5 秒；默认 64，内存紧张可设 32，高带宽可设 128 |
 | `webui.address`        | Web 管理面板监听地址；默认 `0.0.0.0`，修改后需要重启                                  |
 | `webui.port`           | Web 管理面板监听端口；默认 `22335`，修改后需要重启                                  |
 | `webui.username`       | Web 管理面板用户名                                                               |

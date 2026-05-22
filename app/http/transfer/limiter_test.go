@@ -193,16 +193,16 @@ func TestLeaseLimitsConcurrentWorkers(t *testing.T) {
 	lease.ReleaseWorker()
 }
 
-func TestLeaseBufferSharedPerFile(t *testing.T) {
+func TestLeaseBufferSharedGlobally(t *testing.T) {
 	t.Parallel()
 
-	limiter := NewLimiter(1, 4, 2)
+	limiter := NewLimiter(2, 4, 2)
 
 	leaseOne, err := limiter.Acquire(context.Background(), "file-a")
 	require.NoError(t, err)
 	defer leaseOne.Release()
 
-	leaseTwo, err := limiter.Acquire(context.Background(), "file-a")
+	leaseTwo, err := limiter.Acquire(context.Background(), "file-b")
 	require.NoError(t, err)
 	defer leaseTwo.Release()
 
@@ -215,6 +215,10 @@ func TestLeaseBufferSharedPerFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, releaseTwo)
 	defer releaseTwo()
+
+	tryRelease, ok := leaseTwo.TryAcquireBuffer()
+	require.False(t, ok)
+	require.Nil(t, tryRelease)
 
 	blockedCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
