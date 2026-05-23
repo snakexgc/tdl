@@ -33,16 +33,16 @@ func TestRenderDownloadDirTemplate(t *testing.T) {
 	require.Equal(t, []string{"202604", "Group Name", "23"}, renderDownloadDir(`Y&M\G\D`, data))
 	require.Equal(t, []string{"TriggerTitle", "Group Name"}, renderDownloadDir(`I/G`, data))
 	require.Equal(t, []string{"12345", "7", "6", "999"}, renderDownloadDir(`P/S/R/A`, data))
-	require.Equal(t, []string{"video.mp4"}, renderDownloadDir(`F`, data))
+	require.Equal(t, []string{"video"}, renderDownloadDir(`F`, data))
 }
 
 func TestFileNameConfigTemplateAliases(t *testing.T) {
 	require.Equal(t,
-		`{{ .G }}-{{ .I }}-{{ .P }}-{{ .S }}-{{ .R }}-{{ filenamify .FileName }}`,
+		`{{ .G }}-{{ .I }}-{{ .P }}-{{ .S }}-{{ .R }}-{{ .F }}`,
 		fileNameConfigTemplate("G-I-P-S-R-F"),
 	)
 	require.Equal(t,
-		`{{ .P }}_{{ .S }}_{{ filenamify .FileName }}`,
+		`{{ .P }}_{{ .S }}_{{ .F }}`,
 		fileNameConfigTemplate(config.DefaultFilename),
 	)
 }
@@ -64,6 +64,26 @@ func TestRenderFileNameTemplateUsesMessageTitleAndPeerName(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "Group Name-TriggerTitle-video.mp4", got)
+}
+
+func TestRenderFileNameDedupIWhenFContainsI(t *testing.T) {
+	tpl := template.Must(template.New("watch").
+		Funcs(tplfunc.FuncMap(tplfunc.All...)).
+		Parse(fileNameConfigTemplate("G-I-F")))
+	w := &Watcher{tpl: tpl, opts: Options{Template: fileNameConfigTemplate("G-I-F")}}
+
+	// File stem "HelloWorld" equals sanitized I "HelloWorld" → I is omitted, double dash collapsed
+	got, err := w.renderFileName(
+		12345,
+		"Group Name",
+		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
+		&tg.Message{ID: 8, Date: 1770000000, Message: "media caption"},
+		&tg.Message{ID: 7, Date: 1770000000, Message: "Hello World"},
+		&tmedia.Media{Name: "HelloWorld.mp4", Size: 1024},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "Group Name-HelloWorld.mp4", got)
 }
 
 func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {

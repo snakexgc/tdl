@@ -188,7 +188,7 @@ func renderDownloadDirSegment(segment string, data downloadDirData) string {
 func downloadTemplateValue(r rune, data downloadDirData) (string, bool) {
 	switch r {
 	case 'F':
-		return data.FileName, true
+		return strings.TrimSuffix(data.FileName, filepath.Ext(data.FileName)), true
 	case 'I':
 		return safeMessageTitleSegment(data.MessageTitle), true
 	case 'G':
