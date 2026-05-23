@@ -86,7 +86,7 @@ func TestEditMessageReactionSkipsWhenNotMine(t *testing.T) {
 }
 
 func TestEditMessageReactionQueuesWhenMine(t *testing.T) {
-	w := &Watcher{jobCh: make(chan downloadJob, 1)}
+	w := &Watcher{jobCh: make(chan downloadJob, 1), opts: Options{Download: true}}
 	msg := &tg.Message{
 		ID:     116103,
 		PeerID: &tg.PeerChannel{ChannelID: 2578606138},

@@ -19,11 +19,12 @@ import (
 )
 
 type forwardRuntime struct {
-	enabled bool
-	mode    forwarder.Mode
-	target  peers.Peer
-	listen  map[int64]forwardListenEntry
-	dedupe  *timedDedupe
+	enabled          bool
+	mode             forwarder.Mode
+	target           peers.Peer
+	listen           map[int64]forwardListenEntry
+	dedupe           *timedDedupe
+	triggerReactions map[string]struct{}
 }
 
 type forwardListenEntry struct {
@@ -120,11 +121,12 @@ func (w *Watcher) configureForward(ctx context.Context) {
 	}
 
 	w.forward = &forwardRuntime{
-		enabled: true,
-		mode:    mode,
-		target:  target,
-		listen:  listen,
-		dedupe:  newTimedDedupe(w.opts.ForwardDedupeTTL),
+		enabled:          true,
+		mode:             mode,
+		target:           target,
+		listen:           listen,
+		dedupe:           newTimedDedupe(w.opts.ForwardDedupeTTL),
+		triggerReactions: newTriggerReactionSet(w.opts.ForwardTriggerReactions),
 	}
 
 	names := make([]string, 0, len(listen))
@@ -249,6 +251,29 @@ func forwardDedupeKey(peerID int64, msg *tg.Message) string {
 		return fmt.Sprintf("forward:%d:g:%d", peerID, groupedID)
 	}
 	return fmt.Sprintf("forward:%d:m:%d", peerID, msg.ID)
+}
+
+func (w *Watcher) triggerForwardOnReaction(ctx context.Context, e tg.Entities, peer tg.PeerClass, peerID int64, msgID int) {
+	inputPeer := w.peerToInputPeer(peer, e)
+	if inputPeer == nil {
+		var err error
+		inputPeer, err = w.resolvePeer(ctx, peerID)
+		if err != nil {
+			w.notify(ctx, "监听转发（回应触发）失败：无法解析来源。\n来源：%d\n消息：%d\n错误：%v", peerID, msgID, err)
+			return
+		}
+	}
+	msg, err := tutil.GetSingleMessage(ctx, w.pool.Default(ctx), inputPeer, msgID)
+	if err != nil {
+		w.notify(ctx, "监听转发（回应触发）失败：无法获取消息。\n来源：%d\n消息：%d\n错误：%v", peerID, msgID, err)
+		return
+	}
+	if err := w.forwardUpdateMessage(ctx, e, msg); err != nil && !errors.Is(err, context.Canceled) {
+		logctx.From(ctx).Error("Reaction-triggered forward failed",
+			zap.Int64("peer_id", peerID),
+			zap.Int("msg_id", msgID),
+			zap.Error(err))
+	}
 }
 
 func (w *Watcher) resolveForwardPeer(ctx context.Context, e tg.Entities, peer tg.PeerClass, peerID int64) (peers.Peer, error) {

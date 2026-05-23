@@ -98,6 +98,7 @@ type ForwardConfig struct {
 	ListenComments   bool     `json:"listen_comments"`
 	Silent           bool     `json:"silent"`
 	DedupeTTLSeconds int      `json:"dedupe_ttl_seconds"`
+	TriggerReactions []string `json:"trigger_reactions"`
 }
 
 // Config 全局配置结构
@@ -190,6 +191,7 @@ func DefaultConfig() *Config {
 			ListenComments:   true,
 			Silent:           false,
 			DedupeTTLSeconds: 600,
+			TriggerReactions: []string{},
 		},
 	}
 }
@@ -533,6 +535,7 @@ func Validate(cfg *Config) error {
 	if cfg.Forward.DedupeTTLSeconds < 0 {
 		return errors.New("forward.dedupe_ttl_seconds must be greater than or equal to 0")
 	}
+	cfg.Forward.TriggerReactions = normalizeStringList(cfg.Forward.TriggerReactions)
 	if err := normalizeHTTPConfig(cfg); err != nil {
 		return err
 	}

@@ -56,13 +56,14 @@ type Options struct {
 	Include               []string
 	Exclude               []string
 	FileSizeMB            int64
-	Forward               bool
-	ForwardMode           string
-	ForwardTarget         string
-	ForwardListen         []string
-	ForwardListenComments bool
-	ForwardSilent         bool
-	ForwardDedupeTTL      time.Duration
+	Forward                 bool
+	ForwardMode             string
+	ForwardTarget           string
+	ForwardListen           []string
+	ForwardListenComments   bool
+	ForwardSilent           bool
+	ForwardDedupeTTL        time.Duration
+	ForwardTriggerReactions []string
 	Notify                NotifyFunc
 	messageLinks          <-chan messageLinkSubmission
 }
@@ -136,12 +137,13 @@ func DefaultOptions(cfg *config.Config) Options {
 		Exclude:               append([]string(nil), cfg.Exclude...),
 		FileSizeMB:            cfg.FileSizeMB,
 		Forward:               cfg.Modules.Forward,
-		ForwardMode:           config.EffectiveForwardMode(cfg),
-		ForwardTarget:         cfg.Forward.Target,
-		ForwardListen:         append([]string(nil), cfg.Forward.Listen...),
-		ForwardListenComments: cfg.Forward.ListenComments,
-		ForwardSilent:         cfg.Forward.Silent,
-		ForwardDedupeTTL:      time.Duration(config.EffectiveForwardDedupeTTL(cfg)) * time.Second,
+		ForwardMode:             config.EffectiveForwardMode(cfg),
+		ForwardTarget:           cfg.Forward.Target,
+		ForwardListen:           append([]string(nil), cfg.Forward.Listen...),
+		ForwardListenComments:   cfg.Forward.ListenComments,
+		ForwardSilent:           cfg.Forward.Silent,
+		ForwardDedupeTTL:        time.Duration(config.EffectiveForwardDedupeTTL(cfg)) * time.Second,
+		ForwardTriggerReactions: append([]string(nil), cfg.Forward.TriggerReactions...),
 	}
 }
 
@@ -436,6 +438,7 @@ func Run(ctx context.Context, opts Options) error {
 		color.Green("   Forward target: %s", forwardTargetLabel(opts.ForwardTarget))
 		color.Green("   Forward listen: %s", formatForwardListen(opts.ForwardListen))
 		color.Green("   Forward comments: %t", opts.ForwardListenComments)
+		color.Green("   Forward trigger reactions: %s", formatTriggerReactions(opts.ForwardTriggerReactions))
 	}
 	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 		warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
@@ -537,7 +540,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMB),
 	}
 
-	if opts.Download {
+	if opts.Download || (opts.Forward && len(opts.ForwardTriggerReactions) > 0) {
 		d.OnMessageReactions(w.onReaction)
 		d.OnEditMessage(w.onEditMessage)
 		d.OnEditChannelMessage(w.onEditChannelMessage)
@@ -739,50 +742,57 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 		zap.Int("entities_chats", len(e.Chats)),
 		zap.Int("entities_channels", len(e.Channels)))
 
-	isMine := w.isMyMessageReactions(ctx, &update.Reactions, peerID, update.MsgID)
-	if !isMine {
-		logctx.From(ctx).Info("Reaction is not mine, skipping",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", update.MsgID))
-		return nil
+	if w.opts.Download {
+		isMine := w.isMyMessageReactions(ctx, &update.Reactions, peerID, update.MsgID)
+		if !isMine {
+			logctx.From(ctx).Info("Reaction is not mine, skipping",
+				zap.Int64("peer_id", peerID),
+				zap.Int("msg_id", update.MsgID))
+		} else {
+			inputPeer := w.peerToInputPeer(update.Peer, e)
+			key := fmt.Sprintf("%d:%d", peerID, update.MsgID)
+			if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
+				logctx.From(ctx).Info("Duplicate reaction, skipping",
+					zap.Int64("peer_id", peerID),
+					zap.Int("msg_id", update.MsgID))
+			} else {
+				msgLink := w.generateMessageLink(update.Peer, update.MsgID)
+				logctx.From(ctx).Info("My reaction detected, queuing submission",
+					zap.Int64("peer_id", peerID),
+					zap.Int("msg_id", update.MsgID),
+					zap.Bool("input_peer_nil", inputPeer == nil),
+					zap.String("message_link", msgLink))
+
+				color.Cyan("📌 My reaction on %d/%d, queueing submission...", peerID, update.MsgID)
+				color.Green("🔗 Message link: %s", msgLink)
+
+				if err := ctx.Err(); err != nil {
+					logctx.From(ctx).Info("Watcher is stopping, skipping queued submission",
+						zap.Int64("peer_id", peerID),
+						zap.Int("msg_id", update.MsgID),
+						zap.Error(err))
+					w.dedup.Delete(key)
+				} else {
+					select {
+					case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
+					default:
+						logctx.From(ctx).Warn("Submission queue full, dropping job",
+							zap.Int64("peer_id", peerID),
+							zap.Int("msg_id", update.MsgID))
+						w.dedup.Delete(key)
+						w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
+					}
+				}
+			}
+		}
 	}
 
-	inputPeer := w.peerToInputPeer(update.Peer, e)
-	key := fmt.Sprintf("%d:%d", peerID, update.MsgID)
-	if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
-		logctx.From(ctx).Info("Duplicate reaction, skipping",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", update.MsgID))
-		return nil
-	}
-
-	msgLink := w.generateMessageLink(update.Peer, update.MsgID)
-	logctx.From(ctx).Info("My reaction detected, queuing submission",
-		zap.Int64("peer_id", peerID),
-		zap.Int("msg_id", update.MsgID),
-		zap.Bool("input_peer_nil", inputPeer == nil),
-		zap.String("message_link", msgLink))
-
-	color.Cyan("📌 My reaction on %d/%d, queueing submission...", peerID, update.MsgID)
-	color.Green("🔗 Message link: %s", msgLink)
-
-	if err := ctx.Err(); err != nil {
-		logctx.From(ctx).Info("Watcher is stopping, skipping queued submission",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", update.MsgID),
-			zap.Error(err))
-		w.dedup.Delete(key)
-		return nil
-	}
-
-	select {
-	case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
-	default:
-		logctx.From(ctx).Warn("Submission queue full, dropping job",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", update.MsgID))
-		w.dedup.Delete(key)
-		w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
+	if w.forward != nil && w.forward.enabled && len(w.forward.triggerReactions) > 0 {
+		if _, ok := w.forward.listen[peerID]; ok {
+			if w.hasMyForwardReactionTrigger(&update.Reactions) {
+				go w.triggerForwardOnReaction(ctx, e, update.Peer, peerID, update.MsgID)
+			}
+		}
 	}
 
 	return nil
@@ -820,49 +830,56 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 		zap.Int("results_count", len(msg.Reactions.Results)),
 		zap.String("reactions_json", string(reactionsJSON)))
 
-	if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
-		logctx.From(ctx).Info("Reaction via EditMessage is not mine, skipping",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msg.ID))
-		return nil
+	if w.opts.Download {
+		if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
+			logctx.From(ctx).Info("Reaction via EditMessage is not mine, skipping",
+				zap.Int64("peer_id", peerID),
+				zap.Int("msg_id", msg.ID))
+		} else {
+			inputPeer := w.peerToInputPeer(msg.PeerID, e)
+			key := fmt.Sprintf("%d:%d", peerID, msg.ID)
+			if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
+				logctx.From(ctx).Info("Duplicate reaction (via EditMessage), skipping",
+					zap.Int64("peer_id", peerID),
+					zap.Int("msg_id", msg.ID))
+			} else {
+				msgLink := w.generateMessageLink(msg.PeerID, msg.ID)
+				logctx.From(ctx).Info("My reaction detected via EditMessage, queuing submission",
+					zap.Int64("peer_id", peerID),
+					zap.Int("msg_id", msg.ID),
+					zap.Bool("input_peer_nil", inputPeer == nil),
+					zap.String("message_link", msgLink))
+
+				color.Cyan("📌 My reaction on %d/%d (via edit), queueing submission...", peerID, msg.ID)
+				color.Green("🔗 Message link: %s", msgLink)
+
+				if err := ctx.Err(); err != nil {
+					logctx.From(ctx).Info("Watcher is stopping, skipping queued submission",
+						zap.Int64("peer_id", peerID),
+						zap.Int("msg_id", msg.ID),
+						zap.Error(err))
+					w.dedup.Delete(key)
+				} else {
+					select {
+					case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
+					default:
+						logctx.From(ctx).Warn("Submission queue full, dropping job",
+							zap.Int64("peer_id", peerID),
+							zap.Int("msg_id", msg.ID))
+						w.dedup.Delete(key)
+						w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
+					}
+				}
+			}
+		}
 	}
 
-	inputPeer := w.peerToInputPeer(msg.PeerID, e)
-	key := fmt.Sprintf("%d:%d", peerID, msg.ID)
-	if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
-		logctx.From(ctx).Info("Duplicate reaction (via EditMessage), skipping",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msg.ID))
-		return nil
-	}
-
-	msgLink := w.generateMessageLink(msg.PeerID, msg.ID)
-	logctx.From(ctx).Info("My reaction detected via EditMessage, queuing submission",
-		zap.Int64("peer_id", peerID),
-		zap.Int("msg_id", msg.ID),
-		zap.Bool("input_peer_nil", inputPeer == nil),
-		zap.String("message_link", msgLink))
-
-	color.Cyan("📌 My reaction on %d/%d (via edit), queueing submission...", peerID, msg.ID)
-	color.Green("🔗 Message link: %s", msgLink)
-
-	if err := ctx.Err(); err != nil {
-		logctx.From(ctx).Info("Watcher is stopping, skipping queued submission",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msg.ID),
-			zap.Error(err))
-		w.dedup.Delete(key)
-		return nil
-	}
-
-	select {
-	case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
-	default:
-		logctx.From(ctx).Warn("Submission queue full, dropping job",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msg.ID))
-		w.dedup.Delete(key)
-		w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
+	if w.forward != nil && w.forward.enabled && len(w.forward.triggerReactions) > 0 {
+		if _, ok := w.forward.listen[peerID]; ok {
+			if w.hasMyForwardReactionTrigger(&msg.Reactions) {
+				go w.triggerForwardOnReaction(ctx, e, msg.PeerID, peerID, msg.ID)
+			}
+		}
 	}
 
 	return nil
@@ -952,6 +969,30 @@ func (w *Watcher) matchesTriggerReaction(emoji string) bool {
 	}
 	_, ok := w.triggerReactions[normalizeTriggerReaction(emoji)]
 	return ok
+}
+
+func (w *Watcher) hasMyForwardReactionTrigger(reactions *tg.MessageReactions) bool {
+	if w.forward == nil || reactions == nil || reactions.Min {
+		return false
+	}
+	triggers := w.forward.triggerReactions
+	if recent, ok := reactions.GetRecentReactions(); ok {
+		for _, r := range recent {
+			if r.My {
+				if _, ok := triggers[normalizeTriggerReaction(reactionEmoji(r.Reaction))]; ok {
+					return true
+				}
+			}
+		}
+	}
+	for _, rc := range reactions.Results {
+		if _, ok := rc.GetChosenOrder(); ok {
+			if _, ok := triggers[normalizeTriggerReaction(reactionEmoji(rc.Reaction))]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func newTriggerReactionSet(values []string) map[string]struct{} {
