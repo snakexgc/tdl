@@ -8,8 +8,6 @@ on:
         required: true
         default: "master"
   push:
-    branches:
-      - master
     tags:
       - "v*"
 
@@ -29,17 +27,44 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
-        with:
-          context: git
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ref_name="${GITHUB_REF_NAME}"
+          sha_short="$(git rev-parse --short HEAD)"
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            ref_name="${{ inputs.ref }}"
+          fi
+
+          ref_name="${ref_name#refs/tags/}"
+          ref_name="${ref_name#refs/heads/}"
+          version="${ref_name#v}"
+          tag_name="${ref_name//\//-}"
+          tag_name="${tag_name//+/-}"
+          version_tag="${version//+/-}"
+          {
+            echo "version=$version"
+            echo "tags<<EOF"
+            echo "${image}:${tag_name}"
+            if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([+-].*)?$ ]]; then
+              echo "${image}:${version_tag}"
+              if [[ "$version" != *-* ]]; then
+                echo "${image}:${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+                echo "${image}:latest"
+              fi
+            fi
+            echo "${image}:sha-${sha_short}"
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.title=${GITHUB_REPOSITORY#*/}"
+            echo "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.version=${version}"
+            echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+            echo "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4

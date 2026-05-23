@@ -5,9 +5,8 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [master]
   push:
-    branches: [master]
-    paths-ignore:
-      - "docs/**"
+    tags:
+      - "v*"
 
 permissions:
   contents: read
