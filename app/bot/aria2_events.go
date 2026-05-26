@@ -304,7 +304,7 @@ func formatAria2DownloadFinal(task watch.Aria2DownloadStatus, reason string) str
 	switch reason {
 	case "complete":
 		statusLine = "✅ 下载完成"
-	case "pause":
+	case actionPause:
 		statusLine = "⏸ 下载已暂停"
 	case "error":
 		statusLine = "❌ 下载失败"

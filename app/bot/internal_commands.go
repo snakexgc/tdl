@@ -246,7 +246,7 @@ func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery,
 	var done string
 	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *watch.InternalDownloadController) (watch.InternalDownloadActionResult, error) {
 		switch action {
-		case "pause":
+		case actionPause:
 			done = "暂停成功"
 			return controller.Pause(ctx, []string{id})
 		case "start":

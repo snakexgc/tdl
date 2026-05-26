@@ -41,6 +41,10 @@ const (
 	aria2SchemeWS    = "ws"
 )
 
+const (
+	actionPause = "pause"
+)
+
 type aria2ControllerFactory func() *watch.Aria2Controller
 
 func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, factory aria2ControllerFactory) (bool, error) {
@@ -511,7 +515,7 @@ func handleAria2Callback(ctx *th.Context, query telego.CallbackQuery, factory ar
 	var err error
 	var done string
 	switch action {
-	case "pause":
+	case actionPause:
 		err = controller.PauseTask(cmdCtx, gid)
 		done = "暂停成功"
 	case "unpause":
