@@ -63,7 +63,15 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   },
   "bot": {
     "token": "55555555:xxxxxx", // Telegram 机器人 token
-    "allowed_users": [123456] // 允许的用户 ID 列表
+    "allowed_users": [123456], // 允许的用户 ID 列表
+    "notify": {
+      "on_download_start": false, // 下载开始时发送通知
+      "on_download_complete": false, // 下载完成时发送通知
+      "on_download_pause": false, // 下载暂停时发送通知
+      "on_download_error": false, // 下载出错时发送通知
+      "live_progress": false, // 下载中持续更新进度消息
+      "live_progress_interval_seconds": 5 // 进度更新间隔，单位秒；最小 5
+    }
   }
 }
 ```
@@ -105,6 +113,12 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `modules.forward`      | 监听转发模块；监听配置的 Telegram 对象并转发新消息 |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
+| `bot.notify.on_download_start` | 下载开始时机器人发送通知消息；默认 `false` |
+| `bot.notify.on_download_complete` | 下载完成时机器人发送通知消息；默认 `false` |
+| `bot.notify.on_download_pause` | 下载暂停时机器人发送通知消息；默认 `false` |
+| `bot.notify.on_download_error` | 下载出错时机器人发送通知消息；默认 `false` |
+| `bot.notify.live_progress` | 开启后下载开始时发送一条进度消息，并按间隔持续编辑更新直到任务结束；默认 `false` |
+| `bot.notify.live_progress_interval_seconds` | 进度消息刷新间隔，单位秒；最小 `5`，默认 `5` |
 
 `download_dir` 和 `filename` 可用变量：
 
