@@ -14,8 +14,6 @@ const (
 	botCmdMenu    = "/menu"
 	botCmdHelp    = "/help"
 	botCmdInfo    = "/info"
-	botCmdWeb     = "/web"
-	botCmdPath    = "/path"
 	botCmdForward = "/forward"
 
 	botCmdDownloads         = "/downloads"

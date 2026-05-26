@@ -239,14 +239,6 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		}
 		go shutdown()
 	}
-	afterConfigSave := func(cfg *config.Config) {
-		allowed.Replace(cfg.Bot.AllowedUsers)
-		notifier.UpdateChatIDs(cfg.Bot.AllowedUsers)
-		watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
-		if opts.AfterConfigSave != nil {
-			opts.AfterConfigSave(cfg)
-		}
-	}
 	updateController := newTDLUpdateController(requestUpdate)
 	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
 		if !allowed.Contains(query.From.ID) {
@@ -266,7 +258,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, afterConfigSave, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
+			return handleAllowedMessage(ctx, update.Message, loginMgr, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -349,10 +341,9 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 			{Command: "menu", Description: "显示当前下载器控制键盘"},
 			{Command: "help", Description: "查看当前下载器帮助"},
 			{Command: "info", Description: "查看当前下载器信息"},
-			{Command: "web", Description: "获取 AriaNg 在线控制地址（aria2）"},
-			{Command: "path", Description: "修改 aria2 默认下载目录"},
 			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
 			{Command: "cancel_login", Description: "取消正在进行的登录"},
+			{Command: "forward", Description: "回复 Telegram 消息链接并转发"},
 			{Command: "downloads", Description: "查看当前下载器管理命令"},
 			{Command: "downloads_active", Description: "查看正在下载的任务"},
 			{Command: "downloads_waiting", Description: "查看等待或暂停的任务"},
@@ -361,10 +352,6 @@ func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
 			{Command: "downloads_pause_all", Description: "暂停全部下载任务"},
 			{Command: "downloads_start_all", Description: "开始全部下载任务"},
 			{Command: "aria2_retry", Description: "重试已停止的下载任务"},
-			{Command: "forward", Description: "回复 Telegram 消息链接并转发"},
-			{Command: "config", Description: "查看配置命令"},
-			{Command: "config_get", Description: "查看全部配置"},
-			{Command: "config_set", Description: "修改配置"},
 			{Command: "reboot", Description: "重启(不推荐)"},
 			{Command: "update_tdl", Description: "检查并更新 tdl"},
 			{Command: "clean_kv", Description: "清空KV缓存(危险)"},
@@ -451,7 +438,6 @@ func handleAllowedMessage(
 	ctx *th.Context,
 	msg *telego.Message,
 	loginMgr *loginManager,
-	afterConfigSave func(*config.Config),
 	requestReboot func(),
 	updateController *tdlUpdateController,
 	watchCtrl watchControl,
@@ -475,9 +461,6 @@ func handleAllowedMessage(
 		return nil
 	}
 
-	if handled, err := handleConfigCommand(ctx, msg, text, afterConfigSave); handled || err != nil {
-		return err
-	}
 	if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
 		return err
 	}
@@ -568,8 +551,8 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 
 func isPrivateCommand(text string) bool {
 	switch commandName(text) {
-	case botCmdStart, botCmdMenu, botCmdHelp, botCmdInfo, botCmdWeb, botCmdPath,
-		botCmdForward, "/login_code", "/cancel_login", "/config", "/config_help", "/config_get", "/config_set", "/reboot",
+	case botCmdStart, botCmdMenu, botCmdHelp, botCmdInfo,
+		botCmdForward, "/login_code", "/cancel_login", "/reboot",
 		botCmdDownloads, botCmdDownloadsHelp, botCmdDownloadsActive, botCmdDownloadsWaiting, botCmdDownloadsStopped,
 		botCmdDownloadsOverview, botCmdDownloadsPauseAll, botCmdDownloadsStartAll,
 		botCmdInternal, botCmdInternalHelp, botCmdInternalActive, botCmdInternalWaiting, botCmdInternalStopped,

@@ -2,10 +2,7 @@ package bot
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
-	"net"
-	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -17,7 +14,6 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 
 	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/config"
 	"github.com/iyear/tdl/pkg/utils"
 )
 
@@ -84,29 +80,18 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 		return true, err
 	}
 
-	cmd, _, payload := tu.ParseCommandPayload(text)
+	cmd, _, _ := tu.ParseCommandPayload(text)
 	switch "/" + cmd {
 	case botCmdStart, botCmdMenu:
 		return true, sendAria2Menu(ctx, msg.Chat.ID, msg.From.ID)
 	case botCmdHelp:
 		return true, sendMessage(ctx, msg.Chat.ID, aria2BotHelpMessage(msg.From.ID))
-	case botCmdWeb:
-		return true, sendMessage(ctx, msg.Chat.ID, ariaNgURL(config.Get().Aria2))
 	case botCmdInfo:
 		options, err := runAria2GlobalOptions(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取 aria2 设置失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2GlobalOptions(options))
-	case botCmdPath:
-		dir := strings.TrimSpace(payload)
-		if dir == "" {
-			return true, sendMessage(ctx, msg.Chat.ID, "用法：/path 绝对路径，例如 /root/downloads")
-		}
-		if err := runAria2SetGlobalDir(ctx, factory, dir); err != nil {
-			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("默认路径设置失败：%v", err))
-		}
-		return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("默认路径设置成功：%s\n如果 aria2 在 Docker 中运行，请确认该目录已正确挂载。", dir))
 	case botCmdAria2Active, botCmdDownloadsActive:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c *watch.Aria2Controller) ([]watch.Aria2DownloadStatus, error) {
 			return c.ActiveTasks(ctx)
@@ -205,15 +190,6 @@ func runAria2GlobalOptions(ctx context.Context, factory aria2ControllerFactory) 
 	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
 	defer cancel()
 	return factory().GlobalOptions(cmdCtx)
-}
-
-func runAria2SetGlobalDir(ctx context.Context, factory aria2ControllerFactory, dir string) error {
-	if factory == nil {
-		return fmt.Errorf("aria2 controller is not configured")
-	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
-	defer cancel()
-	return factory().SetGlobalDir(cmdCtx, dir)
 }
 
 func sendAria2Menu(ctx *th.Context, chatID int64, userID int64) error {
@@ -326,8 +302,6 @@ func aria2HelpMessage() string {
 		"aria2 管理命令：",
 		"/start 或 /menu 打开控制键盘",
 		"/info 查看 aria2 全局设置",
-		"/web 获取 AriaNg 在线控制地址",
-		"/path 绝对路径 修改 aria2 默认下载目录",
 		"/downloads_active 查看正在下载任务",
 		"/downloads_waiting 查看等待/暂停任务",
 		"/downloads_stopped 查看已完成/停止任务",
@@ -342,7 +316,7 @@ func aria2HelpMessage() string {
 }
 
 func aria2BotHelpMessage(userID int64) string {
-	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n系统信息：/info\nAriaNg 地址：/web\n更换默认下载目录：/path 绝对路径\n提交下载：发送 Telegram 消息链接\nADMIN_ID：%d", aria2MenuClose, userID)
+	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击\"%s\"\n系统信息：/info\n提交下载：发送 Telegram 消息链接\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
 func formatAria2GlobalOptions(options map[string]string) string {
@@ -370,64 +344,6 @@ func formatAria2Bool(value string) string {
 	default:
 		return valueOrUnknown(value)
 	}
-}
-
-func ariaNgURL(cfg config.Aria2Config) string {
-	raw := strings.TrimSpace(cfg.RPCURL)
-	if raw == "" {
-		return "aria2.rpc_url 为空，无法生成 AriaNg 地址。"
-	}
-
-	parseRaw := raw
-	if !strings.Contains(parseRaw, "://") {
-		parseRaw = "http://" + parseRaw
-	}
-	parsed, err := url.Parse(parseRaw)
-	if err != nil || parsed.Host == "" {
-		return "无法解析 aria2.rpc_url：" + raw
-	}
-
-	protocol := aria2SchemeWS
-	switch strings.ToLower(parsed.Scheme) {
-	case aria2SchemeHTTPS, aria2SchemeWSS:
-		protocol = aria2SchemeWSS
-	case aria2SchemeWS, aria2SchemeHTTP:
-		protocol = aria2SchemeWS
-	}
-
-	host := parsed.Hostname()
-	port := parsed.Port()
-	if port == "" {
-		if protocol == "wss" {
-			port = "443"
-		} else {
-			port = "6800"
-		}
-	}
-	if host == "" {
-		host = parsed.Host
-		if h, p, err := net.SplitHostPort(parsed.Host); err == nil {
-			host = h
-			port = p
-		}
-	}
-
-	iface := strings.Trim(parsed.Path, "/")
-	if iface == "" {
-		iface = "jsonrpc"
-	}
-
-	parts := []string{
-		"http://ariang.js.org/#!/settings/rpc/set",
-		url.PathEscape(protocol),
-		url.PathEscape(host),
-		url.PathEscape(port),
-		url.PathEscape(iface),
-	}
-	if cfg.Secret != "" {
-		parts = append(parts, url.PathEscape(base64.StdEncoding.EncodeToString([]byte(cfg.Secret))))
-	}
-	return strings.Join(parts, "/")
 }
 
 func formatAria2Tasks(title string, tasks []watch.Aria2DownloadStatus) string {

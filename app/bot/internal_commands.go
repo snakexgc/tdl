@@ -87,10 +87,6 @@ func handleInternalDownloadCommand(
 		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "开始全部", factory, filterInternalDownloads(watch.InternalDownloadStatusPaused, watch.InternalDownloadStatusError), func(ctx context.Context, controller *watch.InternalDownloadController, ids []string) (watch.InternalDownloadActionResult, error) {
 			return controller.Start(ctx, ids)
 		})
-	case botCmdWeb:
-		return true, sendMessage(ctx, msg.Chat.ID, "当前使用内部下载器，没有 AriaNg 在线控制地址。")
-	case botCmdPath:
-		return true, sendMessage(ctx, msg.Chat.ID, "当前使用内部下载器，下载目录由 download_dir 配置控制，可通过 /config_set download_dir <路径> 修改。")
 	case botCmdAria2, botCmdAria2Help, botCmdAria2Active, botCmdAria2Waiting, botCmdAria2Stopped, botCmdAria2Overview, botCmdAria2PauseAll, botCmdAria2StartAll, botCmdAria2Retry:
 		return true, sendMessage(ctx, msg.Chat.ID, "当前 downloader.mode=internal，请使用 /downloads 或 /menu 管理内部下载器。")
 	default:
