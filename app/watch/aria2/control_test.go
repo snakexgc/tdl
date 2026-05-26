@@ -192,14 +192,12 @@ type fakeAria2ControlClient struct {
 	waiting        []aria2DownloadStatus
 	stopped        []aria2DownloadStatus
 	globalOptions  map[string]string
-	changedOptions []map[string]any
 	forcePaused    []string
 	paused         []string
 	unpaused       []string
 	removed        []string
 	removedResults []string
 	addedURIs      []string
-	addedTorrents  [][]byte
 	addedOptions   []aria2AddURIOptions
 	addedGID       string
 }
@@ -209,11 +207,6 @@ func (f *fakeAria2ControlClient) GetGlobalOptions(ctx context.Context) (map[stri
 		return map[string]string{}, nil
 	}
 	return f.globalOptions, nil
-}
-
-func (f *fakeAria2ControlClient) ChangeGlobalOption(ctx context.Context, options map[string]any) error {
-	f.changedOptions = append(f.changedOptions, options)
-	return nil
 }
 
 func (f *fakeAria2ControlClient) TellStatus(ctx context.Context, gid string) (aria2DownloadStatus, error) {
@@ -268,15 +261,6 @@ func (f *fakeAria2ControlClient) Unpause(ctx context.Context, gid string) error 
 
 func (f *fakeAria2ControlClient) AddURI(ctx context.Context, uri string, opts aria2AddURIOptions) (string, error) {
 	f.addedURIs = append(f.addedURIs, uri)
-	f.addedOptions = append(f.addedOptions, opts)
-	if f.addedGID == "" {
-		return testGIDNew, nil
-	}
-	return f.addedGID, nil
-}
-
-func (f *fakeAria2ControlClient) AddTorrent(ctx context.Context, data []byte, opts aria2AddURIOptions) (string, error) {
-	f.addedTorrents = append(f.addedTorrents, append([]byte(nil), data...))
 	f.addedOptions = append(f.addedOptions, opts)
 	if f.addedGID == "" {
 		return testGIDNew, nil

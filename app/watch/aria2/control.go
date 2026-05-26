@@ -27,7 +27,6 @@ const (
 
 type ControlClient interface {
 	GetGlobalOptions(ctx context.Context) (map[string]string, error)
-	ChangeGlobalOption(ctx context.Context, options map[string]any) error
 	TellStatus(ctx context.Context, gid string) (DownloadStatus, error)
 	TellActive(ctx context.Context) ([]DownloadStatus, error)
 	TellWaiting(ctx context.Context, offset, num int) ([]DownloadStatus, error)
@@ -36,7 +35,6 @@ type ControlClient interface {
 	ForcePause(ctx context.Context, gid string) error
 	Unpause(ctx context.Context, gid string) error
 	AddURI(ctx context.Context, uri string, opts AddURIOptions) (string, error)
-	AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error)
 	Remove(ctx context.Context, gid string) error
 	RemoveDownloadResult(ctx context.Context, gid string) error
 }
@@ -99,10 +97,6 @@ func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) 
 	}
 }
 
-func NewAria2Controller(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Controller {
-	return NewController(cfg, kvd, logger)
-}
-
 func (c *Controller) Overview(ctx context.Context) (Overview, error) {
 	tasks, _, err := c.listOwnedTasks(ctx)
 	if err != nil {
@@ -137,35 +131,6 @@ func (c *Controller) GlobalOptions(ctx context.Context) (map[string]string, erro
 		return nil, errors.New("aria2 controller is not initialized")
 	}
 	return c.client.GetGlobalOptions(ctx)
-}
-
-func (c *Controller) SetGlobalDir(ctx context.Context, dir string) error {
-	dir = strings.TrimSpace(dir)
-	if dir == "" {
-		return errors.New("aria2 download dir is empty")
-	}
-	if c == nil || c.client == nil {
-		return errors.New("aria2 controller is not initialized")
-	}
-	return c.client.ChangeGlobalOption(ctx, map[string]any{aria2KeyDir: dir})
-}
-
-func (c *Controller) AddURL(ctx context.Context, uri string, opts AddURIOptions) (string, error) {
-	uri = strings.TrimSpace(uri)
-	if uri == "" {
-		return "", errors.New("download url is empty")
-	}
-	if c == nil || c.client == nil {
-		return "", errors.New("aria2 controller is not initialized")
-	}
-	return c.client.AddURI(ctx, uri, opts)
-}
-
-func (c *Controller) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions) (string, error) {
-	if c == nil || c.client == nil {
-		return "", errors.New("aria2 controller is not initialized")
-	}
-	return c.client.AddTorrent(ctx, data, opts)
 }
 
 func (c *Controller) TellStatus(ctx context.Context, gid string) (DownloadStatus, error) {

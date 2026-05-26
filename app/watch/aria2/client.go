@@ -256,21 +256,6 @@ func (c *Client) SetMaxConcurrentDownloads(ctx context.Context, limit int) error
 	return nil
 }
 
-func (c *Client) ChangeGlobalOption(ctx context.Context, options map[string]any) error {
-	if len(options) == 0 {
-		return errors.New("aria2 global options are empty")
-	}
-
-	result, err := c.callString(ctx, "aria2.changeGlobalOption", []any{options})
-	if err != nil {
-		return err
-	}
-	if result != "OK" {
-		return fmt.Errorf("unexpected aria2 response %q", result)
-	}
-	return nil
-}
-
 func (c *Client) GetGlobalOptions(ctx context.Context) (map[string]string, error) {
 	raw, err := c.callRaw(ctx, "aria2.getGlobalOption", []any{})
 	if err != nil {

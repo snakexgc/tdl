@@ -935,13 +935,6 @@ func (p *downloadProxy) telegramFileErrorReporter() TelegramFileErrorReporter {
 	return p.reporter
 }
 
-func (p *downloadProxy) StreamTask(ctx context.Context, task *Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
-	if p == nil {
-		return errors.New("download proxy is not initialized")
-	}
-	return p.streamTask(ctx, task, lease, start, end, w)
-}
-
 func (p *downloadProxy) Stream(ctx context.Context, task *Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
 	if p == nil {
 		return errors.New("download proxy is not initialized")
