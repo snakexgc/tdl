@@ -667,8 +667,3 @@ func Set(cfg *Config) error {
 	instance = cfg
 	return nil
 }
-
-// GetPath 获取配置文件路径
-func GetPath() string {
-	return configPath
-}

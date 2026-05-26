@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
-	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/tg"
 	"go.uber.org/multierr"
@@ -209,19 +208,4 @@ func ConfigModeName(mode forwarder.Mode) string {
 	default:
 		return config.ForwardModeDefault
 	}
-}
-
-func FromTelegramClient(ctx context.Context, c *telegram.Client, kvd storage.Storage, poolSize int, reconnectTimeout time.Duration) (dcpool.Pool, *peers.Manager, func() error, error) {
-	if c == nil {
-		return nil, nil, nil, errors.New("telegram client is nil")
-	}
-	if kvd == nil {
-		return nil, nil, nil, errors.New("session storage is nil")
-	}
-	if poolSize < 0 {
-		poolSize = config.DefaultPoolSize
-	}
-	pool := dcpool.NewPool(c, int64(poolSize), coretclient.NewDefaultMiddlewares(ctx, reconnectTimeout)...)
-	manager := peers.Options{Storage: storage.NewPeers(kvd)}.Build(pool.Default(ctx))
-	return pool, manager, pool.Close, nil
 }

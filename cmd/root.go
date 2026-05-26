@@ -3,7 +3,6 @@ package cmd
 import (
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/ivanpirog/coloredcobra"
@@ -11,6 +10,8 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
+	"github.com/iyear/tdl/app/bot"
+	tdlruntime "github.com/iyear/tdl/app/runtime"
 	"github.com/iyear/tdl/core/logctx"
 	"github.com/iyear/tdl/core/util/fsutil"
 	"github.com/iyear/tdl/core/util/logutil"
@@ -29,14 +30,6 @@ var (
 	DefaultBoltStorage = map[string]string{
 		kv.DriverTypeKey: kv.DriverBolt.String(),
 		"path":           defaultBoltPath,
-	}
-)
-
-// command groups
-var (
-	groupTools = &cobra.Group{
-		ID:    "tools",
-		Title: "Tools",
 	}
 )
 
@@ -114,36 +107,19 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
-	cmd.AddGroup(groupTools)
-
-	cmd.AddCommand(NewVersion(), NewWatch(), NewBot())
-
-	cmd.PersistentFlags().String(consts.FlagProxy, cfg.Proxy, "proxy address, supports socks5://, socks5h://, http:// and https://")
-	cmd.PersistentFlags().StringP(consts.FlagNamespace, "n", cfg.Namespace, "namespace for Telegram session")
-	cmd.PersistentFlags().Bool(consts.FlagDebug, cfg.Debug, "enable debug mode")
-
-	cmd.PersistentFlags().IntP(consts.FlagPartSize, "s", 512*1024, "part size for transfer")
-	_ = cmd.PersistentFlags().MarkDeprecated(consts.FlagPartSize, "part size has been set to maximum by default, this flag will be removed in the future")
-
-	cmd.PersistentFlags().IntP(consts.FlagThreads, "t", config.EffectiveThreads(cfg), "max threads for transferring one item")
-	cmd.PersistentFlags().IntP(consts.FlagLimit, "l", config.EffectiveLimit(cfg), "max number of concurrent transfer tasks")
-	cmd.PersistentFlags().Int(consts.FlagPoolSize, config.EffectivePoolSize(cfg), "Telegram DC connection pool size, zero means unlimited")
-	cmd.PersistentFlags().Duration(consts.FlagDelay, time.Duration(cfg.Delay)*time.Second, "delay between each task, zero means no delay")
-
-	cmd.PersistentFlags().String(consts.FlagNTP, cfg.NTP, "ntp server host, if not set, fastest built-in server is selected on startup")
-	cmd.PersistentFlags().Duration(consts.FlagReconnectTimeout, time.Duration(cfg.ReconnectTimeout)*time.Second, "Telegram client reconnection backoff timeout, infinite if set to 0")
-
-	// completion
-	_ = cmd.RegisterFlagCompletionFunc(consts.FlagNamespace, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		engine := kv.From(cmd.Context())
-		ns, err := engine.Namespaces()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		return ns, cobra.ShellCompDirectiveNoFileComp
-	})
+	cmd.AddCommand(NewVersion())
 
 	return cmd
+}
+
+func runBot(cmd *cobra.Command) error {
+	if err := ensureStartupNTP(cmd.Context()); err != nil {
+		return err
+	}
+	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
+		RequestReboot: bot.RequestReboot,
+		RequestUpdate: bot.RequestUpdate,
+	})
 }
 
 func shouldMigrateLegacyToBolt() bool {
