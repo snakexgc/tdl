@@ -11,3 +11,4 @@ tdl
 config.json
 data
 .claude/
+.trae/
