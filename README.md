@@ -135,6 +135,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 [提issues](https://github.com/snakexgc/tdl/issues)  
 
 ## Star History
+**如果项目好用，还请给一个star！**  
 
 [![Star History Chart](https://api.star-history.com/chart?repos=snakexgc/tdl&type=date&legend=top-left)](https://www.star-history.com/?repos=snakexgc%2Ftdl&type=date&legend=top-left)
 
