@@ -349,6 +349,14 @@ func Run(ctx context.Context, opts Options) error {
 			runtime.zeroSpeedMonitor = watcharia2.NewZeroSpeedMonitor(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 			go runtime.zeroSpeedMonitor.Run(runCtx)
 
+			if count, err := watcharia2.ResumeStartupPausedTasks(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx)); err != nil {
+				if !errors.Is(err, context.Canceled) {
+					logctx.From(runCtx).Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
+				}
+			} else if count > 0 {
+				color.Green("▶ Resumed %d paused tdl aria2 task(s) at startup", count)
+			}
+
 			outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
 			if err != nil {
 				if opts.Notify != nil {

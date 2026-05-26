@@ -166,6 +166,77 @@ func pauseTDLAria2TasksForShutdown(ctx context.Context, client ReconnectClient, 
 	return PauseTDLTasksForShutdown(ctx, client, store, publicBaseURL, logger)
 }
 
+// ResumeStartupPausedTasks resumes any tdl-owned aria2 tasks that are paused
+// at startup (e.g., left paused by a previous shutdown). Tasks that exceed the
+// concurrent download limit are automatically queued by aria2. "waiting" tasks
+// are already queued and require no action.
+func ResumeStartupPausedTasks(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) (int, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	registeredGIDs, err := store.GIDs(ctx)
+	if err != nil {
+		return 0, errors.Wrap(err, "load tdl aria2 task registry")
+	}
+	downloadPrefix, err := aria2DownloadURLPrefix(publicBaseURL)
+	if err != nil {
+		return 0, err
+	}
+
+	// aria2.tellWaiting returns both "waiting" and "paused" tasks.
+	var candidates []DownloadStatus
+	for offset := 0; ; {
+		var batch []DownloadStatus
+		if err := retryAria2Connection(ctx, logger, "query aria2 waiting tasks for startup recovery", func() error {
+			var qErr error
+			batch, qErr = client.TellWaiting(ctx, offset, aria2TellWaitingBatchSize)
+			return qErr
+		}); err != nil {
+			return 0, errors.Wrap(err, "query aria2 waiting tasks")
+		}
+		for _, task := range batch {
+			if normalizedAria2Status(task.Status) != aria2StatusPaused {
+				continue
+			}
+			if !isTDLAria2Task(task, registeredGIDs, downloadPrefix) {
+				continue
+			}
+			candidates = append(candidates, task)
+		}
+		if len(batch) < aria2TellWaitingBatchSize {
+			break
+		}
+		offset += len(batch)
+	}
+
+	if len(candidates) == 0 {
+		logger.Info("No paused tdl aria2 tasks to resume at startup")
+		return 0, nil
+	}
+
+	resumed := 0
+	for _, task := range candidates {
+		gid := task.GID
+		err := retryAria2Connection(ctx, logger, "unpause tdl aria2 task at startup", func() error {
+			return client.Unpause(ctx, gid)
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return resumed, err
+			}
+			logger.Warn("Skipping paused tdl aria2 task that could not be resumed at startup",
+				zap.String("gid", gid),
+				zap.Error(err))
+			continue
+		}
+		logger.Info("Resumed paused tdl aria2 task at startup",
+			zap.String("gid", gid))
+		resumed++
+	}
+	return resumed, nil
+}
+
 func listTDLAria2ReconnectTasks(ctx context.Context, client ReconnectClient, registeredGIDs map[string]struct{}, downloadPrefix string, logger *zap.Logger) ([]DownloadStatus, error) {
 	var active []DownloadStatus
 	if err := retryAria2Connection(ctx, logger, "query aria2 active tasks", func() error {

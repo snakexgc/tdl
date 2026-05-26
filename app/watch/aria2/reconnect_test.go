@@ -12,6 +12,7 @@ import (
 
 const (
 	testGIDRegisteredActive = "registered-active"
+	testGIDRegisteredPaused = "registered-paused"
 )
 
 func TestSuspendTDLAria2TasksForReconnectOnlyPausesOwnedTasks(t *testing.T) {
@@ -80,6 +81,53 @@ func TestPauseTDLAria2TasksForShutdownUsesNonCanceledContext(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{testGIDRegisteredActive}, paused)
 	require.Equal(t, paused, client.forcePaused)
+}
+
+func TestResumeStartupPausedTasksOnlyResumesOwnedPausedTasks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newAria2TaskStore(newMemoryTaskStorage())
+	require.NoError(t, store.Add(ctx, aria2TaskRecord{
+		GID:       testGIDRegisteredPaused,
+		TaskID:    testDocument1,
+		CreatedAt: time.Now(),
+	}))
+
+	client := &fakeAria2ReconnectClient{
+		waiting: []aria2DownloadStatus{
+			// Owned via registered GID — should be resumed.
+			{GID: testGIDRegisteredPaused, Status: aria2StatusPaused},
+			// Owned via URL prefix — should be resumed.
+			{GID: "url-paused", Status: aria2StatusPaused, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_2")},
+			// Not owned — should be skipped.
+			{GID: "user-paused", Status: aria2StatusPaused, Files: filesWithURI("http://example.com/file")},
+			// Owned but "waiting" (already queued) — no action needed.
+			{GID: "url-waiting", Status: aria2StatusWaiting, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_3")},
+		},
+	}
+
+	count, err := ResumeStartupPausedTasks(ctx, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	require.Equal(t, []string{testGIDRegisteredPaused, "url-paused"}, client.unpaused)
+	require.Empty(t, client.forcePaused)
+}
+
+func TestResumeStartupPausedTasksNothingToDo(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeAria2ReconnectClient{
+		waiting: []aria2DownloadStatus{
+			{GID: "url-waiting", Status: aria2StatusWaiting, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_1")},
+		},
+	}
+	store := newAria2TaskStore(newMemoryTaskStorage())
+
+	count, err := ResumeStartupPausedTasks(context.Background(), client, store, "http://127.0.0.1:8080/base", zap.NewNop())
+	require.NoError(t, err)
+	require.Equal(t, 0, count)
+	require.Empty(t, client.unpaused)
 }
 
 func TestRetryAria2ConnectionRetriesConnectionErrorOnly(t *testing.T) {
