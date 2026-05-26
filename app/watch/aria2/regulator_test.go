@@ -10,13 +10,19 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	testGIDPauseLow = "pause-low"
+	testGIDPauseMid = "pause-mid"
+	testGIDOnly     = "only"
+)
+
 func TestTelegramErrorRegulatorPausesExtraActiveTasksTemporarily(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	store := newAria2TaskStore(newMemoryTaskStorage())
 	now := time.Now()
-	for _, gid := range []string{"keep", "pause-mid", "pause-low"} {
+	for _, gid := range []string{"keep", testGIDPauseMid, testGIDPauseLow} {
 		require.NoError(t, store.Add(ctx, aria2TaskRecord{
 			GID:       gid,
 			TaskID:    "document_" + gid,
@@ -26,9 +32,9 @@ func TestTelegramErrorRegulatorPausesExtraActiveTasksTemporarily(t *testing.T) {
 
 	client := &fakeAria2ReconnectClient{
 		active: []aria2DownloadStatus{
-			{GID: "pause-low", Status: "active", TotalLength: "1000", CompletedLength: "100"},
-			{GID: "keep", Status: "active", TotalLength: "1000", CompletedLength: "900"},
-			{GID: "pause-mid", Status: "active", TotalLength: "1000", CompletedLength: "200"},
+			{GID: testGIDPauseLow, Status: aria2StatusActive, TotalLength: "1000", CompletedLength: "100"},
+			{GID: "keep", Status: aria2StatusActive, TotalLength: "1000", CompletedLength: "900"},
+			{GID: testGIDPauseMid, Status: aria2StatusActive, TotalLength: "1000", CompletedLength: "200"},
 		},
 	}
 	regulator := newTelegramErrorRegulator(client, store, "http://127.0.0.1:8080", zap.NewNop(), telegramErrorRegulatorConfig{
@@ -38,8 +44,8 @@ func TestTelegramErrorRegulatorPausesExtraActiveTasksTemporarily(t *testing.T) {
 
 	err := regulator.regulate(ctx, gferrors.New("telegram file error"))
 	require.NoError(t, err)
-	require.Equal(t, []string{"pause-mid", "pause-low"}, client.forcePaused)
-	require.Equal(t, []string{"pause-mid", "pause-low"}, client.unpaused)
+	require.Equal(t, []string{"pause-mid", testGIDPauseLow}, client.forcePaused)
+	require.Equal(t, []string{"pause-mid", testGIDPauseLow}, client.unpaused)
 }
 
 func TestTelegramErrorRegulatorRestartsOnlyActiveTask(t *testing.T) {
@@ -48,14 +54,14 @@ func TestTelegramErrorRegulatorRestartsOnlyActiveTask(t *testing.T) {
 	ctx := context.Background()
 	store := newAria2TaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
-		GID:       "only",
+		GID:       testGIDOnly,
 		TaskID:    "document_only",
 		CreatedAt: time.Now(),
 	}))
 
 	client := &fakeAria2ReconnectClient{
 		active: []aria2DownloadStatus{
-			{GID: "only", Status: "active", TotalLength: "1000", CompletedLength: "500"},
+			{GID: testGIDOnly, Status: aria2StatusActive, TotalLength: "1000", CompletedLength: "500"},
 		},
 	}
 	regulator := newTelegramErrorRegulator(client, store, "http://127.0.0.1:8080", zap.NewNop(), telegramErrorRegulatorConfig{
@@ -65,8 +71,8 @@ func TestTelegramErrorRegulatorRestartsOnlyActiveTask(t *testing.T) {
 
 	err := regulator.regulate(ctx, gferrors.New("telegram file error"))
 	require.NoError(t, err)
-	require.Equal(t, []string{"only"}, client.forcePaused)
-	require.Equal(t, []string{"only"}, client.unpaused)
+	require.Equal(t, []string{testGIDOnly}, client.forcePaused)
+	require.Equal(t, []string{testGIDOnly}, client.unpaused)
 }
 
 func TestTelegramErrorRegulatorRecordErrorThresholdAndCooldown(t *testing.T) {

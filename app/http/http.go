@@ -44,6 +44,11 @@ const (
 )
 
 const (
+	mediaKindDocument = "document"
+	mediaKindPhoto    = "photo"
+)
+
+const (
 	downloadTaskKeyPrefix  = "watch.download."
 	downloadTaskIndexKey   = "watch.download.index"
 	defaultDownloadTaskTTL = 24 * time.Hour
@@ -316,7 +321,7 @@ func persistentMediaLocationFromMedia(media *tmedia.Media) (persistentMediaLocat
 	switch loc := media.InputFileLoc.(type) {
 	case *tg.InputDocumentFileLocation:
 		return persistentMediaLocation{
-			Kind:          "document",
+			Kind:          mediaKindDocument,
 			ID:            loc.ID,
 			AccessHash:    loc.AccessHash,
 			FileReference: loc.FileReference,
@@ -324,7 +329,7 @@ func persistentMediaLocationFromMedia(media *tmedia.Media) (persistentMediaLocat
 		}, nil
 	case *tg.InputPhotoFileLocation:
 		return persistentMediaLocation{
-			Kind:          "photo",
+			Kind:          mediaKindPhoto,
 			ID:            loc.ID,
 			AccessHash:    loc.AccessHash,
 			FileReference: loc.FileReference,
@@ -337,14 +342,14 @@ func persistentMediaLocationFromMedia(media *tmedia.Media) (persistentMediaLocat
 
 func (p persistentMediaLocation) ToInputFileLocation() (tg.InputFileLocationClass, error) {
 	switch p.Kind {
-	case "document":
+	case mediaKindDocument:
 		return &tg.InputDocumentFileLocation{
 			ID:            p.ID,
 			AccessHash:    p.AccessHash,
 			FileReference: p.FileReference,
 			ThumbSize:     p.ThumbSize,
 		}, nil
-	case "photo":
+	case mediaKindPhoto:
 		return &tg.InputPhotoFileLocation{
 			ID:            p.ID,
 			AccessHash:    p.AccessHash,
@@ -1290,12 +1295,12 @@ func downloadTaskID(media *tmedia.Media) (string, error) {
 	}
 
 	switch location.Kind {
-	case "document":
+	case mediaKindDocument:
 		if location.ThumbSize != "" {
 			return fmt.Sprintf("document_%d_%s", location.ID, safeTaskIDPart(location.ThumbSize)), nil
 		}
 		return fmt.Sprintf("document_%d", location.ID), nil
-	case "photo":
+	case mediaKindPhoto:
 		if location.ThumbSize != "" {
 			return fmt.Sprintf("photo_%d_%s", location.ID, safeTaskIDPart(location.ThumbSize)), nil
 		}

@@ -14,13 +14,13 @@ func TestAria2TaskStoreKeepsRecordWhenTTLDisabled(t *testing.T) {
 	ctx := context.Background()
 	store := newAria2TaskStore(newMemoryTaskStorage(), 0)
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
-		GID:         "gid-1",
-		TaskID:      "document_1",
-		DownloadURL: "http://127.0.0.1:8080/download/document_1",
+		GID:         testGID1,
+		TaskID:      testDocument1,
+		DownloadURL: testDownloadURL1,
 		CreatedAt:   time.Now().Add(-DefaultTaskTTL - time.Second),
 	}))
 
 	records, err := store.Records(ctx)
 	require.NoError(t, err)
-	require.Contains(t, records, "gid-1")
+	require.Contains(t, records, testGID1)
 }

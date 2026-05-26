@@ -11,15 +11,25 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
+const (
+	testGIDRegisteredError = "registered-error"
+	testDocument1          = "document_1"
+	testDownloadURL1       = "http://127.0.0.1:8080/download/document_1"
+	testGIDURLActive       = "url-active"
+	testGIDURLPaused       = "url-paused"
+	testGIDURLWaiting      = "url-waiting"
+	testGIDNew             = "new-gid"
+)
+
 func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	store := newAria2TaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
-		GID:         "registered-error",
-		TaskID:      "document_1",
-		DownloadURL: "http://127.0.0.1:8080/download/document_1",
+		GID:         testGIDRegisteredError,
+		TaskID:      testDocument1,
+		DownloadURL: testDownloadURL1,
 		CreatedAt:   time.Now(),
 	}))
 
@@ -27,15 +37,15 @@ func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing
 		client: &fakeAria2ControlClient{
 			active: []aria2DownloadStatus{
 				{
-					GID:             "url-active",
-					Status:          "active",
+					GID:             testGIDURLActive,
+					Status:          aria2StatusActive,
 					TotalLength:     "100",
 					CompletedLength: "40",
 					Files:           filesWithURI("http://127.0.0.1:8080/download/document_2"),
 				},
 				{
 					GID:             "user-active",
-					Status:          "active",
+					Status:          aria2StatusActive,
 					TotalLength:     "999",
 					CompletedLength: "0",
 					Files:           filesWithURI("http://example.com/file"),
@@ -43,8 +53,8 @@ func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing
 			},
 			waiting: []aria2DownloadStatus{
 				{
-					GID:             "url-paused",
-					Status:          "paused",
+					GID:             testGIDURLPaused,
+					Status:          aria2StatusPaused,
 					TotalLength:     "50",
 					CompletedLength: "10",
 					Files:           filesWithURI("http://127.0.0.1:8080/download/document_3"),
@@ -52,14 +62,14 @@ func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing
 			},
 			stopped: []aria2DownloadStatus{
 				{
-					GID:             "registered-error",
-					Status:          "error",
+					GID:             testGIDRegisteredError,
+					Status:          aria2StatusError,
 					TotalLength:     "200",
 					CompletedLength: "80",
 				},
 				{
 					GID:             "url-complete",
-					Status:          "complete",
+					Status:          aria2StatusComplete,
 					TotalLength:     "30",
 					CompletedLength: "30",
 					Files:           filesWithURI("http://127.0.0.1:8080/download/document_4"),
@@ -76,12 +86,12 @@ func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing
 	require.Equal(t, 4, overview.TotalTasks)
 	require.Equal(t, 3, overview.RemainingTasks)
 	require.Equal(t, int64(220), overview.RemainingBytes)
-	require.Equal(t, 1, overview.StatusCounts["active"])
-	require.Equal(t, 1, overview.StatusCounts["paused"])
-	require.Equal(t, 1, overview.StatusCounts["error"])
-	require.Equal(t, 1, overview.StatusCounts["complete"])
+	require.Equal(t, 1, overview.StatusCounts[aria2StatusActive])
+	require.Equal(t, 1, overview.StatusCounts[aria2StatusPaused])
+	require.Equal(t, 1, overview.StatusCounts[aria2StatusError])
+	require.Equal(t, 1, overview.StatusCounts[aria2StatusComplete])
 	require.Len(t, overview.RetryCandidates, 1)
-	require.Equal(t, "registered-error", overview.RetryCandidates[0].GID)
+	require.Equal(t, testGIDRegisteredError, overview.RetryCandidates[0].GID)
 	require.Equal(t, int64(120), overview.RetryBytes)
 }
 
@@ -91,10 +101,10 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	ctx := context.Background()
 	store := newAria2TaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
-		GID:         "registered-error",
-		TaskID:      "document_1",
-		DownloadURL: "http://127.0.0.1:8080/download/document_1",
-		Dir:         "downloads",
+		GID:         testGIDRegisteredError,
+		TaskID:      testDocument1,
+		DownloadURL: testDownloadURL1,
+		Dir:         testDownloadDir,
 		Out:         "video.mp4",
 		Connections: 6,
 		CreatedAt:   time.Now(),
@@ -102,22 +112,22 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 
 	client := &fakeAria2ControlClient{
 		active: []aria2DownloadStatus{
-			{GID: "url-active", Status: "active", Files: filesWithURI("http://127.0.0.1:8080/download/document_2")},
+			{GID: testGIDURLActive, Status: aria2StatusActive, Files: filesWithURI("http://127.0.0.1:8080/download/document_2")},
 		},
 		waiting: []aria2DownloadStatus{
-			{GID: "url-waiting", Status: "waiting", Files: filesWithURI("http://127.0.0.1:8080/download/document_3")},
-			{GID: "url-paused", Status: "paused", Files: filesWithURI("http://127.0.0.1:8080/download/document_4")},
+			{GID: testGIDURLWaiting, Status: aria2StatusWaiting, Files: filesWithURI("http://127.0.0.1:8080/download/document_3")},
+			{GID: testGIDURLPaused, Status: aria2StatusPaused, Files: filesWithURI("http://127.0.0.1:8080/download/document_4")},
 		},
 		stopped: []aria2DownloadStatus{
 			{
-				GID:             "registered-error",
-				Status:          "error",
+				GID:             testGIDRegisteredError,
+				Status:          aria2StatusError,
 				TotalLength:     "200",
 				CompletedLength: "100",
 			},
-			{GID: "user-error", Status: "error", Files: filesWithURI("http://example.com/file")},
+			{GID: "user-error", Status: aria2StatusError, Files: filesWithURI("http://example.com/file")},
 		},
-		addedGID: "new-gid",
+		addedGID: testGIDNew,
 	}
 	controller := &Aria2Controller{
 		client:        client,
@@ -130,26 +140,26 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, paused.Matched)
 	require.Equal(t, 2, paused.Changed)
-	require.Equal(t, []string{"url-active", "url-waiting"}, client.forcePaused)
+	require.Equal(t, []string{testGIDURLActive, testGIDURLWaiting}, client.forcePaused)
 
 	started, err := controller.StartAll(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, started.Matched)
 	require.Equal(t, 1, started.Changed)
-	require.Equal(t, []string{"url-paused"}, client.unpaused)
+	require.Equal(t, []string{testGIDURLPaused}, client.unpaused)
 
 	retried, err := controller.RetryStopped(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, retried.Matched)
 	require.Equal(t, 1, retried.Changed)
-	require.Equal(t, []string{"http://127.0.0.1:8080/download/document_1"}, client.addedURIs)
-	require.Equal(t, []aria2AddURIOptions{{Dir: "downloads", Out: "video.mp4", Connections: 1}}, client.addedOptions)
-	require.Equal(t, []string{"registered-error"}, client.removedResults)
+	require.Equal(t, []string{testDownloadURL1}, client.addedURIs)
+	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: "video.mp4", Connections: 1}}, client.addedOptions)
+	require.Equal(t, []string{testGIDRegisteredError}, client.removedResults)
 
 	records, err := store.Records(ctx)
 	require.NoError(t, err)
-	require.NotContains(t, records, "registered-error")
-	require.Contains(t, records, "new-gid")
+	require.NotContains(t, records, testGIDRegisteredError)
+	require.Contains(t, records, testGIDNew)
 }
 
 func TestTaskRecordHTTPConnectionsRequiresClientRangeMode(t *testing.T) {
@@ -260,7 +270,7 @@ func (f *fakeAria2ControlClient) AddURI(ctx context.Context, uri string, opts ar
 	f.addedURIs = append(f.addedURIs, uri)
 	f.addedOptions = append(f.addedOptions, opts)
 	if f.addedGID == "" {
-		return "new-gid", nil
+		return testGIDNew, nil
 	}
 	return f.addedGID, nil
 }
@@ -269,7 +279,7 @@ func (f *fakeAria2ControlClient) AddTorrent(ctx context.Context, data []byte, op
 	f.addedTorrents = append(f.addedTorrents, append([]byte(nil), data...))
 	f.addedOptions = append(f.addedOptions, opts)
 	if f.addedGID == "" {
-		return "new-gid", nil
+		return testGIDNew, nil
 	}
 	return f.addedGID, nil
 }

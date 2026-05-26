@@ -17,7 +17,13 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
-const aria2ControlBatchSize = 1000
+const (
+	aria2ControlBatchSize = 1000
+	aria2StatusComplete   = "complete"
+	aria2StatusPaused     = "paused"
+	aria2StatusError      = "error"
+	aria2StatusWaiting    = "waiting"
+)
 
 type ControlClient interface {
 	GetGlobalOptions(ctx context.Context) (map[string]string, error)
@@ -112,7 +118,7 @@ func (c *Controller) Overview(ctx context.Context) (Overview, error) {
 		info := aria2TaskInfo(task)
 		status := normalizedAria2Status(task.Status)
 		overview.StatusCounts[status]++
-		if info.RemainingLength > 0 && status != "complete" {
+		if info.RemainingLength > 0 && status != aria2StatusComplete {
 			overview.RemainingTasks++
 			overview.RemainingBytes += info.RemainingLength
 		}
@@ -141,7 +147,7 @@ func (c *Controller) SetGlobalDir(ctx context.Context, dir string) error {
 	if c == nil || c.client == nil {
 		return errors.New("aria2 controller is not initialized")
 	}
-	return c.client.ChangeGlobalOption(ctx, map[string]any{"dir": dir})
+	return c.client.ChangeGlobalOption(ctx, map[string]any{aria2KeyDir: dir})
 }
 
 func (c *Controller) AddURL(ctx context.Context, uri string, opts AddURIOptions) (string, error) {
@@ -258,7 +264,7 @@ func (c *Controller) PauseAll(ctx context.Context) (ActionResult, error) {
 	for _, task := range tasks {
 		status := normalizedAria2Status(task.Status)
 		switch status {
-		case "active", "waiting":
+		case aria2StatusActive, aria2StatusWaiting:
 			result.Matched++
 			if err := c.client.ForcePause(ctx, task.GID); err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
@@ -281,7 +287,7 @@ func (c *Controller) StartAll(ctx context.Context) (ActionResult, error) {
 	var result ActionResult
 	for _, task := range tasks {
 		status := normalizedAria2Status(task.Status)
-		if status != "paused" {
+		if status != aria2StatusPaused {
 			result.Skipped++
 			continue
 		}
@@ -539,16 +545,16 @@ func TaskName(task DownloadStatus) string {
 func normalizedAria2Status(status string) string {
 	status = strings.TrimSpace(status)
 	if status == "" {
-		return "active"
+		return aria2StatusActive
 	}
 	return status
 }
 
 func isRetryableStoppedAria2Task(info TaskInfo) bool {
 	switch info.Status {
-	case "error", "removed":
+	case aria2StatusError, "removed":
 		return true
-	case "complete":
+	case aria2StatusComplete:
 		return info.RemainingLength > 0
 	default:
 		return false

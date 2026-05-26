@@ -17,6 +17,13 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
+const (
+	testDownloadDir = "downloads"
+	testSecret      = "secret"
+	testTokenSecret = "token:secret"
+	testGID1        = "gid-1"
+)
+
 func TestAria2AddURIWithoutSecret(t *testing.T) {
 	t.Parallel()
 
@@ -24,7 +31,7 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"` + testGID1 + `"}`))
 	}))
 	defer srv.Close()
 
@@ -34,27 +41,27 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	})
 
 	gid, err := client.AddURI(context.Background(), "http://example.com/file", aria2AddURIOptions{
-		Dir: "downloads",
+		Dir: testDownloadDir,
 		Out: "file.bin",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "gid-1", gid)
+	require.Equal(t, testGID1, gid)
 	require.Equal(t, "aria2.addUri", reqBody.Method)
 	require.Len(t, reqBody.Params, 2)
 	require.Equal(t, []any{"http://example.com/file"}, reqBody.Params[0])
 	require.Equal(t, map[string]any{
-		"dir":                       "downloads",
+		aria2KeyDir:                 testDownloadDir,
 		"out":                       "file.bin",
 		"split":                     "1",
 		"max-connection-per-server": "1",
-		"min-split-size":            "1024K",
-		"piece-length":              "1024K",
+		"min-split-size":            tdlAria2PieceSize,
+		"piece-length":              tdlAria2PieceSize,
 		"timeout":                   "600",
-		"continue":                  "true",
-		"allow-piece-length-change": "true",
-		"allow-overwrite":           "true",
-		"auto-file-renaming":        "false",
-		"user-agent":                "tdl-watch-aria2",
+		"continue":                  aria2BoolTrue,
+		"allow-piece-length-change": aria2BoolTrue,
+		"allow-overwrite":           aria2BoolTrue,
+		"auto-file-renaming":        aria2BoolFalse,
+		"user-agent":                tdlAria2UserAgent,
 	}, reqBody.Params[1])
 }
 
@@ -65,7 +72,7 @@ func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"` + testGID1 + `"}`))
 	}))
 	defer srv.Close()
 
@@ -81,8 +88,8 @@ func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
 	options := reqBody.Params[1].(map[string]any)
 	require.Equal(t, "4", options["split"])
 	require.Equal(t, "4", options["max-connection-per-server"])
-	require.Equal(t, "1024K", options["min-split-size"])
-	require.Equal(t, "1024K", options["piece-length"])
+	require.Equal(t, tdlAria2PieceSize, options["min-split-size"])
+	require.Equal(t, tdlAria2PieceSize, options["piece-length"])
 	require.Equal(t, "600", options["timeout"])
 }
 
@@ -99,7 +106,7 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 
 	client := newAria2Client(config.Aria2Config{
 		RPCURL:         srv.URL,
-		Secret:         "secret",
+		Secret:         testSecret,
 		TimeoutSeconds: 5,
 	})
 
@@ -107,19 +114,19 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "gid-2", gid)
 	require.Len(t, reqBody.Params, 3)
-	require.Equal(t, "token:secret", reqBody.Params[0])
+	require.Equal(t, testTokenSecret, reqBody.Params[0])
 	require.Equal(t, []any{"http://example.com/file"}, reqBody.Params[1])
 	require.Equal(t, map[string]any{
 		"split":                     "1",
 		"max-connection-per-server": "1",
-		"min-split-size":            "1024K",
-		"piece-length":              "1024K",
+		"min-split-size":            tdlAria2PieceSize,
+		"piece-length":              tdlAria2PieceSize,
 		"timeout":                   "600",
-		"continue":                  "true",
-		"allow-piece-length-change": "true",
-		"allow-overwrite":           "true",
-		"auto-file-renaming":        "false",
-		"user-agent":                "tdl-watch-aria2",
+		"continue":                  aria2BoolTrue,
+		"allow-piece-length-change": aria2BoolTrue,
+		"allow-overwrite":           aria2BoolTrue,
+		"auto-file-renaming":        aria2BoolFalse,
+		"user-agent":                tdlAria2UserAgent,
 	}, reqBody.Params[2])
 }
 
@@ -136,23 +143,23 @@ func TestAria2AddTorrentWithOptions(t *testing.T) {
 
 	client := newAria2Client(config.Aria2Config{
 		RPCURL:         srv.URL,
-		Secret:         "secret",
+		Secret:         testSecret,
 		TimeoutSeconds: 5,
 	})
 
 	gid, err := client.AddTorrent(context.Background(), []byte("torrent"), aria2AddURIOptions{
-		Dir: "downloads",
+		Dir: testDownloadDir,
 		Out: "file.torrent",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "torrent-gid", gid)
 	require.Equal(t, "aria2.addTorrent", reqBody.Method)
-	require.Equal(t, "token:secret", reqBody.Params[0])
+	require.Equal(t, testTokenSecret, reqBody.Params[0])
 	require.Equal(t, "dG9ycmVudA==", reqBody.Params[1])
 	require.Equal(t, []any{}, reqBody.Params[2])
 	require.Equal(t, map[string]any{
-		"dir": "downloads",
-		"out": "file.torrent",
+		aria2KeyDir: testDownloadDir,
+		"out":       "file.torrent",
 	}, reqBody.Params[3])
 }
 
@@ -169,7 +176,7 @@ func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
 
 	client := newAria2Client(config.Aria2Config{
 		RPCURL:         srv.URL,
-		Secret:         "secret",
+		Secret:         testSecret,
 		TimeoutSeconds: 5,
 	})
 
@@ -177,7 +184,7 @@ func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "aria2.changeGlobalOption", reqBody.Method)
 	require.Len(t, reqBody.Params, 2)
-	require.Equal(t, "token:secret", reqBody.Params[0])
+	require.Equal(t, testTokenSecret, reqBody.Params[0])
 	require.Equal(t, map[string]any{
 		"max-concurrent-downloads": "7",
 	}, reqBody.Params[1])
@@ -216,9 +223,9 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 		case "aria2.tellStopped":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":[{"gid":"stopped-1","status":"error","errorMessage":"gone","files":[{"uris":[{"uri":"http://example.com/c"}]}]}]}`))
 		case "aria2.forcePause":
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"` + testGID1 + `"}`))
 		case "aria2.unpause":
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"` + testGID1 + `"}`))
 		case "aria2.removeDownloadResult":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"OK"}`))
 		default:
@@ -229,7 +236,7 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 
 	client := newAria2Client(config.Aria2Config{
 		RPCURL:         srv.URL,
-		Secret:         "secret",
+		Secret:         testSecret,
 		TimeoutSeconds: 5,
 	})
 
@@ -254,32 +261,32 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 	require.Equal(t, "stopped-1", stopped[0].GID)
 	require.Equal(t, "gone", stopped[0].ErrorMessage)
 
-	require.NoError(t, client.ForcePause(context.Background(), "gid-1"))
-	require.NoError(t, client.Unpause(context.Background(), "gid-1"))
-	require.NoError(t, client.RemoveDownloadResult(context.Background(), "gid-1"))
+	require.NoError(t, client.ForcePause(context.Background(), testGID1))
+	require.NoError(t, client.Unpause(context.Background(), testGID1))
+	require.NoError(t, client.RemoveDownloadResult(context.Background(), testGID1))
 
 	require.Len(t, requests, 7)
 	require.Equal(t, "aria2.getGlobalOption", requests[0].Method)
-	require.Equal(t, []any{"token:secret"}, requests[0].Params)
+	require.Equal(t, []any{testTokenSecret}, requests[0].Params)
 	require.Equal(t, "aria2.tellActive", requests[1].Method)
-	require.Equal(t, "token:secret", requests[1].Params[0])
+	require.Equal(t, testTokenSecret, requests[1].Params[0])
 	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[1].Params[1])
 	require.Equal(t, "aria2.tellWaiting", requests[2].Method)
-	require.Equal(t, "token:secret", requests[2].Params[0])
+	require.Equal(t, testTokenSecret, requests[2].Params[0])
 	require.Equal(t, float64(5), requests[2].Params[1])
 	require.Equal(t, float64(2), requests[2].Params[2])
 	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[2].Params[3])
 	require.Equal(t, "aria2.tellStopped", requests[3].Method)
-	require.Equal(t, "token:secret", requests[3].Params[0])
+	require.Equal(t, testTokenSecret, requests[3].Params[0])
 	require.Equal(t, float64(7), requests[3].Params[1])
 	require.Equal(t, float64(3), requests[3].Params[2])
 	require.Equal(t, stringSliceToAny(aria2StatusKeys), requests[3].Params[3])
 	require.Equal(t, "aria2.forcePause", requests[4].Method)
-	require.Equal(t, []any{"token:secret", "gid-1"}, requests[4].Params)
+	require.Equal(t, []any{testTokenSecret, testGID1}, requests[4].Params)
 	require.Equal(t, "aria2.unpause", requests[5].Method)
-	require.Equal(t, []any{"token:secret", "gid-1"}, requests[5].Params)
+	require.Equal(t, []any{testTokenSecret, testGID1}, requests[5].Params)
 	require.Equal(t, "aria2.removeDownloadResult", requests[6].Method)
-	require.Equal(t, []any{"token:secret", "gid-1"}, requests[6].Params)
+	require.Equal(t, []any{testTokenSecret, testGID1}, requests[6].Params)
 }
 
 func TestWaitForAria2RetriesConnectionErrors(t *testing.T) {

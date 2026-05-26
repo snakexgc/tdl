@@ -20,6 +20,12 @@ import (
 	"github.com/iyear/tdl/pkg/consts"
 )
 
+const (
+	testDocument1 = "document_1"
+	testActive    = "active"
+	testQueued    = "queued"
+)
+
 func TestValidateWatchConfigAllowsInternalModeWithoutAria2(t *testing.T) {
 	t.Parallel()
 
@@ -46,7 +52,7 @@ func TestInternalModeUsesConfiguredDownloadThreads(t *testing.T) {
 	runtime := newWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
 	require.True(t, runtime.proxy.Limiter() == runtime.internal.limit)
 
-	lease, err := runtime.internal.limit.Acquire(context.Background(), "document_1")
+	lease, err := runtime.internal.limit.Acquire(context.Background(), testDocument1)
 	require.NoError(t, err)
 	require.Equal(t, 3, lease.MaxWorkers())
 	lease.Release()
@@ -106,16 +112,16 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	store := newInternalTaskStore(kvd)
 	createdAt := time.Now()
 	require.NoError(t, store.Save(ctx, internalDownloadRecord{
-		ID:        "document_1",
-		TaskID:    "document_1",
-		FileName:  "video.mp4",
+		ID:        testDocument1,
+		TaskID:    testDocument1,
+		FileName:  testVideoFile,
 		Total:     100,
 		Status:    InternalDownloadStatusQueued,
 		CreatedAt: createdAt,
 	}))
 
 	controller := NewInternalDownloadController(kvd)
-	paused, err := controller.Pause(ctx, []string{"document_1"})
+	paused, err := controller.Pause(ctx, []string{testDocument1})
 	require.NoError(t, err)
 	require.Equal(t, 1, paused.Changed)
 
@@ -124,19 +130,19 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, InternalDownloadStatusPaused, items[0].Status)
 
-	started, err := controller.Start(ctx, []string{"document_1"})
+	started, err := controller.Start(ctx, []string{testDocument1})
 	require.NoError(t, err)
 	require.Equal(t, 1, started.Changed)
 
-	record, ok, err := store.Get(ctx, "document_1")
+	record, ok, err := store.Get(ctx, testDocument1)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, InternalDownloadStatusQueued, record.Status)
 
-	deleted, err := controller.Delete(ctx, []string{"document_1"})
+	deleted, err := controller.Delete(ctx, []string{testDocument1})
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted.Changed)
-	_, ok, err = store.Get(ctx, "document_1")
+	_, ok, err = store.Get(ctx, testDocument1)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -150,8 +156,8 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 	createdAt := time.Now()
 	records := []internalDownloadRecord{
 		{
-			ID:        "active",
-			TaskID:    "active",
+			ID:        testActive,
+			TaskID:    testActive,
 			FileName:  "active.mp4",
 			Total:     100,
 			Completed: 40,
@@ -159,8 +165,8 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 			CreatedAt: createdAt,
 		},
 		{
-			ID:        "queued",
-			TaskID:    "queued",
+			ID:        testQueued,
+			TaskID:    testQueued,
 			FileName:  "queued.mp4",
 			Total:     100,
 			Status:    InternalDownloadStatusQueued,
@@ -184,15 +190,15 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 	cancel()
 	paused, err := (&internalDownloader{store: store}).PauseForShutdown(canceledCtx)
 	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"active", "queued"}, paused)
+	require.ElementsMatch(t, []string{testActive, testQueued}, paused)
 
-	active, ok, err := store.Get(ctx, "active")
+	active, ok, err := store.Get(ctx, testActive)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, InternalDownloadStatusPaused, active.Status)
 	require.Equal(t, int64(40), active.Completed)
 
-	queued, ok, err := store.Get(ctx, "queued")
+	queued, ok, err := store.Get(ctx, testQueued)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, InternalDownloadStatusPaused, queued.Status)
@@ -210,9 +216,9 @@ func TestInternalDownloaderRequeuesInterruptedActiveTasks(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	store := newInternalTaskStore(kvd)
 	require.NoError(t, store.Save(ctx, internalDownloadRecord{
-		ID:        "document_1",
-		TaskID:    "document_1",
-		FileName:  "video.mp4",
+		ID:        testDocument1,
+		TaskID:    testDocument1,
+		FileName:  testVideoFile,
 		Total:     100,
 		Status:    InternalDownloadStatusActive,
 		CreatedAt: time.Now(),
@@ -221,7 +227,7 @@ func TestInternalDownloaderRequeuesInterruptedActiveTasks(t *testing.T) {
 	downloader := &internalDownloader{store: store}
 	require.NoError(t, downloader.requeueInterrupted(ctx))
 
-	record, ok, err := store.Get(ctx, "document_1")
+	record, ok, err := store.Get(ctx, testDocument1)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, InternalDownloadStatusQueued, record.Status)
@@ -239,7 +245,7 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 		PeerID:    12345,
 		MessageID: 7,
 		Peer:      &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
-		FileName:  "video.mp4",
+		FileName:  testVideoFile,
 		FileSize:  4,
 		CreatedAt: time.Now(),
 		Media: &tmedia.Media{
@@ -248,7 +254,7 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 				AccessHash:    99,
 				FileReference: []byte("ref"),
 			},
-			Name: "video.mp4",
+			Name: testVideoFile,
 			Size: 4,
 			DC:   2,
 		},
@@ -328,7 +334,7 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 		PeerID:    12345,
 		MessageID: 7,
 		Peer:      &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
-		FileName:  "video.mp4",
+		FileName:  testVideoFile,
 		FileSize:  100,
 		CreatedAt: time.Now(),
 		Media: &tmedia.Media{
@@ -337,7 +343,7 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 				AccessHash:    99,
 				FileReference: []byte("ref"),
 			},
-			Name: "video.mp4",
+			Name: testVideoFile,
 			Size: 100,
 			DC:   2,
 		},
@@ -353,6 +359,6 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, task.ID, info.ID)
 	require.Equal(t, InternalDownloadStatusQueued, info.Status)
-	require.Equal(t, "video.mp4", filepath.Base(info.Path))
+	require.Equal(t, testVideoFile, filepath.Base(info.Path))
 	require.Contains(t, info.Path, filepath.Join(internalDownloadFallbackDirName, "12345", time.Now().Format("200601")))
 }

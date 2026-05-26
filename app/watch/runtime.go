@@ -14,6 +14,7 @@ type watchRuntime struct {
 	aria2                *aria2.Client
 	aria2Tasks           *aria2.TaskStore
 	telegramErrRegulator *aria2.TelegramErrorRegulator
+	zeroSpeedMonitor     *aria2.ZeroSpeedMonitor
 	internal             *internalDownloader
 	pools                *httpdl.PoolHolder
 	outputRoot           string

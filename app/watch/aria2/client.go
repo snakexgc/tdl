@@ -18,8 +18,11 @@ import (
 
 const (
 	aria2BoolTrue          = "true"
+	aria2BoolFalse         = "false"
 	tdlAria2PieceSize      = "1024K"
 	tdlAria2TimeoutSeconds = "600"
+	tdlAria2UserAgent      = "tdl-watch-aria2"
+	aria2KeyDir            = "dir"
 )
 
 type AddURIOptions struct {
@@ -167,7 +170,7 @@ func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (st
 
 	options := map[string]any{}
 	if opts.Dir != "" {
-		options["dir"] = opts.Dir
+		options[aria2KeyDir] = opts.Dir
 	}
 	if opts.Out != "" {
 		options["out"] = opts.Out
@@ -176,8 +179,8 @@ func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (st
 	options["continue"] = aria2BoolTrue
 	options["allow-piece-length-change"] = aria2BoolTrue
 	options["allow-overwrite"] = aria2BoolTrue
-	options["auto-file-renaming"] = "false"
-	options["user-agent"] = "tdl-watch-aria2"
+	options["auto-file-renaming"] = aria2BoolFalse
+	options["user-agent"] = tdlAria2UserAgent
 	if len(options) > 0 {
 		params = append(params, options)
 	}
@@ -214,7 +217,7 @@ func (c *Client) AddTorrent(ctx context.Context, data []byte, opts AddURIOptions
 	params = append(params, base64.StdEncoding.EncodeToString(data))
 	options := map[string]any{}
 	if opts.Dir != "" {
-		options["dir"] = opts.Dir
+		options[aria2KeyDir] = opts.Dir
 	}
 	if opts.Out != "" {
 		options["out"] = opts.Out
@@ -327,7 +330,7 @@ type URI struct {
 
 type aria2URI = URI
 
-var aria2StatusKeys = []string{"gid", "status", "totalLength", "completedLength", "downloadSpeed", "dir", "errorCode", "errorMessage", "files", "bittorrent"}
+var aria2StatusKeys = []string{"gid", "status", "totalLength", "completedLength", "downloadSpeed", aria2KeyDir, "errorCode", "errorMessage", "files", "bittorrent"}
 
 func (c *Client) TellStatus(ctx context.Context, gid string) (DownloadStatus, error) {
 	raw, err := c.callRaw(ctx, "aria2.tellStatus", []any{gid, aria2StatusKeys})

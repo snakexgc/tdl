@@ -33,10 +33,10 @@ func TestChooseAssetSkipsChecksums(t *testing.T) {
 
 func TestParseApplyArgs(t *testing.T) {
 	source, target, pid, cwd, runArgs, err := parseApplyArgs([]string{
-		"--source", "new",
-		"--target", "tdl",
-		"--pid", "123",
-		"--cwd", "work",
+		flagSource, "new",
+		flagTarget, "tdl",
+		flagPID, "123",
+		flagCWD, "work",
 		"--", "bot", "--debug",
 	})
 	require.NoError(t, err)

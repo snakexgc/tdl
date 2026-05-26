@@ -14,11 +14,18 @@ import (
 	"go.etcd.io/bbolt"
 )
 
+const (
+	optPath       = "path"
+	testCaseValid = "valid"
+	testNSBar     = "bar"
+	testNSFoo     = "foo"
+)
+
 func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
 	storages := map[Driver]map[string]any{
-		DriverBolt:   {"path": t.TempDir()},
-		DriverLegacy: {"path": filepath.Join(t.TempDir(), "test.db")},
-		DriverFile:   {"path": filepath.Join(t.TempDir(), "test.json")},
+		DriverBolt:   {optPath: t.TempDir()},
+		DriverLegacy: {optPath: filepath.Join(t.TempDir(), "test.db")},
+		DriverFile:   {optPath: filepath.Join(t.TempDir(), "test.json")},
 	}
 
 	for driver, opts := range storages {
@@ -34,8 +41,8 @@ func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
 
 func forEachBoltBackedStorage(t *testing.T, fn func(driver Driver, e Storage, t *testing.T)) {
 	storages := map[Driver]map[string]any{
-		DriverBolt:   {"path": t.TempDir()},
-		DriverLegacy: {"path": filepath.Join(t.TempDir(), "test.db")},
+		DriverBolt:   {optPath: t.TempDir()},
+		DriverLegacy: {optPath: filepath.Join(t.TempDir(), "test.db")},
 	}
 
 	for driver, opts := range storages {
@@ -78,18 +85,18 @@ func TestNew(t *testing.T) {
 		wantErr bool
 	}{
 		DriverBolt: {
-			{name: "valid", opts: map[string]any{"path": t.TempDir()}, wantErr: false},
-			{name: "invalid", opts: map[string]any{"path": ""}, wantErr: true},
+			{name: testCaseValid, opts: map[string]any{optPath: t.TempDir()}, wantErr: false},
+			{name: "invalid", opts: map[string]any{optPath: ""}, wantErr: true},
 		},
 		DriverLegacy: {
-			{name: "valid", opts: map[string]any{"path": filepath.Join(t.TempDir(), "test.db")}, wantErr: false},
-			{name: "invalid", opts: map[string]any{"path": ""}, wantErr: true},
+			{name: testCaseValid, opts: map[string]any{optPath: filepath.Join(t.TempDir(), "test.db")}, wantErr: false},
+			{name: "invalid", opts: map[string]any{optPath: ""}, wantErr: true},
 		},
 		DriverFile: {
-			{name: "valid", opts: map[string]any{"path": filepath.Join(t.TempDir(), "test.json")}, wantErr: false},
+			{name: testCaseValid, opts: map[string]any{optPath: filepath.Join(t.TempDir(), "test.json")}, wantErr: false},
 		},
 		Driver("unknown"): {
-			{name: "unknown", opts: map[string]any{"path": ""}, wantErr: true},
+			{name: "unknown", opts: map[string]any{optPath: ""}, wantErr: true},
 		},
 	}
 
@@ -112,7 +119,7 @@ func TestNew(t *testing.T) {
 
 func TestStorage_Open(t *testing.T) {
 	forEachStorage(t, func(e Storage, t *testing.T) {
-		for _, ns := range []string{"foo", "bar", "foo"} {
+		for _, ns := range []string{testNSFoo, testNSBar, testNSFoo} {
 			kv, err := e.Open(ns)
 			require.NoError(t, err)
 			require.NotNil(t, kv)
@@ -121,7 +128,7 @@ func TestStorage_Open(t *testing.T) {
 }
 
 func TestStorage_Namespaces(t *testing.T) {
-	namespaces := []string{"foo", "bar", "baz"}
+	namespaces := []string{testNSFoo, testNSBar, "baz"}
 
 	forEachStorage(t, func(e Storage, t *testing.T) {
 		for _, ns := range namespaces {
@@ -143,7 +150,7 @@ func TestStorage_MigrateTo(t *testing.T) {
 			"3": []byte("4"),
 			"5": []byte("6"),
 		},
-		"bar": {
+		testNSBar: {
 			"7":  []byte("8"),
 			"9":  []byte("10"),
 			"11": []byte("12"),
@@ -174,7 +181,7 @@ func TestStorage_MigrateFrom(t *testing.T) {
 			"3": []byte("4"),
 			"5": []byte("6"),
 		},
-		"bar": {
+		testNSBar: {
 			"7":  []byte("8"),
 			"9":  []byte("10"),
 			"11": []byte("12"),
@@ -242,7 +249,7 @@ func TestBoltBackedStorage_MigrateToReturnsOwnedBytes(t *testing.T) {
 
 func TestFileStorageConcurrentSetKeepsAllKeys(t *testing.T) {
 	storage, err := New(DriverFile, map[string]any{
-		"path": filepath.Join(t.TempDir(), "test.json"),
+		optPath: filepath.Join(t.TempDir(), "test.json"),
 	})
 	require.NoError(t, err)
 	defer func() {

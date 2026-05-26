@@ -346,6 +346,9 @@ func Run(ctx context.Context, opts Options) error {
 			runtime.proxy.SetTelegramFileErrorReporter(runtime.telegramErrRegulator)
 			go runtime.telegramErrRegulator.Run(runCtx)
 
+			runtime.zeroSpeedMonitor = watcharia2.NewZeroSpeedMonitor(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			go runtime.zeroSpeedMonitor.Run(runCtx)
+
 			outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
 			if err != nil {
 				if opts.Notify != nil {

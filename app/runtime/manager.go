@@ -26,6 +26,11 @@ import (
 const (
 	moduleStopTimeout      = 10 * time.Second
 	moduleStatusNotStarted = "未启动"
+	moduleStatusRunning    = "运行中"
+	moduleIDBot            = "bot"
+	moduleIDWatch          = "watch"
+	moduleIDHTTP           = "http"
+	moduleIDForward        = "forward"
 )
 
 type Options struct {
@@ -209,7 +214,7 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 			Enabled:     true,
 			Running:     true,
 			CanToggle:   false,
-			Status:      "运行中",
+			Status:      moduleStatusRunning,
 		},
 		m.botState(cfg),
 		m.watchState(cfg),
@@ -226,13 +231,13 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 
 	id = strings.ToLower(strings.TrimSpace(id))
 	switch id {
-	case "bot":
+	case moduleIDBot:
 		next.Modules.Bot = enabled
-	case "watch":
+	case moduleIDWatch:
 		next.Modules.Watch = enabled
-	case "http":
+	case moduleIDHTTP:
 		next.Modules.HTTP = enabled
-	case "forward":
+	case moduleIDForward:
 		next.Modules.Forward = enabled
 	case "webui":
 		return webui.ModuleState{}, errors.New("webui cannot be disabled from the web panel")
@@ -245,14 +250,14 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 	}
 
 	switch id {
-	case "bot":
+	case moduleIDBot:
 		if enabled {
 			m.StartBot()
 		} else {
 			m.StopBot()
 		}
 		return m.botState(next), nil
-	case "watch":
+	case moduleIDWatch:
 		if enabled {
 			_ = m.StartWatch(ctx)
 		} else {
@@ -266,7 +271,7 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 			}
 		}
 		return m.watchState(next), nil
-	case "http":
+	case moduleIDHTTP:
 		if m.watchCtrl.Running() {
 			go func() {
 				m.StopWatch()
@@ -276,7 +281,7 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 			_ = m.StartWatch(ctx)
 		}
 		return m.httpState(next), nil
-	case "forward":
+	case moduleIDForward:
 		if enabled {
 			_ = m.StartWatch(ctx)
 		} else if !next.Modules.Watch {
@@ -448,7 +453,7 @@ func (m *Manager) botState(cfg *config.Config) webui.ModuleState {
 		status = err.Error()
 	}
 	return webui.ModuleState{
-		ID:          "bot",
+		ID:          moduleIDBot,
 		Name:        "机器人控制",
 		Description: "接收 Telegram 私聊命令，用于登录、配置、更新和下载任务管理。",
 		Enabled:     cfg != nil && cfg.Modules.Bot,
@@ -465,14 +470,14 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 	running := m.watchCtrl.Running()
 	status := moduleStatusNotStarted
 	if running && cfg != nil && cfg.Modules.Watch {
-		status = "运行中"
+		status = moduleStatusRunning
 	} else if err := m.watchCtrl.LastError(); err != nil {
 		status = "已停止：" + err.Error()
 	} else if cfg != nil && cfg.Modules.Watch {
 		status = "已启用，等待 Telegram 用户登录或启动。"
 	}
 	return webui.ModuleState{
-		ID:          "watch",
+		ID:          moduleIDWatch,
 		Name:        "监听下载",
 		Description: "监听 Telegram 表情触发，并把任务提交到当前下载器。",
 		Enabled:     cfg != nil && cfg.Modules.Watch,
@@ -490,7 +495,7 @@ func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
 	running := m.watchCtrl.Running() && cfg != nil && cfg.Modules.Watch && cfg.Modules.HTTP && strings.TrimSpace(config.HTTPListenAddr(cfg)) != ""
 	var status string
 	if running {
-		status = "运行中：" + config.HTTPListenAddr(cfg)
+		status = moduleStatusRunning + "：" + config.HTTPListenAddr(cfg)
 	} else if !enabled {
 		status = "已关闭"
 	} else if cfg != nil && !cfg.Modules.Watch {
@@ -503,7 +508,7 @@ func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
 		status = "已启用，等待启动。"
 	}
 	return webui.ModuleState{
-		ID:          "http",
+		ID:          moduleIDHTTP,
 		Name:        "HTTP 下载代理",
 		Description: "提供 /download 链接、Range 下载和内存缓冲；aria2 下载器依赖该模块获取文件流。",
 		Enabled:     enabled,
@@ -520,14 +525,14 @@ func (m *Manager) forwardState(cfg *config.Config) webui.ModuleState {
 	running := m.watchCtrl.Running()
 	status := moduleStatusNotStarted
 	if running && cfg != nil && cfg.Modules.Forward {
-		status = "运行中"
+		status = moduleStatusRunning
 	} else if err := m.watchCtrl.LastError(); err != nil {
 		status = "已停止：" + err.Error()
 	} else if cfg != nil && cfg.Modules.Forward {
 		status = "已启用，等待 Telegram 用户登录或启动。"
 	}
 	return webui.ModuleState{
-		ID:          "forward",
+		ID:          moduleIDForward,
 		Name:        "监听转发",
 		Description: "监听配置的 Telegram 对象，并按 forward.mode 转发到默认目标；频道会尝试自动监听关联评论区。",
 		Enabled:     cfg != nil && cfg.Modules.Forward,

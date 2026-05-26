@@ -13,6 +13,8 @@ import (
 	"github.com/iyear/tdl/pkg/kv"
 )
 
+const testQueueDefault = "default"
+
 func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	initWebUITestConfig(t)
 
@@ -48,13 +50,13 @@ func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	}`)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"default": {
+		testQueueDefault: {
 			downloadTaskKeyPrefix + "document_42": taskData,
 		},
 	}}
-	namespaceKV, err := engine.Open("default")
+	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
-	server := NewServer(Options{KVEngine: engine, Namespace: "default", NamespaceKV: namespaceKV})
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
 
 	result := server.downloadLinks(context.Background(), []string{"document_42"})
 	require.True(t, result.OK)
@@ -100,13 +102,13 @@ func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.
 	}`)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"default": {
+		testQueueDefault: {
 			downloadTaskKeyPrefix + "document_42": taskData,
 		},
 	}}
-	namespaceKV, err := engine.Open("default")
+	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
-	server := NewServer(Options{KVEngine: engine, Namespace: "default", NamespaceKV: namespaceKV})
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
 
 	server.markDownloadTaskDownloaded(context.Background(), "document_42")
 

@@ -16,22 +16,29 @@ import (
 	"github.com/iyear/tdl/pkg/tplfunc"
 )
 
+const (
+	testGroupName    = "Group Name"
+	testTriggerTitle = "Trigger Title"
+	testVideoFile    = "video.mp4"
+	testMediaCaption = "media caption"
+)
+
 func TestRenderDownloadDirTemplate(t *testing.T) {
 	data := downloadDirData{
 		ID:               "12345",
-		Name:             "Group Name",
-		MessageTitle:     "Trigger Title",
+		Name:             testGroupName,
+		MessageTitle:     testTriggerTitle,
 		MessageID:        "7",
 		TriggerMessageID: "6",
-		FileName:         "video.mp4",
+		FileName:         testVideoFile,
 		AlbumID:          "999",
 		Time:             time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
 	}
 
-	require.Equal(t, []string{"2026", "04", "Group Name"}, renderDownloadDir(`Y/M/G`, data))
-	require.Equal(t, []string{"202604Group Name"}, renderDownloadDir(`Y&M&G`, data))
-	require.Equal(t, []string{"202604", "Group Name", "23"}, renderDownloadDir(`Y&M\G\D`, data))
-	require.Equal(t, []string{"TriggerTitle", "Group Name"}, renderDownloadDir(`I/G`, data))
+	require.Equal(t, []string{"2026", "04", testGroupName}, renderDownloadDir(`Y/M/G`, data))
+	require.Equal(t, []string{"202604" + testGroupName}, renderDownloadDir(`Y&M&G`, data))
+	require.Equal(t, []string{"202604", testGroupName, "23"}, renderDownloadDir(`Y&M\G\D`, data))
+	require.Equal(t, []string{"TriggerTitle", testGroupName}, renderDownloadDir(`I/G`, data))
 	require.Equal(t, []string{"12345", "7", "6", "999"}, renderDownloadDir(`P/S/R/A`, data))
 	require.Equal(t, []string{"video"}, renderDownloadDir(`F`, data))
 }
@@ -55,15 +62,15 @@ func TestRenderFileNameTemplateUsesMessageTitleAndPeerName(t *testing.T) {
 
 	got, err := w.renderFileName(
 		12345,
-		"Group Name",
+		testGroupName,
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
-		&tg.Message{ID: 8, Date: 1770000000, Message: "media caption"},
-		&tg.Message{ID: 7, Date: 1770000000, Message: "Trigger Title"},
-		&tmedia.Media{Name: "video.mp4", Size: 1024},
+		&tg.Message{ID: 8, Date: 1770000000, Message: testMediaCaption},
+		&tg.Message{ID: 7, Date: 1770000000, Message: testTriggerTitle},
+		&tmedia.Media{Name: testVideoFile, Size: 1024},
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, "Group Name-TriggerTitle-video.mp4", got)
+	require.Equal(t, testGroupName+"-TriggerTitle-video.mp4", got)
 }
 
 func TestRenderFileNameDedupIWhenFContainsI(t *testing.T) {
@@ -75,15 +82,15 @@ func TestRenderFileNameDedupIWhenFContainsI(t *testing.T) {
 	// File stem "HelloWorld" equals sanitized I "HelloWorld" → I is omitted, double dash collapsed
 	got, err := w.renderFileName(
 		12345,
-		"Group Name",
+		testGroupName,
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
-		&tg.Message{ID: 8, Date: 1770000000, Message: "media caption"},
+		&tg.Message{ID: 8, Date: 1770000000, Message: testMediaCaption},
 		&tg.Message{ID: 7, Date: 1770000000, Message: "Hello World"},
 		&tmedia.Media{Name: "HelloWorld.mp4", Size: 1024},
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, "Group Name-HelloWorld.mp4", got)
+	require.Equal(t, testGroupName+"-HelloWorld.mp4", got)
 }
 
 func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
@@ -97,7 +104,7 @@ func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
 		12345,
 		"FullGroupName",
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
-		&tg.Message{ID: 8, Date: 1770000000, Message: "media caption"},
+		&tg.Message{ID: 8, Date: 1770000000, Message: testMediaCaption},
 		&tg.Message{ID: 7, Date: 1770000000, Message: strings.Repeat("甲", 80) + strings.Repeat("B", 80)},
 		&tmedia.Media{Name: "video-file.mp4", Size: 1024},
 	)
@@ -118,10 +125,10 @@ func TestRenderFileNameLengthLimitFallsBackWhenNoMessageTitleAlias(t *testing.T)
 
 	got, err := w.renderFileName(
 		12345,
-		"Group Name",
+		testGroupName,
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
-		&tg.Message{ID: 8, Date: 1770000000, Message: "media caption"},
-		&tg.Message{ID: 7, Date: 1770000000, Message: "Trigger Title"},
+		&tg.Message{ID: 8, Date: 1770000000, Message: testMediaCaption},
+		&tg.Message{ID: 7, Date: 1770000000, Message: testTriggerTitle},
 		&tmedia.Media{Name: strings.Repeat("a", 80) + ".mp4", Size: 1024},
 	)
 
@@ -149,12 +156,12 @@ func TestJoinTargetPathKeepsTargetFilesystemStyle(t *testing.T) {
 func TestResolveTargetPathUsesTargetStyle(t *testing.T) {
 	dir, out, full := resolveTargetPath(`D:\Download\202604`, `sub/video.mp4`)
 	require.Equal(t, `D:\Download\202604\sub`, dir)
-	require.Equal(t, "video.mp4", out)
+	require.Equal(t, testVideoFile, out)
 	require.Equal(t, `D:\Download\202604\sub\video.mp4`, full)
 
 	dir, out, full = resolveTargetPath(`/root/download/202604`, `sub\video.mp4`)
 	require.Equal(t, `/root/download/202604/sub`, dir)
-	require.Equal(t, "video.mp4", out)
+	require.Equal(t, testVideoFile, out)
 	require.Equal(t, `/root/download/202604/sub/video.mp4`, full)
 }
 

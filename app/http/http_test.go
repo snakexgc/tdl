@@ -24,12 +24,20 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
+const (
+	testTaskID     = "task-1"
+	testListenAddr = "127.0.0.1:0"
+	testPublicURL  = "http://127.0.0.1:8080"
+	testFileName   = "file.bin"
+	testFileNameA  = "a.bin"
+)
+
 func TestBuildDownloadURL(t *testing.T) {
 	t.Parallel()
 
-	got, err := buildDownloadURL("http://127.0.0.1:8080/base", "task-1")
+	got, err := buildDownloadURL(testPublicURL+"/base", testTaskID)
 	require.NoError(t, err)
-	require.Equal(t, "http://127.0.0.1:8080/base/download/task-1", got)
+	require.Equal(t, testPublicURL+"/base/download/"+testTaskID, got)
 }
 
 func TestTelegramFileMetricsTrackActiveRequests(t *testing.T) {
@@ -58,10 +66,10 @@ func TestTaskStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	store := newTaskStore(nil)
-	task := &downloadTask{ID: "task-1", FileName: "a.bin"}
+	task := &downloadTask{ID: testTaskID, FileName: testFileNameA}
 	require.NoError(t, store.Add(context.Background(), task))
 
-	got, ok, err := store.Get(context.Background(), "task-1")
+	got, ok, err := store.Get(context.Background(), testTaskID)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, task, got)
@@ -71,8 +79,8 @@ func TestDownloadTaskIDStableForMedia(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        "127.0.0.1:0",
-		PublicBaseURL: "http://127.0.0.1:8080",
+		Listen:        testListenAddr,
+		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 	media := &tmedia.Media{
 		InputFileLoc: &tg.InputDocumentFileLocation{
@@ -80,7 +88,7 @@ func TestDownloadTaskIDStableForMedia(t *testing.T) {
 			AccessHash:    67890,
 			FileReference: []byte("ref"),
 		},
-		Name: "file.bin",
+		Name: testFileName,
 		Size: 10,
 		DC:   2,
 	}
@@ -96,7 +104,7 @@ func TestDownloadTaskIDStableForMedia(t *testing.T) {
 
 	u, err := proxy.BuildURL(first.ID)
 	require.NoError(t, err)
-	require.Equal(t, "http://127.0.0.1:8080/download/document_12345", u)
+	require.Equal(t, testPublicURL+"/download/document_12345", u)
 }
 
 func TestTaskStoreRestoresPersistentTask(t *testing.T) {
@@ -158,7 +166,7 @@ func TestTaskStoreExpiresPersistentTask(t *testing.T) {
 		PeerID:    100,
 		MessageID: 200,
 		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
-		FileName:  "file.bin",
+		FileName:  testFileName,
 		FileSize:  10,
 		CreatedAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
 		Media: &tmedia.Media{
@@ -167,7 +175,7 @@ func TestTaskStoreExpiresPersistentTask(t *testing.T) {
 				AccessHash:    99,
 				FileReference: []byte("ref"),
 			},
-			Name: "file.bin",
+			Name: testFileName,
 			Size: 10,
 			DC:   4,
 			Date: 123,
@@ -195,7 +203,7 @@ func TestTaskStoreKeepsPersistentTaskWhenTTLDisabled(t *testing.T) {
 		PeerID:    100,
 		MessageID: 200,
 		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
-		FileName:  "file.bin",
+		FileName:  testFileName,
 		FileSize:  10,
 		CreatedAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
 		Media: &tmedia.Media{
@@ -204,7 +212,7 @@ func TestTaskStoreKeepsPersistentTaskWhenTTLDisabled(t *testing.T) {
 				AccessHash:    99,
 				FileReference: []byte("ref"),
 			},
-			Name: "file.bin",
+			Name: testFileName,
 			Size: 10,
 			DC:   4,
 			Date: 123,
@@ -226,8 +234,8 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        "127.0.0.1:0",
-		PublicBaseURL: "http://127.0.0.1:8080",
+		Listen:        testListenAddr,
+		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	payload := []byte("0123456789")
@@ -237,14 +245,14 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	}
 
 	task := &downloadTask{
-		ID:       "task-1",
-		FileName: "file.bin",
+		ID:       testTaskID,
+		FileName: testFileName,
 		FileSize: int64(len(payload)),
-		Media:    &tmedia.Media{Name: "file.bin", Size: int64(len(payload))},
+		Media:    &tmedia.Media{Name: testFileName, Size: int64(len(payload))},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
-	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
 	rec := httptest.NewRecorder()
 	proxy.handleDownload(rec, req)
 	res := rec.Result()
@@ -255,7 +263,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	require.Equal(t, payload, body)
 	require.Equal(t, "bytes", res.Header.Get("Accept-Ranges"))
 
-	rangeReq := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
+	rangeReq := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
 	rangeReq.Header.Set("Range", "bytes=2-5")
 	rangeRec := httptest.NewRecorder()
 	proxy.handleDownload(rangeRec, rangeReq)
@@ -272,11 +280,11 @@ func TestDownloadHandlerMissingTask(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        "127.0.0.1:0",
-		PublicBaseURL: "http://127.0.0.1:8080",
+		Listen:        testListenAddr,
+		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
 	rec := httptest.NewRecorder()
 	proxy.handleDownload(rec, req)
 	require.Equal(t, http.StatusNotFound, rec.Result().StatusCode)
@@ -286,19 +294,19 @@ func TestDownloadHandlerInvalidRange(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        "127.0.0.1:0",
-		PublicBaseURL: "http://127.0.0.1:8080",
+		Listen:        testListenAddr,
+		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	task := &downloadTask{
-		ID:       "task-1",
-		FileName: "file.bin",
+		ID:       testTaskID,
+		FileName: testFileName,
 		FileSize: 10,
-		Media:    &tmedia.Media{Name: "file.bin", Size: 10},
+		Media:    &tmedia.Media{Name: testFileName, Size: 10},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
-	req := httptest.NewRequest(http.MethodGet, "/download/task-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
 	req.Header.Set("Range", "bytes=20-30")
 	rec := httptest.NewRecorder()
 	proxy.handleDownload(rec, req)
@@ -310,8 +318,8 @@ func TestDownloadHandlerHead(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        "127.0.0.1:0",
-		PublicBaseURL: "http://127.0.0.1:8080",
+		Listen:        testListenAddr,
+		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	called := false
@@ -321,14 +329,14 @@ func TestDownloadHandlerHead(t *testing.T) {
 	}
 
 	task := &downloadTask{
-		ID:       "task-1",
-		FileName: "file.bin",
+		ID:       testTaskID,
+		FileName: testFileName,
 		FileSize: 10,
-		Media:    &tmedia.Media{Name: "file.bin", Size: 10},
+		Media:    &tmedia.Media{Name: testFileName, Size: 10},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
-	req := httptest.NewRequest(http.MethodHead, "/download/task-1", nil)
+	req := httptest.NewRequest(http.MethodHead, "/download/"+testTaskID, nil)
 	rec := httptest.NewRecorder()
 	proxy.handleDownload(rec, req)
 
@@ -483,7 +491,7 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 		DC:           2,
 	}
 	pool := testDownloadPool{client: client}
-	lease, err := transfer.NewLimiter(1, 2, bufferSlots).Acquire(context.Background(), "task-1")
+	lease, err := transfer.NewLimiter(1, 2, bufferSlots).Acquire(context.Background(), testTaskID)
 	require.NoError(t, err)
 	defer lease.Release()
 
@@ -530,8 +538,8 @@ func TestDownloadSessionExpiresReleasedMemoryBuffer(t *testing.T) {
 		Size:         int64(len(payload)),
 		DC:           2,
 	}
-	session := newDownloadSession("task-1", &telegramMediaSource{media: media}, pools, int64(downloadStreamPartSize), 25*time.Millisecond, nil, nil)
-	lease, err := transfer.NewLimiter(1, 1, 1).Acquire(context.Background(), "task-1")
+	session := newDownloadSession(testTaskID, &telegramMediaSource{media: media}, pools, int64(downloadStreamPartSize), 25*time.Millisecond, nil, nil)
+	lease, err := transfer.NewLimiter(1, 1, 1).Acquire(context.Background(), testTaskID)
 	require.NoError(t, err)
 	defer lease.Release()
 
@@ -562,7 +570,7 @@ func TestDownloadProxyUsesGlobalMemoryBufferLimit(t *testing.T) {
 		},
 	}, 2, 1, pools, nil, nil)
 	taskOne := &downloadTask{
-		ID:       "task-1",
+		ID:       testTaskID,
 		FileName: "one.bin",
 		FileSize: int64(len(payload)),
 		Media: &tmedia.Media{
@@ -657,8 +665,8 @@ func TestDownloadSessionDeduplicatesConcurrentRangeChunk(t *testing.T) {
 		RangeConnections: 2,
 	}, 1, 2, pools, nil, nil)
 	task := &downloadTask{
-		ID:       "task-1",
-		FileName: "file.bin",
+		ID:       testTaskID,
+		FileName: testFileName,
 		FileSize: int64(len(payload)),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{},
@@ -899,7 +907,7 @@ var _ dcpool.Pool = testDownloadPool{}
 func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *transfer.Lease {
 	t.Helper()
 
-	lease, err := transfer.NewLimiter(1, maxWorkers).Acquire(context.Background(), "task-1")
+	lease, err := transfer.NewLimiter(1, maxWorkers).Acquire(context.Background(), testTaskID)
 	require.NoError(t, err)
 	return lease
 }

@@ -55,6 +55,13 @@ const (
 
 	webUICookieName = "tdl_webui_session"
 	webUISessionTTL = 24 * time.Hour
+
+	fieldUsingDefaultCredentials = "using_default_credentials"
+	fieldNamespace               = "namespace"
+	fieldDeleted                 = "deleted"
+	valueTrue                    = "true"
+	fieldMessage                 = "message"
+	fieldDefault                 = "default"
 )
 
 type Options struct {
@@ -310,7 +317,7 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		"authenticated": true,
 		"user":          user,
 		"webui": map[string]any{
-			"using_default_credentials": config.UsesDefaultWebUICredentials(cfg),
+			fieldUsingDefaultCredentials: config.UsesDefaultWebUICredentials(cfg),
 		},
 	})
 }
@@ -338,8 +345,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                        true,
-		"using_default_credentials": config.UsesDefaultWebUICredentials(cfg),
+		"ok":                         true,
+		fieldUsingDefaultCredentials: config.UsesDefaultWebUICredentials(cfg),
 	})
 }
 
@@ -531,14 +538,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := config.Get()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"namespace":     s.namespace(),
+		fieldNamespace:  s.namespace(),
 		"watch_running": s.watchRunning(),
 		"webui": map[string]any{
-			"listen":                    config.WebUIListenAddr(cfg),
-			"address":                   cfg.WebUI.Address,
-			"port":                      cfg.WebUI.Port,
-			"user":                      cfg.WebUI.Username,
-			"using_default_credentials": config.UsesDefaultWebUICredentials(cfg),
+			"listen":                     config.WebUIListenAddr(cfg),
+			"address":                    cfg.WebUI.Address,
+			"port":                       cfg.WebUI.Port,
+			"user":                       cfg.WebUI.Username,
+			fieldUsingDefaultCredentials: config.UsesDefaultWebUICredentials(cfg),
 		},
 		"aria2": map[string]any{
 			"rpc_url": cfg.Aria2.RPCURL,
@@ -776,7 +783,7 @@ func (s *Server) handleKVLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldDeleted: deleted})
 }
 
 func (s *Server) handleKVActions(w http.ResponseWriter, r *http.Request) {
@@ -1445,7 +1452,7 @@ func markDownloadTaskDataDownloaded(data []byte, taskID string) ([]byte, bool, e
 		}
 	}
 
-	raw["downloaded"] = json.RawMessage("true")
+	raw["downloaded"] = json.RawMessage(valueTrue)
 	if idRaw, ok := raw["id"]; !ok || string(idRaw) == `""` || strings.TrimSpace(string(idRaw)) == "" {
 		idData, err := json.Marshal(taskID)
 		if err != nil {
@@ -1625,9 +1632,9 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 
 func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string, connections int) (string, error) {
 	options := map[string]any{
-		"continue":                  "true",
-		"allow-piece-length-change": "true",
-		"allow-overwrite":           "true",
+		"continue":                  valueTrue,
+		"allow-piece-length-change": valueTrue,
+		"allow-overwrite":           valueTrue,
 		"auto-file-renaming":        "false",
 		"user-agent":                "tdl-webui-aria2",
 	}
@@ -1719,7 +1726,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Get()
 	sessions, sessionsErr := s.listUserSessions(r.Context())
 	resp := map[string]any{
-		"namespace":     s.namespace(),
+		fieldNamespace:  s.namespace(),
 		"watch_running": s.watchRunning(),
 		"allowed_users": cfg.Bot.AllowedUsers,
 		"sessions":      sessions,
@@ -1780,9 +1787,9 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Get()
 	if cfg != nil && cfg.Namespace == namespace {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":        true,
-			"namespace": namespace,
-			"message":   "当前已经是该用户。",
+			"ok":           true,
+			fieldNamespace: namespace,
+			fieldMessage:   "当前已经是该用户。",
 		})
 		return
 	}
@@ -1810,9 +1817,9 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"namespace": namespace,
-		"message":   "用户已切换，正在重启以加载该用户的数据。",
+		"ok":           true,
+		fieldNamespace: namespace,
+		fieldMessage:   "用户已切换，正在重启以加载该用户的数据。",
 	})
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -1911,10 +1918,10 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"namespace": namespace,
-		"deleted":   deleted,
-		"message":   "用户登录数据已删除。",
+		"ok":           true,
+		fieldNamespace: namespace,
+		fieldDeleted:   deleted,
+		fieldMessage:   "用户登录数据已删除。",
 	})
 }
 
@@ -2091,9 +2098,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			s.opts.AfterConfigSave(next)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":      true,
-			"config":  publicConfig(next),
-			"message": "配置已保存。模块开关会立即生效；监听地址、命名空间、Bot Token 等基础连接参数建议重启后再使用。",
+			"ok":         true,
+			"config":     publicConfig(next),
+			fieldMessage: "配置已保存。模块开关会立即生效；监听地址、命名空间、Bot Token 等基础连接参数建议重启后再使用。",
 		})
 	default:
 		methodNotAllowed(w, "GET, PATCH")
@@ -2161,9 +2168,9 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"update":  info,
-		"message": fmt.Sprintf("更新包已下载，准备更新到 %s 并重启。", info.LatestVersion),
+		"ok":         true,
+		"update":     info,
+		fieldMessage: fmt.Sprintf("更新包已下载，准备更新到 %s 并重启。", info.LatestVersion),
 	})
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -2180,7 +2187,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("reboot is not available in this mode"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "正在重启 tdl"})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldMessage: "正在重启 tdl"})
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		s.opts.RequestReboot()
@@ -2685,7 +2692,7 @@ func (s *Server) namespace() string {
 	if cfg != nil {
 		return cfg.Namespace
 	}
-	return "default"
+	return fieldDefault
 }
 
 func (s *Server) internalDownloadController() *watch.InternalDownloadController {

@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	formatDateTime = "2006-01-02 15:04:05"
+	formatRFC1123  = "Mon, 02 Jan 2006 15:04:05 MST"
+)
+
 func TestNow(t *testing.T) {
 	b := strings.Builder{}
 	err := template.Must(template.New("test").
@@ -77,12 +82,12 @@ func TestCustomFormat(t *testing.T) {
 		Format string
 		want   string
 	}{
-		{name: "formatDate1", Unix: 0, Format: "2006-01-02 15:04:05", want: "1970-01-01 00:00:00"},
-		{name: "formatDate2", Unix: 1, Format: "2006-01-02 15:04:05", want: "1970-01-01 00:00:01"},
-		{name: "formatDate3", Unix: 1000000000, Format: "2006-01-02 15:04:05", want: "2001-09-09 01:46:40"},
-		{name: "formatDate4", Unix: 0, Format: "Mon, 02 Jan 2006 15:04:05 MST", want: "Thu, 01 Jan 1970 00:00:00 UTC"},
-		{name: "formatDate5", Unix: 1, Format: "Mon, 02 Jan 2006 15:04:05 MST", want: "Thu, 01 Jan 1970 00:00:01 UTC"},
-		{name: "formatDate6", Unix: 1000000000, Format: "Mon, 02 Jan 2006 15:04:05 MST", want: "Sun, 09 Sep 2001 01:46:40 UTC"},
+		{name: "formatDate1", Unix: 0, Format: formatDateTime, want: "1970-01-01 00:00:00"},
+		{name: "formatDate2", Unix: 1, Format: formatDateTime, want: "1970-01-01 00:00:01"},
+		{name: "formatDate3", Unix: 1000000000, Format: formatDateTime, want: "2001-09-09 01:46:40"},
+		{name: "formatDate4", Unix: 0, Format: formatRFC1123, want: "Thu, 01 Jan 1970 00:00:00 UTC"},
+		{name: "formatDate5", Unix: 1, Format: formatRFC1123, want: "Thu, 01 Jan 1970 00:00:01 UTC"},
+		{name: "formatDate6", Unix: 1000000000, Format: formatRFC1123, want: "Sun, 09 Sep 2001 01:46:40 UTC"},
 		{name: "formatDate7", Unix: 0, Format: "20060102150405", want: "19700101000000"},
 		{name: "formatDate8", Unix: 1, Format: "20060102150405", want: "19700101000001"},
 		{name: "formatDate9", Unix: 1000000000, Format: "20060102150405", want: "20010909014640"},

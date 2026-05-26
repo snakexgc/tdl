@@ -23,6 +23,12 @@ var webUITestConfigOnce sync.Once
 const (
 	webUITestUsername = "admin"
 	webUITestPassword = "secret"
+
+	testDocumentID  = "document_1"
+	testUserAlice   = "Alice"
+	testUserBob     = "Bob"
+	testGID         = "gid-1"
+	testTokenSecret = "token:secret"
 )
 
 func initWebUITestConfig(t *testing.T) {
@@ -213,31 +219,31 @@ func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        "document_1",
+		ID:        testDocumentID,
 		FileName:  "file.bin",
 		FileSize:  123,
 		CreatedAt: createdAt,
 	})
 	require.NoError(t, err)
 	indexData, err := json.Marshal(map[string]time.Time{
-		"document_1": createdAt,
+		testDocumentID: createdAt,
 	})
 	require.NoError(t, err)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"default": {
-			downloadTaskIndexKey:                 indexData,
-			downloadTaskKeyPrefix + "document_1": taskData,
+		testQueueDefault: {
+			downloadTaskIndexKey:                   indexData,
+			downloadTaskKeyPrefix + testDocumentID: taskData,
 		},
 	}}
-	server := NewServer(Options{KVEngine: engine, Namespace: "default"})
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault})
 
 	items, statusErr, err := server.listDownloadLinks(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, statusErr)
 	require.Len(t, items, 1)
-	require.Equal(t, "document_1", items[0].ID)
-	require.Equal(t, "http://127.0.0.1:22334/download/document_1", items[0].URL)
+	require.Equal(t, testDocumentID, items[0].ID)
+	require.Equal(t, "http://127.0.0.1:22334/download/"+testDocumentID, items[0].URL)
 	require.Equal(t, createdAt, items[0].CreatedAt)
 }
 
@@ -246,7 +252,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        "document_1",
+		ID:        testDocumentID,
 		FileName:  "video.mp4",
 		FileSize:  100,
 		CreatedAt: createdAt,
@@ -254,8 +260,8 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 	require.NoError(t, err)
 	oldRecordData, err := json.Marshal(aria2TaskRecord{
 		GID:         "old-gid",
-		TaskID:      "document_1",
-		DownloadURL: "http://127.0.0.1:22334/download/document_1",
+		TaskID:      testDocumentID,
+		DownloadURL: "http://127.0.0.1:22334/download/" + testDocumentID,
 		CreatedAt:   createdAt,
 		Status:      "error",
 		Error:       "EOF",
@@ -270,7 +276,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch req.Method {
 		case "aria2.tellStopped":
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":[{"gid":"new-gid","status":"complete","totalLength":"100","completedLength":"100","files":[{"length":"100","completedLength":"100","uris":[{"uri":"http://127.0.0.1:22334/download/document_1"}]}]},{"gid":"foreign-gid","status":"complete","totalLength":"100","completedLength":"100","files":[{"uris":[{"uri":"http://127.0.0.1:22334/download/document_2"}]}]}]}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":[{"gid":"new-gid","status":"complete","totalLength":"100","completedLength":"100","files":[{"length":"100","completedLength":"100","uris":[{"uri":"http://127.0.0.1:22334/download/` + testDocumentID + `"}]}]},{"gid":"foreign-gid","status":"complete","totalLength":"100","completedLength":"100","files":[{"uris":[{"uri":"http://127.0.0.1:22334/download/document_2"}]}]}]}`))
 		default:
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":[]}`))
 		}
@@ -288,14 +294,14 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 	}()
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"default": {
-			downloadTaskKeyPrefix + "document_1": taskData,
-			aria2TaskKeyPrefix + "old-gid":       oldRecordData,
+		testQueueDefault: {
+			downloadTaskKeyPrefix + testDocumentID: taskData,
+			aria2TaskKeyPrefix + "old-gid":         oldRecordData,
 		},
 	}}
-	namespaceKV, err := engine.Open("default")
+	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
-	server := NewServer(Options{KVEngine: engine, Namespace: "default", NamespaceKV: namespaceKV})
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
 
 	items, statusErr, err := server.listDownloadLinks(context.Background())
 	require.NoError(t, err)
@@ -318,12 +324,12 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 	require.NoError(t, err)
 	var saved aria2TaskRecord
 	require.NoError(t, json.Unmarshal(data, &saved))
-	require.Equal(t, "document_1", saved.TaskID)
-	require.Equal(t, "http://127.0.0.1:22334/download/document_1", saved.DownloadURL)
+	require.Equal(t, testDocumentID, saved.TaskID)
+	require.Equal(t, "http://127.0.0.1:22334/download/"+testDocumentID, saved.DownloadURL)
 	_, err = namespaceKV.Get(context.Background(), aria2TaskKeyPrefix+"foreign-gid")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	data, err = namespaceKV.Get(context.Background(), downloadTaskKeyPrefix+"document_1")
+	data, err = namespaceKV.Get(context.Background(), downloadTaskKeyPrefix+testDocumentID)
 	require.NoError(t, err)
 	var task persistentDownloadTask
 	require.NoError(t, json.Unmarshal(data, &task))
@@ -334,29 +340,29 @@ func TestListUserSessionsOnlyReturnsNamespacesWithSession(t *testing.T) {
 	initWebUITestConfig(t)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"Alice": {
-			"session": []byte("alice-session"),
+		testUserAlice: {
+			userSessionKey: []byte("alice-session"),
 		},
-		"Bob": {
-			"session": []byte("bob-session"),
+		testUserBob: {
+			userSessionKey: []byte("bob-session"),
 		},
 		"Cache": {
 			"watch.download.document_1": []byte("{}"),
 		},
 		"Bob1": {
-			"session": []byte("invalid-name-session"),
+			userSessionKey: []byte("invalid-name-session"),
 		},
 		"Empty": {
-			"session": []byte{},
+			userSessionKey: []byte{},
 		},
 	}}
-	server := NewServer(Options{KVEngine: engine, Namespace: "Bob"})
+	server := NewServer(Options{KVEngine: engine, Namespace: testUserBob})
 
 	sessions, err := server.listUserSessions(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []userSessionOption{
-		{Namespace: "Bob", Current: true},
-		{Namespace: "Alice"},
+		{Namespace: testUserBob, Current: true},
+		{Namespace: testUserAlice},
 	}, sessions)
 }
 
@@ -364,67 +370,67 @@ func TestDeleteUserSessionRemovesLoginKeysOnly(t *testing.T) {
 	initWebUITestConfig(t)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"Alice": {
+		testUserAlice: {
 			userSessionKey:                   []byte("alice-session"),
 			userAppKey:                       []byte("desktop"),
 			downloadTaskKeyPrefix + "item_1": []byte("{}"),
 		},
-		"Bob": {
+		testUserBob: {
 			userSessionKey: []byte("bob-session"),
 		},
 	}}
-	server := NewServer(Options{KVEngine: engine, Namespace: "Bob"})
+	server := NewServer(Options{KVEngine: engine, Namespace: testUserBob})
 
-	deleted, err := server.deleteUserSession(context.Background(), "Alice")
+	deleted, err := server.deleteUserSession(context.Background(), testUserAlice)
 	require.NoError(t, err)
 	require.Equal(t, 2, deleted)
-	require.NotContains(t, engine.meta["Alice"], userSessionKey)
-	require.NotContains(t, engine.meta["Alice"], userAppKey)
-	require.Contains(t, engine.meta["Alice"], downloadTaskKeyPrefix+"item_1")
+	require.NotContains(t, engine.meta[testUserAlice], userSessionKey)
+	require.NotContains(t, engine.meta[testUserAlice], userAppKey)
+	require.Contains(t, engine.meta[testUserAlice], downloadTaskKeyPrefix+"item_1")
 
 	sessions, err := server.listUserSessions(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []userSessionOption{{Namespace: "Bob", Current: true}}, sessions)
+	require.Equal(t, []userSessionOption{{Namespace: testUserBob, Current: true}}, sessions)
 }
 
 func TestHandleUserDeleteRejectsCurrentUser(t *testing.T) {
 	initWebUITestConfig(t)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"Bob": {
+		testUserBob: {
 			userSessionKey: []byte("bob-session"),
 		},
 	}}
-	server := NewServer(Options{KVEngine: engine, Namespace: "Bob"})
-	req := httptest.NewRequest(http.MethodPost, "/api/user/delete", strings.NewReader(`{"namespace":"Bob"}`))
+	server := NewServer(Options{KVEngine: engine, Namespace: testUserBob})
+	req := httptest.NewRequest(http.MethodPost, "/api/user/delete", strings.NewReader(`{"namespace":"`+testUserBob+`"}`))
 	rec := httptest.NewRecorder()
 
 	server.handleUserDelete(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Contains(t, engine.meta["Bob"], userSessionKey)
+	require.Contains(t, engine.meta[testUserBob], userSessionKey)
 }
 
 func TestDeleteDownloadLinkRefusesDownloadIndexKey(t *testing.T) {
 	initWebUITestConfig(t)
 
 	engine := &fakeWebUIKVEngine{meta: kv.Meta{
-		"default": {
+		testQueueDefault: {
 			downloadTaskIndexKey: []byte("{}"),
 		},
 	}}
-	namespaceKV, err := engine.Open("default")
+	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
 	server := NewServer(Options{
 		KVEngine:    engine,
-		Namespace:   "default",
+		Namespace:   testQueueDefault,
 		NamespaceKV: namespaceKV,
 	})
 
 	deleted, err := server.deleteDownloadLink(context.Background(), "index")
 	require.Error(t, err)
 	require.Zero(t, deleted)
-	require.Contains(t, engine.meta["default"], downloadTaskIndexKey)
+	require.Contains(t, engine.meta[testQueueDefault], downloadTaskIndexKey)
 }
 
 func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
@@ -435,19 +441,19 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":"gid-1"}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":"` + testGID + `"}`))
 	}))
 	defer srv.Close()
 
 	gid, err := addAria2URI(context.Background(), config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 5,
-	}, "http://127.0.0.1:22334/download/document_1", "video.mp4", 1)
+	}, "http://127.0.0.1:22334/download/"+testDocumentID, "video.mp4", 1)
 	require.NoError(t, err)
-	require.Equal(t, "gid-1", gid)
+	require.Equal(t, testGID, gid)
 	require.Equal(t, "aria2.addUri", reqBody.Method)
 	require.Len(t, reqBody.Params, 2)
-	require.Equal(t, []any{"http://127.0.0.1:22334/download/document_1"}, reqBody.Params[0])
+	require.Equal(t, []any{"http://127.0.0.1:22334/download/" + testDocumentID}, reqBody.Params[0])
 	require.Equal(t, map[string]any{
 		"out":                       "video.mp4",
 		"split":                     "1",
@@ -455,9 +461,9 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 		"min-split-size":            "1024K",
 		"piece-length":              "1024K",
 		"timeout":                   "600",
-		"continue":                  "true",
-		"allow-piece-length-change": "true",
-		"allow-overwrite":           "true",
+		"continue":                  valueTrue,
+		"allow-piece-length-change": valueTrue,
+		"allow-overwrite":           valueTrue,
 		"auto-file-renaming":        "false",
 		"user-agent":                "tdl-webui-aria2",
 	}, reqBody.Params[1])
@@ -471,14 +477,14 @@ func TestAddAria2URISubmitsClientRangeConnections(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":"gid-1"}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-webui","result":"` + testGID + `"}`))
 	}))
 	defer srv.Close()
 
 	_, err := addAria2URI(context.Background(), config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 5,
-	}, "http://127.0.0.1:22334/download/document_1", "video.mp4", 4)
+	}, "http://127.0.0.1:22334/download/"+testDocumentID, "video.mp4", 4)
 	require.NoError(t, err)
 	options := reqBody.Params[1].(map[string]any)
 	require.Equal(t, "4", options["split"])
@@ -621,8 +627,8 @@ func TestInjectAria2SecretAddsTokenToMulticallInnerMethods(t *testing.T) {
 		"id":"retry",
 		"method":"system.multicall",
 		"params":[[
-			{"methodName":"aria2.tellStatus","params":["gid-1"]},
-			{"methodName":"aria2.getOption","params":["gid-1"]},
+			{"methodName":"aria2.tellStatus","params":["` + testGID + `"]},
+			{"methodName":"aria2.getOption","params":["` + testGID + `"]},
 			{"methodName":"system.listMethods","params":[]}
 		]]
 	}`)
@@ -640,11 +646,11 @@ func TestInjectAria2SecretAddsTokenToMulticallInnerMethods(t *testing.T) {
 
 	tellStatus := calls[0].(map[string]any)
 	require.Equal(t, "aria2.tellStatus", tellStatus["methodName"])
-	require.Equal(t, []any{"token:secret", "gid-1"}, tellStatus["params"])
+	require.Equal(t, []any{testTokenSecret, testGID}, tellStatus["params"])
 
 	getOption := calls[1].(map[string]any)
 	require.Equal(t, "aria2.getOption", getOption["methodName"])
-	require.Equal(t, []any{"token:secret", "gid-1"}, getOption["params"])
+	require.Equal(t, []any{testTokenSecret, testGID}, getOption["params"])
 
 	systemCall := calls[2].(map[string]any)
 	require.Equal(t, "system.listMethods", systemCall["methodName"])
@@ -664,14 +670,14 @@ func TestInjectAria2SecretDoesNotAddTokenToSystemMethod(t *testing.T) {
 }
 
 func TestInjectAria2SecretDoesNotDuplicateExistingToken(t *testing.T) {
-	body := []byte(`{"jsonrpc":"2.0","id":"status","method":"aria2.tellStatus","params":["token:secret","gid-1"]}`)
+	body := []byte(`{"jsonrpc":"2.0","id":"status","method":"aria2.tellStatus","params":["token:secret","` + testGID + `"]}`)
 
 	next, err := injectAria2Secret(body, "secret")
 	require.NoError(t, err)
 
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(next, &decoded))
-	require.Equal(t, []any{"token:secret", "gid-1"}, decoded["params"])
+	require.Equal(t, []any{"token:secret", testGID}, decoded["params"])
 }
 
 type fakeWebUIKVEngine struct {

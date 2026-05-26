@@ -34,6 +34,10 @@ const (
 	runtimeDocker     = "docker"
 	dockerVersionMark = "-origin-"
 	dockerUpdateCmd   = "docker compose pull && docker compose up -d"
+	flagSource        = "--source"
+	flagTarget        = "--target"
+	flagPID           = "--pid"
+	flagCWD           = "--cwd"
 )
 
 type Info struct {
@@ -183,10 +187,10 @@ func StartApply(plan Plan, targetPath string, args []string) error {
 
 	helperArgs := []string{
 		"__apply-update",
-		"--source", plan.SourcePath,
-		"--target", targetPath,
-		"--pid", fmt.Sprintf("%d", os.Getpid()),
-		"--cwd", cwd,
+		flagSource, plan.SourcePath,
+		flagTarget, targetPath,
+		flagPID, fmt.Sprintf("%d", os.Getpid()),
+		flagCWD, cwd,
 		"--",
 	}
 	helperArgs = append(helperArgs, args...)
@@ -628,15 +632,15 @@ func parseApplyArgs(args []string) (source, target string, pid int32, cwd string
 		}
 		value := args[i+1]
 		switch args[i] {
-		case "--source":
+		case flagSource:
 			source = value
-		case "--target":
+		case flagTarget:
 			target = value
-		case "--pid":
+		case flagPID:
 			var parsed int
 			_, err = fmt.Sscanf(value, "%d", &parsed)
 			pid = int32(parsed)
-		case "--cwd":
+		case flagCWD:
 			cwd = value
 		default:
 			err = fmt.Errorf("unknown update helper argument %q", args[i])

@@ -10,6 +10,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	testGIDRegisteredActive = "registered-active"
+)
+
 func TestSuspendTDLAria2TasksForReconnectOnlyPausesOwnedTasks(t *testing.T) {
 	t.Parallel()
 
@@ -17,28 +21,28 @@ func TestSuspendTDLAria2TasksForReconnectOnlyPausesOwnedTasks(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	store := newAria2TaskStore(kvd)
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
-		GID:         "registered-active",
-		TaskID:      "document_1",
+		GID:         testGIDRegisteredActive,
+		TaskID:      testDocument1,
 		DownloadURL: "http://127.0.0.1:8080/base/download/document_1",
 		CreatedAt:   time.Now(),
 	}))
 
 	client := &fakeAria2ReconnectClient{
 		active: []aria2DownloadStatus{
-			{GID: "registered-active", Status: "active"},
-			{GID: "url-active", Status: "active", Files: filesWithURI("http://127.0.0.1:8080/base/download/document_2")},
-			{GID: "user-active", Status: "active", Files: filesWithURI("http://example.com/file")},
+			{GID: testGIDRegisteredActive, Status: aria2StatusActive},
+			{GID: testGIDURLActive, Status: aria2StatusActive, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_2")},
+			{GID: "user-active", Status: aria2StatusActive, Files: filesWithURI("http://example.com/file")},
 		},
 		waiting: []aria2DownloadStatus{
-			{GID: "url-waiting", Status: "waiting", Files: filesWithURI("http://127.0.0.1:8080/base/download/document_3")},
-			{GID: "user-waiting", Status: "waiting", Files: filesWithURI("http://example.com/waiting")},
-			{GID: "paused-tdl", Status: "paused", Files: filesWithURI("http://127.0.0.1:8080/base/download/document_4")},
+			{GID: testGIDURLWaiting, Status: aria2StatusWaiting, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_3")},
+			{GID: "user-waiting", Status: aria2StatusWaiting, Files: filesWithURI("http://example.com/waiting")},
+			{GID: "paused-tdl", Status: aria2StatusPaused, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_4")},
 		},
 	}
 
 	paused, err := suspendTDLAria2TasksForReconnect(ctx, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
 	require.NoError(t, err)
-	require.Equal(t, []string{"registered-active", "url-active", "url-waiting"}, paused)
+	require.Equal(t, []string{testGIDRegisteredActive, testGIDURLActive, testGIDURLWaiting}, paused)
 	require.Equal(t, paused, client.forcePaused)
 }
 
@@ -46,9 +50,9 @@ func TestResumeTDLAria2TasksOnlyResumesUniquePausedGIDs(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeAria2ReconnectClient{}
-	err := resumeTDLAria2Tasks(context.Background(), client, []string{"gid-1", "gid-2", "gid-1"}, zap.NewNop())
+	err := resumeTDLAria2Tasks(context.Background(), client, []string{testGID1, "gid-2", testGID1}, zap.NewNop())
 	require.NoError(t, err)
-	require.Equal(t, []string{"gid-1", "gid-2"}, client.unpaused)
+	require.Equal(t, []string{testGID1, "gid-2"}, client.unpaused)
 }
 
 func TestPauseTDLAria2TasksForShutdownUsesNonCanceledContext(t *testing.T) {
@@ -60,21 +64,21 @@ func TestPauseTDLAria2TasksForShutdownUsesNonCanceledContext(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	store := newAria2TaskStore(kvd)
 	require.NoError(t, store.Add(context.Background(), aria2TaskRecord{
-		GID:         "registered-active",
-		TaskID:      "document_1",
+		GID:         testGIDRegisteredActive,
+		TaskID:      testDocument1,
 		DownloadURL: "http://127.0.0.1:8080/base/download/document_1",
 		CreatedAt:   time.Now(),
 	}))
 
 	client := &fakeAria2ReconnectClient{
 		active: []aria2DownloadStatus{
-			{GID: "registered-active", Status: "active"},
+			{GID: testGIDRegisteredActive, Status: aria2StatusActive},
 		},
 	}
 
 	paused, err := pauseTDLAria2TasksForShutdown(parent, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
 	require.NoError(t, err)
-	require.Equal(t, []string{"registered-active"}, paused)
+	require.Equal(t, []string{testGIDRegisteredActive}, paused)
 	require.Equal(t, paused, client.forcePaused)
 }
 

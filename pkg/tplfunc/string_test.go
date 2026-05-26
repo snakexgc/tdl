@@ -8,6 +8,17 @@ import (
 	"text/template"
 )
 
+const (
+	testCaseEmpty    = "empty"
+	testString       = "test"
+	testStringUpper  = "TEST"
+	testCaseLower    = "lower"
+	testCaseUpper    = "upper"
+	testStringSnake  = "test_test"
+	testStringPascal = "TestTest"
+	testCasePascal   = "pascal"
+)
+
 func stringSlice(args []string) string {
 	s := make([]string, len(args))
 	for i, v := range args {
@@ -23,10 +34,10 @@ func TestRepeat(t *testing.T) {
 		N    int
 		want string
 	}{
-		{name: "empty", S: "", N: 0, want: ""},
-		{name: "zero", S: "test", N: 0, want: ""},
-		{name: "one", S: "test", N: 1, want: "test"},
-		{name: "two", S: "test", N: 2, want: "testtest"},
+		{name: testCaseEmpty, S: "", N: 0, want: ""},
+		{name: "zero", S: testString, N: 0, want: ""},
+		{name: "one", S: testString, N: 1, want: testString},
+		{name: "two", S: testString, N: 2, want: "testtest"},
 	}
 
 	m := FuncMap(Repeat())
@@ -56,11 +67,11 @@ func TestReplace(t *testing.T) {
 		Pairs []string
 		want  string
 	}{
-		{name: "empty", S: "", Pairs: nil, want: ""},
-		{name: "empty pairs", S: "test", Pairs: nil, want: "test"},
-		{name: "single pair", S: "test", Pairs: []string{"t", "T"}, want: "TesT"},
-		{name: "multiple pairs1", S: "test", Pairs: []string{"t", "T", "e", "E"}, want: "TEsT"},
-		{name: "multiple pairs2", S: "test", Pairs: []string{"t", "T", "e", "E", "s", "S"}, want: "TEST"},
+		{name: testCaseEmpty, S: "", Pairs: nil, want: ""},
+		{name: "empty pairs", S: testString, Pairs: nil, want: testString},
+		{name: "single pair", S: testString, Pairs: []string{"t", "T"}, want: "TesT"},
+		{name: "multiple pairs1", S: testString, Pairs: []string{"t", "T", "e", "E"}, want: "TEsT"},
+		{name: "multiple pairs2", S: testString, Pairs: []string{"t", "T", "e", "E", "s", "S"}, want: testStringUpper},
 	}
 
 	m := FuncMap(Replace())
@@ -89,7 +100,7 @@ func TestReplacePanic(t *testing.T) {
 		S     string
 		Pairs []string
 	}{
-		{name: "odd pairs", S: "test", Pairs: []string{"t", "T", "e"}},
+		{name: "odd pairs", S: testString, Pairs: []string{"t", "T", "e"}},
 	}
 
 	m := FuncMap(Replace())
@@ -112,9 +123,9 @@ func TestToUpper(t *testing.T) {
 		S    string
 		want string
 	}{
-		{name: "empty", S: "", want: ""},
-		{name: "lower", S: "test", want: "TEST"},
-		{name: "upper", S: "TEST", want: "TEST"},
+		{name: testCaseEmpty, S: "", want: ""},
+		{name: testCaseLower, S: testString, want: testStringUpper},
+		{name: testCaseUpper, S: testStringUpper, want: testStringUpper},
 	}
 
 	m := FuncMap(ToUpper())
@@ -143,9 +154,9 @@ func TestToLower(t *testing.T) {
 		S    string
 		want string
 	}{
-		{name: "empty", S: "", want: ""},
-		{name: "lower", S: "test", want: "test"},
-		{name: "upper", S: "TEST", want: "test"},
+		{name: testCaseEmpty, S: "", want: ""},
+		{name: testCaseLower, S: testString, want: testString},
+		{name: testCaseUpper, S: testStringUpper, want: testString},
 	}
 
 	m := FuncMap(ToLower())
@@ -174,11 +185,11 @@ func TestSnakeCase(t *testing.T) {
 		S    string
 		want string
 	}{
-		{name: "empty", S: "", want: ""},
-		{name: "lower", S: "test", want: "test"},
-		{name: "upper", S: "TEST", want: "test"},
-		{name: "camel", S: "testTest", want: "test_test"},
-		{name: "pascal", S: "TestTest", want: "test_test"},
+		{name: testCaseEmpty, S: "", want: ""},
+		{name: testCaseLower, S: testString, want: testString},
+		{name: testCaseUpper, S: testStringUpper, want: testString},
+		{name: "camel", S: "testTest", want: testStringSnake},
+		{name: testCasePascal, S: testStringPascal, want: testStringSnake},
 	}
 
 	m := FuncMap(SnakeCase())
@@ -207,11 +218,11 @@ func TestCamelCase(t *testing.T) {
 		S    string
 		want string
 	}{
-		{name: "empty", S: "", want: ""},
-		{name: "lower", S: "test", want: "Test"},
-		{name: "upper", S: "TEST", want: "Test"},
-		{name: "snake", S: "test_test", want: "TestTest"},
-		{name: "pascal", S: "TestTest", want: "TestTest"},
+		{name: testCaseEmpty, S: "", want: ""},
+		{name: testCaseLower, S: testString, want: "Test"},
+		{name: testCaseUpper, S: testStringUpper, want: "Test"},
+		{name: "snake", S: testStringSnake, want: testStringPascal},
+		{name: "pascal", S: testStringPascal, want: testStringPascal},
 	}
 
 	m := FuncMap(CamelCase())
@@ -240,11 +251,11 @@ func TestKebabCase(t *testing.T) {
 		S    string
 		want string
 	}{
-		{name: "empty", S: "", want: ""},
-		{name: "lower", S: "test", want: "test"},
-		{name: "upper", S: "TEST", want: "test"},
+		{name: testCaseEmpty, S: "", want: ""},
+		{name: testCaseLower, S: testString, want: testString},
+		{name: testCaseUpper, S: testStringUpper, want: testString},
 		{name: "camel", S: "testTest", want: "test-test"},
-		{name: "pascal", S: "TestTest", want: "test-test"},
+		{name: "pascal", S: testStringPascal, want: "test-test"},
 	}
 
 	m := FuncMap(KebabCase())
