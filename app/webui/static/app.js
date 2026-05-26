@@ -115,6 +115,12 @@ const sections = [
     fields: [
       ["bot.token", "机器人 Token", "password", "从 BotFather 获取；留空表示保持原 token。"],
       ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人。"],
+      ["bot.notify.on_download_start", "下载开始通知", "bool", "开始下载时发送进度消息（带进度条）。"],
+      ["bot.notify.on_download_complete", "下载完成通知", "bool", "下载完成后发送完成通知。"],
+      ["bot.notify.on_download_pause", "下载暂停通知", "bool", "任务暂停时冻结进度消息并更新状态。"],
+      ["bot.notify.on_download_error", "下载失败通知", "bool", "任务失败时冻结进度消息并显示错误。"],
+      ["bot.notify.live_progress", "实时进度更新", "bool", "开启后开始下载时发送进度消息，每隔指定秒数自动编辑更新，完成/暂停/失败时冻结。"],
+      ["bot.notify.live_progress_interval_seconds", "进度更新间隔（秒）", "number", "实时进度消息的编辑间隔，单位秒，最小 5 秒。"],
     ],
   },
   {

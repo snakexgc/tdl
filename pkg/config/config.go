@@ -43,10 +43,21 @@ const (
 	ForwardModeClone   = "clone"
 )
 
+// BotNotifyConfig controls which aria2 events trigger Telegram notifications.
+type BotNotifyConfig struct {
+	OnDownloadStart         bool `json:"on_download_start"`
+	OnDownloadComplete      bool `json:"on_download_complete"`
+	OnDownloadPause         bool `json:"on_download_pause"`
+	OnDownloadError         bool `json:"on_download_error"`
+	LiveProgress            bool `json:"live_progress"`
+	LiveProgressIntervalSec int  `json:"live_progress_interval_seconds"`
+}
+
 // BotConfig Bot 配置
 type BotConfig struct {
-	Token        string  `json:"token"`
-	AllowedUsers []int64 `json:"allowed_users"`
+	Token        string          `json:"token"`
+	AllowedUsers []int64         `json:"allowed_users"`
+	Notify       BotNotifyConfig `json:"notify"`
 }
 
 type HTTPConfig struct {
@@ -183,6 +194,14 @@ func DefaultConfig() *Config {
 		Bot: BotConfig{
 			Token:        "",
 			AllowedUsers: []int64{},
+			Notify: BotNotifyConfig{
+				OnDownloadStart:         false,
+				OnDownloadComplete:      false,
+				OnDownloadPause:         false,
+				OnDownloadError:         false,
+				LiveProgress:            false,
+				LiveProgressIntervalSec: 5,
+			},
 		},
 		Forward: ForwardConfig{
 			Mode:             ForwardModeDefault,
@@ -536,6 +555,9 @@ func Validate(cfg *Config) error {
 		return errors.New("forward.dedupe_ttl_seconds must be greater than or equal to 0")
 	}
 	cfg.Forward.TriggerReactions = normalizeStringList(cfg.Forward.TriggerReactions)
+	if cfg.Bot.Notify.LiveProgressIntervalSec < 5 {
+		cfg.Bot.Notify.LiveProgressIntervalSec = 5
+	}
 	if err := normalizeHTTPConfig(cfg); err != nil {
 		return err
 	}
