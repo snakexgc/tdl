@@ -176,7 +176,7 @@ func TestRoutesServeAppShellForViewPaths(t *testing.T) {
 func TestConfigAPIExposesSplitListenFields(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()
-	previous, err := cloneConfig(cfg)
+	previous, err := config.Clone(cfg)
 	require.NoError(t, err)
 	defer func() {
 		*cfg = *previous

@@ -192,7 +192,7 @@ func (m *webLoginManager) saveNamespaceIfChanged(namespace string) (bool, error)
 	if cfg.Namespace == namespace {
 		return false, nil
 	}
-	next, err := cloneConfig(cfg)
+	next, err := config.Clone(cfg)
 	if err != nil {
 		return false, err
 	}

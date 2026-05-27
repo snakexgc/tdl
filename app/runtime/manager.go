@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -192,10 +191,7 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 	}
 	if cfg.Modules.Watch || cfg.Modules.Forward {
 		if restartWatch {
-			go func() {
-				m.StopWatch()
-				_ = m.StartWatch(context.Background())
-			}()
+			m.restartWatchAsync()
 		} else {
 			go m.StartWatch(context.Background())
 		}
@@ -224,7 +220,7 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 }
 
 func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool) (webui.ModuleState, error) {
-	next, err := cloneConfig(config.Get())
+	next, err := config.Clone(config.Get())
 	if err != nil {
 		return webui.ModuleState{}, err
 	}
@@ -264,19 +260,13 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 			if !next.Modules.Forward {
 				m.StopWatch()
 			} else if m.watchCtrl.Running() {
-				go func() {
-					m.StopWatch()
-					_ = m.StartWatch(context.Background())
-				}()
+				m.restartWatchAsync()
 			}
 		}
 		return m.watchState(next), nil
 	case moduleIDHTTP:
 		if m.watchCtrl.Running() {
-			go func() {
-				m.StopWatch()
-				_ = m.StartWatch(context.Background())
-			}()
+			m.restartWatchAsync()
 		} else if enabled && next.Modules.Watch {
 			_ = m.StartWatch(ctx)
 		}
@@ -287,10 +277,7 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		} else if !next.Modules.Watch {
 			m.StopWatch()
 		} else if m.watchCtrl.Running() {
-			go func() {
-				m.StopWatch()
-				_ = m.StartWatch(context.Background())
-			}()
+			m.restartWatchAsync()
 		}
 		return m.forwardState(next), nil
 	default:
@@ -401,6 +388,16 @@ func (m *Manager) StartWatch(ctx context.Context) error {
 
 func (m *Manager) StopWatch() {
 	m.watchCtrl.Stop()
+}
+
+// restartWatchAsync stops the running watcher and starts it again on a
+// background context, off the caller's goroutine. Used when a config or module
+// change requires the watch loop to be rebuilt with fresh options.
+func (m *Manager) restartWatchAsync() {
+	go func() {
+		m.StopWatch()
+		_ = m.StartWatch(context.Background())
+	}()
 }
 
 func (m *Manager) Shutdown() {
@@ -575,16 +572,4 @@ func (m *Manager) setBotStopped(status string, err error) {
 	m.botDone = nil
 	m.botStatus = status
 	m.botErr = err
-}
-
-func cloneConfig(cfg *config.Config) (*config.Config, error) {
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-	var next config.Config
-	if err := json.Unmarshal(data, &next); err != nil {
-		return nil, err
-	}
-	return &next, nil
 }

@@ -655,6 +655,19 @@ func Get() *Config {
 	return instance
 }
 
+// Clone 返回配置的深拷贝，便于在不影响当前实例的情况下修改后再保存。
+func Clone(cfg *Config) (*Config, error) {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var next Config
+	if err := json.Unmarshal(data, &next); err != nil {
+		return nil, err
+	}
+	return &next, nil
+}
+
 // Set 设置配置并保存
 func Set(cfg *Config) error {
 	mu.Lock()

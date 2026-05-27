@@ -423,7 +423,7 @@ func saveBotNamespaceIfChanged(namespace string) (bool, error) {
 		return false, nil
 	}
 
-	next, err := cloneConfig(cfg)
+	next, err := config.Clone(cfg)
 	if err != nil {
 		return false, err
 	}
