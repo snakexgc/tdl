@@ -645,6 +645,175 @@ func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
 	require.GreaterOrEqual(t, invoker.callCount(0), 2)
 }
 
+func TestStreamTelegramMediaRetriesEmptyChunk(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize+128)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:       payload,
+		emptyReads: map[int64]int{0: 1},
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 2)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	require.Equal(t, payload, out.Bytes())
+	require.GreaterOrEqual(t, invoker.callCount(0), 2)
+}
+
+func TestStreamTelegramMediaRetriesTransientNetworkError(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize+128)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:     payload,
+		failures: map[int64]int{0: 1},
+		failErr:  timeoutNetError{},
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 2)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	require.Equal(t, payload, out.Bytes())
+	require.GreaterOrEqual(t, invoker.callCount(0), 2)
+}
+
+func TestStreamTelegramMediaFailsAfterExhaustingTransientRetries(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:     payload,
+		failures: map[int64]int{0: telegramChunkMaxRetries + 5}, // never recovers
+		failErr:  timeoutNetError{},
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 1)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.Error(t, err)
+	// initial attempt + telegramChunkMaxRetries bounded retries, then give up.
+	require.Equal(t, telegramChunkMaxRetries+1, invoker.callCount(0))
+}
+
+func TestStreamTelegramMediaCancelDuringRetryAborts(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:     payload,
+		failures: map[int64]int{0: 100}, // keep failing transiently
+		failErr:  timeoutNetError{},
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 1)
+	defer lease.Release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	defer cancel()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(ctx, pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	// Cancellation during the first backoff aborts well before retries exhaust.
+	require.Less(t, invoker.callCount(0), telegramChunkMaxRetries+1)
+}
+
+// TestStreamTelegramMediaPreservesFileSizeAcrossFragmentsWithRetries proves the
+// 1 MiB per-getFile limit only bounds each request, not the file: a multi-MiB
+// file is fetched as several ≤1 MiB chunks and reassembled to its exact full
+// size even when transient failures and empty bodies hit several chunks.
+func TestStreamTelegramMediaPreservesFileSizeAcrossFragmentsWithRetries(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize*3+12345)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	invoker := &recordingUploadInvoker{
+		data:       payload,
+		failures:   map[int64]int{0: 1, 2 * downloadStreamPartSize: 1},
+		failErr:    timeoutNetError{},
+		emptyReads: map[int64]int{downloadStreamPartSize: 1},
+	}
+	client := tg.NewClient(invoker)
+	media := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}
+	pool := testDownloadPool{client: client}
+	lease := mustAcquireDownloadLease(t, 4)
+	defer lease.Release()
+
+	var out bytes.Buffer
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	require.NoError(t, err)
+	// The reassembled output is the full file, byte for byte — size unaffected.
+	require.Equal(t, len(payload), out.Len())
+	require.Equal(t, payload, out.Bytes())
+	// Every Telegram request stayed within the 1 MiB fragment limit.
+	require.True(t, invoker.allRequestsStayWithinTelegramFragment())
+	for _, limit := range invoker.limits {
+		require.LessOrEqual(t, limit, telegramGetFileFragmentWindowSize)
+	}
+	// The chunks that were made to fail/empty were genuinely retried.
+	require.GreaterOrEqual(t, invoker.callCount(0), 2)
+	require.GreaterOrEqual(t, invoker.callCount(downloadStreamPartSize), 2)
+	require.GreaterOrEqual(t, invoker.callCount(2*downloadStreamPartSize), 2)
+}
+
 func TestDownloadSessionDeduplicatesConcurrentRangeChunk(t *testing.T) {
 	t.Parallel()
 
@@ -713,8 +882,17 @@ type recordingUploadInvoker struct {
 	maxInFlight int
 	failures    map[int64]int
 	failErr     error
+	emptyReads  map[int64]int
 	calls       map[int64]int
 }
+
+// timeoutNetError is a net.Error that reports a timeout, used to exercise the
+// chunk-level transient retry path (distinct from the tg.ErrTimeout RPC path).
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "simulated network timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return true }
 
 type blockingFirstWriteBuffer struct {
 	bytes.Buffer
@@ -772,6 +950,16 @@ func (i *recordingUploadInvoker) Invoke(ctx context.Context, input bin.Encoder, 
 		i.inFlight--
 		i.mu.Unlock()
 		return i.failErr
+	}
+	if remaining := i.emptyReads[req.Offset]; remaining > 0 {
+		i.emptyReads[req.Offset] = remaining - 1
+		i.inFlight--
+		i.mu.Unlock()
+		box.File = &tg.UploadFile{
+			Type:  &tg.StorageFileUnknown{},
+			Bytes: nil,
+		}
+		return nil
 	}
 	delay := i.delay
 	i.mu.Unlock()

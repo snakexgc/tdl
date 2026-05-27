@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sync"
+	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
@@ -124,6 +126,29 @@ type telegramChunkRequest struct {
 func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmedia.Media, chunkReq telegramChunkRequest) ([]byte, error) {
 	logger := logctx.From(ctx)
 
+	transientRetries := 0
+	backoff := telegramChunkRetryBaseDelay
+	// retryTransient backs off and reports whether a bounded transient retry is
+	// still allowed. A non-nil error means the parent context ended while waiting.
+	retryTransient := func(reason string, cause error) (bool, error) {
+		if transientRetries >= telegramChunkMaxRetries {
+			return false, nil
+		}
+		transientRetries++
+		logger.Debug("Retrying transient telegram file chunk",
+			zap.String("reason", reason),
+			zap.Int64("offset", chunkReq.offset),
+			zap.Int("limit", chunkReq.limit),
+			zap.Int("retry", transientRetries),
+			zap.Duration("backoff", backoff),
+			zap.Error(cause))
+		if err := sleepWithContext(ctx, backoff); err != nil {
+			return false, err
+		}
+		backoff = nextChunkBackoff(backoff)
+		return true, nil
+	}
+
 	for attempt := 0; ; attempt++ {
 		req := &tg.UploadGetFileRequest{
 			Location: media.InputFileLoc,
@@ -132,9 +157,19 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 		}
 		req.SetPrecise(true)
 
+		// A per-attempt deadline turns a hung request into a retryable timeout
+		// instead of an indefinite 0 B/s stall.
+		attemptCtx, cancel := context.WithTimeout(ctx, telegramChunkAttemptTimeout)
 		finish := beginTelegramFileRequest()
-		resp, err := client.UploadGetFile(ctx, req)
+		resp, err := client.UploadGetFile(attemptCtx, req)
 		finish()
+		cancel()
+
+		// Real client cancellation/deadline on the parent context is never retried.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+
 		if flood, waitErr := tgerr.FloodWait(ctx, err); waitErr != nil {
 			if flood || tgerr.Is(waitErr, tg.ErrTimeout) {
 				logger.Debug("Retrying telegram file chunk",
@@ -144,6 +179,15 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 					zap.Error(waitErr))
 				continue
 			}
+			if isTransientChunkError(waitErr) {
+				retried, retryErr := retryTransient("rpc", waitErr)
+				if retryErr != nil {
+					return nil, retryErr
+				}
+				if retried {
+					continue
+				}
+			}
 			return nil, errors.Wrap(waitErr, "get telegram file chunk")
 		}
 
@@ -152,6 +196,15 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 			return nil, fmt.Errorf("unexpected telegram file response %T", resp)
 		}
 		if len(file.Bytes) == 0 {
+			// Jobs are clamped within [0, fileSize), so an empty body at a valid
+			// offset is a transient anomaly, not true EOF — retry before failing.
+			retried, retryErr := retryTransient("empty", io.ErrUnexpectedEOF)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			if retried {
+				continue
+			}
 			return nil, io.ErrUnexpectedEOF
 		}
 
@@ -159,6 +212,50 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 		// gotd already decodes UploadFile.Bytes into an owned slice; avoid copying
 		// every 1 MiB chunk again before it enters the session cache.
 		return file.Bytes, nil
+	}
+}
+
+// isTransientChunkError reports whether a chunk fetch failure is worth a bounded
+// in-place retry. It is consulted only after the parent context is confirmed
+// alive, so a context error here is the per-attempt timeout backstop or an
+// internal MTProto engine reset surfaced as cancellation — both recoverable.
+// The allowlist is intentionally narrow: anything not listed fails fast.
+func isTransientChunkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
+func nextChunkBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > telegramChunkRetryMaxDelay {
+		return telegramChunkRetryMaxDelay
+	}
+	return next
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

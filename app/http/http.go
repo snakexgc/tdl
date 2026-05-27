@@ -34,6 +34,24 @@ const (
 )
 
 const (
+	// telegramChunkMaxRetries bounds the last-resort, in-place retry of a single
+	// upload.getFile chunk for transient conditions the lower MTProto layers do
+	// not already recover (an empty body, a hung request, a connection reset that
+	// survived the retry middleware). Recovering the chunk here keeps the HTTP
+	// response alive instead of tearing down the whole stream and forcing the
+	// client (aria2) to re-download from the start.
+	telegramChunkMaxRetries     = 4
+	telegramChunkRetryBaseDelay = 250 * time.Millisecond
+	telegramChunkRetryMaxDelay  = 2 * time.Second
+	// telegramChunkAttemptTimeout is a dead-connection backstop, NOT a throughput
+	// throttle: a single ≤1 MiB getFile slower than this means < ~3.5 KiB/s, which
+	// is below any usable link, so the connection is effectively dead. It is
+	// deliberately far above any real per-chunk transfer time so it can never cut
+	// off a slow-but-progressing download and shorten the resulting file.
+	telegramChunkAttemptTimeout = 5 * time.Minute
+)
+
+const (
 	httpBufferModeOff    = "off"
 	httpBufferModeMemory = "memory"
 )
