@@ -1,0 +1,136 @@
+/* Downloads view: AriaNg iframe shell, aria2 connection guide, internal table. */
+.frame-wrap {
+  height: calc(100vh - 122px);
+  min-height: 560px;
+  overflow: hidden;
+}
+
+#aria2-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #ffffff;
+}
+
+.internal-downloads {
+  height: 100%;
+  padding: 18px;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.internal-table-shell {
+  max-height: calc(100% - 94px);
+}
+
+#internal-download-table {
+  min-width: 1160px;
+}
+
+.internal-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.internal-bulk-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.internal-selection-count {
+  min-width: 72px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.aria2-guide {
+  height: 100%;
+  padding: 28px;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.aria2-guide h2 {
+  font-size: 22px;
+}
+
+.aria2-guide h3 {
+  font-size: 16px;
+}
+
+.aria2-guide ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  margin-top: 24px;
+}
+
+.guide-actions {
+  justify-content: flex-start;
+  margin-top: 24px;
+}
+
+.download-progress {
+  display: grid;
+  min-width: 190px;
+  gap: 6px;
+}
+
+.download-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #31423d;
+  font-size: 12px;
+}
+
+.download-progress-meta span:first-child {
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
+.download-progress-bar {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid #c9ded8;
+  border-radius: 999px;
+  background: #ecf3f1;
+}
+
+.download-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0b7f72, #35a791);
+  transition: width 220ms ease;
+}
+
+.download-speed {
+  color: var(--muted);
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .guide-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -124,6 +124,55 @@ func TestRoutesAuthenticateWithWebSessionCookie(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `id="view-user"`)
 }
 
+func TestRoutesServeAppShellForViewPaths(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	handler := NewServer(Options{}).routes()
+
+	// Unauthenticated deep links redirect to the login page like "/" does.
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.Equal(t, "/login", rec.Header().Get("Location"))
+
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+webUITestUsername+`","password":"`+webUITestPassword+`"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	sessionCookie := rec.Result().Cookies()[0]
+
+	// Authenticated view paths render the SPA shell so a refresh stays put.
+	for _, path := range []string{"/dashboard", "/config", "/kv/extra/segments"} {
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(sessionCookie)
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		require.Equalf(t, http.StatusOK, rec.Code, "path %s", path)
+		require.Containsf(t, rec.Body.String(), `id="view-host"`, "path %s", path)
+		require.Containsf(t, rec.Body.String(), `/static/js/main.js`, "path %s", path)
+	}
+
+	// Module scripts and stylesheets are embedded from subdirectories and
+	// served with a strict MIME type that lets browsers evaluate ES modules.
+	req = httptest.NewRequest(http.MethodGet, "/static/js/main.js", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "javascript")
+
+	req = httptest.NewRequest(http.MethodGet, "/static/css/base.css", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/css")
+}
+
 func TestConfigAPIExposesSplitListenFields(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()

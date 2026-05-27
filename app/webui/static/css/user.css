@@ -1,0 +1,279 @@
+/* User view: tabs, account switcher, and the multi-step login flow. */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab-button {
+  min-height: 42px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tab-button:hover,
+.tab-button.active {
+  color: var(--primary-dark);
+  border-bottom-color: var(--primary);
+}
+
+.user-tab {
+  display: none;
+}
+
+.user-tab.active {
+  display: block;
+}
+
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.user-switch {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 16px;
+}
+
+.user-switch-copy {
+  min-width: 0;
+}
+
+.user-switch-field {
+  margin-bottom: 0;
+}
+
+.user-switch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-switch-actions .btn {
+  min-height: 38px;
+}
+
+.login-flow {
+  display: grid;
+  gap: 16px;
+  max-width: 980px;
+}
+
+.login-flow-head {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px);
+  align-items: end;
+  gap: 14px;
+  padding: 16px;
+}
+
+.login-flow-head h2,
+.user-switch h2 {
+  font-size: 16px;
+}
+
+.login-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.login-steps li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.login-steps span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 1px solid #cbd8d3;
+  border-radius: 50%;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.login-steps li.is-current {
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
+.login-steps li.is-current span {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.login-steps li.is-complete {
+  color: #38645d;
+}
+
+.login-steps li.is-complete span {
+  border-color: #8bbcb5;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.login-steps li.is-error {
+  color: var(--danger);
+}
+
+.login-steps li.is-error span {
+  border-color: #efc7c3;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.login-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 0;
+}
+
+.login-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.login-meta strong {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.login-stage {
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.login-step-panel {
+  min-height: 300px;
+  padding: 20px;
+}
+
+.login-step-panel.animate-in {
+  animation: login-panel-in 220ms ease-out both;
+}
+
+@keyframes login-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-step-panel.animate-in {
+    animation: none;
+  }
+}
+
+.login-step-copy h3 {
+  font-size: 18px;
+}
+
+.login-step-copy p {
+  max-width: 620px;
+  margin-bottom: 16px;
+}
+
+.login-form-panel {
+  max-width: 420px;
+}
+
+.login-result-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 30px;
+  font-weight: 750;
+}
+
+.login-result-mark.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.login-result-actions,
+.login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.login-actions {
+  justify-content: flex-end;
+}
+
+.login-flow .notice:empty {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .login-flow-head,
+  .user-switch {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .user-switch-actions {
+    justify-content: flex-start;
+  }
+
+  .user-switch-actions .btn {
+    flex: 1;
+  }
+
+  .login-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .login-step-panel {
+    padding: 16px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+  }
+}

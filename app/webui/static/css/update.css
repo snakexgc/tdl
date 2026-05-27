@@ -1,0 +1,28 @@
+/* Update view: release notes panel. */
+.update-notes-shell {
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.update-notes-shell h2 {
+  margin: 0;
+  padding: 13px 16px;
+  background: var(--panel-soft);
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.update-notes {
+  min-height: 120px;
+  max-height: 340px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}

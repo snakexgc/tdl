@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -37,8 +38,17 @@ import (
 	"github.com/iyear/tdl/pkg/ps"
 )
 
-//go:embed index.html login.html aria2ng.html static/* views/*
+//go:embed index.html login.html aria2ng.html static views
 var assets embed.FS
+
+func init() {
+	// Serve module scripts and stylesheets with a strict, correct MIME type
+	// regardless of host OS registry settings; browsers refuse to evaluate ES
+	// modules delivered with a non-JavaScript content type.
+	_ = mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
+	_ = mime.AddExtensionType(".mjs", "text/javascript; charset=utf-8")
+	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
+}
 
 const (
 	downloadTaskKeyPrefix = httpdl.DownloadTaskKeyPrefix
@@ -177,9 +187,26 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/update/check", s.authFunc(s.handleUpdateCheck))
 	mux.HandleFunc("/api/update/apply", s.authFunc(s.handleUpdateApply))
 	mux.HandleFunc("/api/system/reboot", s.authFunc(s.handleReboot))
-	mux.HandleFunc("/", s.authFunc(s.handleAsset("index.html", "text/html; charset=utf-8")))
+	mux.HandleFunc("/", s.authFunc(s.handleAppShell))
 
 	return mux
+}
+
+// handleAppShell serves the single-page app shell for any HTML route that is
+// not an API, view fragment, or aria2 endpoint. The client-side router then
+// resolves the path (e.g. /dashboard, /config) to a view, so refreshing or deep
+// linking to a path lands on the correct page instead of falling back to "/".
+func (s *Server) handleAppShell(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/views/") || strings.HasPrefix(r.URL.Path, "/aria2/") {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveAsset(w, r, "index.html", "text/html; charset=utf-8")
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
@@ -378,10 +405,6 @@ func (s *Server) handleAsset(name, contentType string) http.HandlerFunc {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if name == "index.html" && r.URL.Path != "/" {
-			http.NotFound(w, r)
 			return
 		}
 		s.serveAsset(w, r, name, contentType)

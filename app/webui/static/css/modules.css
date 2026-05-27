@@ -1,0 +1,258 @@
+/* Modules view: overview summary tiles and per-module status cards. */
+.module-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.module-summary {
+  min-height: 100px;
+  padding: 14px 16px;
+  overflow: hidden;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border-color: var(--line);
+}
+
+.module-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.module-summary strong {
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.module-summary small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.module-summary-enabled {
+  border-color: #ccc5f0;
+  background: #f6f4ff;
+}
+
+.module-summary-running {
+  border-color: #b9ded8;
+  background: var(--primary-soft);
+}
+
+.module-summary-attention {
+  border-color: #efd0a4;
+  background: var(--warning-soft);
+}
+
+.module-summary-off {
+  border-color: #d1d7d4;
+  background: #f5f7f6;
+}
+
+.module-list {
+  display: grid;
+  gap: 12px;
+}
+
+.module-card {
+  overflow: hidden;
+  padding: 0;
+}
+
+.module-layout {
+  display: grid;
+  grid-template-columns: minmax(118px, 148px) minmax(0, 1fr);
+  min-height: 162px;
+}
+
+.module-state-stack {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 14px;
+  border-right: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.module-state-tile {
+  min-height: 62px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid;
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.module-state-tile span {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.module-state-tile strong {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.module-state-enabled {
+  border-color: #ccc5f0;
+  background: #f6f4ff;
+  color: #5541ad;
+}
+
+.module-state-disabled,
+.module-state-stopped {
+  border-color: #d5ddda;
+  background: #f4f6f5;
+  color: #5f6a66;
+}
+
+.module-state-running {
+  border-color: #b9ded8;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.module-state-waiting {
+  border-color: #efd0a4;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.module-state-error {
+  border-color: #efc5bf;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.module-content {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.module-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+}
+
+.module-card h2 {
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.module-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.module-health-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.module-health-running {
+  border-color: #b9ded8;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.module-health-waiting {
+  border-color: #efd0a4;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.module-health-error {
+  border-color: #efc5bf;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.module-health-off {
+  border-color: #d5ddda;
+  background: #f4f6f5;
+  color: #5f6a66;
+}
+
+.module-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: #fbfcfb;
+}
+
+.module-status {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.module-status span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.module-status strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.module-foot .btn {
+  min-width: 82px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .module-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .module-main,
+  .module-foot {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .module-layout {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .module-state-stack {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 560px) {
+  .module-overview {
+    grid-template-columns: 1fr;
+  }
+}

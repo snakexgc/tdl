@@ -1,0 +1,35 @@
+/* KV view: download-link table, sortable headers, and per-entry status blocks. */
+#kv-table {
+  table-layout: fixed;
+  min-width: 1544px;
+}
+
+.sort-button {
+  border: 0;
+  padding: 0 16px 0 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sort-button::after {
+  content: attr(data-symbol);
+  margin-left: 5px;
+  color: var(--primary-dark);
+}
+
+.sort-button:hover,
+.sort-button.active {
+  color: var(--primary-dark);
+}
+
+.aria2-entry + .aria2-entry {
+  margin-top: 8px;
+}
+
+.row-expired {
+  background: #fffdf8;
+}
