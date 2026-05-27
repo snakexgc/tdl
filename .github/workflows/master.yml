@@ -5,8 +5,7 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [master]
   push:
-    tags:
-      - "v*"
+    branches: [master]
 
 permissions:
   contents: read
