@@ -72,6 +72,15 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
       "live_progress": false, // 下载中持续更新进度消息
       "live_progress_interval_seconds": 5 // 进度更新间隔，单位秒；最小 5
     }
+  },
+  "forward": {
+    "mode": "default", // 转发模式：default 优先官方转发，受保护内容自动降级 clone；clone 始终复制发送
+    "target": "", // 默认转发目标的 ID 或用户名；留空表示收藏夹
+    "listen": [], // 监听对象：频道/群/用户的 ID 或用户名，如 ["@channel", 123456]
+    "listen_comments": true, // 监听频道关联讨论组中的评论消息
+    "silent": false, // 静默转发，不触发通知
+    "dedupe_ttl_seconds": 600, // 监听转发的消息/相册去重时间，单位秒
+    "trigger_reactions": [] // 指定可触发转发的表情，如 ["👍", "🔥"]；留空表示不启用表情触发转发
   }
 }
 ```
@@ -119,6 +128,13 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `bot.notify.on_download_error` | 下载出错时机器人发送通知消息；默认 `false` |
 | `bot.notify.live_progress` | 开启后下载开始时发送一条进度消息，并按间隔持续编辑更新直到任务结束；默认 `false` |
 | `bot.notify.live_progress_interval_seconds` | 进度消息刷新间隔，单位秒；最小 `5`，默认 `5` |
+| `forward.mode`         | 转发模式；`default` 优先官方转发，受保护内容自动降级 `clone`，`clone` 始终复制发送 |
+| `forward.target`       | 默认转发目标；机器人 `/forward` 未指定目标或表情触发转发时使用，留空表示收藏夹 |
+| `forward.listen`       | 监听对象列表；频道/群/用户的 ID 或用户名，频道会尝试同步监听其关联评论区 |
+| `forward.listen_comments` | 是否监听频道关联讨论组中的评论消息；账号需有权限访问该讨论组 |
+| `forward.silent`       | 静默转发；开启后转发的消息不触发通知 |
+| `forward.dedupe_ttl_seconds` | 监听转发的消息/相册去重时间，单位秒；默认 `600` |
+| `forward.trigger_reactions` | 可触发转发的表情列表，如 `["👍", "🔥"]`；与 `watch` 一样支持表情触发，但留空表示不启用表情触发转发，仅自动转发监听对象的新消息 |
 
 `download_dir` 和 `filename` 可用变量：
 

@@ -100,6 +100,7 @@ const sections = [
       ["forward.listen_comments", "监听频道评论", "bool", "开启后会读取频道关联讨论组 ID，并监听其中的评论消息；账号必须有权限访问该讨论组。"],
       ["forward.silent", "静默转发", "bool", "开启后转发消息不触发通知。"],
       ["forward.dedupe_ttl_seconds", "去重时间", "number", "监听转发的消息/相册去重时间，单位秒。"],
+      ["forward.trigger_reactions", "触发表情", "list", "指定可触发转发的表情，如 👍、🔥；留空表示不启用表情触发转发，仅自动转发监听对象的新消息。"],
     ],
   },
 ];
@@ -221,7 +222,7 @@ function renderTagInput(path, type, values) {
 }
 
 function tagInputPlaceholder(path, type) {
-  if (path === "trigger_reactions") return "添加表情";
+  if (path === "trigger_reactions" || path === "forward.trigger_reactions") return "添加表情";
   if (type === "intList") return "添加 ID";
   return "添加词条";
 }
