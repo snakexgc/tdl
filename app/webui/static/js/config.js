@@ -25,7 +25,7 @@ const sections = [
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
       ["download_dir", "下载目录规则", "text", "目录模板；可用 G 名称、P 来源 ID、I 触发消息文字、F 原始文件名、S/R 消息 ID、A 相册 ID、Y/M/D 日期，例如 G\\Y&M；I 会仅保留中英文数字并自动截断。"],
       ["filename", "文件名规则", "text", "文件名模板；与 download_dir 使用同一组变量，例如 G-I-F。"],
-      ["filename_max_length", "文件名长度上限", "number", "最终文件名最长字符数；超长时优先缩短 I，默认 180。"],
+      ["filename_max_length", "文件名字节上限", "number", "最终文件名的 UTF-8 字节数上限（含扩展名）；超长时优先缩短 I（保留头尾，中间用 ... 代替），默认 255。"],
       ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
       ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
       ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],

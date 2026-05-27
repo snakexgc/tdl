@@ -25,7 +25,7 @@ const (
 	DefaultWebUIUsername = "admin"
 	DefaultWebUIPassword = "admin"
 	DefaultFilename      = "P_S_F"
-	DefaultFilenameMax   = 180
+	DefaultFilenameMax   = 255
 )
 
 const (

@@ -23,7 +23,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "reconnect_timeout": 3, // 重连超时时间，单位秒
   "download_dir": "G\\Y&M", // 下载目录模板，会拼接在下载根目录后
   "filename": "P_S_F", // 文件名模板；与 download_dir 使用同一组变量
-  "filename_max_length": 180, // 最终文件名长度上限；超长时优先缩短 I
+  "filename_max_length": 255, // 最终文件名字节数上限（UTF-8 编码）；超长时优先缩短 I
   "trigger_reactions": [], // 指定触发下载的表情，如 ["👍", "🔥"]；为空时任意表情都可以触发
   "include": [], // 只下载指定扩展名，如 `["mp4", "mp3"]`，与exclude互斥
   "exclude": ["png","jpg"], // 排除指定扩展名，如 `["png", "jpg"]`与include互斥
@@ -95,7 +95,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | `namespace`            | 当前用户的数据空间；登录前填写用户名或在 Web 面板切换用户时自动更新，只允许英文字母                            |
 | `download_dir`         | 下载目录模板，会拼接在下载根目录后；与 `filename` 使用同一组变量，`/` 或 `\` 分层，`&` 连接同层，例如 `G/Y&M` |
 | `filename`             | 文件名模板；与 `download_dir` 使用同一组变量，例如 `P_S_F` 或 `G-I-F`；仍兼容原有 Go template 写法 |
-| `filename_max_length`  | 最终文件名长度上限；默认 `180`，超长时优先缩短 `I`，其他变量不会单独缩写；如果仍超长，会对最终文件名做兜底截断并尽量保留扩展名 |
+| `filename_max_length`  | 最终文件名字节数上限（UTF-8 编码，含扩展名）；默认 `255`（文件系统上限），超长时优先缩短 `I`（保留头尾并以 `...` 代替中间内容）；若仍超限，对整体做兜底截断并保留扩展名 |
 | `trigger_reactions`    | 触发下载的表情列表，如 `["👍", "🔥"]`；为空时任意表情都可以触发                                         |
 | `include`              | 只下载指定扩展名，如 `["mp4", "mp3"]`                                                       |
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
@@ -141,7 +141,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 | 变量 | 含义 |
 | --- | --- |
 | `F` | 原始文件名，**不含扩展名**；系统会在最终文件名末尾自动追加与源文件一致的扩展名 |
-| `I` | 触发下载的那条消息文字内容；只保留中文、英文字母、数字，超过 80 个字符时保留头尾，中间用 `隐藏` 代替；当 `filename` 超过 `filename_max_length` 时也只会优先缩短这个变量；若 `F`（不含扩展名）与 `I` 内容相同或包含 `I`，则 `I` 会被自动省略 |
+| `I` | 触发下载的那条消息文字内容；只保留中文、英文字母、数字，超过 80 个字符时保留头尾，中间用 `...` 代替；当文件名超过 `filename_max_length` 字节时优先缩短此变量 |
 | `G` | 聊天、群组或频道的对外显示名称 |
 | `P` | 聊天、群组或频道 ID |
 | `S` | 当前媒体消息 ID |

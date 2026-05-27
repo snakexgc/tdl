@@ -73,13 +73,13 @@ func TestRenderFileNameTemplateUsesMessageTitleAndPeerName(t *testing.T) {
 	require.Equal(t, testGroupName+"-TriggerTitle-video.mp4", got)
 }
 
-func TestRenderFileNameDedupIWhenFContainsI(t *testing.T) {
+func TestRenderFileNameFAndIAlwaysConcatenated(t *testing.T) {
 	tpl := template.Must(template.New("watch").
 		Funcs(tplfunc.FuncMap(tplfunc.All...)).
 		Parse(fileNameConfigTemplate("G-I-F")))
 	w := &Watcher{tpl: tpl, opts: Options{Template: fileNameConfigTemplate("G-I-F")}}
 
-	// File stem "HelloWorld" equals sanitized I "HelloWorld" → I is omitted, double dash collapsed
+	// F contains the same text as I — both must appear; no dedup suppression.
 	got, err := w.renderFileName(
 		12345,
 		testGroupName,
@@ -90,7 +90,7 @@ func TestRenderFileNameDedupIWhenFContainsI(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, testGroupName+"-HelloWorld.mp4", got)
+	require.Equal(t, testGroupName+"-HelloWorld-HelloWorld.mp4", got)
 }
 
 func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
@@ -98,7 +98,8 @@ func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
 	tpl := template.Must(template.New("watch").
 		Funcs(tplfunc.FuncMap(tplfunc.All...)).
 		Parse(pattern))
-	w := &Watcher{tpl: tpl, opts: Options{Template: pattern, FilenameMaxLength: 42}}
+	// 50-byte limit: "FullGroupName-" (14) + I + "-video-file.mp4" (15) = 29 fixed bytes; I gets up to 21 bytes.
+	w := &Watcher{tpl: tpl, opts: Options{Template: pattern, FilenameMaxLength: 50}}
 
 	got, err := w.renderFileName(
 		12345,
@@ -110,7 +111,7 @@ func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.LessOrEqual(t, len([]rune(got)), 42)
+	require.LessOrEqual(t, len(got), 50) // byte count
 	require.True(t, strings.HasPrefix(got, "FullGroupName-"))
 	require.True(t, strings.HasSuffix(got, "-video-file.mp4"))
 	require.Contains(t, got, safeMessageTitleMarker)
@@ -121,6 +122,7 @@ func TestRenderFileNameLengthLimitFallsBackWhenNoMessageTitleAlias(t *testing.T)
 	tpl := template.Must(template.New("watch").
 		Funcs(tplfunc.FuncMap(tplfunc.All...)).
 		Parse(pattern))
+	// 20-byte limit; fallback hard-truncates, no "..." inserted.
 	w := &Watcher{tpl: tpl, opts: Options{Template: pattern, FilenameMaxLength: 20}}
 
 	got, err := w.renderFileName(
@@ -133,9 +135,9 @@ func TestRenderFileNameLengthLimitFallsBackWhenNoMessageTitleAlias(t *testing.T)
 	)
 
 	require.NoError(t, err)
-	require.Len(t, []rune(got), 20)
+	require.Len(t, got, 20) // byte count (all ASCII here)
 	require.True(t, strings.HasSuffix(got, ".mp4"))
-	require.Contains(t, got, safeMessageTitleMarker)
+	require.NotContains(t, got, safeMessageTitleMarker)
 }
 
 func TestSafeMessageTitleSegmentKeepsOnlyChineseEnglishDigitsAndCompacts(t *testing.T) {
@@ -143,7 +145,7 @@ func TestSafeMessageTitleSegmentKeepsOnlyChineseEnglishDigitsAndCompacts(t *test
 	require.Equal(t, "untitled", safeMessageTitleSegment(" !@# -_ "))
 
 	got := safeMessageTitleSegment(strings.Repeat("甲", 60) + "!@#" + strings.Repeat("B", 60))
-	require.Equal(t, strings.Repeat("甲", 48)+"隐藏"+strings.Repeat("B", 30), got)
+	require.Equal(t, strings.Repeat("甲", 47)+"..."+strings.Repeat("B", 30), got)
 	require.Len(t, []rune(got), safeMessageTitleMaxRunes)
 }
 

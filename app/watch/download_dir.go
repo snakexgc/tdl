@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/flytam/filenamify"
 	"github.com/go-faster/errors"
@@ -40,7 +41,7 @@ const (
 	safeMessageTitleMaxRunes  = 80
 	safeMessageTitleHeadRunes = 48
 	safeMessageTitleTailRunes = 30
-	safeMessageTitleMarker    = "隐藏"
+	safeMessageTitleMarker    = "..."
 )
 
 func prepareAria2OutputRoot(ctx context.Context, client aria2GlobalDirGetter, cfg *config.Config) (root string, ensureDirs bool, err error) {
@@ -257,14 +258,16 @@ func isMessageTitleFilenameRune(r rune) bool {
 		unicode.Is(unicode.Han, r)
 }
 
-func renderedNameLeafRuneLen(rendered string) int {
+func renderedNameLeafByteLen(rendered string) int {
 	_, leaf := splitRenderedNameLeaf(rendered)
-	return len([]rune(leaf))
+	return len(leaf)
 }
 
-func limitRenderedNameLeaf(rendered string, maxLength int) string {
+// limitRenderedNameLeafBytes hard-truncates the filename leaf to maxBytes, preserving the
+// file extension and never splitting a multi-byte UTF-8 rune.
+func limitRenderedNameLeafBytes(rendered string, maxBytes int) string {
 	prefix, leaf := splitRenderedNameLeaf(rendered)
-	return prefix + limitFileNameSegment(leaf, maxLength)
+	return prefix + limitFileNameSegmentBytes(leaf, maxBytes)
 }
 
 func splitRenderedNameLeaf(rendered string) (prefix, leaf string) {
@@ -275,23 +278,39 @@ func splitRenderedNameLeaf(rendered string) (prefix, leaf string) {
 	return rendered[:lastSlash+1], rendered[lastSlash+1:]
 }
 
-func limitFileNameSegment(name string, maxLength int) string {
-	if maxLength <= 0 {
+// limitFileNameSegmentBytes hard-truncates name to maxBytes (UTF-8), keeping the extension intact.
+func limitFileNameSegmentBytes(name string, maxBytes int) string {
+	if maxBytes <= 0 {
 		return ""
 	}
-	if len([]rune(name)) <= maxLength {
+	if len(name) <= maxBytes {
 		return name
 	}
 
 	ext := filepath.Ext(name)
-	extRunes := []rune(ext)
-	if ext != "" && len(extRunes) < maxLength {
+	extBytes := len(ext)
+	if ext != "" && extBytes < maxBytes {
 		base := strings.TrimSuffix(name, ext)
-		baseMax := maxLength - len(extRunes)
-		return limitFileNameRunes([]rune(base), baseMax) + ext
+		return truncateBytesKeepingRunes(base, maxBytes-extBytes) + ext
 	}
 
-	return limitFileNameRunes([]rune(name), maxLength)
+	return truncateBytesKeepingRunes(name, maxBytes)
+}
+
+// truncateBytesKeepingRunes shortens s to at most maxBytes without splitting a UTF-8 rune.
+func truncateBytesKeepingRunes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	var n int
+	for _, r := range s {
+		size := utf8.RuneLen(r)
+		if n+size > maxBytes {
+			break
+		}
+		n += size
+	}
+	return s[:n]
 }
 
 func limitFileNameRunes(runes []rune, maxRunes int) string {

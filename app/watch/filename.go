@@ -103,11 +103,10 @@ func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt t
 	ext := filepath.Ext(media.Name)
 	stem := strings.TrimSuffix(media.Name, ext)
 	fValue := safePathSegment(stem)
-	hasF := strings.Contains(w.opts.Template, "{{ .F }}") || strings.Contains(w.opts.Template, "filenamify .FileName")
 	hasI := strings.Contains(w.opts.Template, "{{ .I }}")
 
 	appendExt := func(s string) string {
-		// collapse consecutive dashes/underscores that may result from empty template vars (e.g., dedup of I)
+		// collapse consecutive dashes/underscores that may result from empty template vars
 		prefix, leaf := splitRenderedNameLeaf(s)
 		for strings.Contains(leaf, "--") {
 			leaf = strings.ReplaceAll(leaf, "--", "-")
@@ -124,9 +123,6 @@ func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt t
 
 	render := func(messageTitleMax int) (string, error) {
 		iValue := safeMessageTitleSegmentWithMax(messageTitle, messageTitleMax)
-		if hasF && hasI && iValue != "" && strings.Contains(fValue, iValue) {
-			iValue = ""
-		}
 		var toName bytes.Buffer
 		if err := w.tpl.Execute(&toName, &fileTemplate{
 			DialogID:         dialogID,
@@ -157,12 +153,17 @@ func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt t
 	if err != nil {
 		return "", err
 	}
-	maxLength := w.opts.FilenameMaxLength
-	if maxLength <= 0 || renderedNameLeafRuneLen(rendered) <= maxLength {
+
+	const filenameHardMaxBytes = 255
+	maxBytes := w.opts.FilenameMaxLength
+	if maxBytes <= 0 || maxBytes > filenameHardMaxBytes {
+		maxBytes = filenameHardMaxBytes
+	}
+	if renderedNameLeafByteLen(rendered) <= maxBytes {
 		return rendered, nil
 	}
 
-	if strings.Contains(w.opts.Template, ".I") {
+	if hasI {
 		best := ""
 		found := false
 		for low, high := 0, safeMessageTitleMaxRunes; low <= high; {
@@ -171,7 +172,7 @@ func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt t
 			if err != nil {
 				return "", err
 			}
-			if renderedNameLeafRuneLen(candidate) <= maxLength {
+			if renderedNameLeafByteLen(candidate) <= maxBytes {
 				best = candidate
 				found = true
 				low = mid + 1
@@ -184,5 +185,5 @@ func (w *Watcher) renderFileName(dialogID int64, peerName string, downloadedAt t
 		}
 	}
 
-	return limitRenderedNameLeaf(rendered, maxLength), nil
+	return limitRenderedNameLeafBytes(rendered, maxBytes), nil
 }
