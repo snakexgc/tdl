@@ -77,10 +77,6 @@ func SuspendTDLTasksForReconnect(ctx context.Context, client ReconnectClient, st
 	return paused, nil
 }
 
-func suspendTDLAria2TasksForReconnect(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
-	return SuspendTDLTasksForReconnect(ctx, client, store, publicBaseURL, logger)
-}
-
 func ResumeTDLTasks(ctx context.Context, client ReconnectClient, gids []string, logger *zap.Logger) error {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -104,10 +100,6 @@ func ResumeTDLTasks(ctx context.Context, client ReconnectClient, gids []string, 
 			zap.String("gid", gid))
 	}
 	return nil
-}
-
-func resumeTDLAria2Tasks(ctx context.Context, client ReconnectClient, gids []string, logger *zap.Logger) error {
-	return ResumeTDLTasks(ctx, client, gids, logger)
 }
 
 func PauseTDLTasksForShutdown(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
@@ -160,10 +152,6 @@ func PauseTDLTasksForShutdown(ctx context.Context, client ReconnectClient, store
 	}
 
 	return paused, nil
-}
-
-func pauseTDLAria2TasksForShutdown(ctx context.Context, client ReconnectClient, store *TaskStore, publicBaseURL string, logger *zap.Logger) ([]string, error) {
-	return PauseTDLTasksForShutdown(ctx, client, store, publicBaseURL, logger)
 }
 
 // ResumeStartupPausedTasks resumes any tdl-owned aria2 tasks that are paused

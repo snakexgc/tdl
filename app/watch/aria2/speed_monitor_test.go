@@ -18,7 +18,7 @@ func TestZeroSpeedMonitorPausesAndResumesZeroSpeedTaskAfterThreshold(t *testing.
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:       testGIDStalled,
 		TaskID:    "document_stalled",
@@ -59,7 +59,7 @@ func TestZeroSpeedMonitorDoesNotActOnMovingTask(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:       "moving",
 		TaskID:    "document_moving",
@@ -90,7 +90,7 @@ func TestZeroSpeedMonitorClearsStallWhenSpeedResumes(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:       testGIDRecover,
 		TaskID:    "document_recover",
@@ -137,7 +137,7 @@ func TestZeroSpeedMonitorIgnoresNonOwnedTasks(t *testing.T) {
 
 	ctx := context.Background()
 	// Store is empty — no registered GIDs, no known download prefix match.
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 
 	client := &fakeAria2ReconnectClient{
 		active: []aria2DownloadStatus{
@@ -165,7 +165,7 @@ func TestZeroSpeedMonitorResetsClockAfterAction(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:       "stuck",
 		TaskID:    "document_stuck",

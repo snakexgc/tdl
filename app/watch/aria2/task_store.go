@@ -51,10 +51,6 @@ func NewTaskStore(kv storage.Storage, ttl ...time.Duration) *TaskStore {
 	return &TaskStore{kv: kv, ttl: taskTTL}
 }
 
-func newAria2TaskStore(kv storage.Storage, ttl ...time.Duration) *TaskStore {
-	return NewTaskStore(kv, ttl...)
-}
-
 func (s *TaskStore) Add(ctx context.Context, record TaskRecord) error {
 	if s == nil || s.kv == nil {
 		return nil

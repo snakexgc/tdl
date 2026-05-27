@@ -166,7 +166,9 @@ func TestUnmaskLoginCode(t *testing.T) {
 }
 
 func newTestLoginManager(bot *fakeBotAPI, runner *fakeLoginRunner) *loginManager {
-	manager := newLoginManager(context.Background(), bot, runner)
+	manager := newLoginManagerWithFactory(context.Background(), bot, func(string) (loginRunner, error) {
+		return runner, nil
+	})
 	manager.inputTimeout = time.Second
 	manager.flowTimeout = 2 * time.Second
 	return manager

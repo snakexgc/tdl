@@ -2369,10 +2369,6 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func injectAria2Secret(body []byte, secret string) ([]byte, error) {
-	return rewriteAria2ProxyRequest(body, "", secret, 1)
-}
-
 func rewriteAria2ProxyRequest(body []byte, publicBaseURL, secret string, connections int) ([]byte, error) {
 	var payload any
 	dec := json.NewDecoder(bytes.NewReader(body))

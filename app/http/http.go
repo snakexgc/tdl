@@ -1330,10 +1330,6 @@ func buildDownloadURL(baseURL, taskID string) (string, error) {
 	return u.String(), nil
 }
 
-func BuildDownloadURL(baseURL, taskID string) (string, error) {
-	return buildDownloadURL(baseURL, taskID)
-}
-
 func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
 	if cfg.DownloadLinkTTLHours <= 0 {
 		return 0

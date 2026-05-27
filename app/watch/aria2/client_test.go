@@ -35,7 +35,7 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 5,
 	})
@@ -76,7 +76,7 @@ func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 5,
 	})
@@ -104,7 +104,7 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		Secret:         testSecret,
 		TimeoutSeconds: 5,
@@ -141,7 +141,7 @@ func TestAria2AddTorrentWithOptions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		Secret:         testSecret,
 		TimeoutSeconds: 5,
@@ -174,7 +174,7 @@ func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		Secret:         testSecret,
 		TimeoutSeconds: 5,
@@ -193,7 +193,7 @@ func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
 func TestAria2SetMaxConcurrentDownloadsInvalidLimit(t *testing.T) {
 	t.Parallel()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         "http://127.0.0.1:6800/jsonrpc",
 		TimeoutSeconds: 5,
 	})
@@ -234,7 +234,7 @@ func TestAria2TellAndPauseMethods(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		Secret:         testSecret,
 		TimeoutSeconds: 5,
@@ -331,7 +331,7 @@ func TestAria2AddURIErrorResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 5,
 	})
@@ -351,7 +351,7 @@ func TestAria2AddURITimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAria2Client(config.Aria2Config{
+	client := NewClient(config.Aria2Config{
 		RPCURL:         srv.URL,
 		TimeoutSeconds: 0,
 	})

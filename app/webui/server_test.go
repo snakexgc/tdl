@@ -633,7 +633,7 @@ func TestInjectAria2SecretAddsTokenToMulticallInnerMethods(t *testing.T) {
 		]]
 	}`)
 
-	next, err := injectAria2Secret(body, "secret")
+	next, err := rewriteAria2ProxyRequest(body, "", "secret", 1)
 	require.NoError(t, err)
 
 	var decoded map[string]any
@@ -660,7 +660,7 @@ func TestInjectAria2SecretAddsTokenToMulticallInnerMethods(t *testing.T) {
 func TestInjectAria2SecretDoesNotAddTokenToSystemMethod(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":"methods","method":"system.listMethods"}`)
 
-	next, err := injectAria2Secret(body, "secret")
+	next, err := rewriteAria2ProxyRequest(body, "", "secret", 1)
 	require.NoError(t, err)
 
 	var decoded map[string]any
@@ -672,7 +672,7 @@ func TestInjectAria2SecretDoesNotAddTokenToSystemMethod(t *testing.T) {
 func TestInjectAria2SecretDoesNotDuplicateExistingToken(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":"status","method":"aria2.tellStatus","params":["token:secret","` + testGID + `"]}`)
 
-	next, err := injectAria2Secret(body, "secret")
+	next, err := rewriteAria2ProxyRequest(body, "", "secret", 1)
 	require.NoError(t, err)
 
 	var decoded map[string]any

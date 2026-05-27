@@ -77,12 +77,6 @@ type loginInput struct {
 	messageID int
 }
 
-func newLoginManager(ctx context.Context, bot botAPI, runner loginRunner) *loginManager {
-	return newLoginManagerWithFactory(ctx, bot, func(string) (loginRunner, error) {
-		return runner, nil
-	})
-}
-
 func newLoginManagerWithFactory(ctx context.Context, bot botAPI, factory loginRunnerFactory) *loginManager {
 	if ctx == nil {
 		ctx = context.Background()

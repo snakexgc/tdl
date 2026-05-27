@@ -54,10 +54,6 @@ func NewClient(cfg config.Aria2Config) *Client {
 	}
 }
 
-func newAria2Client(cfg config.Aria2Config) *Client {
-	return NewClient(cfg)
-}
-
 type aria2RPCRequest struct {
 	JSONRPC string `json:"jsonrpc"`
 	Method  string `json:"method"`

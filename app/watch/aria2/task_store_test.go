@@ -12,7 +12,7 @@ func TestAria2TaskStoreKeepsRecordWhenTTLDisabled(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage(), 0)
+	store := NewTaskStore(newMemoryTaskStorage(), 0)
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:         testGID1,
 		TaskID:      testDocument1,

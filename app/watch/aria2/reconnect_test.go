@@ -20,7 +20,7 @@ func TestSuspendTDLAria2TasksForReconnectOnlyPausesOwnedTasks(t *testing.T) {
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
-	store := newAria2TaskStore(kvd)
+	store := NewTaskStore(kvd)
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:         testGIDRegisteredActive,
 		TaskID:      testDocument1,
@@ -41,7 +41,7 @@ func TestSuspendTDLAria2TasksForReconnectOnlyPausesOwnedTasks(t *testing.T) {
 		},
 	}
 
-	paused, err := suspendTDLAria2TasksForReconnect(ctx, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
+	paused, err := SuspendTDLTasksForReconnect(ctx, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
 	require.NoError(t, err)
 	require.Equal(t, []string{testGIDRegisteredActive, testGIDURLActive, testGIDURLWaiting}, paused)
 	require.Equal(t, paused, client.forcePaused)
@@ -51,7 +51,7 @@ func TestResumeTDLAria2TasksOnlyResumesUniquePausedGIDs(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeAria2ReconnectClient{}
-	err := resumeTDLAria2Tasks(context.Background(), client, []string{testGID1, "gid-2", testGID1}, zap.NewNop())
+	err := ResumeTDLTasks(context.Background(), client, []string{testGID1, "gid-2", testGID1}, zap.NewNop())
 	require.NoError(t, err)
 	require.Equal(t, []string{testGID1, "gid-2"}, client.unpaused)
 }
@@ -63,7 +63,7 @@ func TestPauseTDLAria2TasksForShutdownUsesNonCanceledContext(t *testing.T) {
 	cancel()
 
 	kvd := newMemoryTaskStorage()
-	store := newAria2TaskStore(kvd)
+	store := NewTaskStore(kvd)
 	require.NoError(t, store.Add(context.Background(), aria2TaskRecord{
 		GID:         testGIDRegisteredActive,
 		TaskID:      testDocument1,
@@ -77,7 +77,7 @@ func TestPauseTDLAria2TasksForShutdownUsesNonCanceledContext(t *testing.T) {
 		},
 	}
 
-	paused, err := pauseTDLAria2TasksForShutdown(parent, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
+	paused, err := PauseTDLTasksForShutdown(parent, client, store, "http://127.0.0.1:8080/base", zap.NewNop())
 	require.NoError(t, err)
 	require.Equal(t, []string{testGIDRegisteredActive}, paused)
 	require.Equal(t, paused, client.forcePaused)
@@ -87,7 +87,7 @@ func TestResumeStartupPausedTasksOnlyResumesOwnedPausedTasks(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:       testGIDRegisteredPaused,
 		TaskID:    testDocument1,
@@ -122,7 +122,7 @@ func TestResumeStartupPausedTasksNothingToDo(t *testing.T) {
 			{GID: "url-waiting", Status: aria2StatusWaiting, Files: filesWithURI("http://127.0.0.1:8080/base/download/document_1")},
 		},
 	}
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 
 	count, err := ResumeStartupPausedTasks(context.Background(), client, store, "http://127.0.0.1:8080/base", zap.NewNop())
 	require.NoError(t, err)

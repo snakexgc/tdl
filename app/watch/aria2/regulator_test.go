@@ -20,7 +20,7 @@ func TestTelegramErrorRegulatorPausesExtraActiveTasksTemporarily(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	now := time.Now()
 	for _, gid := range []string{"keep", testGIDPauseMid, testGIDPauseLow} {
 		require.NoError(t, store.Add(ctx, aria2TaskRecord{
@@ -52,7 +52,7 @@ func TestTelegramErrorRegulatorRestartsOnlyActiveTask(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:       testGIDOnly,
 		TaskID:    "document_only",
@@ -78,7 +78,7 @@ func TestTelegramErrorRegulatorRestartsOnlyActiveTask(t *testing.T) {
 func TestTelegramErrorRegulatorRecordErrorThresholdAndCooldown(t *testing.T) {
 	t.Parallel()
 
-	regulator := newTelegramErrorRegulator(&fakeAria2ReconnectClient{}, newAria2TaskStore(newMemoryTaskStorage()), "http://127.0.0.1:8080", zap.NewNop(), telegramErrorRegulatorConfig{
+	regulator := newTelegramErrorRegulator(&fakeAria2ReconnectClient{}, NewTaskStore(newMemoryTaskStorage()), "http://127.0.0.1:8080", zap.NewNop(), telegramErrorRegulatorConfig{
 		Window:    time.Second,
 		Threshold: 2,
 		Cooldown:  time.Hour,

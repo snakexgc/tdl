@@ -25,7 +25,7 @@ func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:         testGIDRegisteredError,
 		TaskID:      testDocument1,
@@ -99,7 +99,7 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := newAria2TaskStore(newMemoryTaskStorage())
+	store := NewTaskStore(newMemoryTaskStorage())
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:         testGIDRegisteredError,
 		TaskID:      testDocument1,
