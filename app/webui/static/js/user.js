@@ -54,28 +54,107 @@ function bindLoginActions() {
 
 export async function loadUser() {
   const target = document.getElementById("user-info");
-  target.innerHTML = `<div class="info-item"><div class="info-value">正在检查...</div></div>`;
+  target.innerHTML = `<div class="info-item info-item-wide"><div class="info-value">正在检查...</div></div>`;
   try {
     const data = await api("/api/user");
     const user = data.user || {};
-    const rows = [
-      ["登录状态", data.valid ? "有效" : "无效"],
-      ["状态详情", data.status || "-"],
-      ["数据空间", data.namespace || "-"],
-      ["监听下载", data.watch_running ? "运行中" : "未运行"],
-      ["用户 ID", user.id || "-"],
-      ["用户名", user.username || "-"],
-      ["姓名", user.name || "-"],
-      ["手机号", user.phone || "-"],
-      ["允许用户", (data.allowed_users || []).join(", ") || "-"],
-    ];
-    target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
+    target.innerHTML = renderUserInfoItems(data, user);
     state.userSessions = data.sessions || [];
     state.currentNamespace = data.namespace || "";
     renderUserSwitch(data.namespace || "", state.userSessions, data.sessions_error || "");
     setNamespaceInputs(data.namespace || "");
+    if (data.valid) {
+      checkAccountSpam();
+    }
   } catch (error) {
     target.innerHTML = infoItem("检查失败", error.message);
+  }
+}
+
+function renderUserInfoItems(data, user) {
+  const items = [];
+
+  // 1. Login status — colored row
+  items.push(infoItemStatus("登录状态", data.valid ? "已授权" : "未登录",
+    data.valid ? "info-item-status-ok" : "info-item-status-danger"));
+
+  if (!data.valid) {
+    const errMsg = (data.status && data.status !== "authorized") ? data.status : "无有效登录会话";
+    items.push(infoItemWide("状态详情", escapeHTML(errMsg)));
+    return items.join("");
+  }
+
+  // 2. Account spam status — colored row, updated async by checkAccountSpam
+  items.push(infoItemStatusDyn("账号状态", "检查中...", "info-item-status-muted", "user-spam-row", "user-spam-status"));
+
+  // 3. Account characteristics — colored row, plain text labels
+  const charLabels = [];
+  if (user.premium)    charLabels.push("Premium 会员");
+  if (user.verified)   charLabels.push("官方认证");
+  if (user.bot)        charLabels.push("机器人账号");
+  if (user.restricted) charLabels.push("账号受限");
+  if (!charLabels.length) charLabels.push("普通账号");
+  let charStatus = "info-item-status-muted";
+  if (user.restricted)       charStatus = "info-item-status-danger";
+  else if (user.verified)    charStatus = "info-item-status-info";
+  else if (user.premium)     charStatus = "info-item-status-warning";
+  items.push(infoItemStatus("账号特性", charLabels.join(" · "), charStatus));
+
+  // 4–7. Plain info fields
+  items.push(infoItemWide("姓名", escapeHTML(user.name || "-")));
+  items.push(infoItemWide("用户名", user.username ? escapeHTML(`@${user.username}`) : "未设置"));
+  items.push(infoItemWide("用户 ID", escapeHTML(user.id ? String(user.id) : "-")));
+  items.push(infoItemWide("手机号", escapeHTML(user.phone || "-")));
+
+  return items.join("");
+}
+
+function infoItemStatus(label, text, statusClass) {
+  return `
+    <div class="info-item info-item-wide ${statusClass}">
+      <div class="info-label">${escapeHTML(label)}</div>
+      <div class="info-value">${escapeHTML(text)}</div>
+    </div>
+  `;
+}
+
+function infoItemStatusDyn(label, text, statusClass, rowId, valueId) {
+  return `
+    <div class="info-item info-item-wide ${statusClass}" id="${escapeAttr(rowId)}">
+      <div class="info-label">${escapeHTML(label)}</div>
+      <div class="info-value" id="${escapeAttr(valueId)}">${escapeHTML(text)}</div>
+    </div>
+  `;
+}
+
+function infoItemWide(label, valueHTML) {
+  return `
+    <div class="info-item info-item-wide">
+      <div class="info-label">${escapeHTML(label)}</div>
+      <div class="info-value">${valueHTML}</div>
+    </div>
+  `;
+}
+
+async function checkAccountSpam() {
+  try {
+    const data = await api("/api/user/spam-check", { method: "POST", body: "{}" });
+    const row = document.getElementById("user-spam-row");
+    const el = document.getElementById("user-spam-status");
+    if (!row || !el) return;
+    if (data.clean) {
+      row.className = "info-item info-item-wide info-item-status-ok";
+      el.textContent = "正常";
+    } else {
+      row.className = "info-item info-item-wide info-item-status-danger";
+      el.textContent = "账号异常";
+    }
+  } catch (error) {
+    const row = document.getElementById("user-spam-row");
+    const el = document.getElementById("user-spam-status");
+    if (!row || !el) return;
+    row.className = "info-item info-item-wide info-item-status-muted";
+    el.textContent = "检查失败";
   }
 }
 

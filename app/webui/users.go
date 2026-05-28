@@ -6,14 +6,17 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
+	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/core/storage"
 	"github.com/iyear/tdl/pkg/config"
+	"github.com/iyear/tdl/pkg/tclient"
 )
 
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +267,145 @@ func deleteUserKey(ctx context.Context, kvd storage.Storage, key string) (bool, 
 		return false, errors.Wrapf(err, "delete user key %s", key)
 	}
 	return true, nil
+}
+
+func (s *Server) handleSpamCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	if s.opts.NamespaceKV == nil {
+		writeError(w, http.StatusBadRequest, errors.New("no active session"))
+		return
+	}
+	cfg := config.Get()
+	checkCtx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	clean, err := checkSpamStatus(checkCtx, login.SessionOptions{
+		KV:               s.opts.NamespaceKV,
+		Proxy:            config.EffectiveProxy(cfg),
+		NTP:              cfg.NTP,
+		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clean": clean})
+}
+
+func checkSpamStatus(ctx context.Context, opts login.SessionOptions) (bool, error) {
+	if opts.KV == nil {
+		return false, errors.New("session storage is nil")
+	}
+	const replyTimeout = 20 * time.Second
+	replyCh := make(chan string, 8)
+	var spambotID int64
+
+	handler := telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
+		id := atomic.LoadInt64(&spambotID)
+		if id == 0 {
+			return nil
+		}
+		collectSpambotMessages(u, id, replyCh)
+		return nil
+	})
+
+	c, err := tclient.New(ctx, tclient.Options{
+		KV:               opts.KV,
+		Proxy:            opts.Proxy,
+		NTP:              opts.NTP,
+		ReconnectTimeout: opts.ReconnectTimeout,
+		UpdateHandler:    handler,
+	}, false)
+	if err != nil {
+		return false, errors.Wrap(err, "create client")
+	}
+
+	var clean bool
+	if err := c.Run(ctx, func(ctx context.Context) error {
+		resolved, err := c.API().ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: "spambot"})
+		if err != nil {
+			return errors.Wrap(err, "resolve @spambot")
+		}
+		var spambotPeer tg.InputPeerClass
+		var spambotUID int64
+		for _, u := range resolved.Users {
+			user, ok := u.AsNotEmpty()
+			if !ok {
+				continue
+			}
+			spambotUID = user.ID
+			spambotPeer = user.AsInputPeer()
+			break
+		}
+		if spambotPeer == nil {
+			return errors.New("could not resolve @spambot")
+		}
+		atomic.StoreInt64(&spambotID, spambotUID)
+
+		_, err = c.API().MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+			Peer:     spambotPeer,
+			Message:  "/start",
+			RandomID: time.Now().UnixNano(),
+		})
+		if err != nil {
+			return errors.Wrap(err, "send /start to @spambot")
+		}
+
+		timer := time.NewTimer(replyTimeout)
+		defer timer.Stop()
+		select {
+		case reply := <-replyCh:
+			clean = strings.HasPrefix(strings.ToLower(reply), "good news")
+			return nil
+		case <-timer.C:
+			return errors.New("timeout waiting for @spambot reply")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}); err != nil {
+		return false, err
+	}
+	return clean, nil
+}
+
+func collectSpambotMessages(u tg.UpdatesClass, spambotID int64, ch chan<- string) {
+	var updates []tg.UpdateClass
+	switch upd := u.(type) {
+	case *tg.Updates:
+		updates = upd.Updates
+	case *tg.UpdatesCombined:
+		updates = upd.Updates
+	case *tg.UpdateShort:
+		updates = []tg.UpdateClass{upd.Update}
+	}
+	for _, update := range updates {
+		msg, ok := extractUserMessage(update, spambotID)
+		if !ok {
+			continue
+		}
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+}
+
+func extractUserMessage(update tg.UpdateClass, fromID int64) (string, bool) {
+	newMsg, ok := update.(*tg.UpdateNewMessage)
+	if !ok {
+		return "", false
+	}
+	msg, ok := newMsg.Message.(*tg.Message)
+	if !ok || msg.Out {
+		return "", false
+	}
+	peer, ok := msg.PeerID.(*tg.PeerUser)
+	if !ok || peer.UserID != fromID {
+		return "", false
+	}
+	return msg.Message, true
 }
 
 func telegramUserInfo(user *tg.User) map[string]any {

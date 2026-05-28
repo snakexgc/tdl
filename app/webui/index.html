@@ -27,13 +27,50 @@
         </div>
       </div>
       <nav class="nav" aria-label="主菜单">
-        <button class="nav-item active" data-view="dashboard" type="button">仪表盘</button>
-        <button class="nav-item" data-view="user" type="button">用户管理</button>
-        <button class="nav-item" data-view="config" type="button">配置文件</button>
-        <button class="nav-item" data-view="downloads" type="button">下载管理</button>
-        <button class="nav-item" data-view="kv" type="button">KV 管理</button>
-        <button class="nav-item" data-view="modules" type="button">模块管理</button>
-        <button class="nav-item" data-view="update" type="button">检查更新</button>
+        <button class="nav-item active" data-view="dashboard" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/>
+          </svg>
+          <span>仪表盘</span>
+        </button>
+        <button class="nav-item" data-view="user" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M10 9a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z"/>
+          </svg>
+          <span>用户管理</span>
+        </button>
+        <button class="nav-item" data-view="config" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+          </svg>
+          <span>配置文件</span>
+        </button>
+        <button class="nav-item" data-view="downloads" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v8.586l2.293-2.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V4a1 1 0 011-1zM3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/>
+          </svg>
+          <span>下载管理</span>
+        </button>
+        <button class="nav-item" data-view="kv" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/>
+            <path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/>
+            <path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/>
+          </svg>
+          <span>KV 管理</span>
+        </button>
+        <button class="nav-item" data-view="modules" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5A.75.75 0 012 10z" clip-rule="evenodd"/>
+          </svg>
+          <span>模块管理</span>
+        </button>
+        <button class="nav-item" data-view="update" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+          </svg>
+          <span>检查更新</span>
+        </button>
       </nav>
       <div class="sidebar-foot">
         <div class="heartbeat" id="heartbeat-indicator" data-state="checking" role="status" aria-live="polite">
@@ -51,7 +88,7 @@
       <div class="credential-warning" id="credential-warning" role="alert" hidden>
         <div>
           <strong>正在使用默认 WebUI 管理员账号：admin / admin。</strong>
-          <span>请立刻修改用户名和密码：从侧边栏进入“配置文件”，填写新的用户名和密码，保存后重启TDL使用新凭据重新登录!</span>
+          <span>请立刻修改用户名和密码：从侧边栏进入"配置文件"，填写新的用户名和密码，保存后重启TDL使用新凭据重新登录!</span>
         </div>
         <button class="btn danger" id="credential-warning-action" type="button">去修改</button>
       </div>

@@ -2,15 +2,15 @@
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 14px;
 }
 
 .dashboard-card {
-  min-height: 244px;
-  padding: 14px;
+  min-height: 240px;
+  padding: 16px;
   display: grid;
   grid-template-rows: auto minmax(160px, 1fr) auto;
-  gap: 10px;
+  gap: 12px;
 }
 
 .dashboard-card-wide {
@@ -33,29 +33,35 @@
 }
 
 .dashboard-card-head h2 {
-  font-size: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
   line-height: 1.3;
 }
 
 .dashboard-card-head p {
-  margin-top: 5px;
+  margin-top: 4px;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .dashboard-card-head strong {
   color: var(--text);
-  font-size: 24px;
-  line-height: 1.1;
+  font-size: 28px;
+  line-height: 1;
   font-weight: 800;
+  letter-spacing: -0.03em;
   text-align: right;
   overflow-wrap: anywhere;
 }
 
+/* ── Stat bars (download status card) ── */
 .dashboard-stat-bars {
   display: grid;
-  gap: 13px;
+  gap: 14px;
   align-content: center;
 }
 
@@ -68,6 +74,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 6px;
 }
 
 .dashboard-stat-line span {
@@ -78,19 +85,19 @@
 
 .dashboard-stat-line strong {
   color: var(--text);
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.1;
-  font-weight: 800;
+  font-weight: 700;
   text-align: right;
   overflow-wrap: anywhere;
+  letter-spacing: -0.02em;
 }
 
 .dashboard-stat-track {
-  height: 9px;
-  margin-top: 8px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(64, 80, 74, 0.1);
+  background: rgba(94, 112, 104, 0.12);
 }
 
 .dashboard-stat-fill {
@@ -98,26 +105,16 @@
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: #0b7f72;
-  transition: width 180ms ease;
+  background: var(--primary);
+  transition: width 220ms ease;
 }
 
-.dashboard-stat-fill-danger {
-  background: #c84545;
-}
+.dashboard-stat-fill-danger   { background: #ef4444; }
+.dashboard-stat-fill-warning  { background: #f59e0b; }
+.dashboard-stat-fill-aria2-active { background: #3b82f6; }
+.dashboard-stat-fill-muted    { background: #94a3b8; }
 
-.dashboard-stat-fill-warning {
-  background: #c47a16;
-}
-
-.dashboard-stat-fill-aria2-active {
-  background: #2f7cba;
-}
-
-.dashboard-stat-fill-muted {
-  background: #6a7380;
-}
-
+/* ── SVG charts ── */
 .dashboard-chart-shell {
   position: relative;
   width: 100%;
@@ -133,19 +130,19 @@
 }
 
 .dashboard-chart .grid-line {
-  stroke: rgba(98, 114, 108, 0.16);
+  stroke: rgba(94, 112, 104, 0.12);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .axis-line {
-  stroke: rgba(64, 80, 74, 0.68);
+  stroke: rgba(56, 81, 75, 0.5);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .axis-tick {
-  stroke: rgba(64, 80, 74, 0.5);
+  stroke: rgba(56, 81, 75, 0.4);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
@@ -157,15 +154,15 @@
 
 .dashboard-chart .series-line {
   fill: none;
-  stroke-width: 3;
+  stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .hover-line {
-  stroke: rgba(64, 80, 74, 0.62);
-  stroke-width: 1.2;
+  stroke: rgba(56, 81, 75, 0.5);
+  stroke-width: 1;
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
 }
@@ -177,10 +174,10 @@
 }
 
 .dashboard-chart .hover-tooltip-bg {
-  fill: rgba(255, 255, 255, 0.96);
+  fill: rgba(255, 255, 255, 0.97);
   stroke: var(--line-strong);
   stroke-width: 1;
-  filter: drop-shadow(0 8px 18px rgba(24, 37, 32, 0.14));
+  filter: drop-shadow(0 6px 16px rgba(15, 28, 24, 0.14));
 }
 
 .dashboard-chart .hover-tooltip-title {
@@ -200,13 +197,14 @@
   pointer-events: all;
 }
 
+/* ── Chart legends ── */
 .dashboard-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .dashboard-legend span {
@@ -216,27 +214,28 @@
 }
 
 .dashboard-legend i {
-  width: 18px;
+  width: 16px;
   height: 3px;
   border-radius: 999px;
+  flex: 0 0 16px;
 }
 
 .legend-total,
 .legend-gotd {
-  background: #0b7f72;
+  background: var(--primary);
 }
 
 .legend-software {
-  background: #6f5cc2;
+  background: #8b5cf6;
 }
 
 .legend-buffer,
 .legend-aria2 {
-  background: #c47a16;
+  background: #f59e0b;
 }
 
 .legend-retained {
-  background: #6a7380;
+  background: #94a3b8;
 }
 
 @media (max-width: 900px) {

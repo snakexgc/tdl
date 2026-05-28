@@ -21,42 +21,49 @@
       position: absolute;
       inset: -50%;
       background-image:
-        linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
-      background-size: 60px 60px;
-      animation: grid-drift 20s linear infinite;
+        linear-gradient(rgba(20, 184, 166, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(20, 184, 166, 0.04) 1px, transparent 1px);
+      background-size: 56px 56px;
+      animation: grid-drift 24s linear infinite;
     }
     @keyframes grid-drift {
       from { transform: translate(0, 0); }
-      to { transform: translate(60px, 60px); }
+      to   { transform: translate(56px, 56px); }
     }
     .auth-bg-orb {
       position: absolute;
       border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.5;
-      animation: orb-float 8s ease-in-out infinite alternate;
+      filter: blur(72px);
+      opacity: 0.55;
+      animation: orb-float 9s ease-in-out infinite alternate;
     }
     .auth-bg-orb:nth-child(1) {
-      width: 300px; height: 300px;
-      top: 10%; left: 15%;
-      background: rgba(59, 130, 246, 0.15);
+      width: 320px; height: 320px;
+      top: 8%; left: 12%;
+      background: radial-gradient(circle, rgba(13, 148, 136, 0.3), rgba(13, 148, 136, 0.05));
     }
     .auth-bg-orb:nth-child(2) {
-      width: 250px; height: 250px;
-      bottom: 15%; right: 10%;
-      background: rgba(139, 92, 246, 0.12);
-      animation-delay: -4s;
+      width: 260px; height: 260px;
+      bottom: 12%; right: 8%;
+      background: radial-gradient(circle, rgba(52, 211, 153, 0.22), rgba(52, 211, 153, 0.04));
+      animation-delay: -4.5s;
+    }
+    .auth-bg-orb:nth-child(3) {
+      width: 180px; height: 180px;
+      top: 55%; left: 60%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.15), transparent);
+      animation-delay: -2s;
     }
     @keyframes orb-float {
       from { transform: translateY(0) scale(1); }
-      to { transform: translateY(-30px) scale(1.05); }
+      to   { transform: translateY(-28px) scale(1.06); }
     }
     .auth-shell { position: relative; z-index: 1; }
   </style>
 </head>
 <body class="auth-page">
   <div class="auth-bg-grid" aria-hidden="true">
+    <div class="auth-bg-orb"></div>
     <div class="auth-bg-orb"></div>
     <div class="auth-bg-orb"></div>
   </div>

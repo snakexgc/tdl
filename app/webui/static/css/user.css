@@ -1,25 +1,33 @@
 /* User view: tabs, account switcher, and the multi-step login flow. */
 .tabs {
   display: flex;
-  gap: 8px;
-  margin: 0 0 16px;
+  gap: 4px;
+  margin: 0 0 18px;
   border-bottom: 1px solid var(--line);
 }
 
 .tab-button {
-  min-height: 42px;
+  min-height: 40px;
   border: 0;
-  border-bottom: 3px solid transparent;
-  padding: 0 14px;
+  border-bottom: 2px solid transparent;
+  padding: 0 16px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 150ms ease, border-color 150ms ease;
+  margin-bottom: -1px;
 }
 
-.tab-button:hover,
+.tab-button:hover {
+  color: var(--text);
+}
+
 .tab-button.active {
   color: var(--primary-dark);
   border-bottom-color: var(--primary);
+  font-weight: 600;
 }
 
 .user-tab {
@@ -42,7 +50,7 @@
   align-items: end;
   gap: 16px;
   margin: 0 0 14px;
-  padding: 16px;
+  padding: 18px;
 }
 
 .user-switch-copy {
@@ -65,6 +73,7 @@
   min-height: 38px;
 }
 
+/* ── Login flow ── */
 .login-flow {
   display: grid;
   gap: 16px;
@@ -76,14 +85,16 @@
   grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px);
   align-items: end;
   gap: 14px;
-  padding: 16px;
+  padding: 18px;
 }
 
 .login-flow-head h2,
 .user-switch h2 {
   font-size: 16px;
+  font-weight: 600;
 }
 
+/* ── Step progress indicator ── */
 .login-steps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -101,6 +112,7 @@
   min-height: 36px;
   color: var(--muted);
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -110,11 +122,13 @@
   width: 24px;
   height: 24px;
   flex: 0 0 24px;
-  border: 1px solid #cbd8d3;
+  border: 1.5px solid var(--line-strong);
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--panel);
   color: var(--muted);
   font-size: 12px;
+  font-weight: 600;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
 }
 
 .login-steps li.is-current {
@@ -129,11 +143,11 @@
 }
 
 .login-steps li.is-complete {
-  color: #38645d;
+  color: var(--primary-dark);
 }
 
 .login-steps li.is-complete span {
-  border-color: #8bbcb5;
+  border-color: var(--primary-light);
   background: var(--primary-soft);
   color: var(--primary-dark);
 }
@@ -143,11 +157,12 @@
 }
 
 .login-steps li.is-error span {
-  border-color: #efc7c3;
+  border-color: #fca5a5;
   background: var(--danger-soft);
   color: var(--danger);
 }
 
+/* ── Login meta chips ── */
 .login-meta {
   display: flex;
   flex-wrap: wrap;
@@ -163,16 +178,18 @@
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 10px;
-  background: #ffffff;
+  background: var(--panel);
   color: var(--text);
   font-size: 12px;
+  font-weight: 500;
 }
 
 .login-meta strong {
   color: var(--muted);
-  font-weight: 650;
+  font-weight: 600;
 }
 
+/* ── Login stage panel ── */
 .login-stage {
   min-height: 300px;
   overflow: hidden;
@@ -180,7 +197,7 @@
 
 .login-step-panel {
   min-height: 300px;
-  padding: 20px;
+  padding: 22px;
 }
 
 .login-step-panel.animate-in {
@@ -188,51 +205,48 @@
 }
 
 @keyframes login-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-step-panel.animate-in {
-    animation: none;
-  }
+  .login-step-panel.animate-in { animation: none; }
 }
 
 .login-step-copy h3 {
   font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .login-step-copy p {
   max-width: 620px;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .login-form-panel {
   max-width: 420px;
 }
 
+/* ── Login result ── */
 .login-result-mark {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
-  margin-bottom: 14px;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 16px;
   border-radius: 50%;
   background: var(--primary-soft);
   color: var(--primary-dark);
-  font-size: 30px;
-  font-weight: 750;
+  font-size: 28px;
+  font-weight: 800;
+  border: 2px solid rgba(13, 148, 136, 0.2);
 }
 
 .login-result-mark.error {
   background: var(--danger-soft);
   color: var(--danger);
+  border-color: rgba(220, 38, 38, 0.2);
 }
 
 .login-result-actions,
@@ -248,6 +262,145 @@
 
 .login-flow .notice:empty {
   display: none;
+}
+
+/* ── Login status as a styled banner card ── */
+#login-status:not(:empty) {
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid;
+  margin-bottom: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#login-status:not(.error):not(.success):not(:empty) {
+  background: var(--panel-soft);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+#login-status.success:not(:empty) {
+  background: var(--primary-soft);
+  border-color: #99e6de;
+  color: var(--primary-dark);
+}
+
+#login-status.error:not(:empty) {
+  background: var(--danger-soft);
+  border-color: #fca5a5;
+  color: var(--danger);
+}
+
+/* ── User attribute badges ── */
+.user-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+/* Status dot for valid/invalid badges */
+.user-badge-valid::before,
+.user-badge-invalid::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  flex: 0 0 6px;
+}
+
+.user-badge-valid {
+  background: var(--primary-soft);
+  border-color: #99e6de;
+  color: var(--primary-dark);
+}
+
+.user-badge-valid::before {
+  background: #34d399;
+}
+
+.user-badge-invalid {
+  background: var(--danger-soft);
+  border-color: #fca5a5;
+  color: var(--danger);
+}
+
+.user-badge-invalid::before {
+  background: #f87171;
+}
+
+.user-badge-premium {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.user-badge-verified {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.user-badge-bot {
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+  color: #6d28d9;
+}
+
+.user-badge-restricted {
+  background: var(--danger-soft);
+  border-color: #fca5a5;
+  color: var(--danger);
+}
+
+.user-badge-normal {
+  background: var(--panel-soft);
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+/* ── Status-colored info rows ── */
+.info-item.info-item-status-ok {
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.info-item.info-item-status-danger {
+  background: var(--danger-soft);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.info-item.info-item-status-warning {
+  background: #fffbeb;
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.info-item.info-item-status-info {
+  background: #eff6ff;
+  box-shadow: inset 3px 0 0 #3b82f6;
+}
+
+.info-item.info-item-status-muted {
+  background: var(--panel-soft);
+  box-shadow: inset 3px 0 0 var(--line-strong);
+}
+
+.info-item[class*="info-item-status"] .info-value {
+  font-weight: 600;
 }
 
 @media (max-width: 900px) {

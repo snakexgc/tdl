@@ -10,11 +10,14 @@
 
 .config-section h2 {
   margin: 0;
-  padding: 13px 16px;
+  padding: 12px 16px;
   background: var(--panel-soft);
   border-bottom: 1px solid var(--line);
-  font-size: 15px;
-  font-weight: 750;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .field-grid {

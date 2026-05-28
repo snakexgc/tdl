@@ -160,6 +160,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/user", s.authFunc(s.handleUser))
 	mux.HandleFunc("/api/user/switch", s.authFunc(s.handleUserSwitch))
 	mux.HandleFunc("/api/user/delete", s.authFunc(s.handleUserDelete))
+	mux.HandleFunc("/api/user/spam-check", s.authFunc(s.handleSpamCheck))
 	mux.HandleFunc("/api/login/status", s.authFunc(s.handleLoginStatus))
 	mux.HandleFunc("/api/login/phone/start", s.authFunc(s.handleLoginPhoneStart))
 	mux.HandleFunc("/api/login/code", s.authFunc(s.handleLoginCode))
