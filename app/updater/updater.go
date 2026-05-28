@@ -30,6 +30,8 @@ const (
 	githubAPIBase     = "https://api.github.com"
 	updateTimeout     = 3 * time.Minute
 	goosWindows       = "windows"
+	goosDarwin        = "darwin"
+	archAMD64         = "amd64"
 	runtimeBinary     = "binary"
 	runtimeDocker     = "docker"
 	dockerVersionMark = "-origin-"
@@ -380,12 +382,22 @@ func assetScore(name string) int {
 
 func archAliases(arch string) []string {
 	switch arch {
-	case "amd64":
-		return []string{"amd64", "x86_64", "x64"}
+	case archAMD64:
+		// goreleaser replaces amd64 → 64bit in archive names
+		return []string{"amd64", "x86_64", "x64", "64bit"}
 	case "arm64":
 		return []string{"arm64", "aarch64"}
 	case "386":
-		return []string{"386", "i386", "x86"}
+		// goreleaser replaces 386 → 32bit in archive names
+		return []string{"386", "i386", "x86", "32bit"}
+	case "arm":
+		// goreleaser names arm builds armv5/armv6/armv7; prefer the exact
+		// variant that was compiled in (injected via GOARM ldflag).
+		arm := strings.TrimSpace(consts.GOARM)
+		if arm != "" {
+			return []string{"armv" + arm, "armv"}
+		}
+		return []string{"armv5", "armv6", "armv7", "armv"}
 	default:
 		return []string{arch}
 	}
@@ -395,7 +407,7 @@ func osAliases(goos string) []string {
 	switch goos {
 	case goosWindows:
 		return []string{"windows", "win"}
-	case "darwin":
+	case goosDarwin:
 		return []string{"darwin", "macos", "osx"}
 	default:
 		return []string{goos}

@@ -12,6 +12,7 @@ builds:
       - -X github.com/iyear/tdl/pkg/consts.Version={{ .Version }}
       - -X github.com/iyear/tdl/pkg/consts.Commit={{ .ShortCommit }}
       - -X github.com/iyear/tdl/pkg/consts.CommitDate={{ .CommitDate }}
+      - -X github.com/iyear/tdl/pkg/consts.GOARM={{ .Arm }}
     mod_timestamp: '{{ .CommitTimestamp }}'
     goos:
       - linux

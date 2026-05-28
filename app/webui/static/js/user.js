@@ -64,7 +64,8 @@ export async function loadUser() {
     renderUserSwitch(data.namespace || "", state.userSessions, data.sessions_error || "");
     setNamespaceInputs(data.namespace || "");
     if (data.valid) {
-      checkAccountSpam();
+      const spamBtn = document.getElementById("user-spam-check-btn");
+      if (spamBtn) spamBtn.addEventListener("click", checkAccountSpam);
     }
   } catch (error) {
     target.innerHTML = infoItem("检查失败", error.message);
@@ -85,7 +86,7 @@ function renderUserInfoItems(data, user) {
   }
 
   // 2. Account spam status — colored row, updated async by checkAccountSpam
-  items.push(infoItemStatusDyn("账号状态", "检查中...", "info-item-status-muted", "user-spam-row", "user-spam-status"));
+  items.push(infoItemStatusWithBtn("账号状态", "未检测", "info-item-status-muted", "user-spam-row", "user-spam-status", "user-spam-check-btn", "检测"));
 
   // 3. Account characteristics — colored row, plain text labels
   const charLabels = [];
@@ -127,6 +128,18 @@ function infoItemStatusDyn(label, text, statusClass, rowId, valueId) {
   `;
 }
 
+function infoItemStatusWithBtn(label, text, statusClass, rowId, valueId, btnId, btnText) {
+  return `
+    <div class="info-item info-item-wide ${escapeAttr(statusClass)}" id="${escapeAttr(rowId)}" style="display:flex;align-items:center;gap:12px">
+      <div style="flex:1;min-width:0">
+        <div class="info-label">${escapeHTML(label)}</div>
+        <div class="info-value" id="${escapeAttr(valueId)}">${escapeHTML(text)}</div>
+      </div>
+      <button class="btn secondary" id="${escapeAttr(btnId)}" type="button">${escapeHTML(btnText)}</button>
+    </div>
+  `;
+}
+
 function infoItemWide(label, valueHTML) {
   return `
     <div class="info-item info-item-wide">
@@ -137,11 +150,15 @@ function infoItemWide(label, valueHTML) {
 }
 
 async function checkAccountSpam() {
+  const btn = document.getElementById("user-spam-check-btn");
+  const row = document.getElementById("user-spam-row");
+  const el = document.getElementById("user-spam-status");
+  if (!row || !el) return;
+  if (btn) { btn.disabled = true; btn.textContent = "检测中..."; }
+  el.textContent = "检测中...";
+  row.className = "info-item info-item-wide info-item-status-muted";
   try {
     const data = await api("/api/user/spam-check", { method: "POST", body: "{}" });
-    const row = document.getElementById("user-spam-row");
-    const el = document.getElementById("user-spam-status");
-    if (!row || !el) return;
     if (data.clean) {
       row.className = "info-item info-item-wide info-item-status-ok";
       el.textContent = "正常";
@@ -150,11 +167,10 @@ async function checkAccountSpam() {
       el.textContent = "账号异常";
     }
   } catch (error) {
-    const row = document.getElementById("user-spam-row");
-    const el = document.getElementById("user-spam-status");
-    if (!row || !el) return;
     row.className = "info-item info-item-wide info-item-status-muted";
     el.textContent = "检查失败";
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "重新检测"; }
   }
 }
 
