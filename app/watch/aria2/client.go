@@ -115,15 +115,32 @@ func (c *Client) callRaw(ctx context.Context, method string, params []any) (json
 		return nil, errors.Wrap(err, "marshal aria2 request")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.rpcURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, errors.Wrap(err, "create aria2 request")
-	}
-	req.Header.Set("Content-Type", "application/json")
+	const (
+		maxAttempts = 6
+		retryDelay  = time.Second
+	)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(err, "do aria2 request")
+	var resp *http.Response
+	for attempt := range maxAttempts {
+		var req *http.Request
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.rpcURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, errors.Wrap(err, "create aria2 request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = c.httpClient.Do(req)
+		if err == nil {
+			break
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || attempt == maxAttempts-1 {
+			return nil, errors.Wrap(err, "do aria2 request")
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errors.Wrap(ctx.Err(), "do aria2 request")
+		case <-time.After(retryDelay):
+		}
 	}
 	defer resp.Body.Close()
 
