@@ -275,15 +275,17 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 		return nil, errors.Wrap(err, "build persistent download task id")
 	}
 
+	now := time.Now()
 	task := &downloadTask{
-		ID:        id,
-		PeerID:    peerID,
-		MessageID: msgID,
-		Peer:      peer,
-		FileName:  fileName,
-		FileSize:  fileSize,
-		Media:     media,
-		CreatedAt: time.Now(),
+		ID:           id,
+		PeerID:       peerID,
+		MessageID:    msgID,
+		Peer:         peer,
+		FileName:     fileName,
+		FileSize:     fileSize,
+		Media:        media,
+		CreatedAt:    now,
+		LastActiveAt: now,
 	}
 	if err := p.tasks.Add(ctx, task); err != nil {
 		return nil, err

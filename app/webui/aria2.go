@@ -240,6 +240,8 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 		_ = s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, idxData)
 	}
 
+	ttl := httpdl.LinkTTL(config.Get().HTTP)
+
 	downloadIndex := map[string]time.Time{}
 	if idxData, err := s.opts.NamespaceKV.Get(ctx, downloadTaskIndexKey); err == nil {
 		_ = json.Unmarshal(idxData, &downloadIndex)
@@ -247,6 +249,11 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 	for taskID := range taskHasAria2 {
 		if !taskCompleted[taskID] {
 			downloadIndex[taskID] = now
+			// Slide the link's real expiry clock: a queued/paused/errored task is
+			// still "active" for link-lifetime purposes even though aria2 is not
+			// fetching it, so refresh the record itself (not just the index) or the
+			// link would expire from its original creation time and 404 mid-queue.
+			s.refreshDownloadTaskActivity(ctx, taskID, now, ttl)
 		}
 	}
 	if idxData, err := json.Marshal(downloadIndex); err == nil {
@@ -260,11 +267,18 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 		s.markDownloadTaskDownloaded(ctx, taskID)
 	}
 
-	ttl := httpdl.LinkTTL(config.Get().HTTP)
 	if ttl > 0 && len(downloadIndex) > 0 {
 		dlChanged := false
-		for taskID, createdAt := range downloadIndex {
-			if !createdAt.Add(ttl).Before(now) {
+		for taskID, indexedAt := range downloadIndex {
+			if !indexedAt.Add(ttl).Before(now) {
+				continue
+			}
+			// Confirm against the record's own activity clock before deleting; the
+			// download proxy refreshes records out-of-band, so the index snapshot
+			// can lag a still-active link.
+			if base, ok := s.downloadTaskActivity(ctx, taskID); ok && !base.Add(ttl).Before(now) {
+				downloadIndex[taskID] = base
+				dlChanged = true
 				continue
 			}
 			_ = s.opts.NamespaceKV.Delete(ctx, downloadTaskKeyPrefix+taskID)

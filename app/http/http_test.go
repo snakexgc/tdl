@@ -3,6 +3,7 @@ package httpdl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -228,6 +229,134 @@ func TestTaskStoreKeepsPersistentTaskWhenTTLDisabled(t *testing.T) {
 
 	_, err = kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
 	require.NoError(t, err)
+}
+
+func TestTaskStoreSlidingTTLKeepsActiveLinkAlive(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	ttl := time.Hour
+	now := time.Now()
+	store := newTaskStore(kvd, ttl)
+	task := &downloadTask{
+		ID:           "document_77",
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    now.Add(-10 * ttl), // created long before the TTL window
+		LastActiveAt: now.Add(-time.Minute),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 77, AccessHash: 1, FileReference: []byte("r")},
+			Name:         testFileName,
+			Size:         10,
+			DC:           2,
+		},
+	}
+	require.NoError(t, store.Add(context.Background(), task))
+
+	// A fresh store (cold in-memory cache, like after a restart) must still serve
+	// the link because its activity clock is recent, not its creation time.
+	restored := newTaskStore(kvd, ttl)
+	got, ok, err := restored.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, task.ID, got.ID)
+}
+
+func TestTaskStoreGetSlidesActivity(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	ttl := time.Hour
+	now := time.Now()
+	stale := now.Add(-40 * time.Minute) // older than the 15m refresh interval
+	store := newTaskStore(kvd, ttl)
+	task := &downloadTask{
+		ID:           "document_78",
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    stale,
+		LastActiveAt: stale,
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 78, AccessHash: 1, FileReference: []byte("r")},
+			Name:         testFileName,
+			Size:         10,
+			DC:           2,
+		},
+	}
+	require.NoError(t, store.Add(context.Background(), task))
+
+	reader := newTaskStore(kvd, ttl)
+	_, ok, err := reader.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	var persisted persistentDownloadTask
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.True(t, persisted.LastActiveAt.After(stale), "Get should slide LastActiveAt forward")
+}
+
+func TestSetDownloadTaskLastActiveThrottlesAndPreservesFields(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+
+	data, err := json.Marshal(map[string]any{
+		"id":         "document_5",
+		"file_name":  "f.bin",
+		"file_size":  99,
+		"created_at": now.Add(-2 * time.Hour),
+		"downloaded": true,
+		"media":      map[string]any{"location": map[string]any{"kind": "document", "id": 5}},
+	})
+	require.NoError(t, err)
+
+	updated, changed, err := SetDownloadTaskLastActive(data, now, time.Hour)
+	require.NoError(t, err)
+	require.True(t, changed)
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(updated, &got))
+	require.Contains(t, got, "media", "unrelated fields must be preserved")
+	require.Contains(t, got, "last_active_at")
+	require.Equal(t, json.RawMessage("true"), got["downloaded"])
+
+	fresh, err := json.Marshal(map[string]any{"id": "x", "last_active_at": now.Add(-time.Minute)})
+	require.NoError(t, err)
+	_, changed, err = SetDownloadTaskLastActive(fresh, now, time.Hour)
+	require.NoError(t, err)
+	require.False(t, changed, "a recently-active record must not be rewritten")
+}
+
+func TestCleanupExpiredKeepsRefreshedRecord(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	ttl := time.Hour
+	now := time.Now()
+	store := newTaskStore(kvd, ttl)
+	task := &downloadTask{
+		ID:           "document_79",
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    now.Add(-3 * ttl),
+		LastActiveAt: now, // active right now
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 79, AccessHash: 1, FileReference: []byte("r")},
+			Name:         testFileName,
+			Size:         10,
+			DC:           2,
+		},
+	}
+	require.NoError(t, store.Add(context.Background(), task))
+
+	// Simulate a stale index entry (e.g. written before the record was refreshed).
+	require.NoError(t, store.saveIndex(context.Background(), persistentDownloadTaskIndex{task.ID: now.Add(-3 * ttl)}))
+
+	require.NoError(t, store.CleanupExpired(context.Background(), now))
+
+	_, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err, "a record refreshed past the stale index entry must survive cleanup")
 }
 
 func TestDownloadHandlerSuccessAndRange(t *testing.T) {

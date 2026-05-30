@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	httpdl "github.com/iyear/tdl/app/http"
 	"github.com/iyear/tdl/app/watch"
 	"github.com/iyear/tdl/pkg/config"
 )
@@ -200,13 +201,14 @@ type internalLinkEntry struct {
 }
 
 type persistentDownloadTask struct {
-	ID         string    `json:"id"`
-	PeerID     int64     `json:"peer_id"`
-	MessageID  int       `json:"message_id"`
-	FileName   string    `json:"file_name"`
-	FileSize   int64     `json:"file_size"`
-	CreatedAt  time.Time `json:"created_at"`
-	Downloaded bool      `json:"downloaded"`
+	ID           string    `json:"id"`
+	PeerID       int64     `json:"peer_id"`
+	MessageID    int       `json:"message_id"`
+	FileName     string    `json:"file_name"`
+	FileSize     int64     `json:"file_size"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastActiveAt time.Time `json:"last_active_at,omitempty"`
+	Downloaded   bool      `json:"downloaded"`
 }
 
 func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, string, error) {
@@ -287,10 +289,14 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 			Downloaded: task.Downloaded,
 			Status:     "not_submitted",
 		}
+		expiryBase := task.CreatedAt
+		if !task.LastActiveAt.IsZero() {
+			expiryBase = task.LastActiveAt
+		}
 		if cfg.HTTP.DownloadLinkTTLHours <= 0 {
 			item.Permanent = true
-		} else if !task.CreatedAt.IsZero() {
-			expiresAt := task.CreatedAt.Add(time.Duration(cfg.HTTP.DownloadLinkTTLHours) * time.Hour)
+		} else if !expiryBase.IsZero() {
+			expiresAt := expiryBase.Add(time.Duration(cfg.HTTP.DownloadLinkTTLHours) * time.Hour)
 			item.ExpiresAt = &expiresAt
 			item.Expired = !expiresAt.After(now)
 		}
@@ -390,6 +396,45 @@ func markDownloadTaskDataDownloaded(data []byte, taskID string) ([]byte, bool, e
 		return nil, false, err
 	}
 	return updated, true, nil
+}
+
+// downloadTaskActivity returns the record's sliding expiry base (LastActiveAt,
+// falling back to CreatedAt) and whether the record exists.
+func (s *Server) downloadTaskActivity(ctx context.Context, taskID string) (time.Time, bool) {
+	if s.opts.NamespaceKV == nil || taskID == "" {
+		return time.Time{}, false
+	}
+	data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var task persistentDownloadTask
+	if err := json.Unmarshal(data, &task); err != nil {
+		return time.Time{}, false
+	}
+	if !task.LastActiveAt.IsZero() {
+		return task.LastActiveAt, true
+	}
+	return task.CreatedAt, true
+}
+
+// refreshDownloadTaskActivity slides a download link's expiry by stamping
+// last_active_at=now on the record, throttled to one write per refresh interval.
+// It rewrites only that field via the raw JSON so every other field (media, peer,
+// downloaded flag) is preserved.
+func (s *Server) refreshDownloadTaskActivity(ctx context.Context, taskID string, now time.Time, ttl time.Duration) {
+	if s.opts.NamespaceKV == nil || taskID == "" || ttl <= 0 {
+		return
+	}
+	data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
+	if err != nil {
+		return
+	}
+	updated, changed, err := httpdl.SetDownloadTaskLastActive(data, now, httpdl.RefreshInterval(ttl))
+	if err != nil || !changed {
+		return
+	}
+	_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, updated)
 }
 
 func hasPersistentDownloadMedia(data []byte) bool {

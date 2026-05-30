@@ -29,6 +29,7 @@ const (
 	testUserBob     = "Bob"
 	testGID         = "gid-1"
 	testTokenSecret = "token:secret"
+	testFileName    = "file.bin"
 )
 
 func initWebUITestConfig(t *testing.T) {
@@ -269,7 +270,7 @@ func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
 		ID:        testDocumentID,
-		FileName:  "file.bin",
+		FileName:  testFileName,
 		FileSize:  123,
 		CreatedAt: createdAt,
 	})
@@ -727,6 +728,72 @@ func TestInjectAria2SecretDoesNotDuplicateExistingToken(t *testing.T) {
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(next, &decoded))
 	require.Equal(t, []any{"token:secret", testGID}, decoded["params"])
+}
+
+func TestListDownloadLinksUsesLastActiveForExpiry(t *testing.T) {
+	initWebUITestConfig(t)
+
+	created := time.Now().Add(-72 * time.Hour) // well past the 24h TTL
+	active := time.Now().Add(-1 * time.Hour)   // refreshed recently
+	taskData, err := json.Marshal(persistentDownloadTask{
+		ID:           testDocumentID,
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    created,
+		LastActiveAt: active,
+	})
+	require.NoError(t, err)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		testQueueDefault: {
+			downloadTaskKeyPrefix + testDocumentID: taskData,
+		},
+	}}
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault})
+
+	items, _, err := server.listDownloadLinks(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.False(t, items[0].Expired, "a link with recent activity must not read as expired")
+	require.Equal(t, created.Unix(), items[0].CreatedAt.Unix())
+	require.NotNil(t, items[0].ExpiresAt)
+	require.Equal(t, active.Add(24*time.Hour).Unix(), items[0].ExpiresAt.Unix())
+}
+
+func TestRefreshDownloadTaskActivitySlidesExpiry(t *testing.T) {
+	initWebUITestConfig(t)
+
+	created := time.Now().Add(-72 * time.Hour)
+	taskData, err := json.Marshal(persistentDownloadTask{
+		ID:        testDocumentID,
+		FileName:  testFileName,
+		FileSize:  10,
+		CreatedAt: created,
+	})
+	require.NoError(t, err)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		testQueueDefault: {
+			downloadTaskKeyPrefix + testDocumentID: taskData,
+		},
+	}}
+	namespaceKV, err := engine.Open(testQueueDefault)
+	require.NoError(t, err)
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
+
+	now := time.Now()
+	server.refreshDownloadTaskActivity(context.Background(), testDocumentID, now, 24*time.Hour)
+
+	base, ok := server.downloadTaskActivity(context.Background(), testDocumentID)
+	require.True(t, ok)
+	require.WithinDuration(t, now, base, time.Second)
+
+	var got persistentDownloadTask
+	require.NoError(t, json.Unmarshal(engine.meta[testQueueDefault][downloadTaskKeyPrefix+testDocumentID], &got))
+	require.Equal(t, testDocumentID, got.ID)
+	require.Equal(t, testFileName, got.FileName)
+	require.Equal(t, int64(10), got.FileSize)
+	require.Equal(t, created.Unix(), got.CreatedAt.Unix())
 }
 
 type fakeWebUIKVEngine struct {
