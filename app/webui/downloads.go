@@ -29,7 +29,7 @@ func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items": items,
+		fieldItems: items,
 	})
 }
 
@@ -57,7 +57,7 @@ func (s *Server) handleInternalDownloadActions(w http.ResponseWriter, r *http.Re
 		result, err = controller.Pause(r.Context(), req.IDs)
 	case "start":
 		result, err = controller.Start(r.Context(), req.IDs)
-	case "delete":
+	case actionDelete:
 		result, err = controller.Delete(r.Context(), req.IDs)
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported action %q", req.Action))
@@ -82,7 +82,7 @@ func (s *Server) handleKVLinks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"items":        items,
+			fieldItems:     items,
 			"status_error": statusErr,
 		})
 	default:
@@ -134,7 +134,7 @@ func (s *Server) handleKVActions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Action {
-	case "delete":
+	case actionDelete:
 		var deleted int
 		var itemErrors []string
 		for _, id := range req.IDs {

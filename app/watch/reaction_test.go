@@ -133,6 +133,70 @@ func TestEditMessageReactionSkipsQueueWhenContextCanceled(t *testing.T) {
 	require.Empty(t, w.jobCh)
 }
 
+func TestShouldTriggerForwardReactionIgnoresListenSet(t *testing.T) {
+	// Empty listen set with a configured trigger reaction is a valid
+	// "react to forward" setup: reacting must still trigger a forward.
+	w := &Watcher{forward: &forwardRuntime{
+		enabled:          true,
+		listen:           map[int64]forwardListenEntry{},
+		triggerReactions: newTriggerReactionSet([]string{"🔥"}),
+	}}
+
+	myTrigger := &tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
+	}
+	require.True(t, w.shouldTriggerForwardReaction(myTrigger))
+
+	// A reaction that is not the configured trigger must not forward.
+	myOther := &tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("👍", true)},
+	}
+	require.False(t, w.shouldTriggerForwardReaction(myOther))
+
+	// Someone else's trigger reaction must not forward.
+	notMine := &tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", false)},
+	}
+	require.False(t, w.shouldTriggerForwardReaction(notMine))
+}
+
+func TestShouldTriggerForwardReactionRequiresEnabledForward(t *testing.T) {
+	reactions := &tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
+	}
+
+	// No forward runtime configured.
+	require.False(t, (&Watcher{}).shouldTriggerForwardReaction(reactions))
+
+	// Forward configured but not enabled.
+	disabled := &Watcher{forward: &forwardRuntime{
+		enabled:          false,
+		triggerReactions: newTriggerReactionSet([]string{"🔥"}),
+	}}
+	require.False(t, disabled.shouldTriggerForwardReaction(reactions))
+}
+
+func TestShouldTriggerForwardReactionEmptyTriggerMatchesAnyEmoji(t *testing.T) {
+	// An empty forward trigger set means any of the current user's reactions
+	// forwards, mirroring the download trigger behaviour.
+	w := &Watcher{forward: &forwardRuntime{
+		enabled:          true,
+		listen:           map[int64]forwardListenEntry{},
+		triggerReactions: newTriggerReactionSet(nil),
+	}}
+
+	require.True(t, w.shouldTriggerForwardReaction(&tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
+	}))
+	require.True(t, w.shouldTriggerForwardReaction(&tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("👍", true)},
+	}))
+	// Still must be the current user's reaction, not someone else's.
+	require.False(t, w.shouldTriggerForwardReaction(&tg.MessageReactions{
+		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", false)},
+	}))
+}
+
 func TestGenerateMessageLinkForPrivateChatUsesTelegramDeepLink(t *testing.T) {
 	w := &Watcher{}
 

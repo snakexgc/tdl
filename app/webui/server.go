@@ -55,6 +55,12 @@ const (
 	valueTrue                    = "true"
 	fieldMessage                 = "message"
 	fieldDefault                 = "default"
+
+	actionDelete = "delete"
+	actionPause  = "pause"
+	actionResume = "resume"
+	fieldItems   = "items"
+	fieldRunning = "running"
 )
 
 type Options struct {
@@ -154,6 +160,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/aria2/check", s.authFunc(s.handleAria2Check))
 	mux.HandleFunc("/api/internal-downloads", s.authFunc(s.handleInternalDownloads))
 	mux.HandleFunc("/api/internal-downloads/actions", s.authFunc(s.handleInternalDownloadActions))
+	mux.HandleFunc("/api/forwards", s.authFunc(s.handleForwards))
+	mux.HandleFunc("/api/forwards/actions", s.authFunc(s.handleForwardActions))
 	mux.HandleFunc("/api/kv/links", s.authFunc(s.handleKVLinks))
 	mux.HandleFunc("/api/kv/links/actions", s.authFunc(s.handleKVActions))
 	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))

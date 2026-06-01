@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	appforward "github.com/iyear/tdl/app/forward"
 	httpdl "github.com/iyear/tdl/app/http"
 	watcharia2 "github.com/iyear/tdl/app/watch/aria2"
 	"github.com/iyear/tdl/core/dcpool"
@@ -365,7 +366,10 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMB),
 	}
 
-	if opts.Download || (opts.Forward && len(opts.ForwardTriggerReactions) > 0) {
+	// Register reaction handlers whenever download or forward is enabled. Forward
+	// reacts on its trigger emoji (or any emoji when its trigger set is empty),
+	// so it needs these handlers regardless of how many triggers are configured.
+	if opts.Download || opts.Forward {
 		d.OnMessageReactions(w.onReaction)
 		d.OnEditMessage(w.onEditMessage)
 		d.OnEditChannelMessage(w.onEditChannelMessage)
@@ -441,6 +445,21 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 			go w.dispatcher(egCtx, eg)
 		}
 
+		// Drain the persistent forward queue one job at a time using this
+		// connection's pool. Runs whenever the watcher is connected so /forward
+		// jobs are processed even if the auto-forward listener is disabled.
+		forwardDone := make(chan struct{})
+		go func() {
+			defer close(forwardDone)
+			if err := appforward.Jobs().Serve(egCtx, appforward.Runtime{
+				Pool:    pool,
+				Manager: w.manager,
+				Threads: opts.Threads,
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				logctx.From(ctx).Error("Forward queue worker stopped", zap.Error(err))
+			}
+		}()
+
 		<-ctx.Done()
 
 		if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
@@ -450,6 +469,11 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		case <-updatesDone:
 		case <-time.After(5 * time.Second):
 			logctx.From(ctx).Warn("Updates manager did not stop before timeout")
+		}
+		select {
+		case <-forwardDone:
+		case <-time.After(5 * time.Second):
+			logctx.From(ctx).Warn("Forward queue worker did not stop before timeout")
 		}
 
 		return nil

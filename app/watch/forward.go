@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
@@ -114,19 +113,19 @@ func (w *Watcher) configureForward(ctx context.Context) {
 		w.addLinkedDiscussion(ctx, listen, raw, peer)
 	}
 
-	if len(listen) == 0 {
-		w.notify(ctx, "监听转发已启用，但 forward.listen 里没有可用对象。")
-		logctx.From(ctx).Warn("Forward listening enabled without valid peers")
-		return
-	}
+	triggerReactions := newTriggerReactionSet(w.opts.ForwardTriggerReactions)
 
+	// Forward runs via auto-listen peers and/or reaction triggers. An empty
+	// trigger set means "react with any emoji to forward" (mirroring the
+	// download trigger), so once the module is enabled there is always a way to
+	// forward — no need to bail out on empty listen/triggers.
 	w.forward = &forwardRuntime{
 		enabled:          true,
 		mode:             mode,
 		target:           target,
 		listen:           listen,
 		dedupe:           newTimedDedupe(w.opts.ForwardDedupeTTL),
-		triggerReactions: newTriggerReactionSet(w.opts.ForwardTriggerReactions),
+		triggerReactions: triggerReactions,
 	}
 
 	names := make([]string, 0, len(listen))
@@ -137,10 +136,11 @@ func (w *Watcher) configureForward(ctx context.Context) {
 			names = append(names, fmt.Sprintf("%s(%d)", entry.DisplayName, entry.PeerID))
 		}
 	}
-	logctx.From(ctx).Info("Forward listening configured",
+	logctx.From(ctx).Info("Forward configured",
 		zap.String("mode", appforward.ConfigModeName(mode)),
 		zap.Int64("target_id", target.ID()),
-		zap.Strings("listen", names))
+		zap.Strings("listen", names),
+		zap.Int("trigger_reactions", len(triggerReactions)))
 }
 
 func (w *Watcher) addLinkedDiscussion(ctx context.Context, listen map[int64]forwardListenEntry, input string, peer peers.Peer) {
@@ -190,16 +190,30 @@ func (w *Watcher) onNewChannelMessageForward(ctx context.Context, e tg.Entities,
 	return w.forwardUpdateMessage(ctx, e, msg)
 }
 
+// forwardUpdateMessage auto-forwards a new message, but only from explicitly
+// listened peers. Reaction triggers use enqueueForwardMessage directly and are
+// not restricted to the listen set.
 func (w *Watcher) forwardUpdateMessage(ctx context.Context, e tg.Entities, msg *tg.Message) error {
 	if w.forward == nil || !w.forward.enabled || msg == nil || msg.Out {
 		return nil
 	}
-
 	peerID := tutil.GetPeerID(msg.PeerID)
-	entry, ok := w.forward.listen[peerID]
-	if !ok {
+	if _, ok := w.forward.listen[peerID]; !ok {
 		return nil
 	}
+	w.enqueueForwardMessage(ctx, e, msg)
+	return nil
+}
+
+// enqueueForwardMessage dedupes and enqueues a single message for forwarding to
+// the configured target. It deliberately does NOT apply the listen-peer filter,
+// so it serves both auto-forwarding (after a listen check) and reaction triggers
+// (which forward any message the user reacts to, on any peer).
+func (w *Watcher) enqueueForwardMessage(ctx context.Context, e tg.Entities, msg *tg.Message) {
+	if w.forward == nil || !w.forward.enabled || msg == nil || msg.Out {
+		return
+	}
+	peerID := tutil.GetPeerID(msg.PeerID)
 
 	key := forwardDedupeKey(peerID, msg)
 	if w.forward.dedupe.Seen(key) {
@@ -207,43 +221,33 @@ func (w *Watcher) forwardUpdateMessage(ctx context.Context, e tg.Entities, msg *
 			zap.String("key", key),
 			zap.Int64("peer_id", peerID),
 			zap.Int("msg_id", msg.ID))
-		return nil
+		return
 	}
 
+	// Resolve the source peer so the manager caches its access hash; the queue
+	// worker re-resolves it by id when it later runs the job.
 	from, err := w.resolveForwardPeer(ctx, e, msg.PeerID, peerID)
 	if err != nil {
 		w.notify(ctx, "监听转发失败：无法解析来源。\n来源：%d\n消息：%d\n错误：%v", peerID, msg.ID, err)
-		return nil
+		return
 	}
+	originName := from.VisibleName()
 
-	logctx.From(ctx).Info("Forwarding watched message",
+	logctx.From(ctx).Info("Enqueuing message for forward",
 		zap.Int64("peer_id", peerID),
 		zap.Int("msg_id", msg.ID),
-		zap.Int64("target_id", w.forward.target.ID()),
-		zap.Bool("is_comment", entry.IsComment),
-		zap.Int64("linked_from", entry.LinkedFrom))
+		zap.Int64("target_id", w.forward.target.ID()))
 
-	go func() {
-		err := appforward.ForwardSingle(ctx, w.pool, from, msg, w.forward.target, appforward.ElemOptions{
-			Mode:    w.forward.mode,
-			Silent:  w.opts.ForwardSilent,
-			Grouped: true,
-		}, w.opts.Threads)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			notifyCtx := context.WithoutCancel(ctx)
-			logctx.From(notifyCtx).Error("Watched message forward failed",
-				zap.Int64("peer_id", peerID),
-				zap.Int("msg_id", msg.ID),
-				zap.Error(err))
-			w.notify(notifyCtx, "监听转发失败。\n来源：%d\n消息：%d\n错误：%v", peerID, msg.ID, err)
-			return
-		}
-		if err == nil {
-			w.notify(context.WithoutCancel(ctx), "监听转发完成。\n来源：%d\n消息：%d\n目标：%s", peerID, msg.ID, w.forward.target.VisibleName())
-		}
-	}()
-
-	return nil
+	if _, err := appforward.Jobs().EnqueueMessage(ctx, peerID, msg.ID, originName,
+		w.opts.ForwardTarget, w.forward.target.VisibleName(),
+		appforward.ConfigModeName(w.forward.mode), w.opts.ForwardSilent); err != nil {
+		notifyCtx := context.WithoutCancel(ctx)
+		logctx.From(notifyCtx).Error("Enqueue forward failed",
+			zap.Int64("peer_id", peerID),
+			zap.Int("msg_id", msg.ID),
+			zap.Error(err))
+		w.notify(notifyCtx, "监听转发入队失败。\n来源：%d\n消息：%d\n错误：%v", peerID, msg.ID, err)
+	}
 }
 
 func forwardDedupeKey(peerID int64, msg *tg.Message) string {
@@ -268,12 +272,8 @@ func (w *Watcher) triggerForwardOnReaction(ctx context.Context, e tg.Entities, p
 		w.notify(ctx, "监听转发（回应触发）失败：无法获取消息。\n来源：%d\n消息：%d\n错误：%v", peerID, msgID, err)
 		return
 	}
-	if err := w.forwardUpdateMessage(ctx, e, msg); err != nil && !errors.Is(err, context.Canceled) {
-		logctx.From(ctx).Error("Reaction-triggered forward failed",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msgID),
-			zap.Error(err))
-	}
+	// Reaction triggers forward the reacted message regardless of the listen set.
+	w.enqueueForwardMessage(ctx, e, msg)
 }
 
 func (w *Watcher) resolveForwardPeer(ctx context.Context, e tg.Entities, peer tg.PeerClass, peerID int64) (peers.Peer, error) {

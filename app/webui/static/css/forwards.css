@@ -1,0 +1,71 @@
+/* Forward monitoring view: summary stats, origin→destination path, status pills. */
+.forward-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.forward-stat {
+  flex: 1 1 120px;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.forward-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.forward-stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.forward-table-shell {
+  max-height: calc(100vh - 320px);
+  min-height: 240px;
+}
+
+#forward-table {
+  min-width: 1080px;
+}
+
+.forward-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.forward-peer {
+  overflow-wrap: anywhere;
+}
+
+.forward-arrow {
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
+.forward-failed {
+  margin-left: 6px;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.pill.muted {
+  background: var(--panel-soft);
+  color: var(--muted);
+  border-color: var(--line);
+}

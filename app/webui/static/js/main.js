@@ -7,6 +7,7 @@ import { loadStatus, openCredentialSettings } from "./status.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { initDashboard, stopDashboardPolling } from "./dashboard.js";
 import { initDownloads, stopInternalDownloadPolling } from "./downloads.js";
+import { initForwards, stopForwardPolling } from "./forwards.js";
 import { initKV } from "./kv.js";
 import { initUser } from "./user.js";
 import { initConfig } from "./config.js";
@@ -26,6 +27,7 @@ async function bootstrap() {
   await loadViews();
   initDashboard();
   initDownloads();
+  initForwards();
   initKV();
   initUser();
   initConfig();
@@ -64,6 +66,7 @@ function bindGlobalActions() {
 async function logout() {
   stopHeartbeat();
   stopInternalDownloadPolling();
+  stopForwardPolling();
   stopDashboardPolling();
   try {
     await api("/api/auth/logout", { method: "POST", body: "{}" });

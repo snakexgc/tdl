@@ -1,0 +1,66 @@
+<section class="view" id="view-forwards">
+  <header class="page-head">
+    <div>
+      <h1>转发监控</h1>
+      <p>查看正在进行和最近完成的转发任务，可暂停、继续或删除任务。</p>
+    </div>
+    <div class="actions">
+      <span class="pill" id="forward-running-badge" title="正在进行（运行中 + 已暂停）的转发任务数">进行中 0</span>
+      <button class="btn secondary" id="forward-reload" type="button">刷新</button>
+    </div>
+  </header>
+
+  <div class="forward-summary">
+    <div class="forward-stat">
+      <span class="forward-stat-value" id="forward-stat-waiting">0</span>
+      <span class="forward-stat-label">等待中</span>
+    </div>
+    <div class="forward-stat">
+      <span class="forward-stat-value" id="forward-stat-running">0</span>
+      <span class="forward-stat-label">转发中</span>
+    </div>
+    <div class="forward-stat">
+      <span class="forward-stat-value" id="forward-stat-paused">0</span>
+      <span class="forward-stat-label">已暂停</span>
+    </div>
+    <div class="forward-stat">
+      <span class="forward-stat-value" id="forward-stat-failed">0</span>
+      <span class="forward-stat-label">失败</span>
+    </div>
+  </div>
+
+  <div class="notice" id="forward-status"></div>
+
+  <div class="internal-bulk-toolbar">
+    <div class="internal-bulk-group">
+      <button class="btn secondary compact" id="forward-select-all" type="button">全选</button>
+      <button class="btn secondary compact" id="forward-select-active" type="button">选中进行中</button>
+      <button class="btn secondary compact" id="forward-select-clear" type="button">清空选择</button>
+    </div>
+    <div class="internal-bulk-group">
+      <span class="internal-selection-count" id="forward-selection-count">已选 0 项</span>
+      <button class="btn primary compact" id="forward-resume-selected" type="button" disabled>继续选中</button>
+      <button class="btn secondary compact" id="forward-pause-selected" type="button" disabled>暂停选中</button>
+      <button class="btn danger compact" id="forward-delete-selected" type="button" disabled>删除选中</button>
+    </div>
+  </div>
+
+  <div class="table-shell forward-table-shell">
+    <table id="forward-table">
+      <thead>
+        <tr>
+          <th class="select-col"><input id="forward-select-visible" type="checkbox" aria-label="全选转发任务"></th>
+          <th>转发路径</th>
+          <th>触发 / 模式</th>
+          <th>状态</th>
+          <th>进度</th>
+          <th>更新时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="forward-body">
+        <tr><td colspan="7" class="empty">正在加载...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>

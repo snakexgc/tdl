@@ -5,19 +5,21 @@
 // view instead of always falling back to the dashboard.
 import { loadDashboard, stopDashboardPolling } from "./dashboard.js";
 import { loadDownloads, stopInternalDownloadPolling } from "./downloads.js";
+import { loadForwards, stopForwardPolling } from "./forwards.js";
 import { loadKV } from "./kv.js";
 import { loadUser, loadLoginStatus } from "./user.js";
 import { loadModules } from "./modules.js";
 import { loadConfig } from "./config.js";
 import { loadUpdateStatus } from "./update.js";
 
-export const views = ["dashboard", "user", "config", "downloads", "kv", "modules", "update"];
+export const views = ["dashboard", "user", "config", "downloads", "forwards", "kv", "modules", "update"];
 
 const titles = {
   dashboard: "仪表盘",
   user: "用户管理",
   config: "配置文件",
   downloads: "下载管理",
+  forwards: "转发监控",
   kv: "KV 管理",
   modules: "模块管理",
   update: "检查更新",
@@ -66,11 +68,13 @@ function applyView(view) {
   document.title = `${titles[view] || "管理面板"} · TDL 管理面板`;
   if (view !== "dashboard") stopDashboardPolling();
   if (view !== "downloads") stopInternalDownloadPolling();
+  if (view !== "forwards") stopForwardPolling();
 }
 
 function loadViewData(view) {
   if (view === "dashboard") loadDashboard();
   if (view === "downloads") loadDownloads();
+  if (view === "forwards") loadForwards();
   if (view === "kv") loadKV();
   if (view === "user") {
     loadUser();

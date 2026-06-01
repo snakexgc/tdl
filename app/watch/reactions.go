@@ -85,12 +85,10 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 		}
 	}
 
-	if w.forward != nil && w.forward.enabled && len(w.forward.triggerReactions) > 0 {
-		if _, ok := w.forward.listen[peerID]; ok {
-			if w.hasMyForwardReactionTrigger(&update.Reactions) {
-				go w.triggerForwardOnReaction(ctx, e, update.Peer, peerID, update.MsgID)
-			}
-		}
+	// Reaction triggers forward any message the user reacts to, independent of
+	// the auto-forward listen set (which only governs new-message forwarding).
+	if w.shouldTriggerForwardReaction(&update.Reactions) {
+		go w.triggerForwardOnReaction(ctx, e, update.Peer, peerID, update.MsgID)
 	}
 
 	return nil
@@ -172,12 +170,10 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 		}
 	}
 
-	if w.forward != nil && w.forward.enabled && len(w.forward.triggerReactions) > 0 {
-		if _, ok := w.forward.listen[peerID]; ok {
-			if w.hasMyForwardReactionTrigger(&msg.Reactions) {
-				go w.triggerForwardOnReaction(ctx, e, msg.PeerID, peerID, msg.ID)
-			}
-		}
+	// Reaction triggers forward any message the user reacts to, independent of
+	// the auto-forward listen set (which only governs new-message forwarding).
+	if w.shouldTriggerForwardReaction(&msg.Reactions) {
+		go w.triggerForwardOnReaction(ctx, e, msg.PeerID, peerID, msg.ID)
 	}
 
 	return nil
@@ -269,25 +265,39 @@ func (w *Watcher) matchesTriggerReaction(emoji string) bool {
 	return ok
 }
 
+// shouldTriggerForwardReaction reports whether a reaction update should trigger
+// an on-demand forward: forwarding must be enabled and the current user's
+// reaction must match the forward trigger set. An empty trigger set matches any
+// emoji (mirroring the download trigger). It is deliberately independent of the
+// auto-forward listen set, so reacting forwards a message from any peer.
+func (w *Watcher) shouldTriggerForwardReaction(reactions *tg.MessageReactions) bool {
+	return w.forward != nil && w.forward.enabled && w.hasMyForwardReactionTrigger(reactions)
+}
+
+// matchesForwardTrigger reports whether an emoji matches the forward trigger
+// set. An empty set matches every emoji.
+func (w *Watcher) matchesForwardTrigger(emoji string) bool {
+	if w.forward == nil || len(w.forward.triggerReactions) == 0 {
+		return true
+	}
+	_, ok := w.forward.triggerReactions[normalizeTriggerReaction(emoji)]
+	return ok
+}
+
 func (w *Watcher) hasMyForwardReactionTrigger(reactions *tg.MessageReactions) bool {
 	if w.forward == nil || reactions == nil || reactions.Min {
 		return false
 	}
-	triggers := w.forward.triggerReactions
 	if recent, ok := reactions.GetRecentReactions(); ok {
 		for _, r := range recent {
-			if r.My {
-				if _, ok := triggers[normalizeTriggerReaction(reactionEmoji(r.Reaction))]; ok {
-					return true
-				}
+			if r.My && w.matchesForwardTrigger(reactionEmoji(r.Reaction)) {
+				return true
 			}
 		}
 	}
 	for _, rc := range reactions.Results {
-		if _, ok := rc.GetChosenOrder(); ok {
-			if _, ok := triggers[normalizeTriggerReaction(reactionEmoji(rc.Reaction))]; ok {
-				return true
-			}
+		if _, ok := rc.GetChosenOrder(); ok && w.matchesForwardTrigger(reactionEmoji(rc.Reaction)) {
+			return true
 		}
 	}
 	return false

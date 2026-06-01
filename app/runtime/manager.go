@@ -13,6 +13,7 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/iyear/tdl/app/bot"
+	appforward "github.com/iyear/tdl/app/forward"
 	"github.com/iyear/tdl/app/login"
 	"github.com/iyear/tdl/app/updater"
 	"github.com/iyear/tdl/app/watch"
@@ -69,10 +70,15 @@ func Run(ctx context.Context, opts Options) error {
 		return errors.Wrap(err, "open kv storage")
 	}
 
+	// Bind the persistent forward queue to the namespace KV so the bot, watcher
+	// worker and WebUI all share one durable, single-flight queue.
+	appforward.ConfigureQueue(namespaceKV)
+
 	opts.RequestReboot = wrapShutdown(cancel, opts.RequestReboot)
 	opts.RequestUpdate = wrapUpdateShutdown(cancel, opts.RequestUpdate)
 
 	manager := NewManager(runCtx, engine, namespaceKV, opts)
+	appforward.Jobs().SetNotifier(manager.Notify)
 	webStarted := manager.StartWebUI(runCtx)
 	manager.ApplyConfig(config.Get())
 
