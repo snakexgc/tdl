@@ -103,7 +103,9 @@ func CheckLatestFrom(ctx context.Context, repository, proxyURL string) (Info, er
 	info.PublishedAt = release.PublishedAt
 	info.NeedsUpdate = needsUpdate(consts.Version, release.TagName)
 
-	if !info.Docker {
+	if info.Docker {
+		info.UpdateCommand = dockerUpdateCmd
+	} else {
 		if asset, ok := chooseAsset(release.Assets); ok {
 			info.AssetName = asset.Name
 			info.AssetURL = asset.BrowserDownloadURL
@@ -114,9 +116,12 @@ func CheckLatestFrom(ctx context.Context, repository, proxyURL string) (Info, er
 	}
 
 	if !info.NeedsUpdate {
-		info.Message = "当前已是最新版本"
+		if info.Docker {
+			info.Message = fmt.Sprintf("当前已是最新版本。如需更新容器，请执行 `%s`", dockerUpdateCmd)
+		} else {
+			info.Message = "当前已是最新版本"
+		}
 	} else if info.Docker {
-		info.UpdateCommand = dockerUpdateCmd
 		info.Message = fmt.Sprintf("发现新版本。当前运行在 Docker 镜像中，请在服务器执行 `%s` 更新容器。", dockerUpdateCmd)
 	} else if info.CanUpdate {
 		info.Message = "发现新版本，可以更新"

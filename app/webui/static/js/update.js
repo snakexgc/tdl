@@ -52,6 +52,7 @@ function renderUpdateInfo(update) {
     ["发布地址", update.latest_url || "-"],
   ];
   if (update.update_command) {
+    rows.push(["更新方式", "使用 Docker Compose 更新容器"]);
     rows.push(["更新命令", update.update_command]);
   }
   target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
@@ -59,7 +60,9 @@ function renderUpdateInfo(update) {
   const kind = update.needs_update ? (update.can_update ? "success" : "warn") : "";
   status.className = `notice ${kind}`.trim();
   status.textContent = update.message || (update.needs_update ? "发现新版本。" : "当前已是最新版本。");
-  document.getElementById("apply-update").disabled = !update.needs_update || !update.can_update;
+  const applyBtn = document.getElementById("apply-update");
+  applyBtn.disabled = !update.needs_update || !update.can_update;
+  applyBtn.textContent = update.docker ? "请使用 Docker Compose 更新" : "下载并更新";
 }
 
 async function applyUpdate() {
