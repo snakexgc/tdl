@@ -9,7 +9,7 @@ require (
 	github.com/flytam/filenamify v1.2.0
 	github.com/go-faster/errors v0.7.1
 	github.com/go-playground/validator/v10 v10.30.3
-	github.com/gotd/td v0.145.0
+	github.com/gotd/td v0.145.1
 	github.com/iancoleman/strcase v0.3.0
 	github.com/ivanpirog/coloredcobra v1.0.1
 	github.com/iyear/tdl/core v0.20.3
@@ -57,7 +57,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/ogen-go/ogen v1.19.0 // indirect
+	github.com/ogen-go/ogen v1.20.3 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/samber/lo v1.53.0 // indirect
