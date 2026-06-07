@@ -15,6 +15,90 @@ import (
 	"github.com/iyear/tdl/pkg/config"
 )
 
+// PauseAll pauses every download that is not already stopped (complete/paused/removed).
+func (c *InternalDownloadController) PauseAll(ctx context.Context) (InternalDownloadActionResult, error) {
+	records, err := c.store.Records(ctx)
+	if err != nil {
+		return InternalDownloadActionResult{}, err
+	}
+	ids := make([]string, 0, len(records))
+	for _, r := range records {
+		switch r.Status {
+		case InternalDownloadStatusQueued, InternalDownloadStatusActive, InternalDownloadStatusError:
+			ids = append(ids, r.ID)
+		}
+	}
+	return c.Pause(ctx, ids)
+}
+
+// StartAll re-queues every download that is paused or in an error state.
+func (c *InternalDownloadController) StartAll(ctx context.Context) (InternalDownloadActionResult, error) {
+	records, err := c.store.Records(ctx)
+	if err != nil {
+		return InternalDownloadActionResult{}, err
+	}
+	ids := make([]string, 0, len(records))
+	for _, r := range records {
+		switch r.Status {
+		case InternalDownloadStatusPaused, InternalDownloadStatusError:
+			ids = append(ids, r.ID)
+		}
+	}
+	return c.Start(ctx, ids)
+}
+
+// DeleteAllByStatus deletes every download whose status is in the given list.
+// If statuses is empty it defaults to [complete, error] — a safe "purge finished"
+// operation analogous to aria2ng's "Purge Completed/Error Downloads".
+func (c *InternalDownloadController) DeleteAllByStatus(ctx context.Context, statuses []string) (InternalDownloadActionResult, error) {
+	if len(statuses) == 0 {
+		statuses = []string{InternalDownloadStatusComplete, InternalDownloadStatusError}
+	}
+	statusSet := make(map[string]struct{}, len(statuses))
+	for _, s := range statuses {
+		statusSet[strings.ToLower(strings.TrimSpace(s))] = struct{}{}
+	}
+	records, err := c.store.Records(ctx)
+	if err != nil {
+		return InternalDownloadActionResult{}, err
+	}
+	ids := make([]string, 0, len(records))
+	for _, r := range records {
+		if _, ok := statusSet[r.Status]; ok {
+			ids = append(ids, r.ID)
+		}
+	}
+	return c.Delete(ctx, ids)
+}
+
+// Overview returns per-status counts for all tracked downloads.
+func (c *InternalDownloadController) Overview(ctx context.Context) (InternalDownloadOverview, error) {
+	if c == nil || c.store == nil {
+		return InternalDownloadOverview{}, nil
+	}
+	records, err := c.store.Records(ctx)
+	if err != nil {
+		return InternalDownloadOverview{}, err
+	}
+	var ov InternalDownloadOverview
+	for _, r := range records {
+		ov.Total++
+		switch r.Status {
+		case InternalDownloadStatusActive:
+			ov.Active++
+		case InternalDownloadStatusQueued:
+			ov.Queued++
+		case InternalDownloadStatusPaused:
+			ov.Paused++
+		case InternalDownloadStatusComplete:
+			ov.Complete++
+		case InternalDownloadStatusError:
+			ov.Error++
+		}
+	}
+	return ov, nil
+}
+
 type InternalDownloadController struct {
 	store *internalTaskStore
 	kv    storage.Storage

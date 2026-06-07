@@ -14,6 +14,7 @@ type internalProgressWriter struct {
 	completed int64
 	lastSave  time.Time
 	w         io.Writer
+	speed     *speedCalc
 }
 
 func (w *internalProgressWriter) Write(p []byte) (int, error) {
@@ -23,6 +24,7 @@ func (w *internalProgressWriter) Write(p []byte) (int, error) {
 	n, err := w.w.Write(p)
 	if n > 0 {
 		w.completed += int64(n)
+		w.speed.update(int64(n))
 		if time.Since(w.lastSave) >= time.Second || w.completed >= w.total {
 			w.flush()
 		}
@@ -39,6 +41,7 @@ func (w *internalProgressWriter) flush() {
 	if record.Total <= 0 {
 		record.Total = w.total
 	}
+	record.DownloadSpeed = w.speed.speed()
 	_ = w.store.Save(context.WithoutCancel(w.ctx), record)
 	w.lastSave = time.Now()
 }

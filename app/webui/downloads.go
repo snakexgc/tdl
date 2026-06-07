@@ -28,8 +28,10 @@ func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	overview, _ := controller.Overview(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		fieldItems: items,
+		"overview": overview,
 	})
 }
 
@@ -39,8 +41,9 @@ func (s *Server) handleInternalDownloadActions(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		Action string   `json:"action"`
-		IDs    []string `json:"ids"`
+		Action   string   `json:"action"`
+		IDs      []string `json:"ids"`
+		Statuses []string `json:"statuses"` // used by delete_all to filter by status
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
@@ -59,6 +62,14 @@ func (s *Server) handleInternalDownloadActions(w http.ResponseWriter, r *http.Re
 		result, err = controller.Start(r.Context(), req.IDs)
 	case actionDelete:
 		result, err = controller.Delete(r.Context(), req.IDs)
+	case "pause_all":
+		result, err = controller.PauseAll(r.Context())
+	case "start_all":
+		result, err = controller.StartAll(r.Context())
+	case "delete_all":
+		// Statuses filters which status groups to delete.
+		// Empty → defaults to complete + error (safe purge).
+		result, err = controller.DeleteAllByStatus(r.Context(), req.Statuses)
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported action %q", req.Action))
 		return

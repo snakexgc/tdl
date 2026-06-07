@@ -166,6 +166,7 @@ func (d *internalDownloader) PauseForShutdown(ctx context.Context) ([]string, er
 		}
 		record.Status = InternalDownloadStatusPaused
 		record.Error = ""
+		record.DownloadSpeed = 0
 		if err := d.store.Save(shutdownCtx, record); err != nil {
 			return paused, err
 		}
@@ -386,8 +387,11 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		return
 	}
 
+	now := time.Now()
 	record.Status = InternalDownloadStatusActive
 	record.Error = ""
+	record.StartedAt = &now
+	record.DownloadSpeed = 0
 	if err := d.store.Save(ctx, record); err != nil {
 		d.logger.Warn("Failed to persist internal download status", zap.String("id", record.ID), zap.Error(err))
 	}
@@ -410,6 +414,7 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		total:     record.Total,
 		completed: completed,
 		w:         file,
+		speed:     &speedCalc{},
 	}
 	err = d.proxy.Stream(ctx, task, lease, completed, record.Total-1, writer)
 	closeErr := file.Close()
@@ -433,6 +438,7 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 	case errors.Is(err, errInternalDownloadPaused):
 		record.Status = InternalDownloadStatusPaused
 		record.Error = ""
+		record.DownloadSpeed = 0
 		_ = d.store.Save(context.WithoutCancel(ctx), record)
 	case errors.Is(err, errInternalDownloadRemoved):
 		return
@@ -445,6 +451,7 @@ func (d *internalDownloader) markComplete(ctx context.Context, record internalDo
 	record.Status = InternalDownloadStatusComplete
 	record.Completed = record.Total
 	record.Error = ""
+	record.DownloadSpeed = 0
 	if err := d.store.Save(context.WithoutCancel(ctx), record); err != nil {
 		d.logger.Warn("Failed to mark internal download complete", zap.String("id", record.ID), zap.Error(err))
 	}
@@ -457,6 +464,7 @@ func (d *internalDownloader) markComplete(ctx context.Context, record internalDo
 func (d *internalDownloader) markError(ctx context.Context, record internalDownloadRecord, err error) {
 	record.Status = InternalDownloadStatusError
 	record.Error = err.Error()
+	record.DownloadSpeed = 0
 	if saveErr := d.store.Save(context.WithoutCancel(ctx), record); saveErr != nil {
 		d.logger.Warn("Failed to mark internal download error",
 			zap.String("id", record.ID),
