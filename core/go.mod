@@ -7,7 +7,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/go-faster/errors v0.7.1
 	github.com/gotd/contrib v0.21.1
-	github.com/gotd/td v0.145.1
+	github.com/gotd/td v0.145.2
 	github.com/iyear/connectproxy v0.1.1
 	github.com/samber/lo v1.53.0
 	github.com/yapingcat/gomedia v0.0.0-20240601043430-920523f8e5c7
@@ -38,15 +38,15 @@ require (
 	github.com/ogen-go/ogen v1.20.3 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	go.opentelemetry.io/otel v1.43.0 // indirect
-	go.opentelemetry.io/otel/metric v1.43.0 // indirect
-	go.opentelemetry.io/otel/trace v1.43.0 // indirect
+	go.opentelemetry.io/otel v1.44.0 // indirect
+	go.opentelemetry.io/otel/metric v1.44.0 // indirect
+	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090 // indirect
-	golang.org/x/mod v0.35.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
