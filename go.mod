@@ -9,7 +9,7 @@ require (
 	github.com/flytam/filenamify v1.2.0
 	github.com/go-faster/errors v0.7.1
 	github.com/go-playground/validator/v10 v10.30.3
-	github.com/gotd/td v0.149.0
+	github.com/gotd/td v0.152.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/ivanpirog/coloredcobra v1.0.1
 	github.com/iyear/tdl/core v0.20.3
@@ -60,6 +60,7 @@ require (
 	github.com/ogen-go/ogen v1.20.3 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
+	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
@@ -80,7 +81,7 @@ require (
 	golang.org/x/arch v0.0.0-20210923205945-b76863e36670 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
