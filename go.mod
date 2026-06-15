@@ -4,12 +4,12 @@ go 1.25.8
 
 require (
 	github.com/beevik/ntp v1.5.0
-	github.com/coder/websocket v1.8.14
+	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.19.0
 	github.com/flytam/filenamify v1.2.0
 	github.com/go-faster/errors v0.7.1
 	github.com/go-playground/validator/v10 v10.30.3
-	github.com/gotd/td v0.152.0
+	github.com/gotd/td v0.157.1
 	github.com/iancoleman/strcase v0.3.0
 	github.com/ivanpirog/coloredcobra v1.0.1
 	github.com/iyear/tdl/core v0.20.3
@@ -47,6 +47,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gotd/contrib v0.21.1 // indirect
 	github.com/gotd/ige v0.2.2 // indirect
+	github.com/gotd/log v0.1.0 // indirect
 	github.com/gotd/neo v0.1.5 // indirect
 	github.com/grbit/go-json v0.11.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -84,7 +85,7 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	golang.org/x/tools v0.45.0 // indirect
+	golang.org/x/tools v0.46.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
