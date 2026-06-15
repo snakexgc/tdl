@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/beevik/ntp v1.5.0
-	github.com/coder/websocket v1.8.14
+	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.19.0
 	github.com/flytam/filenamify v1.2.0
 	github.com/go-faster/errors v0.7.1
