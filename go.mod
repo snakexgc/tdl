@@ -11,6 +11,7 @@ require (
 	github.com/flytam/filenamify v1.2.0
 	github.com/go-faster/errors v0.7.1
 	github.com/go-playground/validator/v10 v10.30.3
+	github.com/gotd/log/logzap v0.1.1
 	github.com/gotd/td v0.159.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/ivanpirog/coloredcobra v1.0.1
@@ -47,16 +48,15 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gotd/contrib v0.21.1 // indirect
+	github.com/gotd/contrib v0.24.0 // indirect
 	github.com/gotd/ige v0.2.2 // indirect
 	github.com/gotd/log v0.1.0 // indirect
-	github.com/gotd/log/logzap v0.1.1 // indirect
 	github.com/gotd/neo v0.1.5 // indirect
 	github.com/grbit/go-json v0.11.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/iyear/connectproxy v0.1.1 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
