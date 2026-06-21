@@ -15,6 +15,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
+	"github.com/gotd/log/logzap"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
@@ -390,7 +391,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		Handler: &loggingUpdateHandler{
 			inner: d,
 		},
-		Logger: logctx.From(ctx).Named("updates"),
+		Logger: logzap.New(logctx.From(ctx).Named("updates")),
 	})
 	o.UpdateHandler = updatesMgr
 
