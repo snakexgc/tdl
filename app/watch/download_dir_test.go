@@ -167,16 +167,16 @@ func TestResolveTargetPathUsesTargetStyle(t *testing.T) {
 	require.Equal(t, `/root/download/202604/sub/video.mp4`, full)
 }
 
-func TestPrepareAria2OutputRootUsesConfiguredDirAndCreatesIt(t *testing.T) {
+func TestPrepareAria2OutputRootUsesConfiguredRemoteDirWithoutLocalAccess(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "downloads")
 	cfg := config.DefaultConfig()
 	cfg.Aria2.Dir = root
 
 	got, ensure, err := prepareAria2OutputRoot(context.Background(), fakeAria2GlobalDirGetter{dir: "/ignored"}, cfg)
 	require.NoError(t, err)
-	require.True(t, ensure)
-	require.Equal(t, filepath.Clean(root), got)
-	require.DirExists(t, root)
+	require.False(t, ensure)
+	require.Equal(t, cleanTargetRoot(root), got)
+	require.NoDirExists(t, root)
 }
 
 func TestPrepareAria2OutputRootReadsAria2DefaultDir(t *testing.T) {

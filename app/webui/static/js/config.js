@@ -74,7 +74,7 @@ const sections = [
     fields: [
       ["aria2.rpc_url", "aria2 连接地址", "text", "aria2 的连接地址，例如 http://127.0.0.1:6800/jsonrpc。"],
       ["aria2.secret", "aria2 密钥", "password", "aria2 设置了密钥时填写；留空表示保持原密钥。"],
-      ["aria2.dir", "下载根目录", "text", "aria2 保存文件的根目录；留空时使用 aria2 默认目录。"],
+      ["aria2.dir", "下载根目录", "text", "aria2 所在机器上的保存根目录；留空时使用 aria2 默认目录。"],
       ["aria2.timeout_seconds", "连接超时", "number", "连接 aria2 等待的秒数。"],
     ],
   },

@@ -269,7 +269,9 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 			return preparedFileTask{}, false, errors.Wrap(err, "create target directory")
 		}
 	}
-	if w.opts.SkipSame && dir != "" {
+	// Only inspect paths owned by tdl. In aria2 mode dir is on the aria2 host
+	// and may coincidentally refer to an unrelated local path on this machine.
+	if w.runtime.ensureOutputDirs && w.opts.SkipSame && dir != "" {
 		if stat, statErr := os.Stat(fullPath); statErr == nil && stat.Size() == file.media.Size {
 			color.Yellow("⏭ Skipping existing: %s", fullPath)
 			return preparedFileTask{}, true, nil

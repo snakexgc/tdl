@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -50,18 +49,10 @@ func prepareAria2OutputRoot(ctx context.Context, client aria2GlobalDirGetter, cf
 	}
 
 	if strings.TrimSpace(cfg.Aria2.Dir) != "" {
-		root = filepath.Clean(cfg.Aria2.Dir)
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			return "", false, fmt.Errorf("创建 aria2.dir %q 失败：%w", root, err)
-		}
-		stat, err := os.Stat(root)
-		if err != nil {
-			return "", false, fmt.Errorf("检查 aria2.dir %q 失败：%w", root, err)
-		}
-		if !stat.IsDir() {
-			return "", false, fmt.Errorf("aria2.dir %q 不是目录", root)
-		}
-		return root, true, nil
+		// aria2.dir belongs to the filesystem of the aria2 process. tdl may be
+		// running on another machine (or another container), so it must never
+		// create or inspect this path locally.
+		return cleanTargetRoot(cfg.Aria2.Dir), false, nil
 	}
 
 	root, err = client.GetGlobalDir(ctx)

@@ -58,7 +58,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "aria2": {
     "rpc_url": "http://127.0.0.1:6800/jsonrpc", // aria2 JSON-RPC 地址
     "secret": "123", // aria2 密钥
-    "dir": "", // aria2 下载目录，注意区分操作系统 \ 需要转义为 \\ 
+    "dir": "", // aria2 所在机器上的下载目录，注意区分操作系统，JSON 中 \ 需要写成 \\
     "timeout_seconds": 30 // aria2 超时时间，单位秒
   },
   "bot": {
