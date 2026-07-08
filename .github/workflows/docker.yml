@@ -8,6 +8,8 @@ on:
         required: true
         default: "master"
   push:
+    branches:
+      - master
     tags:
       - "v*"
 

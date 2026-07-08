@@ -3,11 +3,17 @@ name: release
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   goreleaser:
@@ -24,14 +30,72 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Get previous tag
-        run: echo "PREV_TAG=$(git describe --tags --match "v*" --abbrev=0 HEAD^)" >> $GITHUB_ENV
+      - name: Prepare release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            prev_tag="$(git describe --tags --match "v*" --abbrev=0 HEAD^ 2>/dev/null || true)"
+            {
+              echo "mode=stable"
+              echo "args=release --clean --timeout 1h"
+              echo "prev_tag=${prev_tag}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            ref_slug="${GITHUB_REF_NAME//\//-}"
+            short_sha="$(git rev-parse --short HEAD)"
+            prerelease_tag="prerelease-${ref_slug}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${short_sha}"
+            {
+              echo "mode=prerelease"
+              echo "args=release --snapshot --clean --timeout 1h"
+              echo "tag=${prerelease_tag}"
+              echo "short_sha=${short_sha}"
+            } >> "$GITHUB_OUTPUT"
+          fi
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: v1.18.2
-          args: release --clean --timeout 1h
+          args: ${{ steps.release.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_PREVIOUS_TAG: ${{ env.PREV_TAG }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.release.outputs.prev_tag }}
+      - name: Publish prerelease
+        if: steps.release.outputs.mode == 'prerelease'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' assets < <(
+            find .tdl/dist -maxdepth 1 -type f \( \
+              -name '*.tar.gz' -o \
+              -name '*.zip' -o \
+              -name '*checksums.txt' \
+            \) -print0 | sort -z
+          )
+
+          if (( ${#assets[@]} == 0 )); then
+            echo "No release assets found in .tdl/dist"
+            exit 1
+          fi
+
+          notes_file="$(mktemp)"
+          {
+            echo "Automated prerelease build from ${GITHUB_REF_NAME}."
+            echo
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > "$notes_file"
+
+          gh release create "${{ steps.release.outputs.tag }}" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "tdl ${GITHUB_REF_NAME} ${{ steps.release.outputs.short_sha }}" \
+            --notes-file "$notes_file" \
+            --prerelease \
+            --latest=false
