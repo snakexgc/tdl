@@ -17,7 +17,7 @@ require (
 	github.com/ivanpirog/coloredcobra v1.0.1
 	github.com/iyear/tdl/core v0.20.3
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/mymmrac/telego v1.10.0
+	github.com/mymmrac/telego v1.11.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.2
@@ -74,7 +74,7 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.71.0 // indirect
+	github.com/valyala/fasthttp v1.72.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/yapingcat/gomedia v0.0.0-20240601043430-920523f8e5c7 // indirect
 	github.com/yuin/goldmark v1.8.2 // indirect
