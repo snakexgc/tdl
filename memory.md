@@ -71,10 +71,11 @@ tdl 是围绕 Telegram 文件获取与自动化处理构建的 Go 应用。当�
 
 ## 当前项目状态
 
-- 当前分支：`master`，基于提交 `4ec6caf`。
-- 最近修改：修复 GoReleaser snapshot 因历史非 SemVer prerelease tag 而失败的问题。
-- 当前已知问题：尚未在 GitHub Actions runner 上重新运行修复后的 release workflow。
-- 已验证内容：release metadata Bash 脚本在带有历史坏 tag 的独立临时 clone 中执行成功；workflow YAML 可解析。
+- 当前分支：`master`，基于提交 `516a4e8`；当前存在未提交的依赖升级修改。
+- 最近修改：升级根模块和 `core/` 的 Go 依赖，并将 GitHub Actions 的 `actions/setup-go` 升级到 v7。
+- 当前已知问题：未发现由本次依赖升级引起的编译或测试问题。
+- 已验证内容：根模块与 `core/` 的完整测试、构建和模块校验均通过；所有 workflow YAML 可解析。
+- 上一次 GoReleaser 修复已进入 master，仓库存在按新规则生成的 `3.12.3-prerelease.57.1.sha516a4e8` tag。
 
 ## 需求与修改记录
 
@@ -119,14 +120,66 @@ tdl 是围绕 Telegram 文件获取与自动化处理构建的 Go 应用。当�
 
 - 推送修改后重新运行 release workflow，确认 GoReleaser 完整多平台构建和 prerelease 上传成功。
 
+### 2026-07-21：统一升级 Go 与 GitHub Actions 依赖
+
+#### 用户需求
+
+升级 `github.com/mymmrac/telego`、`github.com/gotd/contrib`、`github.com/gotd/td`、`golang.org/x/net`、`golang.org/x/sync`、`golang.org/x/mod`，并将 `actions/setup-go` 从 v6 升级到 v7；涉及根模块及 `core/` 子模块。
+
+#### 需求分析
+
+- 根模块和 `core/` 是两个独立 Go 模块，需要分别升级、tidy、构建和测试。
+- `github.com/gotd/td` 与相关 `golang.org/x/*` 升级会带动一组必要的间接依赖更新。
+- `actions/setup-go` 在 3 个 workflow 中共有 5 处引用，需要保持一致。
+
+#### 修改内容
+
+- 根模块升级 `telego` 到 v1.11.1、`gotd/td` 到 v0.161.0、`x/mod` 到 v0.38.0，并同步模块图中的 `gotd/contrib` v0.25.0、`x/net` v0.57.0 等间接版本。
+- `core/` 升级 `gotd/contrib` 到 v0.25.0、`gotd/td` 到 v0.161.0、`x/net` 到 v0.57.0、`x/sync` 到 v0.22.0、`x/mod` 到 v0.38.0。
+- 两个模块均执行 `go mod tidy`，同步 `go.sum` 和必要的间接依赖。
+- 将 `.github/workflows/dependabot-fix.yml`、`master.yml`、`release.yml` 中的 `actions/setup-go` 全部升级到 v7。
+- 新依赖与现有源码 API 兼容，不需要修改 Go 源代码。
+
+#### 涉及文件
+
+- `go.mod`
+- `go.sum`
+- `core/go.mod`
+- `core/go.sum`
+- `.github/workflows/dependabot-fix.yml`
+- `.github/workflows/master.yml`
+- `.github/workflows/release.yml`
+- `memory.md`
+
+#### 修改结果
+
+用户列出的依赖版本均已被两个模块的最终模块图选中，旧的目标版本不再残留；所有 `setup-go` 引用均为 v7。
+
+#### 验证情况
+
+- 根模块：`go test ./...` 通过，`go build ./...` 通过，`go mod verify` 返回 `all modules verified`。
+- `core/`：`go test ./...` 通过，`go build ./...` 通过，`go mod verify` 返回 `all modules verified`。
+- 使用 `go list -m` 确认最终选中版本与用户要求一致。
+- 使用 PyYAML 6.0.3 成功解析全部 `.github/workflows/*.yml`。
+- `git diff --check` 通过。
+- 未运行远端 GitHub Actions；当前修改尚未提交或推送。
+
+#### 特殊事项
+
+直接依赖升级同时更新了 `gotd/ige`、`ogen`、`fasthttp`、`goldmark`、`x/crypto`、`x/sys`、`x/text`、`x/tools` 等由新模块图要求的间接依赖。
+
+#### 遗留事项
+
+- 提交并推送后观察 GitHub Actions 的 lint、测试和 release job。
+
 ## 待处理事项
 
-- [ ] 推送本次 workflow 修复后，在 GitHub Actions 中验证完整 release job。
+- [ ] 提交并推送依赖升级后，在 GitHub Actions 中验证 lint、测试和 release job。
 
 ## 最近一次任务摘要
 
-- 任务：修复 GoReleaser snapshot 的非 SemVer tag 解析失败。
-- 完成内容：兼容清理历史坏 tag，并改用 SemVer 预发布 tag。
-- 修改文件：`.github/workflows/release.yml`、`memory.md`。
-- 验证结果：本地临时 clone 的实际 metadata 脚本与 YAML 解析均通过；远端 workflow 尚未重跑。
-- 下一步：提交并推送修改，然后观察 release workflow。
+- 任务：统一升级用户列出的 Go 与 GitHub Actions 依赖。
+- 完成内容：更新根模块、`core/` 模块和全部 `setup-go` 引用，未发生源码 API 兼容问题。
+- 修改文件：两个模块的 `go.mod`/`go.sum`、3 个 workflow、`memory.md`。
+- 验证结果：两个模块的测试、构建、模块校验均通过，workflow YAML 与 diff 检查通过。
+- 下一步：提交并推送修改，然后观察 GitHub Actions。
