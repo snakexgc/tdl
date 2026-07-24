@@ -9,7 +9,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.19.0
 	github.com/flytam/filenamify v1.2.0
-	github.com/go-faster/errors v0.7.1
+	github.com/go-faster/errors v0.8.0
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/gotd/log/logzap v0.1.1
 	github.com/gotd/td v0.161.0
