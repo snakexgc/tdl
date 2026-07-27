@@ -11,7 +11,7 @@
 - Go 模块：根模块 `github.com/iyear/tdl`，本地替换并引用 `core/` 子模块
 - 构建方式：`go build`；发布构建由 `.goreleaser.yaml` 和 GitHub Actions 完成
 - 测试方式：`go test -v $(go list ./... | grep -v /test)`；CI 另运行 golangci-lint
-- 最后更新时间：2026-07-21
+- 最后更新时间：2026-07-27
 
 ## 项目概览
 
@@ -71,11 +71,11 @@ tdl 是围绕 Telegram 文件获取与自动化处理构建的 Go 应用。当�
 
 ## 当前项目状态
 
-- 当前分支：`master`，基于提交 `516a4e8`；当前存在未提交的依赖升级修改。
-- 最近修改：升级根模块和 `core/` 的 Go 依赖，并将 GitHub Actions 的 `actions/setup-go` 升级到 v7。
+- 当前分支：`master`，基于提交 `05be125`；当前存在本次未提交的依赖升级修改。
+- 最近修改：将根模块和 `core/` 的 `github.com/go-faster/errors` 升级到 v0.8.0，并将 `core/` 直接依赖及根模块间接依赖 `github.com/gabriel-vasile/mimetype` 升级到 v1.4.15。
 - 当前已知问题：未发现由本次依赖升级引起的编译或测试问题。
-- 已验证内容：根模块与 `core/` 的完整测试、构建和模块校验均通过；所有 workflow YAML 可解析。
-- 上一次 GoReleaser 修复已进入 master，仓库存在按新规则生成的 `3.12.3-prerelease.57.1.sha516a4e8` tag。
+- 已验证内容：根模块与 `core/` 的完整测试、构建和模块校验均通过。
+- 上一次统一依赖升级已进入 master，仓库存在按新规则生成的 `3.12.3-prerelease.58.1.sha05be125` tag。
 
 ## 需求与修改记录
 
@@ -172,14 +172,54 @@ tdl 是围绕 Telegram 文件获取与自动化处理构建的 Go 应用。当�
 
 - 提交并推送后观察 GitHub Actions 的 lint、测试和 release job。
 
+### 2026-07-27：升级 errors 与 mimetype
+
+#### 用户需求
+
+将根模块和 `core/` 的 `github.com/go-faster/errors` 从 v0.7.1 升级到 v0.8.0，并升级 `core/` 的 `github.com/gabriel-vasile/mimetype`。用户同时给出了 v1.4.14 和 v1.4.15 两个目标。
+
+#### 需求分析
+
+- 根模块和 `core/` 是两个独立 Go 模块，需要分别更新和验证。
+- `mimetype` 的两个目标互相覆盖，因此采用更高的 v1.4.15。
+- 根模块通过本地替换引用 `core/`，其模块图中的间接 `mimetype` 也需要同步到 v1.4.15。
+
+#### 修改内容
+
+- 根模块和 `core/` 的 `github.com/go-faster/errors` 均升级到 v0.8.0。
+- `core/` 的直接依赖和根模块的间接依赖 `github.com/gabriel-vasile/mimetype` 均升级到 v1.4.15。
+- 两个模块分别执行 `go mod tidy`，刷新相应校验和。
+
+#### 涉及文件
+
+- `go.mod`
+- `go.sum`
+- `core/go.mod`
+- `core/go.sum`
+- `memory.md`
+
+#### 修改结果
+
+两个模块最终均选中 `errors` v0.8.0 和 `mimetype` v1.4.15，旧版本不再残留，无需修改 Go 源代码。
+
+#### 验证情况
+
+- 根模块：`go test ./...`、`go build ./...` 和 `go mod verify` 均通过。
+- `core/`：`go test ./...`、`go build ./...` 和 `go mod verify` 均通过。
+- `go list -m` 确认两个模块最终选中 `errors` v0.8.0 和 `mimetype` v1.4.15。
+
+#### 遗留事项
+
+- 未运行远端 GitHub Actions；当前修改尚未提交或推送。
+
 ## 待处理事项
 
 - [ ] 提交并推送依赖升级后，在 GitHub Actions 中验证 lint、测试和 release job。
 
 ## 最近一次任务摘要
 
-- 任务：统一升级用户列出的 Go 与 GitHub Actions 依赖。
-- 完成内容：更新根模块、`core/` 模块和全部 `setup-go` 引用，未发生源码 API 兼容问题。
-- 修改文件：两个模块的 `go.mod`/`go.sum`、3 个 workflow、`memory.md`。
-- 验证结果：两个模块的测试、构建、模块校验均通过，workflow YAML 与 diff 检查通过。
+- 任务：升级根模块与 `core/` 的 `go-faster/errors` 和 `mimetype`。
+- 完成内容：`errors` 统一升级到 v0.8.0；冲突的 `mimetype` 目标采用更高的 v1.4.15，并同步根模块间接依赖。
+- 修改文件：两个模块的 `go.mod`/`go.sum`、`memory.md`。
+- 验证结果：两个模块的测试、构建、模块校验和最终版本解析均通过。
 - 下一步：提交并推送修改，然后观察 GitHub Actions。

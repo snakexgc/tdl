@@ -9,7 +9,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.19.0
 	github.com/flytam/filenamify v1.2.0
-	github.com/go-faster/errors v0.7.1
+	github.com/go-faster/errors v0.8.0
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/gotd/log/logzap v0.1.1
 	github.com/gotd/td v0.161.0
@@ -39,7 +39,7 @@ require (
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-faster/jx v1.2.0 // indirect
 	github.com/go-faster/xor v1.0.0 // indirect
