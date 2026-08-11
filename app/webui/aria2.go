@@ -118,18 +118,16 @@ func checkAria2(ctx context.Context, cfg config.Aria2Config) aria2CheckResult {
 }
 
 type aria2TaskRecord struct {
-	GID          string    `json:"gid"`
-	TaskID       string    `json:"task_id"`
-	DownloadURL  string    `json:"download_url"`
-	Dir          string    `json:"dir"`
-	Out          string    `json:"out"`
-	Connections  int       `json:"connections"`
-	TransferMode string    `json:"transfer_mode,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	Status       string    `json:"status"`
-	Total        int64     `json:"total"`
-	Completed    int64     `json:"completed"`
-	Error        string    `json:"error,omitempty"`
+	GID         string    `json:"gid"`
+	TaskID      string    `json:"task_id"`
+	DownloadURL string    `json:"download_url"`
+	Dir         string    `json:"dir"`
+	Out         string    `json:"out"`
+	CreatedAt   time.Time `json:"created_at"`
+	Status      string    `json:"status"`
+	Total       int64     `json:"total"`
+	Completed   int64     `json:"completed"`
+	Error       string    `json:"error,omitempty"`
 }
 
 type aria2Status struct {
@@ -370,13 +368,8 @@ func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pair
 	}
 
 	publicBaseURL := ""
-	threads := config.EffectiveThreads(cfg)
-	connections := 1
-	transferMode := config.HTTPTransferModeSourceParallel
 	if cfg != nil {
 		publicBaseURL = cfg.HTTP.PublicBaseURL
-		connections = config.HTTPRangeConnectionsFor(cfg.HTTP, threads)
-		transferMode = config.EffectiveHTTPTransferMode(cfg)
 	}
 	targetsByID, targetsByURL := downloadLinkTargets(pairs, cfg)
 	if len(targetsByID) == 0 {
@@ -403,18 +396,16 @@ func (s *Server) discoverAria2RecordsFromDownloadLinks(ctx context.Context, pair
 		}
 		total, completed := aria2Lengths(status)
 		record := aria2TaskRecord{
-			GID:          status.GID,
-			TaskID:       target.TaskID,
-			DownloadURL:  downloadURL,
-			Dir:          dir,
-			Out:          out,
-			Connections:  connections,
-			TransferMode: transferMode,
-			CreatedAt:    time.Now(),
-			Status:       normalizedAria2Status(status.Status),
-			Total:        total,
-			Completed:    completed,
-			Error:        strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage),
+			GID:         status.GID,
+			TaskID:      target.TaskID,
+			DownloadURL: downloadURL,
+			Dir:         dir,
+			Out:         out,
+			CreatedAt:   time.Now(),
+			Status:      normalizedAria2Status(status.Status),
+			Total:       total,
+			Completed:   completed,
+			Error:       strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage),
 		}
 
 		records[key] = record
@@ -633,7 +624,7 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cfg.Aria2.Secret != "" || bytes.Contains(body, []byte("/download/")) {
-		connections := config.HTTPRangeConnectionsFor(cfg.HTTP, config.EffectiveThreads(cfg))
+		connections := config.EffectivePoolSize(cfg)
 		body, err = rewriteAria2ProxyRequest(body, cfg.HTTP.PublicBaseURL, cfg.Aria2.Secret, connections)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)

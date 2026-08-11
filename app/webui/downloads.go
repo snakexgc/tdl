@@ -535,9 +535,8 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	}
 	pairs := meta[s.namespace()]
 	cfg := config.Get()
-	threads := config.EffectiveThreads(cfg)
 	limit := config.EffectiveLimit(cfg)
-	connections := config.HTTPRangeConnectionsFor(cfg.HTTP, threads)
+	connections := config.EffectivePoolSize(cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 	internalController := s.internalDownloadController()
 	aria2Configured := false
@@ -592,14 +591,12 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			continue
 		}
 		if err := s.saveAria2Record(ctx, aria2TaskRecord{
-			GID:          gid,
-			TaskID:       task.ID,
-			DownloadURL:  link,
-			Dir:          cfg.Aria2.Dir,
-			Out:          task.FileName,
-			Connections:  connections,
-			TransferMode: config.EffectiveHTTPTransferMode(cfg),
-			CreatedAt:    time.Now(),
+			GID:         gid,
+			TaskID:      task.ID,
+			DownloadURL: link,
+			Dir:         cfg.Aria2.Dir,
+			Out:         task.FileName,
+			CreatedAt:   time.Now(),
 		}); err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: persist aria2 record: %v", id, err))

@@ -52,11 +52,6 @@ const (
 )
 
 const (
-	httpBufferModeOff    = "off"
-	httpBufferModeMemory = "memory"
-)
-
-const (
 	mediaKindDocument = "document"
 	mediaKindPhoto    = "photo"
 )
@@ -65,16 +60,13 @@ const (
 	downloadTaskKeyPrefix  = "watch.download."
 	downloadTaskIndexKey   = "watch.download.index"
 	defaultDownloadTaskTTL = 24 * time.Hour
-	downloadSessionIdleTTL = 2 * time.Minute
-	httpBufferRetentionTTL = 5 * time.Second
+	sourceRegistryIdleTTL  = 2 * time.Minute
 	telegramFileErrorTTL   = time.Minute
 )
 
 const (
 	DownloadTaskKeyPrefix = downloadTaskKeyPrefix
 	DownloadTaskIndexKey  = downloadTaskIndexKey
-	BufferModeOff         = httpBufferModeOff
-	BufferModeMemory      = httpBufferModeMemory
 )
 
 type Task = downloadTask
@@ -88,36 +80,43 @@ type Proxy = downloadProxy
 type TaskStreamer = taskStreamer
 
 type downloadProxy struct {
-	cfg      config.HTTPConfig
-	tasks    *taskStore
-	pools    *poolHolder
-	sessions *sessionManager
-	server   *http.Server
-	stream   taskStreamer
-	limiter  *transfer.Limiter
-	logger   *zap.Logger
+	cfg       config.HTTPConfig
+	tasks     *taskStore
+	pools     *poolHolder
+	sources   *sourceRegistry
+	server    *http.Server
+	stream    taskStreamer
+	parallel  taskStreamer
+	scheduler *transfer.Scheduler
+	logger    *zap.Logger
 
 	reporterMu sync.RWMutex
 	reporter   TelegramFileErrorReporter
 }
 
-func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *poolHolder, kv storage.Storage, logger *zap.Logger) *downloadProxy {
+func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *poolHolder, kv storage.Storage, logger *zap.Logger) *downloadProxy {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	if maxFiles < 1 {
+		maxFiles = config.DefaultLimit
+	}
+	if poolSize < 1 {
+		poolSize = config.DefaultPoolSize
+	}
 
-	bufferSlots := httpMemoryBufferSlots(cfg.Buffer)
-	requestSlots := config.HTTPRangeConnectionsFor(cfg, maxPerFile)
 	p := &downloadProxy{
-		cfg:      cfg,
-		tasks:    newTaskStore(kv, downloadLinkTTL(cfg)),
-		pools:    pools,
-		sessions: newSessionManager(pools, int64(bufferSlots)*int64(downloadStreamPartSize), httpBufferRetentionTTL, logger.Named("watch-http-session")),
-		limiter:  transfer.NewLimiter(maxFiles, maxPerFile, bufferSlots, requestSlots),
-		logger:   logger.Named("watch-http"),
+		cfg:       cfg,
+		tasks:     newTaskStore(kv, downloadLinkTTL(cfg)),
+		pools:     pools,
+		sources:   newSourceRegistry(),
+		scheduler: transfer.NewScheduler(maxFiles, poolSize),
+		logger:    logger.Named("watch-http"),
 	}
 
 	p.stream = p.streamTask
+	p.parallel = p.streamTaskParallel
+	setActiveScheduler(p.scheduler)
 	p.server = &http.Server{
 		Addr:    config.HTTPConfigListenAddr(cfg),
 		Handler: p.routes(),
@@ -126,8 +125,8 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *po
 	return p
 }
 
-func NewProxy(cfg config.HTTPConfig, maxFiles, maxPerFile int, pools *PoolHolder, kv storage.Storage, logger *zap.Logger) *Proxy {
-	return newDownloadProxy(cfg, maxFiles, maxPerFile, pools, kv, logger)
+func NewProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *PoolHolder, kv storage.Storage, logger *zap.Logger) *Proxy {
+	return newDownloadProxy(cfg, maxFiles, poolSize, pools, kv, logger)
 }
 
 func (p *downloadProxy) Tasks() *TaskStore {
@@ -137,11 +136,11 @@ func (p *downloadProxy) Tasks() *TaskStore {
 	return p.tasks
 }
 
-func (p *downloadProxy) Limiter() *transfer.Limiter {
+func (p *downloadProxy) Scheduler() *transfer.Scheduler {
 	if p == nil {
 		return nil
 	}
-	return p.limiter
+	return p.scheduler
 }
 
 func (p *downloadProxy) SetTaskTTL(ttl time.Duration) {
@@ -156,6 +155,7 @@ func (p *downloadProxy) SetStream(stream TaskStreamer) {
 		return
 	}
 	p.stream = stream
+	p.parallel = stream
 }
 
 func (p *downloadProxy) SetTelegramFileErrorReporter(reporter TelegramFileErrorReporter) {
@@ -180,7 +180,7 @@ func (p *downloadProxy) telegramFileErrorReporter() TelegramFileErrorReporter {
 	return p.reporter
 }
 
-func (p *downloadProxy) Stream(ctx context.Context, task *Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
+func (p *downloadProxy) Stream(ctx context.Context, task *Task, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
 	if p == nil {
 		return errors.New("download proxy is not initialized")
 	}
@@ -190,18 +190,25 @@ func (p *downloadProxy) Stream(ctx context.Context, task *Task, lease *transfer.
 	return p.streamTask(ctx, task, lease, start, end, w)
 }
 
+func (p *downloadProxy) StreamParallel(ctx context.Context, task *Task, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
+	if p == nil {
+		return errors.New("download proxy is not initialized")
+	}
+	if p.parallel != nil {
+		return p.parallel(ctx, task, lease, start, end, w)
+	}
+	return p.streamTaskParallel(ctx, task, lease, start, end, w)
+}
+
 func (p *downloadProxy) Start(ctx context.Context) error {
 	p.logger.Info("Starting HTTP download proxy",
 		zap.String("listen", config.HTTPConfigListenAddr(p.cfg)),
 		zap.String("public_base_url", p.cfg.PublicBaseURL),
 		zap.Duration("download_link_ttl", p.tasks.ttl),
-		zap.String("buffer_mode", normalizeHTTPBufferMode(p.cfg.Buffer.Mode)),
-		zap.Int("buffer_size_mb", normalizedHTTPBufferSizeMB(p.cfg.Buffer)),
-		zap.String("transfer_mode", p.cfg.TransferMode),
-		zap.Int("range_connections", p.cfg.RangeConnections))
+		zap.Int("per_dc_capacity", p.scheduler.Capacity()))
 
 	p.startCleanupLoop(ctx)
-	p.startSessionCleanupLoop(ctx)
+	p.startSourceCleanupLoop(ctx)
 
 	go func() {
 		<-ctx.Done()
@@ -245,11 +252,10 @@ func (p *downloadProxy) startCleanupLoop(ctx context.Context) {
 	}()
 }
 
-func (p *downloadProxy) startSessionCleanupLoop(ctx context.Context) {
+func (p *downloadProxy) startSourceCleanupLoop(ctx context.Context) {
 	cleanup := func() {
-		if n := p.sessions.CleanupIdle(time.Now(), downloadSessionIdleTTL); n > 0 {
-			p.logger.Debug("Cleaned idle HTTP download sessions", zap.Int("count", n))
-			requestHTTPBufferMemoryReturn()
+		if n := p.sources.CleanupIdle(time.Now(), sourceRegistryIdleTTL); n > 0 {
+			p.logger.Debug("Cleaned idle HTTP media sources", zap.Int("count", n))
 		}
 	}
 
@@ -355,10 +361,14 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var lease *transfer.Lease
+	var lease *transfer.TaskLease
 	if r.Method != http.MethodHead {
+		if task.Media == nil {
+			http.Error(w, "download media is unavailable", http.StatusInternalServerError)
+			return
+		}
 		waitStart := time.Now()
-		acquired, err := p.limiter.Acquire(r.Context(), task.ID)
+		acquired, err := p.scheduler.Acquire(r.Context(), task.ID, task.Media.DC)
 		if err != nil {
 			fields := []zap.Field{
 				zap.String("task_id", task.ID),
@@ -442,7 +452,15 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		zap.Int64("range_end", end))
 }
 
-func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
+func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
+	return p.streamTaskWithMode(ctx, task, lease, start, end, w, false)
+}
+
+func (p *downloadProxy) streamTaskParallel(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
+	return p.streamTaskWithMode(ctx, task, lease, start, end, w, true)
+}
+
+func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer, parallel bool) error {
 	pool := p.pools.Get()
 	if pool == nil {
 		err := errors.New("telegram client unavailable")
@@ -458,7 +476,7 @@ func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, leas
 		zap.Int64("file_size", task.FileSize),
 		zap.Int64("range_start", start),
 		zap.Int64("range_end", end),
-		zap.Int("max_workers", lease.MaxWorkers()),
+		zap.Int("dc_capacity", lease.Capacity()),
 	))
 
 	refresh := func(ctx context.Context) (*tmedia.Media, error) {
@@ -479,9 +497,12 @@ func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, leas
 		return refreshed.Media, nil
 	}
 
-	session := p.sessions.Get(task, refresh)
-	session.SetTelegramFileErrorReporter(p.telegramFileErrorReporter())
-	return session.Stream(streamCtx, lease, start, end, w)
+	handle := p.sources.Acquire(task, refresh)
+	defer handle.Release()
+	if parallel {
+		return streamTelegramMediaParallel(streamCtx, pool, handle.Source(), lease, p.telegramFileErrorReporter(), start, end, w)
+	}
+	return streamTelegramMedia(streamCtx, pool, handle.Source(), lease, p.telegramFileErrorReporter(), start, end, w)
 }
 
 func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask) error {
@@ -501,6 +522,9 @@ func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask
 	media, ok := tmedia.GetMedia(msg)
 	if !ok {
 		return errors.New("message no longer has media")
+	}
+	if task.Media != nil && media.DC != task.Media.DC {
+		return fmt.Errorf("refreshed media changed dc from %d to %d", task.Media.DC, media.DC)
 	}
 	id, err := downloadTaskID(media)
 	if err != nil {

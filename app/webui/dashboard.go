@@ -63,13 +63,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		memoryPercent = float64(rss) / float64(vm.Total) * 100
 	}
 
-	bufferBytes := uint64(httpdl.HTTPBufferBytes())
-	var softwareBytes uint64
-	if bufferBytes <= rss {
-		softwareBytes = rss - bufferBytes
-	} else {
-		softwareBytes = 0
-	}
+	softwareBytes := rss
 	if retainedIdleBytes <= softwareBytes {
 		softwareBytes -= retainedIdleBytes
 	} else {
@@ -79,6 +73,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	totalBytes := httpdl.TelegramDownloadedBytes()
 	gotdSpeed := s.telegramDownloadSpeed(totalBytes, now)
 	activeChunkRequests := httpdl.ActiveTelegramFileRequests()
+	dcSchedulers := httpdl.DCSchedulerSnapshots()
 	telegramFileErrors := httpdl.TelegramFileErrorCount()
 	telegramFileErrors10s := httpdl.TelegramFileErrorCountSince(10 * time.Second)
 	var aria2Stat aria2DashboardStat
@@ -100,7 +95,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"memory": map[string]any{
 			"total_bytes":              rss,
 			"software_bytes":           softwareBytes,
-			"buffer_bytes":             bufferBytes,
 			"heap_alloc_bytes":         memStats.Alloc,
 			"heap_sys_bytes":           memStats.HeapSys,
 			"heap_idle_bytes":          memStats.HeapIdle,
@@ -126,6 +120,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"active_chunk_requests":    activeChunkRequests,
 			"telegram_file_errors":     telegramFileErrors,
 			"telegram_file_errors_10s": telegramFileErrors10s,
+			"dc_schedulers":            dcSchedulers,
 		},
 		"aria2": map[string]any{
 			"available":     aria2Stat.Available,

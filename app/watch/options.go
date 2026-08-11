@@ -13,7 +13,6 @@ type Options struct {
 	FilenameMaxLength       int
 	SkipSame                bool
 	PoolSize                int
-	Threads                 int
 	Limit                   int
 	Download                bool
 	TriggerReactions        []string
@@ -44,7 +43,6 @@ func DefaultOptions(cfg *config.Config) Options {
 		Template:                fileNameConfigTemplate(config.EffectiveFilename(cfg)),
 		FilenameMaxLength:       config.EffectiveFilenameMax(cfg),
 		PoolSize:                config.EffectivePoolSize(cfg),
-		Threads:                 config.EffectiveThreads(cfg),
 		Limit:                   config.EffectiveLimit(cfg),
 		Download:                cfg.Modules.Watch,
 		TriggerReactions:        append([]string(nil), cfg.TriggerReactions...),
@@ -62,13 +60,6 @@ func DefaultOptions(cfg *config.Config) Options {
 	}
 }
 
-func effectiveWatchOptionThreads(value int, cfg *config.Config) int {
-	if value < 1 {
-		return config.EffectiveThreads(cfg)
-	}
-	return value
-}
-
 func effectiveWatchOptionLimit(value int, cfg *config.Config) int {
 	if value < 1 {
 		return config.EffectiveLimit(cfg)
@@ -77,7 +68,7 @@ func effectiveWatchOptionLimit(value int, cfg *config.Config) int {
 }
 
 func effectiveWatchOptionPoolSize(value int, cfg *config.Config) int {
-	if value < 0 {
+	if value < 1 {
 		return config.EffectivePoolSize(cfg)
 	}
 	return value

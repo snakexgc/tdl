@@ -24,9 +24,9 @@ type watchRuntime struct {
 func newWatchRuntime(cfg *config.Config, opts Options, kvd storage.Storage, logger *zap.Logger) *watchRuntime {
 	pools := &httpdl.PoolHolder{}
 	limit := effectiveWatchOptionLimit(opts.Limit, cfg)
-	threads := effectiveWatchOptionThreads(opts.Threads, cfg)
+	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 
-	proxy := httpdl.NewProxy(cfg.HTTP, limit, threads, pools, kvd, logger)
+	proxy := httpdl.NewProxy(cfg.HTTP, limit, poolSize, pools, kvd, logger)
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 		proxy.SetTaskTTL(0)
 	}

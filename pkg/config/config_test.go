@@ -35,8 +35,6 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, "0.0.0.0", cfg.HTTP.Address)
 	require.Equal(t, 22334, cfg.HTTP.Port)
 	require.Equal(t, "0.0.0.0:22334", HTTPListenAddr(cfg))
-	require.Equal(t, "memory", cfg.HTTP.Buffer.Mode)
-	require.Equal(t, 64, cfg.HTTP.Buffer.SizeMB)
 	require.Equal(t, 24, cfg.HTTP.DownloadLinkTTLHours)
 	require.Empty(t, cfg.WebUI.Listen)
 	require.Equal(t, "0.0.0.0", cfg.WebUI.Address)
@@ -51,7 +49,6 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, DownloaderModeAria2, cfg.Downloader.Mode)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
-	require.Equal(t, DefaultThreads, cfg.Threads)
 	require.Equal(t, DefaultLimit, cfg.Limit)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Equal(t, "G\\Y&M", cfg.DownloadDir)
@@ -119,32 +116,36 @@ func TestLoadRejectsInvalidDownloaderMode(t *testing.T) {
 	require.Contains(t, err.Error(), "downloader.mode")
 }
 
-func TestLoadKeepsTransferConcurrencyConfig(t *testing.T) {
+func TestLoadUsesPoolSizeAsTransferConcurrency(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"threads":7,"limit":3,"pool_size":0}`), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(`{"threads":7,"limit":3,"pool_size":0,"http":{"buffer":{"mode":"memory","size_mb":64},"transfer_mode":"client_range","range_connections":32}}`), 0o644))
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	require.Equal(t, 7, cfg.Threads)
 	require.Equal(t, 3, cfg.Limit)
-	require.Zero(t, cfg.PoolSize)
+	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
+	require.NoError(t, Save(path, cfg))
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(saved), `"threads"`)
+	require.NotContains(t, string(saved), `"buffer"`)
+	require.NotContains(t, string(saved), `"transfer_mode"`)
+	require.NotContains(t, string(saved), `"range_connections"`)
 }
 
-func TestLoadHTTPBufferConfig(t *testing.T) {
+func TestEffectivePoolSizeFallsBackForNonPositiveValues(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"http":{"buffer":{"mode":"off","size_mb":32}}}`), 0o644))
-
-	cfg, err := Load(path)
-	require.NoError(t, err)
-
-	require.Equal(t, "off", cfg.HTTP.Buffer.Mode)
-	require.Equal(t, 32, cfg.HTTP.Buffer.SizeMB)
+	for _, value := range []int{0, -1, -99} {
+		cfg := DefaultConfig()
+		cfg.PoolSize = value
+		require.Equal(t, DefaultPoolSize, EffectivePoolSize(cfg))
+		require.NoError(t, Validate(cfg))
+		require.Equal(t, DefaultPoolSize, cfg.PoolSize)
+	}
 }
 
 func TestLoadRejectsInvalidNamespace(t *testing.T) {

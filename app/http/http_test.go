@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -368,7 +369,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	payload := []byte("0123456789")
-	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
 		_, err := w.Write(payload[start : end+1])
 		return err
 	}
@@ -452,7 +453,7 @@ func TestDownloadHandlerHead(t *testing.T) {
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	called := false
-	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
 		called = true
 		return nil
 	}
@@ -472,17 +473,6 @@ func TestDownloadHandlerHead(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
 	require.False(t, called)
 	require.Equal(t, "10", rec.Result().Header.Get("Content-Length"))
-}
-
-func TestValidateBufferConfigRejectsInvalidBufferMode(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.DefaultConfig()
-	cfg.HTTP.Buffer.Mode = "disk"
-
-	err := validateHTTPBufferConfig(cfg.HTTP.Buffer)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "http.buffer.mode")
 }
 
 func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
@@ -505,7 +495,7 @@ func TestStreamTelegramMediaStartsAtRangeOffset(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 524288, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 524288, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload[524288:], out.Bytes())
 	require.NotEmpty(t, invoker.offsets)
@@ -533,7 +523,7 @@ func TestStreamTelegramMediaAlignsFinalLimit(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.Equal(t, []int64{0}, invoker.offsets)
@@ -564,7 +554,7 @@ func TestStreamTelegramMediaSplitsRangeByTelegramFragment(t *testing.T) {
 	end := int64(downloadStreamPartSize) + 1500
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, start, end, &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, start, end, &out)
 	require.NoError(t, err)
 	require.Equal(t, payload[start:end+1], out.Bytes())
 	require.Equal(t, []telegramChunkRequest{
@@ -597,17 +587,16 @@ func TestStreamTelegramMediaParallelUsesMultipleWorkers(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMediaParallel(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.GreaterOrEqual(t, invoker.maxConcurrent(), 2)
 }
 
-func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T) {
+func TestStreamTelegramMediaStopsFetchingWhileWriterBlocks(t *testing.T) {
 	t.Parallel()
 
-	const bufferSlots = 8
-	payload := make([]byte, downloadStreamPartSize*12)
+	payload := make([]byte, downloadStreamPartSize*3)
 	for i := range payload {
 		payload[i] = byte(i % 251)
 	}
@@ -620,8 +609,7 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 		DC:           2,
 	}
 	pool := testDownloadPool{client: client}
-	lease, err := transfer.NewLimiter(1, 2, bufferSlots).Acquire(context.Background(), testTaskID)
-	require.NoError(t, err)
+	lease := mustAcquireDownloadLease(t, 8)
 	defer lease.Release()
 
 	out := newBlockingFirstWriteBuffer()
@@ -629,7 +617,7 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), out)
+		errCh <- streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), out)
 	}()
 
 	select {
@@ -638,9 +626,8 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 		t.Fatal("timed out waiting for first write")
 	}
 
-	require.Eventually(t, func() bool {
-		return invoker.totalCalls() >= bufferSlots-1
-	}, time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, 1, invoker.totalCalls(), "a blocked client must stop upstream prefetch")
 
 	out.Unblock()
 	select {
@@ -652,94 +639,107 @@ func TestStreamTelegramMediaMemoryBufferPrefetchesWhileWriterBlocks(t *testing.T
 	require.Equal(t, payload, out.Bytes())
 }
 
-func TestDownloadSessionExpiresReleasedMemoryBuffer(t *testing.T) {
-	payload := make([]byte, downloadStreamPartSize)
-	for i := range payload {
-		payload[i] = byte(i % 251)
-	}
+func TestStreamTelegramMediaReleasesPermitAfterWriterFailure(t *testing.T) {
+	t.Parallel()
 
-	invoker := &recordingUploadInvoker{data: payload}
-	client := tg.NewClient(invoker)
-	pools := &poolHolder{}
-	pools.Set(testDownloadPool{client: client})
-	media := &tmedia.Media{
-		InputFileLoc: &tg.InputDocumentFileLocation{},
-		Size:         int64(len(payload)),
-		DC:           2,
-	}
-	session := newDownloadSession(testTaskID, &telegramMediaSource{media: media}, pools, int64(downloadStreamPartSize), 25*time.Millisecond, nil, nil)
-	lease, err := transfer.NewLimiter(1, 1, 1).Acquire(context.Background(), testTaskID)
-	require.NoError(t, err)
+	payload := make([]byte, downloadStreamPartSize)
+	client := tg.NewClient(&recordingUploadInvoker{data: payload})
+	lease := mustAcquireDownloadLease(t, 1)
 	defer lease.Release()
 
-	var out bytes.Buffer
-	require.NoError(t, session.Stream(context.Background(), lease, 0, int64(len(payload)-1), &out))
-	require.Equal(t, payload, out.Bytes())
-	require.Equal(t, 1, sessionChunkCount(session))
+	err := streamTelegramMedia(
+		context.Background(),
+		testDownloadPool{client: client},
+		&telegramMediaSource{media: &tmedia.Media{InputFileLoc: &tg.InputDocumentFileLocation{}, Size: int64(len(payload)), DC: 2}},
+		lease,
+		nil,
+		0,
+		int64(len(payload)-1),
+		failingWriter{},
+	)
+	require.Error(t, err)
 
-	require.Eventually(t, func() bool {
-		return sessionChunkCount(session) == 0 && sessionCachedBytes(session) == 0
-	}, time.Second, 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	chunk, err := lease.AcquireChunk(ctx)
+	require.NoError(t, err)
+	chunk.Release()
 }
 
-func TestDownloadProxyUsesGlobalMemoryBufferLimit(t *testing.T) {
-	payload := make([]byte, downloadStreamPartSize)
-	for i := range payload {
-		payload[i] = byte(i % 251)
-	}
+func TestSourceRegistryCleansIdleMetadata(t *testing.T) {
+	registry := newSourceRegistry()
+	task := &downloadTask{ID: testTaskID, Media: &tmedia.Media{DC: 2}}
+	handle := registry.Acquire(task, nil)
+	require.NotNil(t, handle.Source())
+	handle.Release()
+	require.Equal(t, 1, registrySourceCount(registry))
+	require.Equal(t, 1, registry.CleanupIdle(time.Now().Add(time.Minute), time.Second))
+	require.Zero(t, registrySourceCount(registry))
+}
 
-	invoker := &recordingUploadInvoker{data: payload}
+func TestSourceRegistryDoesNotRegressRefreshedMedia(t *testing.T) {
+	registry := newSourceRegistry()
+	stale := &tmedia.Media{InputFileLoc: &tg.InputDocumentFileLocation{FileReference: []byte("stale")}, DC: 2}
+	fresh := &tmedia.Media{InputFileLoc: &tg.InputDocumentFileLocation{FileReference: []byte("fresh")}, DC: 2}
+	task := &downloadTask{ID: testTaskID, Media: stale}
+
+	first := registry.Acquire(task, nil)
+	first.entry.source.mu.Lock()
+	first.entry.source.media = fresh
+	first.entry.source.mu.Unlock()
+	first.Release()
+
+	second := registry.Acquire(task, nil)
+	defer second.Release()
+	require.Same(t, fresh, second.Source().Media())
+}
+
+func TestTelegramMediaSourceRefreshesExpiredReferenceOnceConcurrently(t *testing.T) {
+	t.Parallel()
+
+	invoker := newFileReferenceRefreshInvoker([]byte("payload"), 2)
 	client := tg.NewClient(invoker)
-	pools := &poolHolder{}
-	pools.Set(testDownloadPool{client: client})
-	proxy := newDownloadProxy(config.HTTPConfig{
-		Buffer: config.HTTPBufferConfig{
-			Mode:   httpBufferModeMemory,
-			SizeMB: 1,
-		},
-	}, 2, 1, pools, nil, nil)
-	taskOne := &downloadTask{
-		ID:       testTaskID,
-		FileName: "one.bin",
-		FileSize: int64(len(payload)),
-		Media: &tmedia.Media{
-			InputFileLoc: &tg.InputDocumentFileLocation{},
-			Size:         int64(len(payload)),
-			DC:           2,
-		},
+	stale := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, FileReference: []byte("stale")},
+		Size:         int64(len(invoker.payload)),
+		DC:           2,
 	}
-	taskTwo := &downloadTask{
-		ID:       "task-2",
-		FileName: "two.bin",
-		FileSize: int64(len(payload)),
-		Media: &tmedia.Media{
-			InputFileLoc: &tg.InputDocumentFileLocation{},
-			Size:         int64(len(payload)),
-			DC:           2,
+	fresh := &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, FileReference: []byte("fresh")},
+		Size:         int64(len(invoker.payload)),
+		DC:           2,
+	}
+	var refreshes atomic.Int32
+	source := &telegramMediaSource{
+		media: stale,
+		refresh: func(context.Context) (*tmedia.Media, error) {
+			refreshes.Add(1)
+			return fresh, nil
 		},
 	}
 
-	leaseOne, err := proxy.limiter.Acquire(context.Background(), taskOne.ID)
-	require.NoError(t, err)
-	var outOne bytes.Buffer
-	require.NoError(t, proxy.streamTask(context.Background(), taskOne, leaseOne, 0, int64(len(payload)-1), &outOne))
-	leaseOne.Release()
-	require.Equal(t, payload, outOne.Bytes())
-	sessionOne := proxy.sessions.Get(taskOne, nil)
-	defer sessionOne.Close()
-	require.Equal(t, 1, sessionChunkCount(sessionOne))
+	errCh := make(chan error, 2)
+	for range 2 {
+		go func() {
+			data, err := source.FetchChunk(context.Background(), testDownloadPool{client: client}, nil, telegramChunkRequest{offset: 0, limit: len(invoker.payload)})
+			if err == nil && !bytes.Equal(invoker.payload, data) {
+				err = fmt.Errorf("unexpected refreshed payload")
+			}
+			errCh <- err
+		}()
+	}
+	require.NoError(t, <-errCh)
+	require.NoError(t, <-errCh)
+	require.Equal(t, int32(1), refreshes.Load())
+	require.Same(t, fresh, source.Media())
+}
 
-	leaseTwo, err := proxy.limiter.Acquire(context.Background(), taskTwo.ID)
-	require.NoError(t, err)
-	var outTwo bytes.Buffer
-	require.NoError(t, proxy.streamTask(context.Background(), taskTwo, leaseTwo, 0, int64(len(payload)-1), &outTwo))
-	leaseTwo.Release()
-	require.Equal(t, payload, outTwo.Bytes())
-	sessionTwo := proxy.sessions.Get(taskTwo, nil)
-	defer sessionTwo.Close()
+func TestDownloadProxyUsesPerDCSchedulerCapacity(t *testing.T) {
+	proxy := newDownloadProxy(config.HTTPConfig{}, 2, 3, &poolHolder{}, nil, nil)
+	require.Equal(t, 3, proxy.scheduler.Capacity())
 
-	require.Equal(t, 0, sessionChunkCount(sessionOne))
-	require.Equal(t, 1, sessionChunkCount(sessionTwo))
+	fallback := newDownloadProxy(config.HTTPConfig{}, 2, 0, &poolHolder{}, nil, nil)
+	require.Equal(t, config.DefaultPoolSize, fallback.scheduler.Capacity())
 }
 
 func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
@@ -768,7 +768,7 @@ func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.GreaterOrEqual(t, invoker.callCount(0), 2)
@@ -797,7 +797,7 @@ func TestStreamTelegramMediaRetriesEmptyChunk(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.GreaterOrEqual(t, invoker.callCount(0), 2)
@@ -827,7 +827,7 @@ func TestStreamTelegramMediaRetriesTransientNetworkError(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	require.Equal(t, payload, out.Bytes())
 	require.GreaterOrEqual(t, invoker.callCount(0), 2)
@@ -857,7 +857,7 @@ func TestStreamTelegramMediaFailsAfterExhaustingTransientRetries(t *testing.T) {
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.Error(t, err)
 	// initial attempt + telegramChunkMaxRetries bounded retries, then give up.
 	require.Equal(t, telegramChunkMaxRetries+1, invoker.callCount(0))
@@ -891,7 +891,7 @@ func TestStreamTelegramMediaCancelDuringRetryAborts(t *testing.T) {
 	defer cancel()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(ctx, pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(ctx, pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
 	// Cancellation during the first backoff aborts well before retries exhaust.
@@ -927,7 +927,7 @@ func TestStreamTelegramMediaPreservesFileSizeAcrossFragmentsWithRetries(t *testi
 	defer lease.Release()
 
 	var out bytes.Buffer
-	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, 0, int64(len(payload)-1), &out)
+	err := streamTelegramMedia(context.Background(), pool, &telegramMediaSource{media: media}, lease, nil, 0, int64(len(payload)-1), &out)
 	require.NoError(t, err)
 	// The reassembled output is the full file, byte for byte — size unaffected.
 	require.Equal(t, len(payload), out.Len())
@@ -943,7 +943,7 @@ func TestStreamTelegramMediaPreservesFileSizeAcrossFragmentsWithRetries(t *testi
 	require.GreaterOrEqual(t, invoker.callCount(2*downloadStreamPartSize), 2)
 }
 
-func TestDownloadSessionDeduplicatesConcurrentRangeChunk(t *testing.T) {
+func TestConcurrentRangesShareTaskQuotaWithoutCaching(t *testing.T) {
 	t.Parallel()
 
 	payload := make([]byte, downloadStreamPartSize)
@@ -958,10 +958,7 @@ func TestDownloadSessionDeduplicatesConcurrentRangeChunk(t *testing.T) {
 	client := tg.NewClient(invoker)
 	pools := &poolHolder{}
 	pools.Set(testDownloadPool{client: client})
-	proxy := newDownloadProxy(config.HTTPConfig{
-		TransferMode:     config.HTTPTransferModeClientRange,
-		RangeConnections: 2,
-	}, 1, 2, pools, nil, nil)
+	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 2, pools, nil, nil)
 	task := &downloadTask{
 		ID:       testTaskID,
 		FileName: testFileName,
@@ -973,32 +970,35 @@ func TestDownloadSessionDeduplicatesConcurrentRangeChunk(t *testing.T) {
 		},
 	}
 
-	lease1, err := proxy.limiter.Acquire(context.Background(), task.ID)
-	require.NoError(t, err)
-	defer lease1.Release()
-	lease2, err := proxy.limiter.Acquire(context.Background(), task.ID)
-	require.NoError(t, err)
-	defer lease2.Release()
-
+	const requests = 32
 	start := make(chan struct{})
-	errCh := make(chan error, 2)
-	var out1, out2 bytes.Buffer
-	go func() {
-		<-start
-		errCh <- proxy.streamTask(context.Background(), task, lease1, 0, 1023, &out1)
-	}()
-	go func() {
-		<-start
-		errCh <- proxy.streamTask(context.Background(), task, lease2, 100, 900, &out2)
-	}()
+	errCh := make(chan error, requests)
+	for range requests {
+		go func() {
+			<-start
+			lease, err := proxy.scheduler.Acquire(context.Background(), task.ID, task.Media.DC)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer lease.Release()
+
+			var out bytes.Buffer
+			err = proxy.streamTask(context.Background(), task, lease, 0, 1023, &out)
+			if err == nil && !bytes.Equal(payload[:1024], out.Bytes()) {
+				err = fmt.Errorf("unexpected range body")
+			}
+			errCh <- err
+		}()
+	}
 	close(start)
 
-	require.NoError(t, <-errCh)
-	require.NoError(t, <-errCh)
-	require.Equal(t, payload[:1024], out1.Bytes())
-	require.Equal(t, payload[100:901], out2.Bytes())
-	require.Equal(t, 1, invoker.callCount(0))
-	require.Equal(t, 1, invoker.totalCalls())
+	for range requests {
+		require.NoError(t, <-errCh)
+	}
+	require.LessOrEqual(t, invoker.maxConcurrent(), 2)
+	require.Equal(t, requests, invoker.callCount(0))
+	require.Equal(t, requests, invoker.totalCalls())
 }
 
 type recordingUploadInvoker struct {
@@ -1015,6 +1015,50 @@ type recordingUploadInvoker struct {
 	calls       map[int64]int
 }
 
+type fileReferenceRefreshInvoker struct {
+	mu           sync.Mutex
+	payload      []byte
+	staleTarget  int
+	staleArrived int
+	allStale     chan struct{}
+}
+
+func newFileReferenceRefreshInvoker(payload []byte, staleTarget int) *fileReferenceRefreshInvoker {
+	return &fileReferenceRefreshInvoker{payload: payload, staleTarget: staleTarget, allStale: make(chan struct{})}
+}
+
+func (i *fileReferenceRefreshInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	req, ok := input.(*tg.UploadGetFileRequest)
+	if !ok {
+		return fmt.Errorf("unexpected request type %T", input)
+	}
+	loc, ok := req.Location.(*tg.InputDocumentFileLocation)
+	if !ok {
+		return fmt.Errorf("unexpected location type %T", req.Location)
+	}
+	if bytes.Equal(loc.FileReference, []byte("stale")) {
+		i.mu.Lock()
+		i.staleArrived++
+		if i.staleArrived == i.staleTarget {
+			close(i.allStale)
+		}
+		allStale := i.allStale
+		i.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-allStale:
+			return tgerr.New(400, "FILE_REFERENCE_EXPIRED")
+		}
+	}
+	box, ok := output.(*tg.UploadFileBox)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", output)
+	}
+	box.File = &tg.UploadFile{Type: &tg.StorageFileUnknown{}, Bytes: i.payload}
+	return nil
+}
+
 // timeoutNetError is a net.Error that reports a timeout, used to exercise the
 // chunk-level transient retry path (distinct from the tg.ErrTimeout RPC path).
 type timeoutNetError struct{}
@@ -1022,6 +1066,12 @@ type timeoutNetError struct{}
 func (timeoutNetError) Error() string   { return "simulated network timeout" }
 func (timeoutNetError) Timeout() bool   { return true }
 func (timeoutNetError) Temporary() bool { return true }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
 
 type blockingFirstWriteBuffer struct {
 	bytes.Buffer
@@ -1185,18 +1235,11 @@ func (i *recordingUploadInvoker) allRequestsStayWithinTelegramFragment() bool {
 	return true
 }
 
-func sessionChunkCount(session *downloadSession) int {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+func registrySourceCount(registry *sourceRegistry) int {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
 
-	return len(session.chunks)
-}
-
-func sessionCachedBytes(session *downloadSession) int64 {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-
-	return session.cachedBytes
+	return len(registry.sources)
 }
 
 type testDownloadPool struct {
@@ -1221,10 +1264,10 @@ func (p testDownloadPool) Close() error {
 
 var _ dcpool.Pool = testDownloadPool{}
 
-func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *transfer.Lease {
+func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *transfer.TaskLease {
 	t.Helper()
 
-	lease, err := transfer.NewLimiter(1, maxWorkers).Acquire(context.Background(), testTaskID)
+	lease, err := transfer.NewScheduler(1, maxWorkers).Acquire(context.Background(), testTaskID, 2)
 	require.NoError(t, err)
 	return lease
 }

@@ -17,9 +17,8 @@ const sections = [
       ["proxy_username", "代理用户名", "text", "代理需要认证时填写；没有认证时留空。"],
       ["proxy_password", "代理密码", "password", "代理需要认证时填写；没有认证时留空，保存时留空表示保持原密码。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
-      ["threads", "单文件线程数", "number", "与 tdl --threads 一致，限制单个文件最多同时使用多少个分片请求；小文件会自动降低实际线程数。"],
       ["limit", "并发下载数", "number", "与 tdl --limit 一致，限制同时下载的文件任务数量。"],
-      ["pool_size", "DC 连接池大小", "number", "与 tdl --pool 一致，限制每个 Telegram DC 的连接池大小；填 0 表示无限。"],
+      ["pool_size", "每 DC 下载容量", "number", "同时限制每个 Telegram DC 的连接池和下载流；默认 8，填 0 或负数会恢复为 8。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
@@ -39,10 +38,6 @@ const sections = [
       ["http.port", "监听端口", "number", "tdl 提供下载链接的监听端口，例如 22334。"],
       ["http.public_base_url", "对外访问地址", "text", "aria2 能访问到的 tdl 地址，不同机器时请填写局域网地址。"],
       ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
-      ["http.transfer_mode", "传输模式", "select", "source_parallel 为默认单 Range 模式；client_range 允许 aria2 多 Range。", ["source_parallel", "client_range"]],
-      ["http.range_connections", "Range 连接数", "number", "仅 client_range 生效；填 0 表示 min(threads, 4)。"],
-      ["http.buffer.mode", "下载缓冲", "select", "memory 为所有 HTTP 下载共享 chunk cache；off 表示只保留正在传输的分片。", ["memory", "off"]],
-      ["http.buffer.size_mb", "缓冲大小", "number", "所有 HTTP 下载合计可使用的共享内存上限，单位 MiB；已读分片最多保留 5 秒。"],
     ],
   },
   {
@@ -66,7 +61,7 @@ const sections = [
   {
     title: "下载器",
     fields: [
-      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器；并发下载数由 limit 控制，单文件线程数由 threads 控制。", ["aria2", "internal"]],
+      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部下载器；并发文件数由 limit 控制，每个 DC 的连接与下载流由 pool_size 控制。", ["aria2", "internal"]],
     ],
   },
   {

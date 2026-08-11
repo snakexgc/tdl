@@ -65,7 +65,7 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 	}, reqBody.Params[1])
 }
 
-func TestAria2AddURIWithClientRangeConnections(t *testing.T) {
+func TestAria2AddURIWithPoolSizeConnections(t *testing.T) {
 	t.Parallel()
 
 	var reqBody aria2RPCRequest

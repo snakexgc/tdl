@@ -316,7 +316,7 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return errors.Wrap(err, "build download url")
 	}
 
-	connections := config.HTTPRangeConnectionsFor(cfg.HTTP, w.opts.Threads)
+	connections := config.EffectivePoolSize(cfg)
 	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, watcharia2.AddURIOptions{
 		Dir:         prepared.dir,
 		Out:         prepared.out,
@@ -326,14 +326,12 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return errors.Wrap(err, "submit to aria2")
 	}
 	if err := w.runtime.aria2Tasks.Add(ctx, watcharia2.TaskRecord{
-		GID:          gid,
-		TaskID:       task.ID,
-		DownloadURL:  downloadURL,
-		Dir:          prepared.dir,
-		Out:          prepared.out,
-		Connections:  connections,
-		TransferMode: config.EffectiveHTTPTransferMode(cfg),
-		CreatedAt:    time.Now(),
+		GID:         gid,
+		TaskID:      task.ID,
+		DownloadURL: downloadURL,
+		Dir:         prepared.dir,
+		Out:         prepared.out,
+		CreatedAt:   time.Now(),
 	}); err != nil {
 		logctx.From(ctx).Warn("Failed to register aria2 task",
 			zap.String("gid", gid),

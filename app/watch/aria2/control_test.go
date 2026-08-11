@@ -7,8 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-
-	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (
@@ -106,7 +104,6 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 		DownloadURL: testDownloadURL1,
 		Dir:         testDownloadDir,
 		Out:         "video.mp4",
-		Connections: 6,
 		CreatedAt:   time.Now(),
 	}))
 
@@ -133,6 +130,7 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 		client:        client,
 		store:         store,
 		publicBaseURL: "http://127.0.0.1:8080",
+		connections:   6,
 		logger:        zap.NewNop(),
 	}
 
@@ -153,23 +151,13 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.Equal(t, 1, retried.Matched)
 	require.Equal(t, 1, retried.Changed)
 	require.Equal(t, []string{testDownloadURL1}, client.addedURIs)
-	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: "video.mp4", Connections: 1}}, client.addedOptions)
+	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: "video.mp4", Connections: 6}}, client.addedOptions)
 	require.Equal(t, []string{testGIDRegisteredError}, client.removedResults)
 
 	records, err := store.Records(ctx)
 	require.NoError(t, err)
 	require.NotContains(t, records, testGIDRegisteredError)
 	require.Contains(t, records, testGIDNew)
-}
-
-func TestTaskRecordHTTPConnectionsRequiresClientRangeMode(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, 1, taskRecordHTTPConnections(TaskRecord{Connections: 6}))
-	require.Equal(t, 6, taskRecordHTTPConnections(TaskRecord{
-		Connections:  6,
-		TransferMode: config.HTTPTransferModeClientRange,
-	}))
 }
 
 func TestTaskNamePrefersBittorrentInfoPathThenURI(t *testing.T) {

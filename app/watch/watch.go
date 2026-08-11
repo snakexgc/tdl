@@ -24,7 +24,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
-	httpdl "github.com/snakexgc/tdl/app/http"
 	watcharia2 "github.com/snakexgc/tdl/app/watch/aria2"
 	"github.com/snakexgc/tdl/core/dcpool"
 	"github.com/snakexgc/tdl/core/logctx"
@@ -77,13 +76,9 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Forward && len(opts.ForwardListen) == 0 {
 		color.Yellow("⚠️ modules.forward is enabled but forward.listen is empty")
 	}
-	if err := httpdl.ValidateBufferConfig(cfg.HTTP.Buffer); err != nil {
-		return err
-	}
 	if opts.FileSizeMB < 0 {
 		return errors.New("file_size_mb must be greater than or equal to 0")
 	}
-	opts.Threads = effectiveWatchOptionThreads(opts.Threads, cfg)
 	opts.Limit = effectiveWatchOptionLimit(opts.Limit, cfg)
 	opts.PoolSize = effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
@@ -231,27 +226,17 @@ func Run(ctx context.Context, opts Options) error {
 		color.Green("   Output root: %s", runtime.outputRoot)
 		color.Green("   Download dir template: %s", opts.Dir)
 	}
-	poolSizeLabel := fmt.Sprintf("%d", opts.PoolSize)
-	if opts.PoolSize == 0 {
-		poolSizeLabel = "unlimited"
-	}
-	color.Green("   Telegram DC pool size: %s", poolSizeLabel)
+	color.Green("   Telegram DC pool size: %d", opts.PoolSize)
 	if opts.Download {
-		color.Green("   Per-file threads: %d", opts.Threads)
+		color.Green("   Per-DC connection and download capacity: %d", opts.PoolSize)
 		color.Green("   Max concurrent downloads: %d", opts.Limit)
 		if cfg.HTTP.DownloadLinkTTLHours <= 0 {
 			color.Green("   Download link TTL: permanent")
 		} else {
 			color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
 		}
-		if httpdl.NormalizeBufferMode(cfg.HTTP.Buffer.Mode) == httpdl.BufferModeMemory {
-			color.Green("   HTTP buffer: memory (%d MiB shared, 5s retention)", httpdl.NormalizedBufferSizeMB(cfg.HTTP.Buffer))
-		} else {
-			color.Green("   HTTP buffer: off")
-		}
-		color.Green("   HTTP transfer mode: %s", config.EffectiveHTTPTransferMode(cfg))
 		if downloaderMode == config.DownloaderModeAria2 {
-			color.Green("   HTTP range connections: %d", config.EffectiveHTTPRangeConnections(cfg))
+			color.Green("   HTTP Range connections per aria2 task: %d", opts.PoolSize)
 		}
 		color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
 		if opts.FileSizeMB > 0 {
@@ -453,9 +438,9 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		go func() {
 			defer close(forwardDone)
 			if err := appforward.Jobs().Serve(egCtx, appforward.Runtime{
-				Pool:    pool,
-				Manager: w.manager,
-				Threads: opts.Threads,
+				Pool:     pool,
+				Manager:  w.manager,
+				PoolSize: opts.PoolSize,
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				logctx.From(ctx).Error("Forward queue worker stopped", zap.Error(err))
 			}
@@ -521,12 +506,6 @@ func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, lim
 }
 
 func validateWatchConfig(cfg *config.Config) error {
-	if _, err := config.NormalizeHTTPTransferMode(cfg.HTTP.TransferMode); err != nil {
-		return err
-	}
-	if err := httpdl.ValidateBufferConfig(cfg.HTTP.Buffer); err != nil {
-		return err
-	}
 	switch config.EffectiveDownloaderMode(cfg) {
 	case config.DownloaderModeAria2:
 		if !cfg.Modules.HTTP {

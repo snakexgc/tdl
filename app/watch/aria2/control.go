@@ -43,6 +43,7 @@ type Controller struct {
 	client        ControlClient
 	store         *TaskStore
 	publicBaseURL string
+	connections   int
 	logger        *zap.Logger
 }
 
@@ -93,6 +94,7 @@ func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) 
 		client:        NewClient(cfg.Aria2),
 		store:         NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		publicBaseURL: cfg.HTTP.PublicBaseURL,
+		connections:   config.EffectivePoolSize(cfg),
 		logger:        logger,
 	}
 }
@@ -301,7 +303,7 @@ func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 		gid, err := c.client.AddURI(ctx, downloadURL, AddURIOptions{
 			Dir:         next.Dir,
 			Out:         next.Out,
-			Connections: taskRecordHTTPConnections(next),
+			Connections: c.connections,
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
@@ -330,17 +332,6 @@ func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 		result.Changed++
 	}
 	return result, nil
-}
-
-func taskRecordHTTPConnections(record TaskRecord) int {
-	mode, err := config.NormalizeHTTPTransferMode(record.TransferMode)
-	if err != nil || mode != config.HTTPTransferModeClientRange {
-		return 1
-	}
-	if record.Connections < 1 {
-		return 1
-	}
-	return record.Connections
 }
 
 func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[string]TaskRecord, error) {

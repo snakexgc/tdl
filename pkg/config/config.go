@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	DefaultThreads       = 4
 	DefaultLimit         = 1
 	DefaultPoolSize      = 8
 	DefaultHTTPAddress   = "0.0.0.0"
@@ -31,11 +30,6 @@ const (
 const (
 	DownloaderModeAria2    = "aria2"
 	DownloaderModeInternal = "internal"
-)
-
-const (
-	HTTPTransferModeSourceParallel = "source_parallel"
-	HTTPTransferModeClientRange    = "client_range"
 )
 
 const (
@@ -61,19 +55,11 @@ type BotConfig struct {
 }
 
 type HTTPConfig struct {
-	Listen               string           `json:"listen,omitempty"`
-	Address              string           `json:"address"`
-	Port                 int              `json:"port"`
-	PublicBaseURL        string           `json:"public_base_url"`
-	DownloadLinkTTLHours int              `json:"download_link_ttl_hours"`
-	TransferMode         string           `json:"transfer_mode"`
-	RangeConnections     int              `json:"range_connections"`
-	Buffer               HTTPBufferConfig `json:"buffer"`
-}
-
-type HTTPBufferConfig struct {
-	Mode   string `json:"mode"`
-	SizeMB int    `json:"size_mb"`
+	Listen               string `json:"listen,omitempty"`
+	Address              string `json:"address"`
+	Port                 int    `json:"port"`
+	PublicBaseURL        string `json:"public_base_url"`
+	DownloadLinkTTLHours int    `json:"download_link_ttl_hours"`
 }
 
 type WebUIConfig struct {
@@ -119,7 +105,6 @@ type Config struct {
 	ProxyPassword    string           `json:"proxy_password"`
 	Namespace        string           `json:"namespace"`
 	Debug            bool             `json:"debug"`
-	Threads          int              `json:"threads"`
 	Limit            int              `json:"limit"`
 	PoolSize         int              `json:"pool_size"`
 	Delay            int              `json:"delay"`
@@ -146,7 +131,6 @@ func DefaultConfig() *Config {
 	return &Config{
 		Namespace:        "default",
 		Debug:            false,
-		Threads:          DefaultThreads,
 		Limit:            DefaultLimit,
 		PoolSize:         DefaultPoolSize,
 		Delay:            0,
@@ -163,12 +147,6 @@ func DefaultConfig() *Config {
 			Port:                 DefaultHTTPPort,
 			PublicBaseURL:        "",
 			DownloadLinkTTLHours: 24,
-			TransferMode:         HTTPTransferModeSourceParallel,
-			RangeConnections:     0,
-			Buffer: HTTPBufferConfig{
-				Mode:   "memory",
-				SizeMB: 64,
-			},
 		},
 		WebUI: WebUIConfig{
 			Address:  DefaultWebUIAddress,
@@ -229,13 +207,6 @@ func NormalizeNamespace(namespace string) (string, error) {
 	return namespace, nil
 }
 
-func EffectiveThreads(cfg *Config) int {
-	if cfg == nil || cfg.Threads < 1 {
-		return DefaultThreads
-	}
-	return cfg.Threads
-}
-
 func EffectiveLimit(cfg *Config) int {
 	if cfg == nil || cfg.Limit < 1 {
 		return DefaultLimit
@@ -244,7 +215,7 @@ func EffectiveLimit(cfg *Config) int {
 }
 
 func EffectivePoolSize(cfg *Config) int {
-	if cfg == nil || cfg.PoolSize < 0 {
+	if cfg == nil || cfg.PoolSize < 1 {
 		return DefaultPoolSize
 	}
 	return cfg.PoolSize
@@ -312,60 +283,6 @@ func EffectiveDownloaderMode(cfg *Config) string {
 		return DownloaderModeAria2
 	}
 	return mode
-}
-
-func NormalizeHTTPTransferMode(mode string) (string, error) {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		return HTTPTransferModeSourceParallel, nil
-	}
-	switch mode {
-	case HTTPTransferModeSourceParallel, HTTPTransferModeClientRange:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("http.transfer_mode must be %q or %q", HTTPTransferModeSourceParallel, HTTPTransferModeClientRange)
-	}
-}
-
-func EffectiveHTTPTransferMode(cfg *Config) string {
-	if cfg == nil {
-		return HTTPTransferModeSourceParallel
-	}
-	mode, err := NormalizeHTTPTransferMode(cfg.HTTP.TransferMode)
-	if err != nil {
-		return HTTPTransferModeSourceParallel
-	}
-	return mode
-}
-
-func HTTPRangeConnectionsFor(httpCfg HTTPConfig, threads int) int {
-	if mode, err := NormalizeHTTPTransferMode(httpCfg.TransferMode); err != nil || mode != HTTPTransferModeClientRange {
-		return 1
-	}
-	if threads < 1 {
-		threads = DefaultThreads
-	}
-	connections := httpCfg.RangeConnections
-	if connections <= 0 {
-		connections = threads
-		if connections > 4 {
-			connections = 4
-		}
-	}
-	if connections < 1 {
-		connections = 1
-	}
-	if connections > threads {
-		connections = threads
-	}
-	return connections
-}
-
-func EffectiveHTTPRangeConnections(cfg *Config) int {
-	if cfg == nil {
-		return 1
-	}
-	return HTTPRangeConnectionsFor(cfg.HTTP, EffectiveThreads(cfg))
 }
 
 func NormalizeForwardMode(mode string) (string, error) {
@@ -463,14 +380,6 @@ func normalizeHTTPConfig(cfg *Config) error {
 	if httpCfg.Port < 1 || httpCfg.Port > 65535 {
 		return fmt.Errorf("http.port must be between 1 and 65535")
 	}
-	mode, err := NormalizeHTTPTransferMode(httpCfg.TransferMode)
-	if err != nil {
-		return err
-	}
-	httpCfg.TransferMode = mode
-	if httpCfg.RangeConnections < 0 {
-		httpCfg.RangeConnections = 0
-	}
 	return nil
 }
 
@@ -531,7 +440,6 @@ func Validate(cfg *Config) error {
 	cfg.Proxy = strings.TrimSpace(cfg.Proxy)
 	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
 	cfg.NTP = strings.TrimSpace(cfg.NTP)
-	cfg.Threads = EffectiveThreads(cfg)
 	cfg.Limit = EffectiveLimit(cfg)
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	cfg.Filename = EffectiveFilename(cfg)
