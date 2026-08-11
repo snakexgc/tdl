@@ -11,10 +11,10 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/core/storage/keygen"
-	"github.com/iyear/tdl/pkg/key"
-	"github.com/iyear/tdl/pkg/tclient"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/storage/keygen"
+	"github.com/snakexgc/tdl/pkg/key"
+	"github.com/snakexgc/tdl/pkg/tclient"
 )
 
 type SessionOptions struct {

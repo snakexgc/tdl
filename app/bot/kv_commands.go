@@ -9,8 +9,8 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 const cleanKVCommandTimeout = 30 * time.Second

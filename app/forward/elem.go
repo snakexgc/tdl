@@ -6,7 +6,7 @@ import (
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/tg"
 
-	"github.com/iyear/tdl/core/forwarder"
+	"github.com/snakexgc/tdl/core/forwarder"
 )
 
 type ElemOptions struct {

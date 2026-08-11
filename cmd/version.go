@@ -9,7 +9,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/iyear/tdl/pkg/consts"
+	"github.com/snakexgc/tdl/pkg/consts"
 )
 
 //go:embed version.tmpl

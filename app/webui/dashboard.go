@@ -7,10 +7,10 @@ import (
 
 	hostmem "github.com/shirou/gopsutil/v3/mem"
 
-	httpdl "github.com/iyear/tdl/app/http"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/consts"
-	"github.com/iyear/tdl/pkg/ps"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/consts"
+	"github.com/snakexgc/tdl/pkg/ps"
 )
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {

@@ -21,9 +21,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$goarm \
     go build -trimpath \
     -ldflags "-s -w \
-    -X github.com/iyear/tdl/pkg/consts.Version=${VERSION}  \
-    -X github.com/iyear/tdl/pkg/consts.Commit=${COMMIT}  \
-    -X github.com/iyear/tdl/pkg/consts.CommitDate=${COMMIT_DATE}" \
+    -X github.com/snakexgc/tdl/pkg/consts.Version=${VERSION}  \
+    -X github.com/snakexgc/tdl/pkg/consts.Commit=${COMMIT}  \
+    -X github.com/snakexgc/tdl/pkg/consts.CommitDate=${COMMIT_DATE}" \
     -o /out/tdl
 
 FROM alpine:latest

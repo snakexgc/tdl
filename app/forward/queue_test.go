@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iyear/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/storage"
 )
 
 // memStorage is an in-memory storage.Storage for queue tests.

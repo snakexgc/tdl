@@ -10,8 +10,8 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 
-	"github.com/iyear/tdl/core/tmedia"
-	"github.com/iyear/tdl/pkg/utils"
+	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/pkg/utils"
 )
 
 func fileNameConfigTemplate(pattern string) string {

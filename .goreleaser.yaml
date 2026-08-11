@@ -9,10 +9,10 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/iyear/tdl/pkg/consts.Version={{ .Version }}
-      - -X github.com/iyear/tdl/pkg/consts.Commit={{ .ShortCommit }}
-      - -X github.com/iyear/tdl/pkg/consts.CommitDate={{ .CommitDate }}
-      - -X github.com/iyear/tdl/pkg/consts.GOARM={{ .Arm }}
+      - -X github.com/snakexgc/tdl/pkg/consts.Version={{ .Version }}
+      - -X github.com/snakexgc/tdl/pkg/consts.Commit={{ .ShortCommit }}
+      - -X github.com/snakexgc/tdl/pkg/consts.CommitDate={{ .CommitDate }}
+      - -X github.com/snakexgc/tdl/pkg/consts.GOARM={{ .Arm }}
     mod_timestamp: '{{ .CommitTimestamp }}'
     goos:
       - linux

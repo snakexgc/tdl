@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	httpdl "github.com/iyear/tdl/app/http"
-	"github.com/iyear/tdl/app/http/transfer"
-	"github.com/iyear/tdl/core/tmedia"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/consts"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/app/http/transfer"
+	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/consts"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 
-	"github.com/iyear/tdl/app/watch"
+	"github.com/snakexgc/tdl/app/watch"
 )
 
 const messageLinkSubmissionTimeout = 2 * time.Minute

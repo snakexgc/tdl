@@ -13,12 +13,12 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	httpdl "github.com/iyear/tdl/app/http"
-	"github.com/iyear/tdl/app/updater"
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/kv"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 //go:embed index.html login.html aria2ng.html static views

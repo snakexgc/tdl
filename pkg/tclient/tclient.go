@@ -8,9 +8,9 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/core/tclient"
-	"github.com/iyear/tdl/pkg/key"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/tclient"
+	"github.com/snakexgc/tdl/pkg/key"
 )
 
 type Options struct {

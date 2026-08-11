@@ -1,8 +1,8 @@
-module github.com/iyear/tdl
+module github.com/snakexgc/tdl
 
 go 1.25.8
 
-replace github.com/iyear/tdl/core => ./core
+replace github.com/snakexgc/tdl/core => ./core
 
 require (
 	github.com/beevik/ntp v1.5.0
@@ -15,10 +15,10 @@ require (
 	github.com/gotd/td v0.161.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/ivanpirog/coloredcobra v1.0.1
-	github.com/iyear/tdl/core v0.20.3
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/mymmrac/telego v1.11.1
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/snakexgc/tdl/core v0.20.3
 	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1

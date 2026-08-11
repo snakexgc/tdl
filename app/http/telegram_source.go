@@ -13,10 +13,10 @@ import (
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/app/http/transfer"
-	"github.com/iyear/tdl/core/dcpool"
-	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/app/http/transfer"
+	"github.com/snakexgc/tdl/core/dcpool"
+	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/tmedia"
 )
 
 type telegramMediaSource struct {

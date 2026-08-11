@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/iyear/tdl/app/updater"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {

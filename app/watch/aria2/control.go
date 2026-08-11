@@ -13,8 +13,8 @@ import (
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (

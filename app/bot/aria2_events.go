@@ -11,9 +11,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/utils"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/utils"
 )
 
 const (

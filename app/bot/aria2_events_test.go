@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/iyear/tdl/app/watch"
+	"github.com/snakexgc/tdl/app/watch"
 )
 
 // TestHandleAria2EventIgnoresEventsWhenConfigNil verifies that when no config is loaded

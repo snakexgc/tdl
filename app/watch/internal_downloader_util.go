@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	httpdl "github.com/iyear/tdl/app/http"
-	"github.com/iyear/tdl/core/storage"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/core/storage"
 )
 
 func shouldRunInternalDownload(status string) bool {

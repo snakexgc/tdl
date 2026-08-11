@@ -9,9 +9,9 @@ import (
 	"github.com/go-faster/errors"
 	bberrors "go.etcd.io/bbolt/errors"
 
-	"github.com/iyear/tdl/app/bot"
-	"github.com/iyear/tdl/app/updater"
-	"github.com/iyear/tdl/cmd"
+	"github.com/snakexgc/tdl/app/bot"
+	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/cmd"
 )
 
 func main() {

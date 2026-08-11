@@ -10,8 +10,8 @@ import (
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/util/tutil"
 )
 
 func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.UpdateMessageReactions) error {

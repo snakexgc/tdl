@@ -13,8 +13,8 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/utils"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/pkg/utils"
 )
 
 const aria2CommandTimeout = 30 * time.Second

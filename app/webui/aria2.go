@@ -16,9 +16,9 @@ import (
 
 	"github.com/go-faster/errors"
 
-	httpdl "github.com/iyear/tdl/app/http"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type aria2GlobalStat struct {

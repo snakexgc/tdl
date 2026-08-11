@@ -37,7 +37,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/iyear/tdl)
+        - prefix(github.com/snakexgc/tdl)
         - dot
       custom-order: true
   exclusions:

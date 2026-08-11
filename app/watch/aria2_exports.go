@@ -3,9 +3,9 @@ package watch
 import (
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/app/watch/aria2"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/app/watch/aria2"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type (

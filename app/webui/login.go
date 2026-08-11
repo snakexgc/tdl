@@ -10,9 +10,9 @@ import (
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
 
-	"github.com/iyear/tdl/app/login"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (

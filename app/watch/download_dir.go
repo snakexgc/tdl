@@ -15,8 +15,8 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/iyear/tdl/core/util/tutil"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type aria2GlobalDirGetter interface {

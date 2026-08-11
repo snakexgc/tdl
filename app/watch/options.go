@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type Options struct {

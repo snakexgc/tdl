@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/iyear/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/storage"
 )
 
 //go:generate go-enum --values --names --flag --nocase

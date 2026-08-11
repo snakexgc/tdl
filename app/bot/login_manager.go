@@ -14,7 +14,7 @@ import (
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/iyear/tdl/app/login"
+	"github.com/snakexgc/tdl/app/login"
 )
 
 const (

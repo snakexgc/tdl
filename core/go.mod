@@ -1,4 +1,4 @@
-module github.com/iyear/tdl/core
+module github.com/snakexgc/tdl/core
 
 go 1.25.8
 

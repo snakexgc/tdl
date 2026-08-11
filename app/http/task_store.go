@@ -10,8 +10,8 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/tmedia"
 )
 
 type downloadTask struct {

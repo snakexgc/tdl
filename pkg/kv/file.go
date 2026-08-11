@@ -10,8 +10,8 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/mitchellh/mapstructure"
 
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/validator"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/validator"
 )
 
 func init() {

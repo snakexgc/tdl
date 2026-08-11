@@ -12,7 +12,7 @@ import (
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/logctx"
 )
 
 var internalErrors = []string{

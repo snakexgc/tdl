@@ -11,10 +11,10 @@ import (
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
-	appforward "github.com/iyear/tdl/app/forward"
-	"github.com/iyear/tdl/core/forwarder"
-	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/util/tutil"
+	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/core/forwarder"
+	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/util/tutil"
 )
 
 type forwardRuntime struct {

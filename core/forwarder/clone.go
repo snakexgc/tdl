@@ -12,10 +12,10 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 
-	tdownloader "github.com/iyear/tdl/core/downloader"
-	"github.com/iyear/tdl/core/tmedia"
-	tuploader "github.com/iyear/tdl/core/uploader"
-	"github.com/iyear/tdl/core/util/tutil"
+	tdownloader "github.com/snakexgc/tdl/core/downloader"
+	"github.com/snakexgc/tdl/core/tmedia"
+	tuploader "github.com/snakexgc/tdl/core/uploader"
+	"github.com/snakexgc/tdl/core/util/tutil"
 )
 
 type cloneOptions struct {

@@ -12,11 +12,11 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	watcharia2 "github.com/iyear/tdl/app/watch/aria2"
-	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/tmedia"
-	"github.com/iyear/tdl/core/util/tutil"
-	"github.com/iyear/tdl/pkg/config"
+	watcharia2 "github.com/snakexgc/tdl/app/watch/aria2"
+	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type downloadJob struct {

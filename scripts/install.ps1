@@ -4,7 +4,7 @@ param(
 )
 
 
-$Owner = "iyear"
+$Owner = "snakexgc"
 $Repo = "tdl"
 $Location = "$Env:SystemDrive\tdl"
 
@@ -91,4 +91,4 @@ if (-not(Get-Command $Repo -ErrorAction SilentlyContinue))
 
 Write-Host "$Repo installed successfully! Location: $Location" -ForegroundColor Green
 Write-Host "Run '$Repo' to get started" -ForegroundColor Green
-Write-Host "To get started with tdl, please visit https://docs.iyear.me/tdl" -ForegroundColor Green
+Write-Host "To get started with tdl, please visit https://github.com/snakexgc/tdl" -ForegroundColor Green

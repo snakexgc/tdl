@@ -21,8 +21,8 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 	"golang.org/x/mod/semver"
 
-	"github.com/iyear/tdl/core/util/netutil"
-	"github.com/iyear/tdl/pkg/consts"
+	"github.com/snakexgc/tdl/core/util/netutil"
+	"github.com/snakexgc/tdl/pkg/consts"
 )
 
 const (

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/iyear/tdl/app/login"
+	"github.com/snakexgc/tdl/app/login"
 )
 
 func TestWebLoginFlowKeepsRetryPromptUntilNextSubmit(t *testing.T) {

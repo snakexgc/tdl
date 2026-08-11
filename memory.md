@@ -8,10 +8,10 @@
 - 项目路径：`D:\gitrepo\tdl`
 - 项目类型：Go 应用，包含 Telegram 下载、机器人、监听转发、HTTP 下载代理和 Web 管理功能
 - 主要技术栈：Go 1.25.8、Cobra、gotd/td、GitHub Actions、GoReleaser、Docker
-- Go 模块：根模块 `github.com/iyear/tdl`，本地替换并引用 `core/` 子模块
+- Go 模块：根模块 `github.com/snakexgc/tdl`，本地替换并引用 `core/` 子模块
 - 构建方式：`go build`；发布构建由 `.goreleaser.yaml` 和 GitHub Actions 完成
 - 测试方式：`go test -v $(go list ./... | grep -v /test)`；CI 另运行 golangci-lint
-- 最后更新时间：2026-07-27
+- 最后更新时间：2026-08-11
 
 ## 项目概览
 

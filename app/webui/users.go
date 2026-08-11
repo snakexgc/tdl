@@ -13,10 +13,10 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
-	"github.com/iyear/tdl/app/login"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/tclient"
+	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/tclient"
 )
 
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {

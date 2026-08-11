@@ -19,12 +19,12 @@ import (
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/app/http/transfer"
-	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/core/tmedia"
-	"github.com/iyear/tdl/core/util/tutil"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/app/http/transfer"
+	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (

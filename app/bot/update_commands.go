@@ -9,8 +9,8 @@ import (
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 
-	"github.com/iyear/tdl/app/updater"
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type tdlUpdateController struct {

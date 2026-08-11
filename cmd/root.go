@@ -10,14 +10,14 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/app/bot"
-	tdlruntime "github.com/iyear/tdl/app/runtime"
-	"github.com/iyear/tdl/core/logctx"
-	"github.com/iyear/tdl/core/util/fsutil"
-	"github.com/iyear/tdl/core/util/logutil"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/consts"
-	"github.com/iyear/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/app/bot"
+	tdlruntime "github.com/snakexgc/tdl/app/runtime"
+	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/core/util/fsutil"
+	"github.com/snakexgc/tdl/core/util/logutil"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/consts"
+	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 var (

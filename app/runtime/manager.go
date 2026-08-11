@@ -12,15 +12,15 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 
-	"github.com/iyear/tdl/app/bot"
-	appforward "github.com/iyear/tdl/app/forward"
-	"github.com/iyear/tdl/app/login"
-	"github.com/iyear/tdl/app/updater"
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/app/webui"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/app/bot"
+	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/app/webui"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 const (

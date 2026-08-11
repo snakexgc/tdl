@@ -12,9 +12,9 @@ import (
 
 	"github.com/go-faster/errors"
 
-	httpdl "github.com/iyear/tdl/app/http"
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/pkg/config"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request) {

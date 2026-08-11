@@ -11,9 +11,9 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
-	"github.com/iyear/tdl/core/tmedia"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/tplfunc"
+	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/tplfunc"
 )
 
 const (

@@ -20,14 +20,14 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/iyear/tdl/app/login"
-	"github.com/iyear/tdl/app/updater"
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/core/util/netutil"
-	"github.com/iyear/tdl/pkg/config"
-	"github.com/iyear/tdl/pkg/consts"
-	"github.com/iyear/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/core/util/netutil"
+	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/consts"
+	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 var processRebootRequested atomic.Bool

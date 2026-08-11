@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-OWNER="iyear"
+OWNER="snakexgc"
 REPO="tdl"
 LOCATION="/usr/local/bin"
 
@@ -101,4 +101,4 @@ wget -q --show-progress -O - "$URL" | tar -xz && \
   chmod +x $LOCATION/$REPO && \
   echo_green "$REPO installed successfully! Location: $LOCATION/$REPO" && \
   echo_green "Run '$REPO' to get started" && \
-  echo_green "To get started with tdl, please visit https://docs.iyear.me/tdl"
+  echo_green "To get started with tdl, please visit https://github.com/snakexgc/tdl"

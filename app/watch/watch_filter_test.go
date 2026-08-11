@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/iyear/tdl/pkg/filterMap"
+	"github.com/snakexgc/tdl/pkg/filterMap"
 )
 
 func TestWatcherMatchFilterAppliesExtensionBeforeFileSizeMB(t *testing.T) {

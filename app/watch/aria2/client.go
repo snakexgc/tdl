@@ -13,7 +13,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (

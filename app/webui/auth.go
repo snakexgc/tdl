@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 func (s *Server) auth(next http.Handler) http.Handler {

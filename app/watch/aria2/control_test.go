@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/iyear/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (

@@ -1,7 +1,7 @@
 package key
 
 import (
-	"github.com/iyear/tdl/core/storage/keygen"
+	"github.com/snakexgc/tdl/core/storage/keygen"
 )
 
 func App() string {

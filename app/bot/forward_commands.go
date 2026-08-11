@@ -9,10 +9,10 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	appforward "github.com/iyear/tdl/app/forward"
-	"github.com/iyear/tdl/app/watch"
-	"github.com/iyear/tdl/core/storage"
-	"github.com/iyear/tdl/pkg/config"
+	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, namespaceKV storage.Storage) (bool, error) {

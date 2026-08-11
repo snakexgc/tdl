@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	appforward "github.com/iyear/tdl/app/forward"
+	appforward "github.com/snakexgc/tdl/app/forward"
 )
 
 // handleForwards lists the persistent forward queue (pending, running and
