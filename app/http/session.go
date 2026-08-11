@@ -164,7 +164,9 @@ func buildDownloadChunkJobs(start, end int64) []downloadChunkJob {
 }
 
 // streamTelegramMedia serves one HTTP request sequentially. Parallelism is
-// created by independent Range requests, all governed by the shared lease.
+// created by independent Range requests. The shared task lease is acquired by
+// telegramMediaSource for each actual upload.getFile attempt, so a slow HTTP
+// writer never occupies an otherwise-idle DC connection lane.
 func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.TaskLease, reporter TelegramFileErrorReporter, start, end int64, w io.Writer) error {
 	if end < start {
 		return errors.New("invalid byte range")
@@ -176,18 +178,12 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 	logger := logctx.From(ctx)
 	var written int64
 	for _, job := range jobs {
-		chunkLease, err := lease.AcquireChunk(ctx)
+		raw, err := source.FetchChunk(ctx, pool, lease, reporter, job.req)
 		if err != nil {
-			return err
-		}
-		raw, err := source.FetchChunk(ctx, pool, reporter, job.req)
-		if err != nil {
-			chunkLease.Release()
 			return err
 		}
 		data, err := sliceTelegramChunk(raw, job.skip, job.take)
 		if err != nil {
-			chunkLease.Release()
 			return errors.Wrap(err, "slice telegram file chunk")
 		}
 		n, err := writeFull(w, data)
@@ -195,7 +191,6 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 		if err == nil {
 			err = flushWriter(w)
 		}
-		chunkLease.Release()
 		if err != nil {
 			logger.Error("Writing HTTP response body failed",
 				zap.Int("chunk_size", len(data)),
@@ -209,8 +204,9 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 }
 
 // streamTelegramMediaParallel preserves parallel internal downloads without
-// introducing a retained cache. Chunk leases stay held until ordered output is
-// written, so decoded chunk memory remains bounded by the DC capacity.
+// introducing a retained cache. A worker does not start another chunk until
+// its previous result has been written, bounding decoded chunk memory by the
+// worker count while DC permits remain scoped to actual Telegram RPCs.
 func streamTelegramMediaParallel(ctx context.Context, pool dcpool.Pool, source *telegramMediaSource, lease *transfer.TaskLease, reporter TelegramFileErrorReporter, start, end int64, w io.Writer) error {
 	if end < start {
 		return errors.New("invalid byte range")
@@ -239,26 +235,33 @@ func streamTelegramMediaParallel(ctx context.Context, pool dcpool.Pool, source *
 	for range workers {
 		g.Go(func() error {
 			for job := range jobsCh {
-				chunkLease, err := lease.AcquireChunk(gctx)
+				raw, err := source.FetchChunk(gctx, pool, lease, reporter, job.req)
 				if err != nil {
-					return err
-				}
-				raw, err := source.FetchChunk(gctx, pool, reporter, job.req)
-				if err != nil {
-					chunkLease.Release()
 					return err
 				}
 				data, err := sliceTelegramChunk(raw, job.skip, job.take)
 				if err != nil {
-					chunkLease.Release()
 					return errors.Wrap(err, "slice telegram file chunk")
 				}
-				result := downloadChunkResult{index: job.index, data: data, release: chunkLease.Release}
+				written := make(chan struct{})
+				var writtenOnce sync.Once
+				result := downloadChunkResult{
+					index: job.index,
+					data:  data,
+					release: func() {
+						writtenOnce.Do(func() { close(written) })
+					},
+				}
 				select {
 				case <-gctx.Done():
 					releaseDownloadChunk(result)
 					return gctx.Err()
 				case results <- result:
+				}
+				select {
+				case <-gctx.Done():
+					return gctx.Err()
+				case <-written:
 				}
 			}
 			return nil

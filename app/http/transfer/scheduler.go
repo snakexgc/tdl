@@ -317,26 +317,41 @@ func (s *Scheduler) dispatchLocked(dcID int) {
 	if dc == nil || len(dc.tasks) == 0 {
 		return
 	}
-	admitted := min(s.capacity, len(dc.tasks))
-	base := s.capacity / admitted
-	remainder := s.capacity % admitted
 
-	for i := 0; i < admitted && dc.inFlight < s.capacity; i++ {
-		state := dc.tasks[i]
-		quota := base
-		if i < remainder {
-			quota++
+	// Schedule by file in FIFO order. All queued Range requests for the oldest
+	// file are granted before requests for later files, allowing one normal
+	// download to use as many DC connections as it requested. The scan continues
+	// to later files whenever an earlier file has no pending request, so the DC
+	// remains work-conserving without round-robin switching between files.
+	for dc.inFlight < s.capacity {
+		state, waiter := firstFileWaiter(dc)
+		if waiter == nil {
+			return
 		}
-		for state.inFlight < quota && dc.inFlight < s.capacity {
-			waiter := popWaiter(state)
-			if waiter == nil {
-				break
-			}
-			waiter.granted = true
-			state.inFlight++
-			dc.inFlight++
-			close(waiter.ready)
+		waiter.granted = true
+		state.inFlight++
+		dc.inFlight++
+		close(waiter.ready)
+	}
+}
+
+func firstFileWaiter(dc *dcState) (*taskState, *chunkWaiter) {
+	if dc == nil || len(dc.tasks) == 0 {
+		return nil, nil
+	}
+
+	for _, state := range dc.tasks {
+		pruneCanceledWaiters(state)
+		if len(state.waiters) > 0 {
+			return state, popWaiter(state)
 		}
+	}
+	return nil, nil
+}
+
+func pruneCanceledWaiters(state *taskState) {
+	for len(state.waiters) > 0 && state.waiters[0].canceled {
+		state.waiters = state.waiters[1:]
 	}
 }
 
@@ -360,13 +375,21 @@ func (s *Scheduler) Snapshots() []DCSnapshot {
 
 	result := make([]DCSnapshot, 0, len(s.dcs))
 	for id, dc := range s.dcs {
-		activeFiles := min(s.capacity, len(dc.tasks))
+		activeFiles := 0
+		queuedFiles := 0
 		queuedRequests := 0
 		for _, state := range dc.tasks {
+			pending := 0
 			for _, waiter := range state.waiters {
 				if !waiter.canceled {
-					queuedRequests++
+					pending++
 				}
+			}
+			queuedRequests += pending
+			if state.inFlight > 0 {
+				activeFiles++
+			} else if pending > 0 {
+				queuedFiles++
 			}
 		}
 		result = append(result, DCSnapshot{
@@ -374,7 +397,7 @@ func (s *Scheduler) Snapshots() []DCSnapshot {
 			Capacity:       s.capacity,
 			ActiveChunks:   dc.inFlight,
 			ActiveFiles:    activeFiles,
-			QueuedFiles:    max(0, len(dc.tasks)-activeFiles),
+			QueuedFiles:    queuedFiles,
 			QueuedRequests: queuedRequests,
 		})
 	}

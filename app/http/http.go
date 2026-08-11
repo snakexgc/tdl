@@ -2,10 +2,13 @@ package httpdl
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -31,6 +34,9 @@ const (
 	downloadStreamPartSize            = 1024 * 1024
 	telegramGetFilePreciseAlignment   = 1024
 	telegramGetFileFragmentWindowSize = 1024 * 1024
+	httpReadHeaderTimeout             = 10 * time.Second
+	httpIdleTimeout                   = 2 * time.Minute
+	httpMaxHeaderBytes                = 1 << 20
 )
 
 const (
@@ -69,6 +75,8 @@ const (
 	DownloadTaskIndexKey  = downloadTaskIndexKey
 )
 
+var errRangeNoOverlap = errors.New("requested range does not overlap content")
+
 type Task = downloadTask
 
 type TaskStore = taskStore
@@ -78,6 +86,18 @@ type PoolHolder = poolHolder
 type Proxy = downloadProxy
 
 type TaskStreamer = taskStreamer
+
+type downloadRange struct {
+	start int64
+	end   int64
+}
+
+func (r downloadRange) length() int64 {
+	if r.end < r.start {
+		return 0
+	}
+	return r.end - r.start + 1
+}
 
 type downloadProxy struct {
 	cfg       config.HTTPConfig
@@ -118,8 +138,11 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 	p.parallel = p.streamTaskParallel
 	setActiveScheduler(p.scheduler)
 	p.server = &http.Server{
-		Addr:    config.HTTPConfigListenAddr(cfg),
-		Handler: p.routes(),
+		Addr:              config.HTTPConfigListenAddr(cfg),
+		Handler:           p.routes(),
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
 	}
 
 	return p
@@ -350,19 +373,51 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	start, end, partial, err := parseDownloadRange(r.Header.Get("Range"), task.FileSize)
-	if err != nil {
-		p.logger.Warn("Invalid download range",
+	if task.FileSize < 0 {
+		p.logger.Error("Download task has invalid file size",
 			zap.String("task_id", taskID),
-			zap.String("range", r.Header.Get("Range")),
-			zap.Error(err))
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", task.FileSize))
-		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
+			zap.Int64("file_size", task.FileSize))
+		http.Error(w, "invalid download size", http.StatusInternalServerError)
 		return
 	}
 
+	etag := downloadETag(task)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("ETag", etag)
+	rangeHeader := r.Header.Get("Range")
+	if ifRange := strings.TrimSpace(r.Header.Get("If-Range")); ifRange != "" && ifRange != etag {
+		// The client can safely resume only the representation identified by our
+		// strong ETag. A stale or date-based If-Range therefore receives the full
+		// current representation, as required by HTTP range semantics.
+		rangeHeader = ""
+	}
+	ranges, err := parseDownloadRanges(rangeHeader, task.FileSize)
+	if err != nil {
+		if errors.Is(err, errRangeNoOverlap) && task.FileSize == 0 {
+			ranges = nil
+		} else {
+			p.logger.Warn("Invalid download range",
+				zap.String("task_id", taskID),
+				zap.String("range", r.Header.Get("Range")),
+				zap.Error(err))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", task.FileSize))
+			http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+	}
+	if downloadRangesSizeExceeds(ranges, task.FileSize) {
+		// Mirroring net/http ServeContent, ignore obviously abusive or redundant
+		// multi-range sets whose combined payload exceeds the representation.
+		ranges = nil
+	}
+	partial := len(ranges) > 0
+	responseRanges := ranges
+	if !partial {
+		responseRanges = []downloadRange{{start: 0, end: task.FileSize - 1}}
+	}
+
 	var lease *transfer.TaskLease
-	if r.Method != http.MethodHead {
+	if r.Method != http.MethodHead && task.FileSize > 0 {
 		if task.Media == nil {
 			http.Error(w, "download media is unavailable", http.StatusInternalServerError)
 			return
@@ -402,24 +457,31 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": task.FileName})
 
-	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", disposition)
-	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-
-	if partial {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, task.FileSize))
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.WriteHeader(http.StatusOK)
+	status := http.StatusOK
+	var multipartWriter *multipart.Writer
+	switch len(ranges) {
+	case 0:
+		w.Header().Set("Content-Length", strconv.FormatInt(task.FileSize, 10))
+	case 1:
+		status = http.StatusPartialContent
+		selected := ranges[0]
+		w.Header().Set("Content-Length", strconv.FormatInt(selected.length(), 10))
+		w.Header().Set("Content-Range", selected.contentRange(task.FileSize))
+	default:
+		status = http.StatusPartialContent
+		multipartWriter = multipart.NewWriter(w)
+		w.Header().Set("Content-Type", "multipart/byteranges; boundary="+multipartWriter.Boundary())
+		w.Header().Set("Content-Length", strconv.FormatInt(multipartDownloadRangesSize(ranges, contentType, task.FileSize, multipartWriter.Boundary()), 10))
 	}
+	w.WriteHeader(status)
 
 	p.logger.Info("Serving download task",
 		zap.String("task_id", task.ID),
 		zap.String("file_name", task.FileName),
 		zap.Int64("file_size", task.FileSize),
-		zap.Int64("range_start", start),
-		zap.Int64("range_end", end),
+		zap.Int("range_count", len(responseRanges)),
 		zap.Bool("partial", partial))
 
 	if r.Method == http.MethodHead {
@@ -427,16 +489,20 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 			zap.String("task_id", task.ID))
 		return
 	}
+	if task.FileSize == 0 {
+		p.logger.Info("Empty download stream finished", zap.String("task_id", task.ID))
+		return
+	}
 
-	if err := p.stream(r.Context(), task, lease, start, end, w); err != nil {
+	streamErr := p.streamDownloadRanges(r.Context(), task, lease, responseRanges, contentType, multipartWriter, w)
+	if streamErr != nil {
 		fields := []zap.Field{
 			zap.String("task_id", task.ID),
 			zap.String("file_name", task.FileName),
-			zap.Int64("range_start", start),
-			zap.Int64("range_end", end),
-			zap.Error(err),
+			zap.Int("range_count", len(responseRanges)),
+			zap.Error(streamErr),
 		}
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(streamErr, context.Canceled) {
 			p.logger.Warn("Download client disconnected", fields...)
 			return
 		}
@@ -448,8 +514,27 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 	p.logger.Info("Download stream finished",
 		zap.String("task_id", task.ID),
 		zap.String("file_name", task.FileName),
-		zap.Int64("range_start", start),
-		zap.Int64("range_end", end))
+		zap.Int("range_count", len(responseRanges)))
+}
+
+func (p *downloadProxy) streamDownloadRanges(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, ranges []downloadRange, contentType string, mw *multipart.Writer, w io.Writer) error {
+	for _, selected := range ranges {
+		target := w
+		if mw != nil {
+			part, err := mw.CreatePart(selected.mimeHeader(contentType, task.FileSize))
+			if err != nil {
+				return errors.Wrap(err, "create multipart download range")
+			}
+			target = part
+		}
+		if err := p.stream(ctx, task, lease, selected.start, selected.end, target); err != nil {
+			return err
+		}
+	}
+	if mw != nil {
+		return errors.Wrap(mw.Close(), "close multipart download ranges")
+	}
+	return nil
 }
 
 func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
@@ -612,52 +697,135 @@ func LinkTTL(cfg config.HTTPConfig) time.Duration {
 	return downloadLinkTTL(cfg)
 }
 
-func parseDownloadRange(header string, size int64) (start, end int64, partial bool, err error) {
-	if size <= 0 {
-		return 0, 0, false, errors.New("invalid content length")
+func (r downloadRange) contentRange(size int64) string {
+	return fmt.Sprintf("bytes %d-%d/%d", r.start, r.end, size)
+}
+
+func (r downloadRange) mimeHeader(contentType string, size int64) textproto.MIMEHeader {
+	return textproto.MIMEHeader{
+		"Content-Range": {r.contentRange(size)},
+		"Content-Type":  {contentType},
 	}
-	if header == "" {
+}
+
+func downloadETag(task *downloadTask) string {
+	if task == nil {
+		return `"0"`
+	}
+	sum := sha256.Sum256([]byte(task.ID + ":" + strconv.FormatInt(task.FileSize, 10)))
+	return fmt.Sprintf(`"%x"`, sum[:16])
+}
+
+func parseDownloadRanges(header string, size int64) ([]downloadRange, error) {
+	if size < 0 {
+		return nil, errors.New("invalid content length")
+	}
+	if strings.TrimSpace(header) == "" {
+		return nil, nil
+	}
+	unit, spec, ok := strings.Cut(header, "=")
+	if !ok || !strings.EqualFold(strings.TrimSpace(unit), "bytes") {
+		return nil, errors.New("invalid range unit")
+	}
+
+	ranges := make([]downloadRange, 0, strings.Count(spec, ",")+1)
+	noOverlap := false
+	for raw := range strings.SplitSeq(spec, ",") {
+		raw = textproto.TrimString(raw)
+		if raw == "" {
+			return nil, errors.New("invalid empty range")
+		}
+		first, last, ok := strings.Cut(raw, "-")
+		if !ok {
+			return nil, errors.New("invalid range format")
+		}
+		first = textproto.TrimString(first)
+		last = textproto.TrimString(last)
+		if first == "" {
+			suffix, convErr := strconv.ParseInt(last, 10, 64)
+			if convErr != nil || suffix <= 0 {
+				return nil, errors.New("invalid suffix range")
+			}
+			if suffix > size {
+				suffix = size
+			}
+			if suffix == 0 {
+				noOverlap = true
+				continue
+			}
+			ranges = append(ranges, downloadRange{start: size - suffix, end: size - 1})
+			continue
+		}
+
+		start, convErr := strconv.ParseInt(first, 10, 64)
+		if convErr != nil || start < 0 {
+			return nil, errors.New("invalid range start")
+		}
+		if start >= size {
+			noOverlap = true
+			continue
+		}
+		end := size - 1
+		if last != "" {
+			end, convErr = strconv.ParseInt(last, 10, 64)
+			if convErr != nil || end < start {
+				return nil, errors.New("invalid range bounds")
+			}
+			if end >= size {
+				end = size - 1
+			}
+		}
+		ranges = append(ranges, downloadRange{start: start, end: end})
+	}
+	if noOverlap && len(ranges) == 0 {
+		return nil, errRangeNoOverlap
+	}
+	return ranges, nil
+}
+
+// parseDownloadRange remains the small single-range helper used by package
+// callers and tests. The HTTP handler itself supports a full multi-range set.
+func parseDownloadRange(header string, size int64) (start, end int64, partial bool, err error) {
+	ranges, err := parseDownloadRanges(header, size)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if len(ranges) == 0 {
 		return 0, size - 1, false, nil
 	}
-	if !strings.HasPrefix(header, "bytes=") {
-		return 0, 0, false, errors.New("invalid range unit")
+	if len(ranges) != 1 {
+		return 0, 0, false, errors.New("multiple ranges require multipart response")
 	}
+	return ranges[0].start, ranges[0].end, true, nil
+}
 
-	spec := strings.TrimPrefix(header, "bytes=")
-	if strings.Contains(spec, ",") {
-		return 0, 0, false, errors.New("multiple ranges are not supported")
+func downloadRangesSizeExceeds(ranges []downloadRange, size int64) bool {
+	var total int64
+	for _, selected := range ranges {
+		length := selected.length()
+		if length > size-total {
+			return true
+		}
+		total += length
 	}
+	return false
+}
 
-	parts := strings.SplitN(spec, "-", 2)
-	if len(parts) != 2 {
-		return 0, 0, false, errors.New("invalid range format")
-	}
+type downloadCountingWriter int64
 
-	switch {
-	case parts[0] == "":
-		suffix, convErr := strconv.ParseInt(parts[1], 10, 64)
-		if convErr != nil || suffix <= 0 {
-			return 0, 0, false, errors.New("invalid suffix range")
-		}
-		if suffix > size {
-			suffix = size
-		}
-		return size - suffix, size - 1, true, nil
-	case parts[1] == "":
-		rangeStart, convErr := strconv.ParseInt(parts[0], 10, 64)
-		if convErr != nil || rangeStart < 0 || rangeStart >= size {
-			return 0, 0, false, errors.New("invalid range start")
-		}
-		return rangeStart, size - 1, true, nil
-	default:
-		rangeStart, startErr := strconv.ParseInt(parts[0], 10, 64)
-		rangeEnd, endErr := strconv.ParseInt(parts[1], 10, 64)
-		if startErr != nil || endErr != nil || rangeStart < 0 || rangeEnd < rangeStart || rangeStart >= size {
-			return 0, 0, false, errors.New("invalid range bounds")
-		}
-		if rangeEnd >= size {
-			rangeEnd = size - 1
-		}
-		return rangeStart, rangeEnd, true, nil
+func (w *downloadCountingWriter) Write(p []byte) (int, error) {
+	*w += downloadCountingWriter(len(p))
+	return len(p), nil
+}
+
+func multipartDownloadRangesSize(ranges []downloadRange, contentType string, size int64, boundary string) int64 {
+	var encoded downloadCountingWriter
+	mw := multipart.NewWriter(&encoded)
+	_ = mw.SetBoundary(boundary)
+	for _, selected := range ranges {
+		_, _ = mw.CreatePart(selected.mimeHeader(contentType, size))
+		encoded += downloadCountingWriter(selected.length())
 	}
+	_ = mw.Close()
+	return int64(encoded)
 }

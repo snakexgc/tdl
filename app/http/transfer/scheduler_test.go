@@ -38,6 +38,51 @@ func TestSchedulerDistributesCapacityByTask(t *testing.T) {
 	three.Release()
 }
 
+func TestSchedulerRedistributesUnusedShareWithoutLeavingDCIdle(t *testing.T) {
+	s := NewScheduler(2, 4)
+	one := mustAcquireTask(t, s, "one", 2)
+	two := mustAcquireTask(t, s, "two", 2)
+
+	oneChunks := mustAcquireChunks(t, one, 1)
+	// Task one has no more demand. Task two must be allowed to consume every
+	// remaining lane instead of being capped at a static 2/2 fair share.
+	twoChunks := mustAcquireChunks(t, two, 3)
+	require.Equal(t, 4, s.Snapshots()[0].ActiveChunks)
+	assertChunkBlocked(t, two)
+
+	releaseChunks(oneChunks)
+	releaseChunks(twoChunks)
+	one.Release()
+	two.Release()
+}
+
+func TestSchedulerPrioritizesRangesByFileFIFO(t *testing.T) {
+	s := NewScheduler(2, 2)
+	one := mustAcquireTask(t, s, "one", 2)
+	two := mustAcquireTask(t, s, "two", 2)
+	oneChunks := mustAcquireChunks(t, one, 2)
+
+	oneWaiting := acquireChunkAsync(one)
+	require.Eventually(t, func() bool {
+		return s.Snapshots()[0].QueuedRequests == 1
+	}, time.Second, time.Millisecond)
+	twoWaiting := acquireChunkAsync(two)
+	require.Eventually(t, func() bool {
+		return s.Snapshots()[0].QueuedRequests == 2
+	}, time.Second, time.Millisecond)
+
+	oneChunks[0].Release()
+	oneNext := requireChunkResult(t, oneWaiting)
+	assertNoChunkResult(t, twoWaiting)
+
+	oneChunks[1].Release()
+	twoNext := requireChunkResult(t, twoWaiting)
+	oneNext.Release()
+	twoNext.Release()
+	one.Release()
+	two.Release()
+}
+
 func TestSchedulerQueuesFilesBeyondDCCapacityFIFO(t *testing.T) {
 	s := NewScheduler(10, 2)
 	one := mustAcquireTask(t, s, "one", 4)

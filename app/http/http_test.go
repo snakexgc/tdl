@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -406,6 +409,104 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	require.Equal(t, "bytes 2-5/10", rangeRes.Header.Get("Content-Range"))
 }
 
+func TestDownloadHandlerSupportsMultipartRanges(t *testing.T) {
+	t.Parallel()
+
+	proxy := newDownloadProxy(config.HTTPConfig{}, 2, 2, &poolHolder{}, nil, nil)
+	payload := []byte("0123456789")
+	proxy.stream = func(_ context.Context, _ *downloadTask, _ *transfer.TaskLease, start, end int64, w io.Writer) error {
+		_, err := w.Write(payload[start : end+1])
+		return err
+	}
+	task := &downloadTask{
+		ID:       testTaskID,
+		FileName: testFileName,
+		FileSize: int64(len(payload)),
+		Media:    &tmedia.Media{DC: 2},
+	}
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
+
+	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	req.Header.Set("Range", "bytes=0-1, 8-9")
+	rec := httptest.NewRecorder()
+	proxy.handleDownload(rec, req)
+	res := rec.Result()
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusPartialContent, res.StatusCode)
+	require.Equal(t, strconv.Itoa(len(body)), res.Header.Get("Content-Length"))
+
+	mediaType, params, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	require.Equal(t, "multipart/byteranges", mediaType)
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+
+	part, err := reader.NextPart()
+	require.NoError(t, err)
+	require.Equal(t, "bytes 0-1/10", part.Header.Get("Content-Range"))
+	data, err := io.ReadAll(part)
+	require.NoError(t, err)
+	require.Equal(t, []byte("01"), data)
+
+	part, err = reader.NextPart()
+	require.NoError(t, err)
+	require.Equal(t, "bytes 8-9/10", part.Header.Get("Content-Range"))
+	data, err = io.ReadAll(part)
+	require.NoError(t, err)
+	require.Equal(t, []byte("89"), data)
+	_, err = reader.NextPart()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestDownloadHandlerHonorsIfRangeETag(t *testing.T) {
+	t.Parallel()
+
+	proxy := newDownloadProxy(config.HTTPConfig{}, 2, 2, &poolHolder{}, nil, nil)
+	payload := []byte("0123456789")
+	proxy.stream = func(_ context.Context, _ *downloadTask, _ *transfer.TaskLease, start, end int64, w io.Writer) error {
+		_, err := w.Write(payload[start : end+1])
+		return err
+	}
+	task := &downloadTask{
+		ID:       testTaskID,
+		FileName: testFileName,
+		FileSize: int64(len(payload)),
+		Media:    &tmedia.Media{DC: 2},
+	}
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
+
+	stale := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	stale.Header.Set("Range", "bytes=2-5")
+	stale.Header.Set("If-Range", `"stale"`)
+	staleRec := httptest.NewRecorder()
+	proxy.handleDownload(staleRec, stale)
+	require.Equal(t, http.StatusOK, staleRec.Result().StatusCode)
+	require.Equal(t, payload, staleRec.Body.Bytes())
+
+	matching := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	matching.Header.Set("Range", "bytes=2-5")
+	matching.Header.Set("If-Range", downloadETag(task))
+	matchingRec := httptest.NewRecorder()
+	proxy.handleDownload(matchingRec, matching)
+	require.Equal(t, http.StatusPartialContent, matchingRec.Result().StatusCode)
+	require.Equal(t, []byte("2345"), matchingRec.Body.Bytes())
+}
+
+func TestDownloadHandlerServesEmptyFile(t *testing.T) {
+	t.Parallel()
+
+	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, nil, nil)
+	task := &downloadTask{ID: testTaskID, FileName: testFileName, FileSize: 0}
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
+
+	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	rec := httptest.NewRecorder()
+	proxy.handleDownload(rec, req)
+	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
+	require.Equal(t, "0", rec.Result().Header.Get("Content-Length"))
+	require.Empty(t, rec.Body.Bytes())
+}
+
 func TestDownloadHandlerMissingTask(t *testing.T) {
 	t.Parallel()
 
@@ -639,6 +740,66 @@ func TestStreamTelegramMediaStopsFetchingWhileWriterBlocks(t *testing.T) {
 	require.Equal(t, payload, out.Bytes())
 }
 
+func TestSlowHTTPWriterDoesNotOccupyDCConnectionLane(t *testing.T) {
+	t.Parallel()
+
+	payload := make([]byte, downloadStreamPartSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	invoker := &recordingUploadInvoker{data: payload}
+	pool := testDownloadPool{client: tg.NewClient(invoker)}
+	source := &telegramMediaSource{media: &tmedia.Media{
+		InputFileLoc: &tg.InputDocumentFileLocation{},
+		Size:         int64(len(payload)),
+		DC:           2,
+	}}
+	scheduler := transfer.NewScheduler(1, 1)
+	firstLease, err := scheduler.Acquire(context.Background(), testTaskID, 2)
+	require.NoError(t, err)
+	defer firstLease.Release()
+	secondLease, err := scheduler.Acquire(context.Background(), testTaskID, 2)
+	require.NoError(t, err)
+	defer secondLease.Release()
+
+	blocked := newBlockingFirstWriteBuffer()
+	defer blocked.Unblock()
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- streamTelegramMedia(context.Background(), pool, source, firstLease, nil, 0, 1023, blocked)
+	}()
+	select {
+	case <-blocked.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the first HTTP writer to block")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		var out bytes.Buffer
+		err := streamTelegramMedia(context.Background(), pool, source, secondLease, nil, 1024, 2047, &out)
+		if err == nil && !bytes.Equal(payload[1024:2048], out.Bytes()) {
+			err = fmt.Errorf("unexpected second range body")
+		}
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("a completed Telegram RPC kept the DC lane while its HTTP writer was blocked")
+	}
+	require.LessOrEqual(t, invoker.maxConcurrent(), 1)
+
+	blocked.Unblock()
+	select {
+	case err := <-firstDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the blocked HTTP writer")
+	}
+}
+
 func TestStreamTelegramMediaReleasesPermitAfterWriterFailure(t *testing.T) {
 	t.Parallel()
 
@@ -717,11 +878,13 @@ func TestTelegramMediaSourceRefreshesExpiredReferenceOnceConcurrently(t *testing
 			return fresh, nil
 		},
 	}
+	lease := mustAcquireDownloadLease(t, 2)
+	defer lease.Release()
 
 	errCh := make(chan error, 2)
 	for range 2 {
 		go func() {
-			data, err := source.FetchChunk(context.Background(), testDownloadPool{client: client}, nil, telegramChunkRequest{offset: 0, limit: len(invoker.payload)})
+			data, err := source.FetchChunk(context.Background(), testDownloadPool{client: client}, lease, nil, telegramChunkRequest{offset: 0, limit: len(invoker.payload)})
 			if err == nil && !bytes.Equal(invoker.payload, data) {
 				err = fmt.Errorf("unexpected refreshed payload")
 			}
@@ -740,6 +903,14 @@ func TestDownloadProxyUsesPerDCSchedulerCapacity(t *testing.T) {
 
 	fallback := newDownloadProxy(config.HTTPConfig{}, 2, 0, &poolHolder{}, nil, nil)
 	require.Equal(t, config.DefaultPoolSize, fallback.scheduler.Capacity())
+}
+
+func TestDownloadProxyUsesBoundedHTTPHeaderAndIdleTimeouts(t *testing.T) {
+	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, nil, nil)
+	require.Equal(t, httpReadHeaderTimeout, proxy.server.ReadHeaderTimeout)
+	require.Equal(t, httpIdleTimeout, proxy.server.IdleTimeout)
+	require.Equal(t, httpMaxHeaderBytes, proxy.server.MaxHeaderBytes)
+	require.Zero(t, proxy.server.WriteTimeout, "a whole-response write timeout would truncate legitimate large downloads")
 }
 
 func TestStreamTelegramMediaRetriesTimeoutChunk(t *testing.T) {

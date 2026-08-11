@@ -16,7 +16,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "namespace": "default", // 当前用户的数据空间；由 Web 登录或切换用户维护，只允许英文字母
   "debug": false, // 是否开启调试模式
   "limit": 2, // 同时下载的文件任务数量
-  "pool_size": 8, // 每个 Telegram DC 的连接池和下载流上限；0 或负数会恢复为 8
+  "pool_size": 8, // 每个 Telegram DC 的连接池和 upload.getFile 并发上限；0 或负数会恢复为 8
   "delay": 0, // 两个下载任务之间的等待时间，单位秒
   "ntp": "", // NTP 服务器地址；留空时启动会自动选择最快的内置服务器并写回此项
   "reconnect_timeout": 3, // 重连超时时间，单位秒
@@ -78,7 +78,7 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 }
 ```
 
-HTTP 下载采用标准单 Range 顺序流：每个请求按 1 MiB Telegram 分片读取，写入并刷新客户端后才释放该分片的 DC 许可，不维护跨请求的文件字节缓存。多个 aria2 Range 请求共享同一文件配额；`pool_size` 会在同一 DC 的活跃文件间动态公平分配，客户端增加连接数也不会突破服务端上限。
+HTTP 下载代理兼容标准单 Range、`multipart/byteranges` 多 Range、HEAD 和 `If-Range` 断点续传语义，不依赖 aria2 专有行为。每次 Telegram `upload.getFile`（包括重试）才占用一个 DC 许可，请求结束后立即释放；向慢速 HTTP 客户端写入时不占用 DC 许可，也不维护跨请求的文件字节缓存。任意数量的外部下载器分片都会进入同一套按 DC、按文件 FIFO 且工作保守的调度：同一文件的 Range 优先使用尽可能多的空闲连接，当前文件没有待处理分片时后续文件可立即利用剩余连接。每个 DC 最多同时执行 `pool_size` 个 Telegram 文件请求，绝不会因为客户端增加 HTTP 连接或分片数而突破该上限。
 
 常用配置项及其说明：
 
@@ -96,7 +96,7 @@ HTTP 下载采用标准单 Range 顺序流：每个请求按 1 MiB Telegram 分�
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
 | `file_size_mb`         | 文件大小过滤，单位 MB；`0` 表示不限制，小于该大小的文件会在 `include`/`exclude` 后跳过               |
 | `limit`                | 同时下载的文件任务数量；默认 2 |
-| `pool_size`            | 每个 Telegram DC 的连接池与活跃下载流上限；默认 8，设置为 0 或负数会恢复为 8；同时作为 aria2 的 `split` 和 `max-connection-per-server` |
+| `pool_size`            | 每个 Telegram DC 的连接池与 `upload.getFile` 并发上限；默认 8，设置为 0 或负数会恢复为 8；同时作为 aria2 的 `split` 和 `max-connection-per-server`，其他下载器即使请求更多 Range 也只会在服务端排队 |
 | `ntp`                  | NTP 时间校准服务器；留空时启动会检测内置服务器并保存最快可用项，已填写时会先按 3 秒超时重试 3 次 |
 | `http.address`         | tdl 下载代理监听地址；默认 `0.0.0.0`，修改后需要重启                                                         |
 | `http.port`            | tdl 下载代理监听端口；默认 `22334`，修改后需要重启                                                         |

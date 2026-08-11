@@ -513,7 +513,7 @@ func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
 	return webui.ModuleState{
 		ID:          moduleIDHTTP,
 		Name:        "HTTP 下载代理",
-		Description: "提供 /download 链接和按 DC 公平调度的 Range 文件流；aria2 下载器依赖该模块。",
+		Description: "提供 /download 链接和按 DC、按文件 FIFO 调度的标准 Range 文件流；支持 aria2 及其他下载器。",
 		Enabled:     enabled,
 		Running:     running,
 		CanToggle:   true,
