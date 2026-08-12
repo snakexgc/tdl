@@ -82,6 +82,8 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 
 HTTP 下载代理兼容标准单 Range、`multipart/byteranges` 多 Range、HEAD 和 `If-Range` 断点续传语义，不依赖 aria2 专有行为。每次 Telegram `upload.getFile`（包括重试）才占用一个 DC 许可，请求结束后立即释放；向慢速 HTTP 客户端写入时不占用 DC 许可，也不维护跨请求的文件字节缓存。任意数量的外部下载器分片都会进入同一套按 DC、按文件 FIFO 且工作保守的调度：同一文件的 Range 优先使用尽可能多的空闲连接，当前文件没有待处理分片时后续文件可立即利用剩余连接。每个 DC 最多同时执行 `pool_size` 个 Telegram 文件请求，绝不会因为客户端增加 HTTP 连接或分片数而突破该上限。
 
+HTTP Server 会把成功发送完毕的 GET Range 持久化到对应下载链接记录，并合并并行、重试和重叠分片；当已发送区间完整覆盖文件后，KV 管理会将其显示为“已下载（HTTP）”。HEAD、失败或中断的响应不会计入完成状态。
+
 常用配置项及其说明：
 
 | 配置项                    | 说明                                                                                |

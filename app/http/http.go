@@ -38,6 +38,7 @@ const (
 	httpIdleTimeout                   = 2 * time.Minute
 	httpMaxHeaderBytes                = 1 << 20
 	telegramClientWaitTimeout         = 30 * time.Second
+	httpDeliveryPersistTimeout        = 5 * time.Second
 )
 
 const (
@@ -548,6 +549,7 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if task.FileSize == 0 {
 		p.logger.Info("Empty download stream finished", zap.String("task_id", task.ID))
+		p.recordHTTPDelivery(context.WithoutCancel(r.Context()), task, nil)
 		return
 	}
 
@@ -572,6 +574,29 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		zap.String("task_id", task.ID),
 		zap.String("file_name", task.FileName),
 		zap.Int("range_count", len(responseRanges)))
+	p.recordHTTPDelivery(context.WithoutCancel(r.Context()), task, responseRanges)
+}
+
+func (p *downloadProxy) recordHTTPDelivery(ctx context.Context, task *downloadTask, ranges []downloadRange) {
+	if p == nil || p.tasks == nil || task == nil {
+		return
+	}
+	persistCtx, cancel := context.WithTimeout(ctx, httpDeliveryPersistTimeout)
+	defer cancel()
+	completed, err := p.tasks.recordHTTPDelivery(persistCtx, task.ID, task.FileSize, ranges, time.Now())
+	if err != nil {
+		p.logger.Warn("Failed to persist HTTP delivery status",
+			zap.String("task_id", task.ID),
+			zap.String("file_name", task.FileName),
+			zap.Error(err))
+		return
+	}
+	if completed {
+		p.logger.Info("HTTP download completed",
+			zap.String("task_id", task.ID),
+			zap.String("file_name", task.FileName),
+			zap.Int64("file_size", task.FileSize))
+	}
 }
 
 func (p *downloadProxy) streamDownloadRanges(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, ranges []downloadRange, contentType string, mw *multipart.Writer, w io.Writer) error {

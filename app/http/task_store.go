@@ -256,6 +256,14 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 		if err != nil {
 			return errors.Wrap(err, "marshal persistent download task")
 		}
+		if existing, getErr := s.kv.Get(ctx, downloadTaskStorageKey(task.ID)); getErr == nil {
+			data, err = mergeDownloadTaskData(existing, data)
+			if err != nil {
+				return errors.Wrap(err, "merge persistent download task")
+			}
+		} else if !errors.Is(getErr, storage.ErrNotFound) {
+			return errors.Wrap(getErr, "load existing persistent download task")
+		}
 		if err := s.kv.Set(ctx, downloadTaskStorageKey(task.ID), data); err != nil {
 			return errors.Wrap(err, "persist download task")
 		}

@@ -332,6 +332,92 @@ func TestSetDownloadTaskLastActiveThrottlesAndPreservesFields(t *testing.T) {
 	require.False(t, changed, "a recently-active record must not be rewritten")
 }
 
+func TestTaskStoreAddPreservesExternalStatusFields(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	store := newTaskStore(kvd, time.Hour)
+	task := &downloadTask{
+		ID:        "document_79",
+		FileName:  testFileName,
+		FileSize:  10,
+		CreatedAt: time.Now(),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 79, AccessHash: 1, FileReference: []byte("r")},
+			Name:         testFileName,
+			Size:         10,
+			DC:           2,
+		},
+	}
+	require.NoError(t, store.Add(context.Background(), task))
+	_, err := store.recordHTTPDelivery(context.Background(), task.ID, task.FileSize, []downloadRange{{start: 0, end: 3}}, time.Now())
+	require.NoError(t, err)
+
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+	raw["downloaded"] = json.RawMessage("true")
+	data, err = json.Marshal(raw)
+	require.NoError(t, err)
+	require.NoError(t, kvd.Set(context.Background(), downloadTaskStorageKey(task.ID), data))
+
+	refreshed := *task
+	refreshed.FileName = "refreshed.bin"
+	require.NoError(t, store.Add(context.Background(), &refreshed))
+
+	data, err = kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	status, err := ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), status.DeliveredBytes)
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Equal(t, json.RawMessage("true"), raw["downloaded"])
+}
+
+func TestTaskStoreRecordsConcurrentHTTPRangesWithoutLostUpdates(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	store := newTaskStore(kvd, time.Hour)
+	task := &downloadTask{
+		ID:        "document_80",
+		FileName:  testFileName,
+		FileSize:  10,
+		CreatedAt: time.Now(),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 80, AccessHash: 1, FileReference: []byte("r")},
+			Name:         testFileName,
+			Size:         10,
+			DC:           2,
+		},
+	}
+	require.NoError(t, store.Add(context.Background(), task))
+
+	errCh := make(chan error, task.FileSize)
+	var wg sync.WaitGroup
+	for offset := int64(0); offset < task.FileSize; offset++ {
+		wg.Add(1)
+		go func(offset int64) {
+			defer wg.Done()
+			_, err := store.recordHTTPDelivery(context.Background(), task.ID, task.FileSize, []downloadRange{{start: offset, end: offset}}, time.Now())
+			errCh <- err
+		}(offset)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	status, err := ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.True(t, status.Completed)
+	require.Equal(t, task.FileSize, status.DeliveredBytes)
+}
+
 func TestCleanupExpiredKeepsRefreshedRecord(t *testing.T) {
 	t.Parallel()
 
@@ -366,10 +452,11 @@ func TestCleanupExpiredKeepsRefreshedRecord(t *testing.T) {
 func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	t.Parallel()
 
+	kvd := newMemoryTaskStorage()
 	proxy := newDownloadProxy(config.HTTPConfig{
 		Listen:        testListenAddr,
 		PublicBaseURL: testPublicURL,
-	}, 2, 4, &poolHolder{}, nil, nil)
+	}, 2, 4, &poolHolder{}, kvd, nil)
 	proxy.pools.Set(testDownloadPool{})
 
 	payload := []byte("0123456789")
@@ -382,7 +469,12 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 		ID:       testTaskID,
 		FileName: testFileName,
 		FileSize: int64(len(payload)),
-		Media:    &tmedia.Media{Name: testFileName, Size: int64(len(payload))},
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
+			Name:         testFileName,
+			Size:         int64(len(payload)),
+			DC:           2,
+		},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
@@ -396,6 +488,11 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	require.Equal(t, payload, body)
 	require.Equal(t, "bytes", res.Header.Get("Accept-Ranges"))
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	httpStatus, err := ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.True(t, httpStatus.Completed)
 
 	rangeReq := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
 	rangeReq.Header.Set("Range", "bytes=2-5")
@@ -460,6 +557,104 @@ func TestDownloadHandlerSupportsMultipartRanges(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 }
 
+func TestDownloadHandlerTracksCompletedHTTPRanges(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	proxy := newDownloadProxy(config.HTTPConfig{}, 2, 2, &poolHolder{}, kvd, nil)
+	proxy.pools.Set(testDownloadPool{})
+	payload := []byte("0123456789")
+	proxy.stream = func(_ context.Context, _ *downloadTask, _ *transfer.TaskLease, start, end int64, w io.Writer) error {
+		_, err := w.Write(payload[start : end+1])
+		return err
+	}
+	task := &downloadTask{
+		ID:       testTaskID,
+		FileName: testFileName,
+		FileSize: int64(len(payload)),
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
+			Name:         testFileName,
+			Size:         int64(len(payload)),
+			DC:           2,
+		},
+	}
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
+
+	first := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	first.Header.Set("Range", "bytes=0-3")
+	firstRec := httptest.NewRecorder()
+	proxy.handleDownload(firstRec, first)
+	require.Equal(t, http.StatusPartialContent, firstRec.Result().StatusCode)
+
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	status, err := ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.False(t, status.Completed)
+	require.Equal(t, int64(4), status.DeliveredBytes)
+	var afterFirst struct {
+		Downloaded bool `json:"downloaded"`
+	}
+	require.NoError(t, json.Unmarshal(data, &afterFirst))
+	require.False(t, afterFirst.Downloaded)
+
+	second := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	second.Header.Set("Range", "bytes=4-9")
+	secondRec := httptest.NewRecorder()
+	proxy.handleDownload(secondRec, second)
+	require.Equal(t, http.StatusPartialContent, secondRec.Result().StatusCode)
+
+	data, err = kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	status, err = ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.True(t, status.Completed)
+	require.False(t, status.CompletedAt.IsZero())
+	require.Equal(t, int64(len(payload)), status.DeliveredBytes)
+	var completed struct {
+		Downloaded bool `json:"downloaded"`
+	}
+	require.NoError(t, json.Unmarshal(data, &completed))
+	require.True(t, completed.Downloaded)
+}
+
+func TestDownloadHandlerDoesNotTrackFailedOrHeadResponses(t *testing.T) {
+	t.Parallel()
+
+	kvd := newMemoryTaskStorage()
+	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, kvd, nil)
+	proxy.pools.Set(testDownloadPool{})
+	task := &downloadTask{
+		ID:       testTaskID,
+		FileName: testFileName,
+		FileSize: 10,
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
+			Name:         testFileName,
+			Size:         10,
+			DC:           2,
+		},
+	}
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
+	proxy.stream = func(_ context.Context, _ *downloadTask, _ *transfer.TaskLease, _, _ int64, w io.Writer) error {
+		_, _ = w.Write([]byte("partial"))
+		return fmt.Errorf("client disconnected")
+	}
+
+	head := httptest.NewRequest(http.MethodHead, "/download/"+testTaskID, nil)
+	proxy.handleDownload(httptest.NewRecorder(), head)
+	failed := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	proxy.handleDownload(httptest.NewRecorder(), failed)
+
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	status, err := ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.False(t, status.Completed)
+	require.Zero(t, status.DeliveredBytes)
+}
+
 func TestDownloadHandlerHonorsIfRangeETag(t *testing.T) {
 	t.Parallel()
 
@@ -498,8 +693,18 @@ func TestDownloadHandlerHonorsIfRangeETag(t *testing.T) {
 func TestDownloadHandlerServesEmptyFile(t *testing.T) {
 	t.Parallel()
 
-	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, nil, nil)
-	task := &downloadTask{ID: testTaskID, FileName: testFileName, FileSize: 0}
+	kvd := newMemoryTaskStorage()
+	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, kvd, nil)
+	task := &downloadTask{
+		ID:       testTaskID,
+		FileName: testFileName,
+		FileSize: 0,
+		Media: &tmedia.Media{
+			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
+			Name:         testFileName,
+			DC:           2,
+		},
+	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
 	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
@@ -508,6 +713,11 @@ func TestDownloadHandlerServesEmptyFile(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
 	require.Equal(t, "0", rec.Result().Header.Get("Content-Length"))
 	require.Empty(t, rec.Body.Bytes())
+	data, err := kvd.Get(context.Background(), downloadTaskStorageKey(task.ID))
+	require.NoError(t, err)
+	status, err := ParseDownloadTaskHTTPStatus(data)
+	require.NoError(t, err)
+	require.True(t, status.Completed)
 }
 
 func TestDownloadHandlerReturnsServiceUnavailableBeforeTelegramIsReady(t *testing.T) {

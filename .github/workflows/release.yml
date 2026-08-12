@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - dev
       - master
     tags:
       - 'v*'
@@ -42,30 +43,39 @@ jobs:
               echo "mode=stable"
               echo "args=release --clean --timeout 1h"
               echo "prev_tag=${prev_tag}"
+              echo "version=${GITHUB_REF_NAME#v}"
             } >> "$GITHUB_OUTPUT"
           else
             # GoReleaser v1.18.2 parses the nearest tag even in snapshot mode.
-            # Hide legacy non-SemVer prerelease tags from this local checkout.
-            while IFS= read -r legacy_tag; do
-              [[ -n "$legacy_tag" ]] && git tag --delete "$legacy_tag"
-            done < <(git tag --list 'prerelease-*')
+            # Date-based prerelease tags are intentionally not SemVer. Hide all
+            # non-stable tags in this disposable checkout before the snapshot
+            # build so they cannot become GoReleaser's inferred base version.
+            while IFS= read -r tag; do
+              if [[ -n "$tag" && ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                git tag --delete "$tag"
+              fi
+            done < <(git tag --list)
 
-            stable_tag="$(git describe --tags --match 'v[0-9]*' --exclude '*-*' --abbrev=0 2>/dev/null || true)"
-            if [[ ! "$stable_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              echo "Unable to determine the latest stable SemVer tag" >&2
-              exit 1
-            fi
+            case "$GITHUB_REF_NAME" in
+              dev|master)
+                channel="$GITHUB_REF_NAME"
+                ;;
+              *)
+                echo "Prereleases can only be built from dev or master, got: ${GITHUB_REF_NAME}" >&2
+                exit 1
+                ;;
+            esac
 
-            major="${BASH_REMATCH[1]}"
-            minor="${BASH_REMATCH[2]}"
-            patch="${BASH_REMATCH[3]}"
-            next_patch="$((10#$patch + 1))"
+            release_date="$(TZ=Asia/Shanghai date +%Y%m%d)"
             short_sha="$(git rev-parse --short HEAD)"
-            prerelease_tag="${major}.${minor}.${next_patch}-prerelease.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.sha${short_sha}"
+            prerelease_tag="${release_date}_${channel}_${short_sha}"
             {
               echo "mode=prerelease"
               echo "args=release --snapshot --clean --timeout 1h"
               echo "tag=${prerelease_tag}"
+              echo "version=${prerelease_tag}"
+              echo "channel=${channel}"
+              echo "release_date=${release_date}"
               echo "short_sha=${short_sha}"
             } >> "$GITHUB_OUTPUT"
           fi
@@ -78,6 +88,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.release.outputs.prev_tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
       - name: Publish prerelease
         if: steps.release.outputs.mode == 'prerelease'
         env:
@@ -107,10 +118,27 @@ jobs:
             echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } > "$notes_file"
 
-          gh release create "${{ steps.release.outputs.tag }}" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "tdl ${GITHUB_REF_NAME} ${{ steps.release.outputs.short_sha }}" \
-            --notes-file "$notes_file" \
-            --prerelease \
-            --latest=false
+          release_tag="${{ steps.release.outputs.tag }}"
+          release_title="tdl ${release_tag}"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A rerun for the same commit must update the exact requested
+            # version instead of inventing a second tag.
+            gh release upload "$release_tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$notes_file" \
+              --prerelease \
+              --latest=false
+          else
+            gh release create "$release_tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$notes_file" \
+              --prerelease \
+              --latest=false
+          fi

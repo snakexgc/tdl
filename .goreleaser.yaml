@@ -1,5 +1,9 @@
 project_name: tdl
 dist: .tdl/dist
+snapshot:
+  # release.yml supplies the requested yyyyMMdd_<channel>_<shortSHA> version.
+  # GoReleaser v1 uses name_template (renamed to version_template in v2.2).
+  name_template: '{{ .Env.RELEASE_VERSION }}'
 env:
   - GO111MODULE=on
 builds:

@@ -215,8 +215,15 @@ function renderInternalEntries(item) {
 }
 
 function renderDownloadedState(item) {
+  if (item.http_downloaded) {
+    const completedAt = item.http_downloaded_at ? `<div class="subtle">HTTP 完整传输于 ${escapeHTML(formatTime(item.http_downloaded_at))}</div>` : "";
+    return `<span class="pill">已下载（HTTP）</span>${completedAt}`;
+  }
   if (item.downloaded) {
     return `<span class="pill">已下载</span>`;
+  }
+  if (Number(item.http_delivered_bytes || 0) > 0) {
+    return `<span class="pill warn">HTTP 已发送部分</span><div class="subtle">${escapeHTML(formatBytes(item.http_delivered_bytes))} / ${escapeHTML(formatBytes(item.file_size || 0))}</div>`;
   }
   if (item.expired) {
     return `<span class="pill bad">已过期</span>`;
