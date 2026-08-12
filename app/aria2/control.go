@@ -13,6 +13,7 @@ import (
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
+	appdownload "github.com/snakexgc/tdl/app/download"
 	"github.com/snakexgc/tdl/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
@@ -97,6 +98,51 @@ func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) 
 		connections:   config.EffectivePoolSize(cfg),
 		logger:        logger,
 	}
+}
+
+func (c *Controller) Name() string {
+	return "aria2"
+}
+
+// Submit implements download.Submitter. Task creation and link generation stay
+// in watch/HTTP; this controller owns only aria2 RPC submission and bookkeeping.
+func (c *Controller) Submit(ctx context.Context, submission appdownload.Submission) (appdownload.Result, error) {
+	if c == nil || c.client == nil {
+		return appdownload.Result{}, errors.New("aria2 controller is not initialized")
+	}
+	if strings.TrimSpace(submission.DownloadURL) == "" {
+		return appdownload.Result{}, errors.New("download url is empty")
+	}
+
+	gid, err := c.client.AddURI(ctx, submission.DownloadURL, AddURIOptions{
+		Dir:         submission.Dir,
+		Out:         submission.Out,
+		Connections: c.connections,
+	})
+	if err != nil {
+		return appdownload.Result{}, errors.Wrap(err, "add aria2 uri")
+	}
+	if err := c.store.Add(ctx, TaskRecord{
+		GID:         gid,
+		TaskID:      submission.TaskID,
+		DownloadURL: submission.DownloadURL,
+		Dir:         submission.Dir,
+		Out:         submission.Out,
+		CreatedAt:   time.Now(),
+	}); err != nil {
+		c.logger.Warn("Failed to register aria2 task",
+			zap.String("gid", gid),
+			zap.String("task_id", submission.TaskID),
+			zap.String("download_url", submission.DownloadURL),
+			zap.Error(err))
+	}
+
+	c.logger.Info("Submitted aria2 task",
+		zap.String("gid", gid),
+		zap.String("task_id", submission.TaskID),
+		zap.String("download_url", submission.DownloadURL),
+		zap.String("target_path", submission.FullPath))
+	return appdownload.Result{Target: c.Name(), ID: gid}, nil
 }
 
 func (c *Controller) Overview(ctx context.Context) (Overview, error) {

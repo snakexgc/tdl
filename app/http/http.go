@@ -37,6 +37,7 @@ const (
 	httpReadHeaderTimeout             = 10 * time.Second
 	httpIdleTimeout                   = 2 * time.Minute
 	httpMaxHeaderBytes                = 1 << 20
+	telegramClientWaitTimeout         = 30 * time.Second
 )
 
 const (
@@ -113,6 +114,8 @@ type downloadProxy struct {
 
 	reporterMu sync.RWMutex
 	reporter   TelegramFileErrorReporter
+
+	clientWaitTimeout time.Duration
 }
 
 func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *poolHolder, kv storage.Storage, logger *zap.Logger) *downloadProxy {
@@ -125,14 +128,18 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 	if poolSize < 1 {
 		poolSize = config.DefaultPoolSize
 	}
+	if pools == nil {
+		pools = &poolHolder{}
+	}
 
 	p := &downloadProxy{
-		cfg:       cfg,
-		tasks:     newTaskStore(kv, downloadLinkTTL(cfg)),
-		pools:     pools,
-		sources:   newSourceRegistry(),
-		scheduler: transfer.NewScheduler(maxFiles, poolSize),
-		logger:    logger.Named("http-download"),
+		cfg:               cfg,
+		tasks:             newTaskStore(kv, downloadLinkTTL(cfg)),
+		pools:             pools,
+		sources:           newSourceRegistry(),
+		scheduler:         transfer.NewScheduler(maxFiles, poolSize),
+		logger:            logger.Named("http-download"),
+		clientWaitTimeout: telegramClientWaitTimeout,
 	}
 
 	p.stream = p.streamTask
@@ -439,12 +446,39 @@ func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
 		responseRanges = []downloadRange{{start: 0, end: task.FileSize - 1}}
 	}
 
-	var lease *transfer.TaskLease
 	if r.Method != http.MethodHead && task.FileSize > 0 {
 		if task.Media == nil {
 			http.Error(w, "download media is unavailable", http.StatusInternalServerError)
 			return
 		}
+		waitTimeout := p.clientWaitTimeout
+		if waitTimeout <= 0 {
+			waitTimeout = telegramClientWaitTimeout
+		}
+		waitStart := time.Now()
+		waitCtx, cancel := context.WithTimeout(r.Context(), waitTimeout)
+		_, waitErr := p.pools.Wait(waitCtx)
+		cancel()
+		if waitErr != nil {
+			fields := []zap.Field{
+				zap.String("task_id", task.ID),
+				zap.String("file_name", task.FileName),
+				zap.Duration("waited", time.Since(waitStart)),
+				zap.Error(waitErr),
+			}
+			if r.Context().Err() != nil {
+				p.logger.Warn("Download client disconnected while waiting for Telegram", fields...)
+				return
+			}
+			p.logger.Warn("Telegram download backend is not ready", fields...)
+			w.Header().Set("Retry-After", "3")
+			http.Error(w, "telegram download backend is not ready", http.StatusServiceUnavailable)
+			return
+		}
+	}
+
+	var lease *transfer.TaskLease
+	if r.Method != http.MethodHead && task.FileSize > 0 {
 		waitStart := time.Now()
 		acquired, err := p.scheduler.Acquire(r.Context(), task.ID, task.Media.DC)
 		if err != nil {

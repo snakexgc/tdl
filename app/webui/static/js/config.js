@@ -53,8 +53,9 @@ const sections = [
     title: "模块开关",
     fields: [
       ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
-      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到当前下载器。"],
+      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情并生成临时 HTTP 链接；是否自动提交给 aria2 由 aria2.auto_download 控制。"],
       ["modules.http", "HTTP 下载代理", "bool", "独立启停 /download 文件流服务，不会连带重启监听下载或 aria2 自动化。"],
+      ["modules.aria2", "aria2 下载器管理", "bool", "独立启停 aria2 RPC 管理、任务恢复和异常监控；不会影响 watch 生成临时 HTTP 链接。"],
       ["modules.forward", "监听转发", "bool", "启用后监听 forward.listen 中的 Telegram 对象并转发新消息。"],
     ],
   },
@@ -67,6 +68,7 @@ const sections = [
   {
     title: "aria2",
     fields: [
+      ["aria2.auto_download", "监听触发后自动下载", "bool", "仅当监听模块、aria2 模块均启用且 downloader.mode 为 aria2 时，把表情触发生成的临时 HTTP 链接自动提交到 aria2；关闭后只生成链接。"],
       ["aria2.rpc_url", "aria2 连接地址", "text", "aria2 的连接地址，例如 http://127.0.0.1:6800/jsonrpc。"],
       ["aria2.secret", "aria2 密钥", "password", "aria2 设置了密钥时填写；留空表示保持原密钥。"],
       ["aria2.dir", "下载根目录", "text", "aria2 所在机器上的保存根目录；留空时使用 aria2 默认目录。"],

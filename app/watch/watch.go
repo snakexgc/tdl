@@ -22,7 +22,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/snakexgc/tdl/app/aria2"
 	appforward "github.com/snakexgc/tdl/app/forward"
 	"github.com/snakexgc/tdl/core/dcpool"
 	"github.com/snakexgc/tdl/core/logctx"
@@ -37,10 +36,6 @@ import (
 )
 
 const bytesPerMegabyte int64 = 1024 * 1024
-
-type aria2ConcurrentDownloadSetter interface {
-	SetMaxConcurrentDownloads(ctx context.Context, limit int) error
-}
 
 type Watcher struct {
 	opts    Options
@@ -106,17 +101,7 @@ func Run(ctx context.Context, opts Options) error {
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
 			color.Yellow("⏹ Stopping watcher...")
-			switch downloaderMode {
-			case config.DownloaderModeAria2:
-				paused, err := aria2.PauseTDLTasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
-				if err != nil {
-					color.Yellow("⚠️ Failed to pause tdl aria2 tasks before shutdown: %v", err)
-					return
-				}
-				if len(paused) > 0 {
-					color.Yellow("⏸ Paused %d tdl aria2 task(s) before shutdown", len(paused))
-				}
-			case config.DownloaderModeInternal:
+			if downloaderMode == config.DownloaderModeInternal {
 				paused, err := runtime.internal.PauseForShutdown(runCtx)
 				if err != nil {
 					color.Yellow("⚠️ Failed to pause internal download tasks before shutdown: %v", err)
@@ -144,39 +129,13 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Download {
 		switch downloaderMode {
 		case config.DownloaderModeAria2:
-			if err := waitForAria2(runCtx, runtime.aria2, opts.Limit, aria2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return nil
-				}
-				return errors.Wrap(err, "configure aria2 max concurrent downloads")
+			// The target path is metadata for an optional external submitter. Never
+			// query that backend while starting the Telegram watcher.
+			runtime.outputRoot = cleanTargetRoot(cfg.Aria2.Dir)
+			if runtime.outputRoot == "" {
+				runtime.outputRoot = "."
 			}
-			logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
-				zap.Int("limit", opts.Limit))
-			runtime.telegramErrRegulator = aria2.NewTelegramErrorRegulator(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
-			runtime.proxy.SetTelegramFileErrorReporter(runtime.telegramErrRegulator)
-			defer runtime.proxy.SetTelegramFileErrorReporter(nil)
-			go runtime.telegramErrRegulator.Run(runCtx)
-
-			runtime.zeroSpeedMonitor = aria2.NewZeroSpeedMonitor(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
-			go runtime.zeroSpeedMonitor.Run(runCtx)
-
-			if count, err := aria2.ResumeStartupPausedTasks(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx)); err != nil {
-				if !errors.Is(err, context.Canceled) {
-					logctx.From(runCtx).Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
-				}
-			} else if count > 0 {
-				color.Green("▶ Resumed %d paused tdl aria2 task(s) at startup", count)
-			}
-
-			outputRoot, ensureOutputDirs, err := prepareAria2OutputRoot(runCtx, runtime.aria2, cfg)
-			if err != nil {
-				if opts.Notify != nil {
-					opts.Notify(runCtx, fmt.Sprintf("aria2 下载目录异常：%v", err))
-				}
-				return errors.Wrap(err, "prepare aria2 output root")
-			}
-			runtime.outputRoot = outputRoot
-			runtime.ensureOutputDirs = ensureOutputDirs
+			runtime.ensureOutputDirs = false
 		case config.DownloaderModeInternal:
 			outputRoot, fallback, err := prepareInternalOutputRoot(cfg)
 			if err != nil {
@@ -202,7 +161,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 		color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
-		color.Green("   aria2 RPC: %s", cfg.Aria2.RPCURL)
+		if opts.DownloadSubmitter != nil {
+			color.Green("   Download submitter: %s", opts.DownloadSubmitter.Name())
+		} else {
+			color.Green("   Download submitter: none (links only)")
+		}
 	}
 	if opts.Download {
 		color.Green("   Downloader mode: %s", downloaderMode)
@@ -243,35 +206,17 @@ func Run(ctx context.Context, opts Options) error {
 	if reconnectDelay <= 0 {
 		reconnectDelay = 5 * time.Second
 	}
-	var pausedAria2GIDs []string
-
 	for {
 		if runCtx.Err() != nil {
 			return nil
 		}
 
-		resumed, err := runOnce(runCtx, opts, tpl, kvd, reconnectDelay, runtime, pausedAria2GIDs)
-		if resumed {
-			pausedAria2GIDs = nil
-		}
+		err := runOnce(runCtx, opts, tpl, kvd, reconnectDelay, runtime)
 		if err == nil || errors.Is(err, context.Canceled) {
 			return nil
 		}
 
 		color.Yellow("⚠️ Watcher disconnected: %v", err)
-		if opts.Download && downloaderMode == config.DownloaderModeAria2 {
-			newPausedGIDs, pauseErr := aria2.SuspendTDLTasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
-			if pauseErr != nil {
-				if errors.Is(pauseErr, context.Canceled) {
-					return nil
-				}
-				return errors.Wrap(pauseErr, "pause aria2 tasks before reconnect")
-			}
-			pausedAria2GIDs = aria2.MergeUniqueGIDs(pausedAria2GIDs, newPausedGIDs)
-			if len(newPausedGIDs) > 0 {
-				color.Yellow("⏸ Paused %d tdl aria2 task(s) before reconnect", len(newPausedGIDs))
-			}
-		}
 		color.Yellow("🔄 Reconnecting in %v...", reconnectDelay)
 
 		select {
@@ -282,7 +227,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
-func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime, pausedAria2GIDs []string) (resumed bool, rerr error) {
+func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime) (rerr error) {
 	cfg := config.Get()
 	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
@@ -337,7 +282,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 	client, err := pkgtclient.New(ctx, o, false)
 	if err != nil {
-		return false, errors.Wrap(err, "create client")
+		return errors.Wrap(err, "create client")
 	}
 
 	err = tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
@@ -362,13 +307,6 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 				return errors.Wrap(err, "start internal downloader")
 			}
 			defer runtime.internal.Stop()
-		}
-		if downloaderMode == config.DownloaderModeAria2 && len(pausedAria2GIDs) > 0 {
-			if err := aria2.ResumeTDLTasks(ctx, runtime.aria2, pausedAria2GIDs, logctx.From(ctx)); err != nil {
-				return errors.Wrap(err, "resume paused aria2 tasks")
-			}
-			resumed = true
-			color.Green("▶ Resumed %d tdl aria2 task(s) after reconnect", len(aria2.UniqueGIDs(pausedAria2GIDs)))
 		}
 		updatesDone := make(chan struct{})
 		go func() {
@@ -419,45 +357,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 		return nil
 	})
-	return resumed, err
-}
-
-func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, limit int, retryInterval time.Duration, logger *zap.Logger) error {
-	if retryInterval <= 0 {
-		retryInterval = aria2.DefaultConnectRetryInterval
-	}
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-
-	for {
-		err := client.SetMaxConcurrentDownloads(ctx, limit)
-		if err == nil {
-			return nil
-		}
-		if errors.Is(err, context.Canceled) || !aria2.IsConnectionError(err) {
-			return err
-		}
-
-		logger.Warn("Cannot connect to aria2 RPC, retrying",
-			zap.Duration("retry_interval", retryInterval),
-			zap.Error(err))
-		color.Yellow("⚠️ Cannot connect to aria2 RPC: %v", err)
-		color.Yellow("🔄 Retrying in %v...", retryInterval)
-
-		timer := time.NewTimer(retryInterval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
+	return err
 }
 
 func validateWatchConfig(cfg *config.Config) error {
@@ -465,9 +365,6 @@ func validateWatchConfig(cfg *config.Config) error {
 	case config.DownloaderModeAria2:
 		if cfg.HTTP.PublicBaseURL == "" {
 			return errors.New("http.public_base_url is empty, please set it in config.json")
-		}
-		if cfg.Aria2.RPCURL == "" {
-			return errors.New("aria2.rpc_url is empty, please set it in config.json")
 		}
 	case config.DownloaderModeInternal:
 	default:
@@ -484,12 +381,12 @@ func warnPublicBaseURL(base string) {
 
 	switch u.Hostname() {
 	case "0.0.0.0", "::":
-		color.Yellow("⚠️ http.public_base_url uses %s; aria2 usually cannot download from this address directly", u.Hostname())
+		color.Yellow("⚠️ http.public_base_url uses %s; external downloaders usually cannot use this address directly", u.Hostname())
 	case "localhost":
-		color.Yellow("⚠️ http.public_base_url uses localhost; this only works when aria2 runs on the same machine and network namespace")
+		color.Yellow("⚠️ http.public_base_url uses localhost; this only works when the downloader shares this machine and network namespace")
 	default:
 		if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsLoopback() {
-			color.Yellow("⚠️ http.public_base_url uses loopback address %s; this only works when aria2 runs on the same machine and network namespace", u.Hostname())
+			color.Yellow("⚠️ http.public_base_url uses loopback address %s; this only works when the downloader shares this machine and network namespace", u.Hostname())
 		}
 	}
 }

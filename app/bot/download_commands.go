@@ -75,5 +75,6 @@ func handleDownloadCallback(
 }
 
 func aria2DownloaderEnabled() bool {
-	return config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeAria2
+	cfg := config.Get()
+	return cfg != nil && cfg.Modules.Aria2 && config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2
 }

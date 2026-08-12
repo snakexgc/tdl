@@ -44,6 +44,7 @@ func TestValidateWatchConfigDoesNotOwnHTTPServerLifecycle(t *testing.T) {
 	cfg.Downloader.Mode = config.DownloaderModeAria2
 	cfg.Modules.HTTP = false
 	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
+	cfg.Aria2.RPCURL = ""
 
 	require.NoError(t, validateWatchConfig(cfg))
 }

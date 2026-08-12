@@ -370,6 +370,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 		Listen:        testListenAddr,
 		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
+	proxy.pools.Set(testDownloadPool{})
 
 	payload := []byte("0123456789")
 	proxy.stream = func(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
@@ -413,6 +414,7 @@ func TestDownloadHandlerSupportsMultipartRanges(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{}, 2, 2, &poolHolder{}, nil, nil)
+	proxy.pools.Set(testDownloadPool{})
 	payload := []byte("0123456789")
 	proxy.stream = func(_ context.Context, _ *downloadTask, _ *transfer.TaskLease, start, end int64, w io.Writer) error {
 		_, err := w.Write(payload[start : end+1])
@@ -462,6 +464,7 @@ func TestDownloadHandlerHonorsIfRangeETag(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{}, 2, 2, &poolHolder{}, nil, nil)
+	proxy.pools.Set(testDownloadPool{})
 	payload := []byte("0123456789")
 	proxy.stream = func(_ context.Context, _ *downloadTask, _ *transfer.TaskLease, start, end int64, w io.Writer) error {
 		_, err := w.Write(payload[start : end+1])
@@ -505,6 +508,27 @@ func TestDownloadHandlerServesEmptyFile(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
 	require.Equal(t, "0", rec.Result().Header.Get("Content-Length"))
 	require.Empty(t, rec.Body.Bytes())
+}
+
+func TestDownloadHandlerReturnsServiceUnavailableBeforeTelegramIsReady(t *testing.T) {
+	t.Parallel()
+
+	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, nil, nil)
+	proxy.clientWaitTimeout = time.Millisecond
+	task := &downloadTask{
+		ID:       testTaskID,
+		FileName: testFileName,
+		FileSize: 10,
+		Media:    &tmedia.Media{DC: 2},
+	}
+	require.NoError(t, proxy.tasks.Add(context.Background(), task))
+
+	req := httptest.NewRequest(http.MethodGet, "/download/"+testTaskID, nil)
+	rec := httptest.NewRecorder()
+	proxy.handleDownload(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Result().StatusCode)
+	require.Equal(t, "3", rec.Result().Header.Get("Retry-After"))
 }
 
 func TestDownloadHandlerMissingTask(t *testing.T) {

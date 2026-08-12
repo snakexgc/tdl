@@ -46,9 +46,11 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.True(t, cfg.Modules.Bot)
 	require.True(t, cfg.Modules.Watch)
 	require.True(t, cfg.Modules.HTTP)
+	require.True(t, cfg.Modules.Aria2)
 	require.Equal(t, DownloaderModeAria2, cfg.Downloader.Mode)
 	require.Equal(t, "http://127.0.0.1:6800/jsonrpc", cfg.Aria2.RPCURL)
 	require.Equal(t, 30, cfg.Aria2.TimeoutSeconds)
+	require.True(t, cfg.Aria2.AutoDownload)
 	require.Equal(t, DefaultLimit, cfg.Limit)
 	require.Equal(t, DefaultPoolSize, cfg.PoolSize)
 	require.Equal(t, "G\\Y&M", cfg.DownloadDir)
@@ -56,6 +58,41 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, DefaultFilenameMax, cfg.FilenameMax)
 	require.Empty(t, cfg.TriggerReactions)
 	require.Zero(t, cfg.FileSizeMB)
+}
+
+func TestLoadAllowsDisablingAria2ModuleAndAutoDownload(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{
+  "namespace": "custom",
+  "modules": {"aria2": false},
+  "aria2": {"auto_download": false}
+}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Modules.Aria2)
+	require.False(t, cfg.Aria2.AutoDownload)
+	require.True(t, cfg.Modules.Watch)
+	require.True(t, cfg.Modules.HTTP)
+}
+
+func TestLoadLegacyConfigEnablesAria2Defaults(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{
+  "modules": {"bot": true, "watch": true, "http": true, "forward": false},
+  "aria2": {"rpc_url": "http://127.0.0.1:6800/jsonrpc", "timeout_seconds": 30}
+}`), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.True(t, cfg.Modules.Aria2)
+	require.True(t, cfg.Aria2.AutoDownload)
 }
 
 func TestLoadMigratesLegacyHTTPListen(t *testing.T) {

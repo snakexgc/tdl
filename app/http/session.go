@@ -18,20 +18,58 @@ import (
 )
 
 type poolHolder struct {
-	mu   sync.RWMutex
-	pool dcpool.Pool
+	mu      sync.RWMutex
+	pool    dcpool.Pool
+	changed chan struct{}
 }
 
 func (h *poolHolder) Set(pool dcpool.Pool) {
+	if h == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pool = pool
+	if h.changed != nil {
+		close(h.changed)
+		h.changed = make(chan struct{})
+	}
 }
 
 func (h *poolHolder) Get() dcpool.Pool {
+	if h == nil {
+		return nil
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.pool
+}
+
+// Wait returns the current Telegram pool, waiting for the watch connection to
+// publish one when the HTTP request races application startup or reconnect.
+func (h *poolHolder) Wait(ctx context.Context) (dcpool.Pool, error) {
+	if h == nil {
+		return nil, errors.New("telegram client pool is not initialized")
+	}
+	for {
+		h.mu.Lock()
+		if h.pool != nil {
+			pool := h.pool
+			h.mu.Unlock()
+			return pool, nil
+		}
+		if h.changed == nil {
+			h.changed = make(chan struct{})
+		}
+		changed := h.changed
+		h.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-changed:
+		}
+	}
 }
 
 type taskStreamer func(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error

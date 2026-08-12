@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	appdownload "github.com/snakexgc/tdl/app/download"
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/pkg/config"
 )
@@ -30,6 +31,7 @@ type Options struct {
 	ForwardTriggerReactions []string
 	Notify                  NotifyFunc
 	HTTPService             *httpdl.Service
+	DownloadSubmitter       appdownload.Submitter
 	messageLinks            <-chan messageLinkSubmission
 }
 

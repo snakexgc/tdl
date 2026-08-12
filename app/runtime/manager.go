@@ -12,6 +12,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 
+	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/app/bot"
 	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
@@ -32,12 +33,48 @@ const (
 	moduleIDBot            = "bot"
 	moduleIDWatch          = "watch"
 	moduleIDHTTP           = "http"
+	moduleIDAria2          = "aria2"
 	moduleIDForward        = "forward"
 )
 
 type Options struct {
 	RequestReboot func()
 	RequestUpdate func(updater.Plan)
+}
+
+type aria2ManagerConfig struct {
+	RPCURL         string
+	Secret         string
+	Dir            string
+	TimeoutSeconds int
+	PublicBaseURL  string
+	LinkTTLHours   int
+	Limit          int
+	PoolSize       int
+}
+
+func effectiveAria2ManagerConfig(cfg *config.Config) aria2ManagerConfig {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	return aria2ManagerConfig{
+		RPCURL:         cfg.Aria2.RPCURL,
+		Secret:         cfg.Aria2.Secret,
+		Dir:            cfg.Aria2.Dir,
+		TimeoutSeconds: cfg.Aria2.TimeoutSeconds,
+		PublicBaseURL:  cfg.HTTP.PublicBaseURL,
+		LinkTTLHours:   cfg.HTTP.DownloadLinkTTLHours,
+		Limit:          config.EffectiveLimit(cfg),
+		PoolSize:       config.EffectivePoolSize(cfg),
+	}
+}
+
+func watchAutoDownloadEnabled(cfg *config.Config) bool {
+	return cfg != nil &&
+		cfg.Modules.Watch &&
+		cfg.Modules.Aria2 &&
+		cfg.Aria2.AutoDownload &&
+		config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2
 }
 
 type Manager struct {
@@ -48,6 +85,11 @@ type Manager struct {
 	watchCtrl   *watch.Controller
 	httpService *httpdl.Service
 	httpCtrl    *httpdl.Controller
+	aria2Mgr    *aria2.Manager
+	aria2Cancel context.CancelFunc
+	aria2Done   chan struct{}
+	aria2Err    error
+	aria2Config aria2ManagerConfig
 
 	requestReboot func()
 	requestUpdate func(updater.Plan)
@@ -61,6 +103,8 @@ type Manager struct {
 	watchMode      string
 	watchEnabled   bool
 	forwardEnabled bool
+	aria2Enabled   bool
+	aria2Auto      bool
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -125,9 +169,13 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		watchMode:      config.EffectiveDownloaderMode(cfg),
 		watchEnabled:   cfg != nil && cfg.Modules.Watch,
 		forwardEnabled: cfg != nil && cfg.Modules.Forward,
+		aria2Enabled:   cfg != nil && cfg.Modules.Aria2,
+		aria2Auto:      watchAutoDownloadEnabled(cfg),
+		aria2Config:    effectiveAria2ManagerConfig(cfg),
 	}
 	manager.httpService = httpdl.NewService(cfg, namespaceKV, logctx.From(ctx))
 	manager.httpCtrl = httpdl.NewController(ctx, manager.httpService)
+	manager.aria2Mgr = aria2.NewManager(cfg, namespaceKV, logctx.From(ctx))
 	manager.watchCtrl = watch.NewController(ctx, manager.watchOptions(cfg), manager.Notify)
 	return manager
 }
@@ -178,20 +226,37 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 		cfg = config.Get()
 	}
 	restartHTTP := m.httpService.UpdateConfig(cfg)
-	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
 	nextWatchMode := config.EffectiveDownloaderMode(cfg)
+	nextAria2Auto := watchAutoDownloadEnabled(cfg)
+	nextAria2Config := effectiveAria2ManagerConfig(cfg)
 	m.mu.Lock()
 	prevWatchMode := m.watchMode
 	prevWatchEnabled := m.watchEnabled
 	prevForwardEnabled := m.forwardEnabled
+	prevAria2Auto := m.aria2Auto
+	aria2ConfigChanged := m.aria2Config != nextAria2Config
 	m.watchMode = nextWatchMode
 	m.watchEnabled = cfg.Modules.Watch
 	m.forwardEnabled = cfg.Modules.Forward
+	m.aria2Enabled = cfg.Modules.Aria2
+	m.aria2Auto = nextAria2Auto
 	m.mu.Unlock()
+
+	if aria2ConfigChanged {
+		m.StopAria2Manager()
+		manager := aria2.NewManager(cfg, m.namespaceKV, logctx.From(m.parent))
+		m.mu.Lock()
+		m.aria2Mgr = manager
+		m.aria2Config = nextAria2Config
+		m.mu.Unlock()
+	}
+	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
 	restartWatch := m.watchCtrl.Running() &&
 		((prevWatchMode != "" && prevWatchMode != nextWatchMode) ||
 			prevWatchEnabled != cfg.Modules.Watch ||
-			prevForwardEnabled != cfg.Modules.Forward)
+			prevForwardEnabled != cfg.Modules.Forward ||
+			prevAria2Auto != nextAria2Auto ||
+			(aria2ConfigChanged && nextAria2Auto))
 
 	if cfg.Modules.HTTP {
 		if restartHTTP && m.httpCtrl.Running() {
@@ -200,6 +265,11 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 		m.StartHTTP()
 	} else {
 		go m.StopHTTP()
+	}
+	if cfg.Modules.Aria2 {
+		m.StartAria2Manager()
+	} else {
+		go m.StopAria2Manager()
 	}
 
 	if cfg.Modules.Bot {
@@ -233,6 +303,7 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 		m.botState(cfg),
 		m.watchState(cfg),
 		m.httpState(cfg),
+		m.aria2State(cfg),
 		m.forwardState(cfg),
 	}
 }
@@ -251,6 +322,8 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		next.Modules.Watch = enabled
 	case moduleIDHTTP:
 		next.Modules.HTTP = enabled
+	case moduleIDAria2:
+		next.Modules.Aria2 = enabled
 	case moduleIDForward:
 		next.Modules.Forward = enabled
 	case "webui":
@@ -289,6 +362,9 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 			m.StopHTTP()
 		}
 		return m.httpState(next), nil
+	case moduleIDAria2:
+		m.ApplyConfig(next)
+		return m.aria2State(next), nil
 	case moduleIDForward:
 		if enabled {
 			_ = m.StartWatch(ctx)
@@ -420,6 +496,61 @@ func (m *Manager) StopHTTP() {
 	m.httpCtrl.Stop()
 }
 
+func (m *Manager) StartAria2Manager() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	manager := m.aria2Mgr
+	if !m.aria2Enabled || manager == nil || m.aria2Cancel != nil {
+		m.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(m.parent)
+	done := make(chan struct{})
+	m.aria2Cancel = cancel
+	m.aria2Done = done
+	m.aria2Err = nil
+	m.mu.Unlock()
+
+	m.httpService.Proxy().SetTelegramFileErrorReporter(manager)
+	go func() {
+		err := manager.Run(ctx)
+		m.mu.Lock()
+		if m.aria2Done == done {
+			m.aria2Cancel = nil
+			m.aria2Done = nil
+			m.aria2Err = err
+		}
+		m.mu.Unlock()
+		close(done)
+	}()
+}
+
+func (m *Manager) StopAria2Manager() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	cancel := m.aria2Cancel
+	done := m.aria2Done
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		timer := time.NewTimer(moduleStopTimeout)
+		select {
+		case <-done:
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	if m.httpService != nil && m.httpService.Proxy() != nil {
+		m.httpService.Proxy().SetTelegramFileErrorReporter(nil)
+	}
+}
+
 // restartWatchAsync stops the running watcher and starts it again on a
 // background context, off the caller's goroutine. Used when a config or module
 // change requires the watch loop to be rebuilt with fresh options.
@@ -432,6 +563,7 @@ func (m *Manager) restartWatchAsync() {
 
 func (m *Manager) Shutdown() {
 	m.StopBot()
+	m.StopAria2Manager()
 	m.StopHTTP()
 	m.StopWatch()
 }
@@ -507,7 +639,7 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 	return webui.ModuleState{
 		ID:          moduleIDWatch,
 		Name:        "监听下载",
-		Description: "监听 Telegram 表情触发，并把任务提交到当前下载器。",
+		Description: "监听 Telegram 表情触发并生成临时 HTTP 链接；是否自动提交给 aria2 由 aria2 模块的自动下载开关决定。",
 		Enabled:     cfg != nil && cfg.Modules.Watch,
 		Running:     running && cfg != nil && cfg.Modules.Watch,
 		CanToggle:   true,
@@ -535,6 +667,41 @@ func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
 		ID:          moduleIDHTTP,
 		Name:        "HTTP 下载代理",
 		Description: "提供 /download 链接和按 DC、按文件 FIFO 调度的标准 Range 文件流；支持 aria2 及其他下载器。",
+		Enabled:     enabled,
+		Running:     running,
+		CanToggle:   true,
+		Status:      status,
+	}
+}
+
+func (m *Manager) aria2State(cfg *config.Config) webui.ModuleState {
+	if cfg == nil {
+		cfg = config.Get()
+	}
+	m.mu.Lock()
+	running := m.aria2Cancel != nil
+	err := m.aria2Err
+	m.mu.Unlock()
+	enabled := cfg != nil && cfg.Modules.Aria2
+	status := moduleStatusNotStarted
+	switch {
+	case !enabled:
+		status = "已关闭"
+	case err != nil:
+		status = "已停止：" + err.Error()
+	case running && watchAutoDownloadEnabled(cfg):
+		status = "运行中；监听触发后自动提交到 aria2"
+	case running && cfg != nil && cfg.Aria2.AutoDownload:
+		status = "运行中；自动提交等待 watch 使用 aria2 模式"
+	case running:
+		status = "运行中；自动下载已关闭"
+	default:
+		status = "已启用，正在启动或连接 aria2 RPC。"
+	}
+	return webui.ModuleState{
+		ID:          moduleIDAria2,
+		Name:        "aria2 下载器管理",
+		Description: "独立维护 aria2 RPC、任务恢复和异常监控；是否把监听生成的临时 HTTP 链接自动提交给 aria2 由 aria2.auto_download 控制。",
 		Enabled:     enabled,
 		Running:     running,
 		CanToggle:   true,
@@ -589,12 +756,17 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 	if cfg == nil {
 		return false
 	}
-	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.Watch || cfg.Modules.HTTP || cfg.Modules.Forward
+	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.Watch || cfg.Modules.HTTP || cfg.Modules.Aria2 || cfg.Modules.Forward
 }
 
 func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts := watch.DefaultOptions(cfg)
 	opts.HTTPService = m.httpService
+	if watchAutoDownloadEnabled(cfg) {
+		m.mu.Lock()
+		opts.DownloadSubmitter = m.aria2Mgr
+		m.mu.Unlock()
+	}
 	return opts
 }
 

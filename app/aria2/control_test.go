@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	appdownload "github.com/snakexgc/tdl/app/download"
 )
 
 const (
@@ -158,6 +160,36 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, records, testGIDRegisteredError)
 	require.Contains(t, records, testGIDNew)
+}
+
+func TestAria2ControllerSubmitsGeneratedHTTPLink(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := NewTaskStore(newMemoryTaskStorage())
+	client := &fakeAria2ControlClient{addedGID: testGIDNew}
+	controller := &Aria2Controller{
+		client:      client,
+		store:       store,
+		connections: 8,
+		logger:      zap.NewNop(),
+	}
+
+	result, err := controller.Submit(ctx, appdownload.Submission{
+		TaskID:      testDocument1,
+		DownloadURL: testDownloadURL1,
+		Dir:         testDownloadDir,
+		Out:         "video.mp4",
+		FullPath:    testDownloadDir + "/video.mp4",
+	})
+	require.NoError(t, err)
+	require.Equal(t, appdownload.Result{Target: "aria2", ID: testGIDNew}, result)
+	require.Equal(t, []string{testDownloadURL1}, client.addedURIs)
+	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: "video.mp4", Connections: 8}}, client.addedOptions)
+
+	records, err := store.Records(ctx)
+	require.NoError(t, err)
+	require.Equal(t, testDocument1, records[testGIDNew].TaskID)
 }
 
 func TestTaskNamePrefersBittorrentInfoPathThenURI(t *testing.T) {

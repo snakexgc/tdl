@@ -74,6 +74,7 @@ type ModulesConfig struct {
 	Bot     bool `json:"bot"`
 	Watch   bool `json:"watch"`
 	HTTP    bool `json:"http"`
+	Aria2   bool `json:"aria2"`
 	Forward bool `json:"forward"`
 }
 
@@ -86,6 +87,7 @@ type Aria2Config struct {
 	Secret         string `json:"secret"`
 	Dir            string `json:"dir"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+	AutoDownload   bool   `json:"auto_download"`
 }
 
 type ForwardConfig struct {
@@ -158,6 +160,7 @@ func DefaultConfig() *Config {
 			Bot:     true,
 			Watch:   true,
 			HTTP:    true,
+			Aria2:   true,
 			Forward: false,
 		},
 		Downloader: DownloaderConfig{
@@ -168,6 +171,7 @@ func DefaultConfig() *Config {
 			Secret:         "",
 			Dir:            "",
 			TimeoutSeconds: 30,
+			AutoDownload:   true,
 		},
 		Bot: BotConfig{
 			Token:        "",

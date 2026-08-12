@@ -43,12 +43,14 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
     "bot": true, // Telegram 机器人控制模块
     "watch": true, // 监听下载模块：表情监听和任务提交
     "http": true, // HTTP 下载代理模块：提供 /download 文件流链接
+    "aria2": true, // aria2 管理模块：独立维护 RPC、任务恢复和异常监控
     "forward": false // 监听转发模块
   },
   "downloader": {
     "mode": "aria2" // 下载器模式：aria2 或 internal
   },
   "aria2": {
+    "auto_download": true, // 表情触发并生成临时 HTTP 链接后，自动提交到 aria2
     "rpc_url": "http://127.0.0.1:6800/jsonrpc", // aria2 JSON-RPC 地址
     "secret": "123", // aria2 密钥
     "dir": "", // aria2 所在机器上的下载目录，注意区分操作系统，JSON 中 \ 需要写成 \\
@@ -109,8 +111,10 @@ HTTP 下载代理兼容标准单 Range、`multipart/byteranges` 多 Range、HEAD
 | `modules.bot`          | Telegram 机器人控制模块；关闭后不再接收机器人私聊命令                                             |
 | `modules.watch`        | 监听下载模块；负责 Telegram 表情监听和任务提交                                    |
 | `modules.http`         | 独立的 HTTP 下载代理模块；只负责启停 `/download` 文件流服务，关闭或重启它不会连带重启监听下载/aria2 自动化 |
+| `modules.aria2`        | 独立的 aria2 管理模块；负责 RPC 连接、任务恢复和异常监控，不负责监听表情或提供 HTTP 文件流 |
 | `modules.forward`      | 监听转发模块；监听配置的 Telegram 对象并转发新消息 |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
+| `aria2.auto_download`  | 表情触发并生成临时 HTTP 链接后是否自动提交到 aria2；仅在 watch、aria2 模块均启用且下载器模式为 `aria2` 时生效 |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
 | `bot.notify.on_download_start` | 下载开始时机器人发送通知消息；默认 `false` |
 | `bot.notify.on_download_complete` | 下载完成时机器人发送通知消息；默认 `false` |
