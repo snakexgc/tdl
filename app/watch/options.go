@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -28,6 +29,7 @@ type Options struct {
 	ForwardDedupeTTL        time.Duration
 	ForwardTriggerReactions []string
 	Notify                  NotifyFunc
+	HTTPService             *httpdl.Service
 	messageLinks            <-chan messageLinkSubmission
 }
 

@@ -108,7 +108,7 @@ HTTP 下载代理兼容标准单 Range、`multipart/byteranges` 多 Range、HEAD
 | `webui.password`       | Web 管理面板密码；默认 `admin`，首次登录后请立刻修改                                                |
 | `modules.bot`          | Telegram 机器人控制模块；关闭后不再接收机器人私聊命令                                             |
 | `modules.watch`        | 监听下载模块；负责 Telegram 表情监听和任务提交                                    |
-| `modules.http`         | HTTP 下载代理模块；提供 `/download` 文件流链接，aria2 下载器依赖该模块 |
+| `modules.http`         | 独立的 HTTP 下载代理模块；只负责启停 `/download` 文件流服务，关闭或重启它不会连带重启监听下载/aria2 自动化 |
 | `modules.forward`      | 监听转发模块；监听配置的 Telegram 对象并转发新消息 |
 | `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |

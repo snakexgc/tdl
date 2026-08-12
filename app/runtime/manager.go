@@ -14,10 +14,12 @@ import (
 
 	"github.com/snakexgc/tdl/app/bot"
 	appforward "github.com/snakexgc/tdl/app/forward"
+	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/app/webui"
+	"github.com/snakexgc/tdl/core/logctx"
 	"github.com/snakexgc/tdl/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
@@ -44,6 +46,8 @@ type Manager struct {
 	kvEngine    kv.Storage
 	namespaceKV storage.Storage
 	watchCtrl   *watch.Controller
+	httpService *httpdl.Service
+	httpCtrl    *httpdl.Controller
 
 	requestReboot func()
 	requestUpdate func(updater.Plan)
@@ -56,7 +60,6 @@ type Manager struct {
 	botErr         error
 	watchMode      string
 	watchEnabled   bool
-	httpEnabled    bool
 	forwardEnabled bool
 }
 
@@ -111,6 +114,7 @@ func wrapUpdateShutdown(cancel context.CancelFunc, fn func(updater.Plan)) func(u
 }
 
 func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Storage, opts Options) *Manager {
+	cfg := config.Get()
 	manager := &Manager{
 		parent:         ctx,
 		kvEngine:       engine,
@@ -118,12 +122,13 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		requestReboot:  opts.RequestReboot,
 		requestUpdate:  opts.RequestUpdate,
 		botStatus:      moduleStatusNotStarted,
-		watchMode:      config.EffectiveDownloaderMode(config.Get()),
-		watchEnabled:   config.Get() != nil && config.Get().Modules.Watch,
-		httpEnabled:    config.Get() != nil && config.Get().Modules.HTTP,
-		forwardEnabled: config.Get() != nil && config.Get().Modules.Forward,
+		watchMode:      config.EffectiveDownloaderMode(cfg),
+		watchEnabled:   cfg != nil && cfg.Modules.Watch,
+		forwardEnabled: cfg != nil && cfg.Modules.Forward,
 	}
-	manager.watchCtrl = watch.NewController(ctx, watch.DefaultOptions(config.Get()), manager.Notify)
+	manager.httpService = httpdl.NewService(cfg, namespaceKV, logctx.From(ctx))
+	manager.httpCtrl = httpdl.NewController(ctx, manager.httpService)
+	manager.watchCtrl = watch.NewController(ctx, manager.watchOptions(cfg), manager.Notify)
 	return manager
 }
 
@@ -172,23 +177,30 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 	if cfg == nil {
 		cfg = config.Get()
 	}
-	m.watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
+	restartHTTP := m.httpService.UpdateConfig(cfg)
+	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
 	nextWatchMode := config.EffectiveDownloaderMode(cfg)
 	m.mu.Lock()
 	prevWatchMode := m.watchMode
 	prevWatchEnabled := m.watchEnabled
-	prevHTTPEnabled := m.httpEnabled
 	prevForwardEnabled := m.forwardEnabled
 	m.watchMode = nextWatchMode
 	m.watchEnabled = cfg.Modules.Watch
-	m.httpEnabled = cfg.Modules.HTTP
 	m.forwardEnabled = cfg.Modules.Forward
 	m.mu.Unlock()
 	restartWatch := m.watchCtrl.Running() &&
 		((prevWatchMode != "" && prevWatchMode != nextWatchMode) ||
 			prevWatchEnabled != cfg.Modules.Watch ||
-			prevHTTPEnabled != cfg.Modules.HTTP ||
 			prevForwardEnabled != cfg.Modules.Forward)
+
+	if cfg.Modules.HTTP {
+		if restartHTTP && m.httpCtrl.Running() {
+			m.StopHTTP()
+		}
+		m.StartHTTP()
+	} else {
+		go m.StopHTTP()
+	}
 
 	if cfg.Modules.Bot {
 		m.StartBot()
@@ -271,10 +283,10 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		}
 		return m.watchState(next), nil
 	case moduleIDHTTP:
-		if m.watchCtrl.Running() {
-			m.restartWatchAsync()
-		} else if enabled && next.Modules.Watch {
-			_ = m.StartWatch(ctx)
+		if enabled {
+			m.StartHTTP()
+		} else {
+			m.StopHTTP()
 		}
 		return m.httpState(next), nil
 	case moduleIDForward:
@@ -322,7 +334,7 @@ func (m *Manager) StartBot() {
 			Namespace:             cfg.Namespace,
 			NTP:                   cfg.NTP,
 			ReconnectTimeout:      time.Duration(cfg.ReconnectTimeout) * time.Second,
-			Watch:                 watch.DefaultOptions(cfg),
+			Watch:                 m.watchOptions(cfg),
 			WatchControl:          m.watchCtrl,
 			DisableAutoStartWatch: true,
 			AfterConfigSave:       m.ApplyConfig,
@@ -387,13 +399,25 @@ func (m *Manager) StartWatch(ctx context.Context) error {
 	if err := m.checkSession(ctx); err != nil {
 		return err
 	}
-	m.watchCtrl.UpdateOptions(watch.DefaultOptions(cfg))
+	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
 	m.watchCtrl.Start()
 	return nil
 }
 
 func (m *Manager) StopWatch() {
 	m.watchCtrl.Stop()
+}
+
+func (m *Manager) StartHTTP() {
+	cfg := config.Get()
+	if cfg == nil || !cfg.Modules.HTTP {
+		return
+	}
+	m.httpCtrl.Start()
+}
+
+func (m *Manager) StopHTTP() {
+	m.httpCtrl.Stop()
 }
 
 // restartWatchAsync stops the running watcher and starts it again on a
@@ -408,6 +432,7 @@ func (m *Manager) restartWatchAsync() {
 
 func (m *Manager) Shutdown() {
 	m.StopBot()
+	m.StopHTTP()
 	m.StopWatch()
 }
 
@@ -495,18 +520,14 @@ func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
 		cfg = config.Get()
 	}
 	enabled := cfg != nil && cfg.Modules.HTTP
-	running := m.watchCtrl.Running() && cfg != nil && cfg.Modules.Watch && cfg.Modules.HTTP && strings.TrimSpace(config.HTTPListenAddr(cfg)) != ""
+	running := m.httpCtrl.Running()
 	var status string
 	if running {
 		status = moduleStatusRunning + "：" + config.HTTPListenAddr(cfg)
 	} else if !enabled {
 		status = "已关闭"
-	} else if cfg != nil && !cfg.Modules.Watch {
-		status = "已启用，等待监听下载模块启动。"
-	} else if err := m.watchCtrl.LastError(); err != nil {
+	} else if err := m.httpCtrl.LastError(); err != nil {
 		status = "已停止：" + err.Error()
-	} else if cfg != nil && config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2 && strings.TrimSpace(cfg.HTTP.PublicBaseURL) == "" {
-		status = "已启用，等待填写 http.public_base_url。"
 	} else {
 		status = "已启用，等待启动。"
 	}
@@ -568,7 +589,13 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 	if cfg == nil {
 		return false
 	}
-	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.Watch || cfg.Modules.Forward
+	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.Watch || cfg.Modules.HTTP || cfg.Modules.Forward
+}
+
+func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
+	opts := watch.DefaultOptions(cfg)
+	opts.HTTPService = m.httpService
+	return opts
 }
 
 func (m *Manager) setBotStopped(status string, err error) {

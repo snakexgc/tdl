@@ -273,9 +273,10 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 
 	s.mu.RLock()
 	task, ok := s.tasks[id]
+	ttl := s.ttl
 	s.mu.RUnlock()
 	if ok {
-		if !isDownloadTaskExpired(downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt), now, s.ttl) {
+		if !isDownloadTaskExpired(downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt), now, ttl) {
 			s.touch(ctx, id, nil, now)
 			return task, true, nil
 		}
@@ -324,7 +325,7 @@ func (s *taskStore) reload(ctx context.Context, id string, now time.Time) (*down
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		return nil, false, errors.Wrap(err, "decode persistent download task")
 	}
-	if isDownloadTaskExpired(downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt), now, s.ttl) {
+	if isDownloadTaskExpired(downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt), now, s.TTL()) {
 		if err := s.delete(ctx, id); err != nil {
 			return nil, false, err
 		}
@@ -350,12 +351,15 @@ func (s *taskStore) reload(ctx context.Context, id string, now time.Time) (*down
 // preserved. The write is throttled to one per refresh interval and is
 // best-effort: a failed refresh just means the next request will retry.
 func (s *taskStore) touch(ctx context.Context, id string, data []byte, now time.Time) {
-	if s == nil || s.kv == nil || s.ttl == 0 {
+	if s == nil || s.kv == nil {
 		return
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ttl == 0 {
+		return
+	}
 
 	if data == nil {
 		var err error
@@ -393,6 +397,8 @@ func (s *taskStore) TTL() time.Duration {
 	if s == nil {
 		return 0
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.ttl
 }
 

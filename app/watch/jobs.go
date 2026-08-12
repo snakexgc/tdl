@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	watcharia2 "github.com/snakexgc/tdl/app/watch/aria2"
+	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/core/logctx"
 	"github.com/snakexgc/tdl/core/tmedia"
 	"github.com/snakexgc/tdl/core/util/tutil"
@@ -317,7 +317,7 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 	}
 
 	connections := config.EffectivePoolSize(cfg)
-	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, watcharia2.AddURIOptions{
+	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, aria2.AddURIOptions{
 		Dir:         prepared.dir,
 		Out:         prepared.out,
 		Connections: connections,
@@ -325,7 +325,7 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 	if err != nil {
 		return errors.Wrap(err, "submit to aria2")
 	}
-	if err := w.runtime.aria2Tasks.Add(ctx, watcharia2.TaskRecord{
+	if err := w.runtime.aria2Tasks.Add(ctx, aria2.TaskRecord{
 		GID:         gid,
 		TaskID:      task.ID,
 		DownloadURL: downloadURL,

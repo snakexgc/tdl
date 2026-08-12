@@ -100,6 +100,7 @@ func (r downloadRange) length() int64 {
 }
 
 type downloadProxy struct {
+	cfgMu     sync.RWMutex
 	cfg       config.HTTPConfig
 	tasks     *taskStore
 	pools     *poolHolder
@@ -131,21 +132,41 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 		pools:     pools,
 		sources:   newSourceRegistry(),
 		scheduler: transfer.NewScheduler(maxFiles, poolSize),
-		logger:    logger.Named("watch-http"),
+		logger:    logger.Named("http-download"),
 	}
 
 	p.stream = p.streamTask
 	p.parallel = p.streamTaskParallel
 	setActiveScheduler(p.scheduler)
-	p.server = &http.Server{
+	p.server = p.newServer()
+
+	return p
+}
+
+func (p *downloadProxy) newServer() *http.Server {
+	cfg := p.config()
+	return &http.Server{
 		Addr:              config.HTTPConfigListenAddr(cfg),
 		Handler:           p.routes(),
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 		IdleTimeout:       httpIdleTimeout,
 		MaxHeaderBytes:    httpMaxHeaderBytes,
 	}
+}
 
-	return p
+func (p *downloadProxy) config() config.HTTPConfig {
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+	return p.cfg
+}
+
+func (p *downloadProxy) updateConfig(cfg config.HTTPConfig) bool {
+	p.cfgMu.Lock()
+	previousListen := config.HTTPConfigListenAddr(p.cfg)
+	p.cfg = cfg
+	nextListen := config.HTTPConfigListenAddr(p.cfg)
+	p.cfgMu.Unlock()
+	return previousListen != nextListen
 }
 
 func NewProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *PoolHolder, kv storage.Storage, logger *zap.Logger) *Proxy {
@@ -224,24 +245,26 @@ func (p *downloadProxy) StreamParallel(ctx context.Context, task *Task, lease *t
 }
 
 func (p *downloadProxy) Start(ctx context.Context) error {
+	cfg := p.config()
 	p.logger.Info("Starting HTTP download proxy",
-		zap.String("listen", config.HTTPConfigListenAddr(p.cfg)),
-		zap.String("public_base_url", p.cfg.PublicBaseURL),
-		zap.Duration("download_link_ttl", p.tasks.ttl),
+		zap.String("listen", config.HTTPConfigListenAddr(cfg)),
+		zap.String("public_base_url", cfg.PublicBaseURL),
+		zap.Duration("download_link_ttl", p.tasks.TTL()),
 		zap.Int("per_dc_capacity", p.scheduler.Capacity()))
 
 	p.startCleanupLoop(ctx)
 	p.startSourceCleanupLoop(ctx)
+	server := p.newServer()
 
 	go func() {
 		<-ctx.Done()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = p.server.Shutdown(shutdownCtx)
+		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	return p.server.ListenAndServe()
+	return server.ListenAndServe()
 }
 
 func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
@@ -249,7 +272,7 @@ func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
 }
 
 func (p *downloadProxy) startCleanupLoop(ctx context.Context) {
-	if p.tasks.kv == nil || p.tasks.ttl == 0 {
+	if p.tasks.kv == nil || p.tasks.TTL() == 0 {
 		return
 	}
 
@@ -324,7 +347,7 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 }
 
 func (p *downloadProxy) BuildURL(taskID string) (string, error) {
-	return buildDownloadURL(p.cfg.PublicBaseURL, taskID)
+	return buildDownloadURL(p.config().PublicBaseURL, taskID)
 }
 
 func (p *downloadProxy) routes() http.Handler {
@@ -781,22 +804,6 @@ func parseDownloadRanges(header string, size int64) ([]downloadRange, error) {
 		return nil, errRangeNoOverlap
 	}
 	return ranges, nil
-}
-
-// parseDownloadRange remains the small single-range helper used by package
-// callers and tests. The HTTP handler itself supports a full multi-range set.
-func parseDownloadRange(header string, size int64) (start, end int64, partial bool, err error) {
-	ranges, err := parseDownloadRanges(header, size)
-	if err != nil {
-		return 0, 0, false, err
-	}
-	if len(ranges) == 0 {
-		return 0, size - 1, false, nil
-	}
-	if len(ranges) != 1 {
-		return 0, 0, false, errors.New("multiple ranges require multipart response")
-	}
-	return ranges[0].start, ranges[0].end, true, nil
 }
 
 func downloadRangesSizeExceeds(ranges []downloadRange, size int64) bool {

@@ -3,8 +3,8 @@ package watch
 import (
 	"go.uber.org/zap"
 
+	"github.com/snakexgc/tdl/app/aria2"
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/watch/aria2"
 	"github.com/snakexgc/tdl/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
@@ -22,14 +22,12 @@ type watchRuntime struct {
 }
 
 func newWatchRuntime(cfg *config.Config, opts Options, kvd storage.Storage, logger *zap.Logger) *watchRuntime {
-	pools := &httpdl.PoolHolder{}
-	limit := effectiveWatchOptionLimit(opts.Limit, cfg)
-	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
-
-	proxy := httpdl.NewProxy(cfg.HTTP, limit, poolSize, pools, kvd, logger)
-	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
-		proxy.SetTaskTTL(0)
+	service := opts.HTTPService
+	if service == nil {
+		service = httpdl.NewService(cfg, kvd, logger)
 	}
+	proxy := service.Proxy()
+	pools := service.Pools()
 	runtime := &watchRuntime{
 		proxy:      proxy,
 		aria2:      aria2.NewClient(cfg.Aria2),

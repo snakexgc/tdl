@@ -37,6 +37,17 @@ func TestValidateWatchConfigAllowsInternalModeWithoutAria2(t *testing.T) {
 	require.NoError(t, validateWatchConfig(cfg))
 }
 
+func TestValidateWatchConfigDoesNotOwnHTTPServerLifecycle(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Downloader.Mode = config.DownloaderModeAria2
+	cfg.Modules.HTTP = false
+	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
+
+	require.NoError(t, validateWatchConfig(cfg))
+}
+
 func TestInternalModeUsesConfiguredPoolSize(t *testing.T) {
 	t.Parallel()
 

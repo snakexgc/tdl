@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"os/signal"
 	"strings"
@@ -23,8 +22,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/snakexgc/tdl/app/aria2"
 	appforward "github.com/snakexgc/tdl/app/forward"
-	watcharia2 "github.com/snakexgc/tdl/app/watch/aria2"
 	"github.com/snakexgc/tdl/core/dcpool"
 	"github.com/snakexgc/tdl/core/logctx"
 	"github.com/snakexgc/tdl/core/storage"
@@ -109,7 +108,7 @@ func Run(ctx context.Context, opts Options) error {
 			color.Yellow("⏹ Stopping watcher...")
 			switch downloaderMode {
 			case config.DownloaderModeAria2:
-				paused, err := watcharia2.PauseTDLTasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+				paused, err := aria2.PauseTDLTasksForShutdown(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 				if err != nil {
 					color.Yellow("⚠️ Failed to pause tdl aria2 tasks before shutdown: %v", err)
 					return
@@ -145,7 +144,7 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Download {
 		switch downloaderMode {
 		case config.DownloaderModeAria2:
-			if err := waitForAria2(runCtx, runtime.aria2, opts.Limit, watcharia2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
+			if err := waitForAria2(runCtx, runtime.aria2, opts.Limit, aria2.DefaultConnectRetryInterval, logctx.From(runCtx)); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
@@ -153,14 +152,15 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			logctx.From(runCtx).Info("Configured aria2 max concurrent downloads",
 				zap.Int("limit", opts.Limit))
-			runtime.telegramErrRegulator = watcharia2.NewTelegramErrorRegulator(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			runtime.telegramErrRegulator = aria2.NewTelegramErrorRegulator(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 			runtime.proxy.SetTelegramFileErrorReporter(runtime.telegramErrRegulator)
+			defer runtime.proxy.SetTelegramFileErrorReporter(nil)
 			go runtime.telegramErrRegulator.Run(runCtx)
 
-			runtime.zeroSpeedMonitor = watcharia2.NewZeroSpeedMonitor(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			runtime.zeroSpeedMonitor = aria2.NewZeroSpeedMonitor(runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 			go runtime.zeroSpeedMonitor.Run(runCtx)
 
-			if count, err := watcharia2.ResumeStartupPausedTasks(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx)); err != nil {
+			if count, err := aria2.ResumeStartupPausedTasks(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx)); err != nil {
 				if !errors.Is(err, context.Canceled) {
 					logctx.From(runCtx).Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
 				}
@@ -193,29 +193,12 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	proxyErrCh := make(chan error, 1)
-	httpListen := config.HTTPListenAddr(cfg)
-	if opts.Download && cfg.Modules.HTTP && strings.TrimSpace(httpListen) != "" {
-		go func() {
-			if err := runtime.proxy.Start(runCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				select {
-				case proxyErrCh <- err:
-				default:
-				}
-				cancelRun()
-			}
-		}()
-	}
-
 	if opts.Download && opts.Forward {
 		color.Green("👀 Watching for reactions and forward sources... Press Ctrl+C to stop")
 	} else if opts.Forward {
 		color.Green("👀 Watching forward sources... Press Ctrl+C to stop")
 	} else {
 		color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
-	}
-	if opts.Download && cfg.Modules.HTTP && strings.TrimSpace(httpListen) != "" {
-		color.Green("   HTTP listen: %s", httpListen)
 	}
 	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 		color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
@@ -261,26 +244,9 @@ func Run(ctx context.Context, opts Options) error {
 		reconnectDelay = 5 * time.Second
 	}
 	var pausedAria2GIDs []string
-	takeProxyErr := func() error {
-		select {
-		case err := <-proxyErrCh:
-			return err
-		default:
-			return nil
-		}
-	}
 
 	for {
-		select {
-		case err := <-proxyErrCh:
-			return errors.Wrap(err, "start http proxy")
-		default:
-		}
-
 		if runCtx.Err() != nil {
-			if err := takeProxyErr(); err != nil {
-				return errors.Wrap(err, "start http proxy")
-			}
 			return nil
 		}
 
@@ -289,25 +255,19 @@ func Run(ctx context.Context, opts Options) error {
 			pausedAria2GIDs = nil
 		}
 		if err == nil || errors.Is(err, context.Canceled) {
-			if proxyErr := takeProxyErr(); proxyErr != nil {
-				return errors.Wrap(proxyErr, "start http proxy")
-			}
 			return nil
 		}
 
 		color.Yellow("⚠️ Watcher disconnected: %v", err)
 		if opts.Download && downloaderMode == config.DownloaderModeAria2 {
-			newPausedGIDs, pauseErr := watcharia2.SuspendTDLTasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
+			newPausedGIDs, pauseErr := aria2.SuspendTDLTasksForReconnect(runCtx, runtime.aria2, runtime.aria2Tasks, cfg.HTTP.PublicBaseURL, logctx.From(runCtx))
 			if pauseErr != nil {
 				if errors.Is(pauseErr, context.Canceled) {
-					if proxyErr := takeProxyErr(); proxyErr != nil {
-						return errors.Wrap(proxyErr, "start http proxy")
-					}
 					return nil
 				}
 				return errors.Wrap(pauseErr, "pause aria2 tasks before reconnect")
 			}
-			pausedAria2GIDs = watcharia2.MergeUniqueGIDs(pausedAria2GIDs, newPausedGIDs)
+			pausedAria2GIDs = aria2.MergeUniqueGIDs(pausedAria2GIDs, newPausedGIDs)
 			if len(newPausedGIDs) > 0 {
 				color.Yellow("⏸ Paused %d tdl aria2 task(s) before reconnect", len(newPausedGIDs))
 			}
@@ -315,12 +275,7 @@ func Run(ctx context.Context, opts Options) error {
 		color.Yellow("🔄 Reconnecting in %v...", reconnectDelay)
 
 		select {
-		case err := <-proxyErrCh:
-			return errors.Wrap(err, "start http proxy")
 		case <-runCtx.Done():
-			if proxyErr := takeProxyErr(); proxyErr != nil {
-				return errors.Wrap(proxyErr, "start http proxy")
-			}
 			return nil
 		case <-time.After(reconnectDelay):
 		}
@@ -409,11 +364,11 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 			defer runtime.internal.Stop()
 		}
 		if downloaderMode == config.DownloaderModeAria2 && len(pausedAria2GIDs) > 0 {
-			if err := watcharia2.ResumeTDLTasks(ctx, runtime.aria2, pausedAria2GIDs, logctx.From(ctx)); err != nil {
+			if err := aria2.ResumeTDLTasks(ctx, runtime.aria2, pausedAria2GIDs, logctx.From(ctx)); err != nil {
 				return errors.Wrap(err, "resume paused aria2 tasks")
 			}
 			resumed = true
-			color.Green("▶ Resumed %d tdl aria2 task(s) after reconnect", len(watcharia2.UniqueGIDs(pausedAria2GIDs)))
+			color.Green("▶ Resumed %d tdl aria2 task(s) after reconnect", len(aria2.UniqueGIDs(pausedAria2GIDs)))
 		}
 		updatesDone := make(chan struct{})
 		go func() {
@@ -469,7 +424,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 
 func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, limit int, retryInterval time.Duration, logger *zap.Logger) error {
 	if retryInterval <= 0 {
-		retryInterval = watcharia2.DefaultConnectRetryInterval
+		retryInterval = aria2.DefaultConnectRetryInterval
 	}
 	if logger == nil {
 		logger = zap.NewNop()
@@ -480,7 +435,7 @@ func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, lim
 		if err == nil {
 			return nil
 		}
-		if errors.Is(err, context.Canceled) || !watcharia2.IsConnectionError(err) {
+		if errors.Is(err, context.Canceled) || !aria2.IsConnectionError(err) {
 			return err
 		}
 
@@ -508,12 +463,6 @@ func waitForAria2(ctx context.Context, client aria2ConcurrentDownloadSetter, lim
 func validateWatchConfig(cfg *config.Config) error {
 	switch config.EffectiveDownloaderMode(cfg) {
 	case config.DownloaderModeAria2:
-		if !cfg.Modules.HTTP {
-			return errors.New("modules.http must be enabled when downloader.mode is aria2")
-		}
-		if strings.TrimSpace(config.HTTPListenAddr(cfg)) == "" {
-			return errors.New("http.address or http.port is empty")
-		}
 		if cfg.HTTP.PublicBaseURL == "" {
 			return errors.New("http.public_base_url is empty, please set it in config.json")
 		}

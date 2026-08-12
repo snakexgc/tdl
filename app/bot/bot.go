@@ -20,6 +20,7 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
+	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
@@ -147,8 +148,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		}
 		return gotdLoginRunner{opts: sessionOptionsForKV(targetKV)}, nil
 	})
-	aria2Factory := func() *watch.Aria2Controller {
-		return watch.NewAria2Controller(config.Get(), kvd, nil)
+	aria2Factory := func() *aria2.Controller {
+		return aria2.NewController(config.Get(), kvd, nil)
 	}
 	internalFactory := func() *watch.InternalDownloadController {
 		return watch.NewInternalDownloadController(kvd)
