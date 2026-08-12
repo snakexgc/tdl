@@ -16,7 +16,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/consts"
 )
 
-const internalDownloadFallbackDirName = "docnload"
+const internalDownloadFallbackDirName = "downloads"
 
 func prepareInternalOutputRoot(cfg *config.Config) (root string, fallback bool, err error) {
 	if cfg == nil {
