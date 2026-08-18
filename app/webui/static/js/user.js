@@ -243,7 +243,11 @@ async function startPhoneLogin() {
   }
   const namespace = readNamespaceInput("login-namespace", renderLoginError);
   if (!namespace) return;
-  await loginRequest("/api/login/phone/start", { phone, namespace });
+  await loginRequest(
+    "/api/login/phone/start",
+    { phone, namespace },
+    "正在连接 Telegram 并发送验证码，请稍候；网络状况不佳时可能需要一些时间。",
+  );
 }
 
 async function submitLoginCode() {
@@ -282,8 +286,8 @@ async function cancelLogin() {
   }
 }
 
-async function loginRequest(path, body) {
-  setLoginStatus("正在处理登录请求...");
+async function loginRequest(path, body, pendingMessage = "正在处理登录请求...") {
+  setLoginStatus(pendingMessage);
   try {
     const data = await api(path, {
       method: "POST",
@@ -397,8 +401,10 @@ function renderLoginPanel(data) {
     panel = "login-step-result";
   } else if (data.stage === "password") {
     panel = "login-step-password";
-  } else if (data.active && data.kind === "phone") {
+  } else if (data.stage === "code") {
     panel = "login-step-code";
+  } else if (data.active && data.kind === "phone") {
+    panel = "login-step-sending";
   }
   if (showLoginPanel(panel)) {
     focusLoginPanel(panel);
@@ -460,7 +466,10 @@ function loginStatusMessage(data = {}) {
   if (data.active && data.error) return data.error;
   if (data.stage === "done") return "登录成功。";
   if (data.stage === "password") return data.status || "请输入 2FA 密码。";
-  if (data.active && data.kind === "phone") return data.status || "请输入 Telegram 收到的验证码。";
+  if (data.stage === "code") return data.status || "请输入 Telegram 收到的验证码。";
+  if (data.active && data.kind === "phone") {
+    return data.status || "正在连接 Telegram 并发送验证码，请稍候。";
+  }
   if (data.status && data.status !== "当前没有登录流程。") return data.status;
   return "";
 }

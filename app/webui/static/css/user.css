@@ -210,7 +210,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-step-panel.animate-in { animation: none; }
+  .login-step-panel.animate-in,
+  .login-waiting-indicator { animation: none; }
 }
 
 .login-step-copy h3 {
@@ -226,6 +227,28 @@
 
 .login-form-panel {
   max-width: 420px;
+}
+
+.login-waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  max-width: 680px;
+}
+
+.login-waiting-indicator {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin-top: 2px;
+  border: 3px solid var(--primary-soft);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: login-waiting-spin 800ms linear infinite;
+}
+
+@keyframes login-waiting-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Login result ── */

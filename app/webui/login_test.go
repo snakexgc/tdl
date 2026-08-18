@@ -4,11 +4,47 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/app/login"
 )
+
+func TestWebCodeAuthenticatorPromptsOnlyAfterCodeSent(t *testing.T) {
+	flow := &webLoginFlow{
+		stage:  loginStageSendingCode,
+		status: loginStatusSendingCode,
+		codeCh: make(chan string, 1),
+	}
+	authenticator := webCodeAuthenticator{flow: flow, phone: "+8613800000000"}
+
+	require.EqualError(t, flow.sendCode("12345"), "验证码尚未发送，请稍候。")
+	require.Equal(t, loginStageSendingCode, flow.stage)
+	require.Equal(t, loginStatusSendingCode, flow.status)
+
+	type codeResult struct {
+		code string
+		err  error
+	}
+	result := make(chan codeResult, 1)
+	go func() {
+		code, err := authenticator.Code(context.Background(), &tg.AuthSentCode{})
+		result <- codeResult{code: code, err: err}
+	}()
+
+	require.Eventually(t, func() bool {
+		flow.mu.Lock()
+		defer flow.mu.Unlock()
+		return flow.stage == "code" && flow.status == loginStatusCodeSent
+	}, time.Second, 10*time.Millisecond)
+
+	require.NoError(t, flow.sendCode("12345"))
+	got := <-result
+	require.NoError(t, got.err)
+	require.Equal(t, "12345", got.code)
+}
 
 func TestWebLoginFlowKeepsRetryPromptUntilNextSubmit(t *testing.T) {
 	flow := &webLoginFlow{

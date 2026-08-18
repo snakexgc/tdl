@@ -18,8 +18,12 @@ import (
 const (
 	webLoginTimeout = 10 * time.Minute
 
-	loginStageDone   = "done"
-	loginStageFailed = "failed"
+	loginStageSendingCode = "sending_code"
+	loginStageDone        = "done"
+	loginStageFailed      = "failed"
+
+	loginStatusSendingCode = "正在连接 Telegram 并发送验证码，请稍候；网络状况不佳时可能需要一些时间。"
+	loginStatusCodeSent    = "验证码已发送，请输入 Telegram 收到的原始验证码。"
 )
 
 type webLoginManager struct {
@@ -70,7 +74,6 @@ func (m *webLoginManager) startPhone(parent context.Context, phone, namespace st
 		return err
 	}
 	return m.start(parent, "phone", namespace, func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
-		flow.set("code", "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
 		authenticator := webCodeAuthenticator{
 			flow:  flow,
 			phone: phone,
@@ -78,6 +81,8 @@ func (m *webLoginManager) startPhone(parent context.Context, phone, namespace st
 		return login.CodeWithAuthenticator(ctx, m.sessionOptions(kvd), authenticator)
 	}, func(flow *webLoginFlow) {
 		flow.phone = phone
+		flow.stage = loginStageSendingCode
+		flow.status = loginStatusSendingCode
 	})
 }
 
@@ -294,7 +299,8 @@ func (a webCodeAuthenticator) Phone(ctx context.Context) (string, error) {
 }
 
 func (a webCodeAuthenticator) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
-	a.flow.prompt("code", "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
+	// gotd only asks for the code after Telegram has acknowledged SendCode.
+	a.flow.prompt("code", loginStatusCodeSent)
 	return a.flow.waitCode(ctx)
 }
 
@@ -390,9 +396,16 @@ func (f *webLoginFlow) sendCode(code string) error {
 	if code == "" {
 		return errors.New("code is empty")
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.stage != "code" {
+		return errors.New("验证码尚未发送，请稍候。")
+	}
 	select {
 	case f.codeCh <- code:
-		f.verifying("code", "正在验证验证码...")
+		f.stage = "code"
+		f.status = "正在验证验证码..."
+		f.errText = ""
 		return nil
 	default:
 		return errors.New("code has already been submitted")
