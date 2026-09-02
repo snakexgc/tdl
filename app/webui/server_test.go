@@ -116,6 +116,8 @@ func TestRoutesAuthenticateWithWebSessionCookie(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"process"`)
 	require.Contains(t, rec.Body.String(), `"download"`)
+	require.Contains(t, rec.Body.String(), `"dc_schedulers"`)
+	require.NotContains(t, rec.Body.String(), `"buffer_bytes"`)
 
 	req = httptest.NewRequest(http.MethodGet, "/views/user.html", nil)
 	req.AddCookie(sessionCookie)
@@ -519,7 +521,7 @@ func TestAddAria2URISubmitsSingleHTTPConnection(t *testing.T) {
 	}, reqBody.Params[1])
 }
 
-func TestAddAria2URISubmitsClientRangeConnections(t *testing.T) {
+func TestAddAria2URISubmitsPoolSizeConnections(t *testing.T) {
 	var reqBody struct {
 		Method string `json:"method"`
 		Params []any  `json:"params"`
@@ -622,7 +624,7 @@ func TestRewriteAria2ProxyRequestNormalizesTDLAddURI(t *testing.T) {
 	require.Equal(t, "video.mp4", options["out"])
 }
 
-func TestRewriteAria2ProxyRequestNormalizesTDLAddURIClientRange(t *testing.T) {
+func TestRewriteAria2ProxyRequestNormalizesTDLAddURIToPoolSize(t *testing.T) {
 	body := []byte(`{
 		"jsonrpc":"2.0",
 		"id":"retry",

@@ -33,13 +33,10 @@ func (s *telegramMediaSource) Media() *tmedia.Media {
 	return s.media
 }
 
-func (s *telegramMediaSource) Update(media *tmedia.Media, refresh func(ctx context.Context) (*tmedia.Media, error)) {
+func (s *telegramMediaSource) UpdateRefresh(refresh func(ctx context.Context) (*tmedia.Media, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if media != nil {
-		s.media = media
-	}
 	s.refresh = refresh
 }
 
@@ -50,23 +47,15 @@ func (s *telegramMediaSource) refreshFunc() func(ctx context.Context) (*tmedia.M
 	return s.refresh
 }
 
-func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.Lease, reporter TelegramFileErrorReporter, req telegramChunkRequest) ([]byte, error) {
+func (s *telegramMediaSource) FetchChunk(ctx context.Context, pool dcpool.Pool, lease *transfer.TaskLease, reporter TelegramFileErrorReporter, req telegramChunkRequest) ([]byte, error) {
 	for {
 		media := s.Media()
 		if media == nil {
 			return nil, errors.New("telegram media is unavailable")
 		}
 
-		if lease != nil {
-			if err := lease.AcquireWorker(ctx); err != nil {
-				return nil, err
-			}
-		}
 		client := pool.Client(ctx, media.DC)
-		data, err := fetchTelegramMediaChunk(ctx, client, media, req)
-		if lease != nil {
-			lease.ReleaseWorker()
-		}
+		data, err := fetchTelegramMediaChunk(ctx, client, media, lease, req)
 		if err == nil {
 			return data, nil
 		}
@@ -123,7 +112,7 @@ type telegramChunkRequest struct {
 	limit  int
 }
 
-func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmedia.Media, chunkReq telegramChunkRequest) ([]byte, error) {
+func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmedia.Media, lease *transfer.TaskLease, chunkReq telegramChunkRequest) ([]byte, error) {
 	logger := logctx.From(ctx)
 
 	transientRetries := 0
@@ -157,13 +146,24 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 		}
 		req.SetPrecise(true)
 
-		// A per-attempt deadline turns a hung request into a retryable timeout
-		// instead of an indefinite 0 B/s stall.
-		attemptCtx, cancel := context.WithTimeout(ctx, telegramChunkAttemptTimeout)
-		finish := beginTelegramFileRequest()
-		resp, err := client.UploadGetFile(attemptCtx, req)
-		finish()
-		cancel()
+		// A scheduler permit covers exactly one upload.getFile RPC. It is not
+		// retained while backing off, refreshing metadata, or writing to the HTTP
+		// client, so every free DC connection can immediately serve another Range
+		// request without ever exceeding the configured per-DC capacity.
+		chunkLease, err := lease.AcquireChunk(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := func() (tg.UploadFileClass, error) {
+			defer chunkLease.Release()
+			// A per-attempt deadline turns a hung request into a retryable timeout
+			// instead of an indefinite 0 B/s stall.
+			attemptCtx, cancel := context.WithTimeout(ctx, telegramChunkAttemptTimeout)
+			defer cancel()
+			finish := beginTelegramFileRequest()
+			defer finish()
+			return client.UploadGetFile(attemptCtx, req)
+		}()
 
 		// Real client cancellation/deadline on the parent context is never retried.
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -210,7 +210,7 @@ func fetchTelegramMediaChunk(ctx context.Context, client *tg.Client, media *tmed
 
 		recordTelegramDownloadedBytes(len(file.Bytes))
 		// gotd already decodes UploadFile.Bytes into an owned slice; avoid copying
-		// every 1 MiB chunk again before it enters the session cache.
+		// the transient 1 MiB chunk again before writing it downstream.
 		return file.Bytes, nil
 	}
 }

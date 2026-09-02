@@ -17,9 +17,8 @@ const sections = [
       ["proxy_username", "代理用户名", "text", "代理需要认证时填写；没有认证时留空。"],
       ["proxy_password", "代理密码", "password", "代理需要认证时填写；没有认证时留空，保存时留空表示保持原密码。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
-      ["threads", "单文件线程数", "number", "与 tdl --threads 一致，限制单个文件最多同时使用多少个分片请求；小文件会自动降低实际线程数。"],
       ["limit", "并发下载数", "number", "与 tdl --limit 一致，限制同时下载的文件任务数量。"],
-      ["pool_size", "DC 连接池大小", "number", "与 tdl --pool 一致，限制每个 Telegram DC 的连接池大小；填 0 表示无限。"],
+      ["pool_size", "每 DC 下载容量", "number", "同时限制每个 Telegram DC 的连接池和下载流；默认 8，填 0 或负数会恢复为 8。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
@@ -29,7 +28,7 @@ const sections = [
       ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
       ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
       ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],
-      ["file_size_mb", "文件大小过滤", "number", "单位 MB；填 0 表示不限制，小于该大小的文件会在扩展名过滤后跳过。"],
+      ["file_size_min_mb", "文件大小范围", "sizeRange", "单位 MB；左右边界均包含在内，任一边填 0 表示该侧不限制。", "file_size_max_mb"],
     ],
   },
   {
@@ -39,10 +38,6 @@ const sections = [
       ["http.port", "监听端口", "number", "tdl 提供下载链接的监听端口，例如 22334。"],
       ["http.public_base_url", "对外访问地址", "text", "aria2 能访问到的 tdl 地址，不同机器时请填写局域网地址。"],
       ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
-      ["http.transfer_mode", "传输模式", "select", "source_parallel 为默认单 Range 模式；client_range 允许 aria2 多 Range。", ["source_parallel", "client_range"]],
-      ["http.range_connections", "Range 连接数", "number", "仅 client_range 生效；填 0 表示 min(threads, 4)。"],
-      ["http.buffer.mode", "下载缓冲", "select", "memory 为所有 HTTP 下载共享 chunk cache；off 表示只保留正在传输的分片。", ["memory", "off"]],
-      ["http.buffer.size_mb", "缓冲大小", "number", "所有 HTTP 下载合计可使用的共享内存上限，单位 MiB；已读分片最多保留 5 秒。"],
     ],
   },
   {
@@ -58,20 +53,22 @@ const sections = [
     title: "模块开关",
     fields: [
       ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
-      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情，并把文件提交到当前下载器。"],
-      ["modules.http", "HTTP 下载代理", "bool", "启用后提供 /download 文件流链接；aria2 下载器依赖该模块。"],
+      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情并生成临时 HTTP 链接；是否自动提交给 aria2 由 aria2.auto_download 控制。"],
+      ["modules.http", "HTTP 下载代理", "bool", "独立启停 /download 文件流服务，不会连带重启监听下载或 aria2 自动化。"],
+      ["modules.aria2", "aria2 下载器管理", "bool", "独立启停 aria2 RPC 管理、任务恢复和异常监控；不会影响 watch 生成临时 HTTP 链接。"],
       ["modules.forward", "监听转发", "bool", "启用后监听 forward.listen 中的 Telegram 对象并转发新消息。"],
     ],
   },
   {
     title: "下载器",
     fields: [
-      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部简易本地下载器；并发下载数由 limit 控制，单文件线程数由 threads 控制。", ["aria2", "internal"]],
+      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部下载器；并发文件数由 limit 控制，每个 DC 的连接与下载流由 pool_size 控制。", ["aria2", "internal"]],
     ],
   },
   {
     title: "aria2",
     fields: [
+      ["aria2.auto_download", "监听触发后自动下载", "bool", "仅当监听模块、aria2 模块均启用且 downloader.mode 为 aria2 时，把表情触发生成的临时 HTTP 链接自动提交到 aria2；关闭后只生成链接。"],
       ["aria2.rpc_url", "aria2 连接地址", "text", "aria2 的连接地址，例如 http://127.0.0.1:6800/jsonrpc。"],
       ["aria2.secret", "aria2 密钥", "password", "aria2 设置了密钥时填写；留空表示保持原密钥。"],
       ["aria2.dir", "下载根目录", "text", "aria2 所在机器上的保存根目录；留空时使用 aria2 默认目录。"],
@@ -155,6 +152,8 @@ function renderField(field) {
     control = renderTagInput(path, type, value || []);
   } else if (type === "password") {
     control = `<input data-config-control type="password" data-path="${escapeAttr(path)}" data-type="${type}" value="" placeholder="留空保持不变">`;
+  } else if (type === "sizeRange") {
+    control = renderFileSizeRangeInput(path, options, value, getPath(state.config, options));
   } else {
     control = `<input data-config-control type="${type === "number" ? "number" : "text"}" data-path="${escapeAttr(path)}" data-type="${type}" value="${escapeAttr(value ?? "")}">`;
   }
@@ -163,6 +162,16 @@ function renderField(field) {
       <label>${escapeHTML(label)}</label>
       ${control}
       <small>${escapeHTML(help || path)}</small>
+    </div>
+  `;
+}
+
+function renderFileSizeRangeInput(minPath, maxPath, minValue, maxValue) {
+  return `
+    <div class="file-size-range-control" data-file-size-range>
+      <input data-config-control data-file-size-min type="number" min="0" step="1" inputmode="numeric" data-path="${escapeAttr(minPath)}" data-type="number" value="${escapeAttr(minValue ?? 0)}" aria-label="文件大小左边界（MB）">
+      <span class="range-separator" aria-hidden="true">~</span>
+      <input data-config-control data-file-size-max type="number" min="0" step="1" inputmode="numeric" data-path="${escapeAttr(maxPath)}" data-type="number" value="${escapeAttr(maxValue ?? 0)}" aria-label="文件大小右边界（MB）">
     </div>
   `;
 }
@@ -328,6 +337,7 @@ function setListControlDisabled(control, disabled) {
 async function saveConfig(event) {
   event.preventDefault();
   commitPendingTagInputs();
+  const fileSizeRangeWasReset = normalizeFileSizeRangeInputs();
   const status = document.getElementById("config-status");
   status.className = "notice";
   status.textContent = "正在保存...";
@@ -345,8 +355,10 @@ async function saveConfig(event) {
     });
     state.config = data.config;
     renderConfigForm();
-    status.className = "notice success";
-    status.textContent = data.message || "配置已保存";
+    status.className = fileSizeRangeWasReset ? "notice warn" : "notice success";
+    status.textContent = fileSizeRangeWasReset
+      ? "文件大小范围输入有误，已按 0 ~ 0（不限制）保存。"
+      : (data.message || "配置已保存");
     state.aria2Loaded = false;
     document.getElementById("aria2-frame").removeAttribute("src");
     if (document.getElementById("view-downloads").classList.contains("active")) {
@@ -358,6 +370,37 @@ async function saveConfig(event) {
     status.className = "notice error";
     status.textContent = error.message;
   }
+}
+
+function normalizeFileSizeRangeInputs() {
+  const control = document.querySelector("#config-form [data-file-size-range]");
+  if (!control) return false;
+
+  const minInput = control.querySelector("[data-file-size-min]");
+  const maxInput = control.querySelector("[data-file-size-max]");
+  const parseBoundary = (input) => {
+    const raw = input?.value.trim() || "0";
+    const value = Number(raw);
+    return {
+      value,
+      valid: Number.isSafeInteger(value) && value >= 0,
+    };
+  };
+  const minimum = parseBoundary(minInput);
+  const maximum = parseBoundary(maxInput);
+  const valid = minimum.valid && maximum.valid
+    && (minimum.value === 0 || maximum.value === 0 || minimum.value <= maximum.value);
+
+  if (!valid) {
+    window.alert("文件大小范围输入有误，将按 0 ~ 0（不限制）处理。");
+    minInput.value = "0";
+    maxInput.value = "0";
+    return true;
+  }
+
+  minInput.value = String(minimum.value);
+  maxInput.value = String(maximum.value);
+  return false;
 }
 
 function fieldValue(input, type) {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/utils"
 )
@@ -201,7 +201,7 @@ func handleAria2Event(ctx context.Context, notifier *botNotifier, factory aria2C
 				if len(tracked) > 0 {
 					notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "pause"))
 				} else {
-					notifier.Notify(ctx, fmt.Sprintf("%s 下载已暂停", watch.Aria2TaskName(task)))
+					notifier.Notify(ctx, fmt.Sprintf("%s 下载已暂停", aria2.TaskName(task)))
 				}
 			} else {
 				notifier.Notify(ctx, fmt.Sprintf("GID %s 下载已暂停", gid))
@@ -216,8 +216,8 @@ func handleAria2Event(ctx context.Context, notifier *botNotifier, factory aria2C
 				if len(tracked) > 0 {
 					notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "error"))
 				} else {
-					info := watch.Aria2TaskInfoFromStatus(task)
-					msg := watch.Aria2TaskName(task) + " 下载失败"
+					info := aria2.TaskInfoFromStatus(task)
+					msg := aria2.TaskName(task) + " 下载失败"
 					if info.ErrorMessage != "" {
 						msg += "：" + info.ErrorMessage
 					}
@@ -264,9 +264,9 @@ func runAria2ProgressLoop(
 	}
 }
 
-func notifyAria2DownloadComplete(ctx context.Context, notifier *botNotifier, task watch.Aria2DownloadStatus) {
+func notifyAria2DownloadComplete(ctx context.Context, notifier *botNotifier, task aria2.DownloadStatus) {
 	if len(task.Files) == 0 {
-		notifier.Notify(ctx, fmt.Sprintf("下载完成===> %s", watch.Aria2TaskName(task)))
+		notifier.Notify(ctx, fmt.Sprintf("下载完成===> %s", aria2.TaskName(task)))
 		return
 	}
 
@@ -280,13 +280,13 @@ func notifyAria2DownloadComplete(ctx context.Context, notifier *botNotifier, tas
 }
 
 // formatAria2ProgressMessage formats a live-updating progress message.
-func formatAria2ProgressMessage(task watch.Aria2DownloadStatus) string {
-	info := watch.Aria2TaskInfoFromStatus(task)
+func formatAria2ProgressMessage(task aria2.DownloadStatus) string {
+	info := aria2.TaskInfoFromStatus(task)
 	speed := parseAria2Int(task.DownloadSpeed)
 	bar := buildAria2ProgressBar(info.CompletedLength, info.TotalLength, aria2ProgressBarWidth)
 
 	lines := []string{
-		"下载中: " + watch.Aria2TaskName(task),
+		"下载中: " + aria2.TaskName(task),
 		"进度: " + bar,
 		"大小: " + formatAria2Size(info.TotalLength),
 		"速度: " + utils.Byte.FormatBinaryBytes(speed) + "/s",
@@ -296,8 +296,8 @@ func formatAria2ProgressMessage(task watch.Aria2DownloadStatus) string {
 }
 
 // formatAria2DownloadFinal formats the frozen final-state message after a download ends.
-func formatAria2DownloadFinal(task watch.Aria2DownloadStatus, reason string) string {
-	info := watch.Aria2TaskInfoFromStatus(task)
+func formatAria2DownloadFinal(task aria2.DownloadStatus, reason string) string {
+	info := aria2.TaskInfoFromStatus(task)
 	bar := buildAria2ProgressBar(info.CompletedLength, info.TotalLength, aria2ProgressBarWidth)
 
 	var statusLine string
@@ -316,7 +316,7 @@ func formatAria2DownloadFinal(task watch.Aria2DownloadStatus, reason string) str
 	}
 
 	lines := []string{
-		statusLine + ": " + watch.Aria2TaskName(task),
+		statusLine + ": " + aria2.TaskName(task),
 		"进度: " + bar,
 		"大小: " + formatAria2Size(info.TotalLength),
 	}

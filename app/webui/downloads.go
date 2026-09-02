@@ -170,21 +170,24 @@ func (s *Server) handleKVActions(w http.ResponseWriter, r *http.Request) {
 }
 
 type downloadLinkItem struct {
-	ID         string              `json:"id"`
-	Key        string              `json:"key"`
-	URL        string              `json:"url"`
-	FileName   string              `json:"file_name"`
-	FileSize   int64               `json:"file_size"`
-	PeerID     int64               `json:"peer_id"`
-	MessageID  int                 `json:"message_id"`
-	CreatedAt  time.Time           `json:"created_at"`
-	ExpiresAt  *time.Time          `json:"expires_at,omitempty"`
-	Permanent  bool                `json:"permanent"`
-	Expired    bool                `json:"expired"`
-	Downloaded bool                `json:"downloaded"`
-	Status     string              `json:"status"`
-	Aria2      []aria2LinkEntry    `json:"aria2"`
-	Internal   []internalLinkEntry `json:"internal"`
+	ID                 string              `json:"id"`
+	Key                string              `json:"key"`
+	URL                string              `json:"url"`
+	FileName           string              `json:"file_name"`
+	FileSize           int64               `json:"file_size"`
+	PeerID             int64               `json:"peer_id"`
+	MessageID          int                 `json:"message_id"`
+	CreatedAt          time.Time           `json:"created_at"`
+	ExpiresAt          *time.Time          `json:"expires_at,omitempty"`
+	Permanent          bool                `json:"permanent"`
+	Expired            bool                `json:"expired"`
+	Downloaded         bool                `json:"downloaded"`
+	HTTPDownloaded     bool                `json:"http_downloaded"`
+	HTTPDownloadedAt   *time.Time          `json:"http_downloaded_at,omitempty"`
+	HTTPDeliveredBytes int64               `json:"http_delivered_bytes"`
+	Status             string              `json:"status"`
+	Aria2              []aria2LinkEntry    `json:"aria2"`
+	Internal           []internalLinkEntry `json:"internal"`
 }
 
 type aria2LinkEntry struct {
@@ -287,18 +290,30 @@ func (s *Server) listDownloadLinks(ctx context.Context) ([]downloadLinkItem, str
 		if task.ID == "" {
 			task.ID = strings.TrimPrefix(key, downloadTaskKeyPrefix)
 		}
+		httpStatus, _ := httpdl.ParseDownloadTaskHTTPStatus(pairs[key])
+		var httpDownloadedAt *time.Time
+		if httpStatus.Completed {
+			completedAt := httpStatus.CompletedAt
+			httpDownloadedAt = &completedAt
+			if !task.Downloaded {
+				s.markDownloadTaskDownloaded(ctx, task.ID)
+			}
+		}
 
 		item := downloadLinkItem{
-			ID:         task.ID,
-			Key:        key,
-			URL:        downloadURL(cfg.HTTP.PublicBaseURL, task.ID),
-			FileName:   task.FileName,
-			FileSize:   task.FileSize,
-			PeerID:     task.PeerID,
-			MessageID:  task.MessageID,
-			CreatedAt:  task.CreatedAt,
-			Downloaded: task.Downloaded,
-			Status:     "not_submitted",
+			ID:                 task.ID,
+			Key:                key,
+			URL:                downloadURL(cfg.HTTP.PublicBaseURL, task.ID),
+			FileName:           task.FileName,
+			FileSize:           task.FileSize,
+			PeerID:             task.PeerID,
+			MessageID:          task.MessageID,
+			CreatedAt:          task.CreatedAt,
+			Downloaded:         task.Downloaded || httpStatus.Completed,
+			HTTPDownloaded:     httpStatus.Completed,
+			HTTPDownloadedAt:   httpDownloadedAt,
+			HTTPDeliveredBytes: httpStatus.DeliveredBytes,
+			Status:             "not_submitted",
 		}
 		expiryBase := task.CreatedAt
 		if !task.LastActiveAt.IsZero() {
@@ -535,9 +550,8 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 	}
 	pairs := meta[s.namespace()]
 	cfg := config.Get()
-	threads := config.EffectiveThreads(cfg)
 	limit := config.EffectiveLimit(cfg)
-	connections := config.HTTPRangeConnectionsFor(cfg.HTTP, threads)
+	connections := config.EffectivePoolSize(cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 	internalController := s.internalDownloadController()
 	aria2Configured := false
@@ -592,14 +606,12 @@ func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActi
 			continue
 		}
 		if err := s.saveAria2Record(ctx, aria2TaskRecord{
-			GID:          gid,
-			TaskID:       task.ID,
-			DownloadURL:  link,
-			Dir:          cfg.Aria2.Dir,
-			Out:          task.FileName,
-			Connections:  connections,
-			TransferMode: config.EffectiveHTTPTransferMode(cfg),
-			CreatedAt:    time.Now(),
+			GID:         gid,
+			TaskID:      task.ID,
+			DownloadURL: link,
+			Dir:         cfg.Aria2.Dir,
+			Out:         task.FileName,
+			CreatedAt:   time.Now(),
 		}); err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: persist aria2 record: %v", id, err))

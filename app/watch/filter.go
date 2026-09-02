@@ -25,7 +25,10 @@ func (w *Watcher) matchExtensionFilter(name string) bool {
 }
 
 func (w *Watcher) matchFileSizeFilter(size int64) bool {
-	return w.minFileSizeBytes <= 0 || size >= w.minFileSizeBytes
+	if w.minFileSizeBytes > 0 && size < w.minFileSizeBytes {
+		return false
+	}
+	return w.maxFileSizeBytes <= 0 || size <= w.maxFileSizeBytes
 }
 
 func fileSizeMBToBytes(mb int64) int64 {

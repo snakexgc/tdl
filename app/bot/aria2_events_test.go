@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/app/aria2"
 )
 
 // TestHandleAria2EventIgnoresEventsWhenConfigNil verifies that when no config is loaded
@@ -21,7 +21,7 @@ func TestHandleAria2EventIgnoresEventsWhenConfigNil(t *testing.T) {
 		aria2EventDownloadPause,
 		aria2EventDownloadError,
 	} {
-		handleAria2Event(context.Background(), notifier, func() *watch.Aria2Controller {
+		handleAria2Event(context.Background(), notifier, func() *aria2.Controller {
 			panic("factory should not be called when config is nil")
 		}, tracker, method, "gid-1")
 	}
@@ -32,7 +32,7 @@ func TestNotifyAria2DownloadCompleteWithoutFiles(t *testing.T) {
 	notifierBot := &fakeBotAPI{}
 	notifier := newBotNotifier(notifierBot, []int64{1})
 
-	notifyAria2DownloadComplete(context.Background(), notifier, watch.Aria2DownloadStatus{GID: "gid-1"})
+	notifyAria2DownloadComplete(context.Background(), notifier, aria2.DownloadStatus{GID: "gid-1"})
 
 	require.Equal(t, []string{"下载完成===> gid-1"}, notifierBot.messagesText())
 }

@@ -2,10 +2,11 @@ package httpdl
 
 import (
 	"context"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/snakexgc/tdl/app/http/transfer"
 )
 
 type TelegramFileErrorReporter interface {
@@ -14,25 +15,16 @@ type TelegramFileErrorReporter interface {
 
 var (
 	telegramDownloadedBytes atomic.Int64
-	httpBufferBytes         atomic.Int64
 	activeTelegramRequests  atomic.Int64
 	telegramFileErrors      atomic.Int64
 	telegramFileErrorMu     sync.Mutex
 	telegramFileErrorTimes  []time.Time
-	httpBufferFreeMu        sync.Mutex
-	httpBufferFreeTimer     *time.Timer
+	activeSchedulerMu       sync.RWMutex
+	activeScheduler         *transfer.Scheduler
 )
 
 func TelegramDownloadedBytes() int64 {
 	return telegramDownloadedBytes.Load()
-}
-
-func HTTPBufferBytes() int64 {
-	n := httpBufferBytes.Load()
-	if n < 0 {
-		return 0
-	}
-	return n
 }
 
 func ActiveTelegramFileRequests() int64 {
@@ -78,13 +70,6 @@ func recordTelegramDownloadedBytes(n int) {
 	telegramDownloadedBytes.Add(int64(n))
 }
 
-func recordHTTPBufferBytes(delta int64) {
-	if delta == 0 {
-		return
-	}
-	httpBufferBytes.Add(delta)
-}
-
 func beginTelegramFileRequest() func() {
 	activeTelegramRequests.Add(1)
 	return func() {
@@ -117,18 +102,18 @@ func pruneTelegramFileErrorTimesLocked(cutoff time.Time) {
 	telegramFileErrorTimes = telegramFileErrorTimes[:len(telegramFileErrorTimes)-idx]
 }
 
-func requestHTTPBufferMemoryReturn() {
-	httpBufferFreeMu.Lock()
-	defer httpBufferFreeMu.Unlock()
+func setActiveScheduler(s *transfer.Scheduler) {
+	activeSchedulerMu.Lock()
+	activeScheduler = s
+	activeSchedulerMu.Unlock()
+}
 
-	if httpBufferFreeTimer != nil {
-		return
+func DCSchedulerSnapshots() []transfer.DCSnapshot {
+	activeSchedulerMu.RLock()
+	s := activeScheduler
+	activeSchedulerMu.RUnlock()
+	if s == nil {
+		return nil
 	}
-	httpBufferFreeTimer = time.AfterFunc(250*time.Millisecond, func() {
-		debug.FreeOSMemory()
-
-		httpBufferFreeMu.Lock()
-		httpBufferFreeTimer = nil
-		httpBufferFreeMu.Unlock()
-	})
+	return s.Snapshots()
 }

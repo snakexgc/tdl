@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
@@ -12,7 +11,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	watcharia2 "github.com/snakexgc/tdl/app/watch/aria2"
+	appdownload "github.com/snakexgc/tdl/app/download"
 	"github.com/snakexgc/tdl/core/logctx"
 	"github.com/snakexgc/tdl/core/tmedia"
 	"github.com/snakexgc/tdl/core/util/tutil"
@@ -168,9 +167,11 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 						zap.String("name", f.file.media.Name),
 						zap.Error(err))
 					color.Red("❌ Submission failed: msg %d (%s): %v", f.file.msg.ID, f.file.media.Name, err)
-					target := "aria2"
+					target := "download backend"
 					if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
 						target = "内部下载队列"
+					} else if w.opts.DownloadSubmitter != nil {
+						target = w.opts.DownloadSubmitter.Name()
 					}
 					w.notify(ctx, "提交到%s失败。\n文件：%s\n消息 ID: %d\n错误：%v", target, f.file.media.Name, f.file.msg.ID, err)
 				}
@@ -316,43 +317,43 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return errors.Wrap(err, "build download url")
 	}
 
-	connections := config.HTTPRangeConnectionsFor(cfg.HTTP, w.opts.Threads)
-	gid, err := w.runtime.aria2.AddURI(ctx, downloadURL, watcharia2.AddURIOptions{
-		Dir:         prepared.dir,
-		Out:         prepared.out,
-		Connections: connections,
-	})
-	if err != nil {
-		return errors.Wrap(err, "submit to aria2")
-	}
-	if err := w.runtime.aria2Tasks.Add(ctx, watcharia2.TaskRecord{
-		GID:          gid,
-		TaskID:       task.ID,
-		DownloadURL:  downloadURL,
-		Dir:          prepared.dir,
-		Out:          prepared.out,
-		Connections:  connections,
-		TransferMode: config.EffectiveHTTPTransferMode(cfg),
-		CreatedAt:    time.Now(),
-	}); err != nil {
-		logctx.From(ctx).Warn("Failed to register aria2 task",
-			zap.String("gid", gid),
-			zap.String("task_id", task.ID),
+	if w.opts.DownloadSubmitter == nil {
+		logctx.From(ctx).Info("Generated temporary HTTP download link",
+			zap.Int64("peer_id", file.peerID),
+			zap.Int("msg_id", file.msg.ID),
+			zap.String("file_name", prepared.fileName),
 			zap.String("download_url", downloadURL),
-			zap.Error(err))
+			zap.String("task_id", task.ID))
+		color.Green("Generated HTTP download link: %s", downloadURL)
+		w.notify(ctx, "已生成临时 HTTP 下载链接。\n文件：%s\n链接：%s", prepared.fileName, downloadURL)
+		return nil
 	}
 
-	logctx.From(ctx).Info("Submitted aria2 task",
+	result, err := w.opts.DownloadSubmitter.Submit(ctx, appdownload.Submission{
+		TaskID:      task.ID,
+		DownloadURL: downloadURL,
+		Dir:         prepared.dir,
+		Out:         prepared.out,
+		FullPath:    prepared.fullPath,
+	})
+	if err != nil {
+		return errors.Wrapf(err, "submit temporary link to %s (link remains available at %s)", w.opts.DownloadSubmitter.Name(), downloadURL)
+	}
+
+	logctx.From(ctx).Info("Submitted temporary HTTP download link",
 		zap.Int64("peer_id", file.peerID),
 		zap.Int("msg_id", file.msg.ID),
 		zap.String("file_name", prepared.fileName),
 		zap.String("target_path", prepared.fullPath),
 		zap.String("download_url", downloadURL),
-		zap.String("gid", gid))
+		zap.String("target", result.Target),
+		zap.String("backend_id", result.ID))
 
-	color.Green("🚀 Submitted to aria2: msg %d -> %s", file.msg.ID, prepared.fullPath)
+	color.Green("Submitted to %s: msg %d -> %s", result.Target, file.msg.ID, prepared.fullPath)
 	color.Green("   URL: %s", downloadURL)
-	color.Green("   GID: %s", gid)
+	if result.ID != "" {
+		color.Green("   ID: %s", result.ID)
+	}
 
 	return nil
 }

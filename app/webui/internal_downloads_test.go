@@ -130,3 +130,51 @@ func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, watch.InternalDownloadStatusQueued, info.Status)
 }
+
+func TestDownloadLinksUsesCompletedHTTPDeliveryStatus(t *testing.T) {
+	initWebUITestConfig(t)
+
+	cfg := config.Get()
+	oldMode := cfg.Downloader.Mode
+	defer func() { cfg.Downloader.Mode = oldMode }()
+	cfg.Downloader.Mode = config.DownloaderModeInternal
+
+	completedAt := time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC)
+	taskData := []byte(`{
+		"id":"document_42",
+		"peer_id":12345,
+		"message_id":7,
+		"file_name":"video.mp4",
+		"file_size":100,
+		"created_at":"2026-08-12T08:00:00Z",
+		"downloaded":false,
+		"http_delivery":{"file_size":100,"completed_at":"` + completedAt.Format(time.RFC3339Nano) + `"}
+	}`)
+
+	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+		testQueueDefault: {
+			downloadTaskKeyPrefix + "document_42": taskData,
+		},
+	}}
+	namespaceKV, err := engine.Open(testQueueDefault)
+	require.NoError(t, err)
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
+
+	items, statusErr, err := server.listDownloadLinks(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, statusErr)
+	require.Len(t, items, 1)
+	require.True(t, items[0].Downloaded)
+	require.True(t, items[0].HTTPDownloaded)
+	require.NotNil(t, items[0].HTTPDownloadedAt)
+	require.Equal(t, completedAt, *items[0].HTTPDownloadedAt)
+	require.Equal(t, int64(100), items[0].HTTPDeliveredBytes)
+
+	data, err := namespaceKV.Get(context.Background(), downloadTaskKeyPrefix+"document_42")
+	require.NoError(t, err)
+	var persisted struct {
+		Downloaded bool `json:"downloaded"`
+	}
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.True(t, persisted.Downloaded, "KV listing should self-heal the generic downloaded flag")
+}

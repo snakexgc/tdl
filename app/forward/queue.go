@@ -46,9 +46,9 @@ type ActionResult struct {
 // supplied by the watcher (which owns the long-lived authenticated pool) when it
 // starts serving the queue.
 type Runtime struct {
-	Pool    dcpool.Pool
-	Manager *peers.Manager
-	Threads int
+	Pool     dcpool.Pool
+	Manager  *peers.Manager
+	PoolSize int
 }
 
 // Queue is a process-wide, persistent, single-flight forward task queue. Jobs
@@ -354,8 +354,8 @@ func (q *Queue) Serve(ctx context.Context, rt Runtime) error {
 		q.mu.Unlock()
 	}()
 
-	if rt.Threads <= 0 {
-		rt.Threads = config.DefaultThreads
+	if rt.PoolSize <= 0 {
+		rt.PoolSize = config.DefaultPoolSize
 	}
 
 	q.recoverRunning(ctx, store)
@@ -555,7 +555,7 @@ func (q *Queue) forwardJob(ctx context.Context, rt Runtime, job *Job) error {
 	prog := &jobProgress{queue: q, job: job, ctx: ctx}
 	fw := forwarder.New(forwarder.Options{
 		Pool:     rt.Pool,
-		Threads:  rt.Threads,
+		Threads:  rt.PoolSize,
 		Iter:     NewSliceIter([]forwarder.Elem{elem}),
 		Progress: prog,
 	})

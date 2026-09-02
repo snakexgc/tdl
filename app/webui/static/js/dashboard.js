@@ -61,10 +61,10 @@ function pushDashboardSample(data) {
   const download = data.download || {};
   const httpMetrics = data.http || {};
   const aria2 = data.aria2 || {};
+  const dcSchedulers = Array.isArray(httpMetrics.dc_schedulers) ? httpMetrics.dc_schedulers : [];
   const totalMemory = Number(memory.total_bytes ?? process.memory_rss ?? 0);
-  const bufferMemory = Number(memory.buffer_bytes ?? 0);
   const retainedMemory = Number(memory.heap_retained_idle_bytes ?? 0);
-  const softwareMemory = Number(memory.software_bytes ?? Math.max(0, totalMemory - bufferMemory));
+  const softwareMemory = Number(memory.software_bytes ?? totalMemory);
   const gotdSpeed = Number(download.gotd_speed_bps ?? download.speed_bps ?? 0);
 
   state.dashboardSamples.push({
@@ -73,7 +73,6 @@ function pushDashboardSample(data) {
     goroutines: Number(process.goroutines || 0),
     memoryTotal: totalMemory,
     memorySoftware: softwareMemory,
-    memoryBuffer: bufferMemory,
     memoryRetained: retainedMemory,
     memoryPercent: Number(memory.total_percent || process.memory_percent || 0),
     gotdSpeed,
@@ -81,6 +80,7 @@ function pushDashboardSample(data) {
     aria2Speed: Number(aria2.speed_bps ?? download.aria2_speed_bps ?? 0),
     aria2Available: Boolean(aria2.available ?? download.aria2_available),
     activeChunks: Number(httpMetrics.active_chunk_requests ?? download.active_chunk_requests ?? 0),
+    dcSchedulers,
     fileErrors: Number(httpMetrics.telegram_file_errors ?? download.telegram_file_errors ?? 0),
     fileErrors10s: Number(httpMetrics.telegram_file_errors_10s ?? download.telegram_file_errors_10s ?? 0),
     aria2Tasks: Number(aria2.task_count ?? download.aria2_task_count ?? 0),
@@ -100,10 +100,11 @@ function renderDashboard() {
   setText("dashboard-cpu-value", formatPercent(latest.cpu));
   setText("dashboard-cpu-meta", `${latest.goroutines} goroutines`);
   setText("dashboard-memory-value", formatBytes(latest.memoryTotal));
-  setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 缓冲 ${formatBytes(latest.memoryBuffer)} · 保留堆 ${formatBytes(latest.memoryRetained)}`);
+  setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 保留堆 ${formatBytes(latest.memoryRetained)}`);
   setText("dashboard-speed-value", `${formatBytes(latest.gotdSpeed)}/s`);
   setText("dashboard-speed-meta", `aria2 ${formatBytes(latest.aria2Speed)}/s · gotd累计 ${formatBytes(latest.gotdTotal)}`);
   setText("dashboard-active-chunks-value", formatCount(latest.activeChunks));
+  setText("dashboard-dc-schedulers-meta", formatDCSchedulers(latest.dcSchedulers));
   setText("dashboard-file-errors-value", formatCount(latest.fileErrors));
   setText("dashboard-file-errors-10s-value", formatCount(latest.fileErrors10s));
   setText("dashboard-aria2-active-value", formatCount(latest.aria2ActiveTasks));
@@ -122,7 +123,6 @@ function renderDashboard() {
   renderSmoothChart("dashboard-memory-chart", "dashboard-memory-axis", [
     { key: "memoryTotal", label: "总用量", color: "#0b7f72" },
     { key: "memorySoftware", label: "软件用量", color: "#6f5cc2" },
-    { key: "memoryBuffer", label: "HTTP buffer", color: "#c47a16" },
     { key: "memoryRetained", label: "保留堆", color: "#6a7380" },
   ], { min: 0, formatter: formatBytes });
 
@@ -130,6 +130,18 @@ function renderDashboard() {
     { key: "gotdSpeed", label: "gotd", color: "#0b7f72" },
     { key: "aria2Speed", label: "aria2", color: "#c47a16" },
   ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
+}
+
+function formatDCSchedulers(schedulers) {
+  if (!Array.isArray(schedulers) || schedulers.length === 0) return "DC 调度器：暂无活动";
+  return schedulers.map((item) => {
+    const dc = formatCount(item.dc);
+    const capacity = formatCount(item.capacity);
+    const chunks = formatCount(item.active_chunks);
+    const files = formatCount(item.active_files);
+    const queued = formatCount(item.queued_requests);
+    return `DC${dc}：许可 ${chunks}/${capacity} · 文件 ${files} · 排队 ${queued}`;
+  }).join("；");
 }
 
 function renderDashboardStatBars(latest) {

@@ -24,10 +24,10 @@ const (
 )
 
 type internalDownloader struct {
-	proxy  *httpdl.Proxy
-	store  *internalTaskStore
-	limit  *transfer.Limiter
-	logger *zap.Logger
+	proxy     *httpdl.Proxy
+	store     *internalTaskStore
+	scheduler *transfer.Scheduler
+	logger    *zap.Logger
 
 	mu      sync.Mutex
 	running bool
@@ -44,35 +44,27 @@ func newInternalDownloader(proxy *httpdl.Proxy, kvd storage.Storage, logger *zap
 	}
 	limit := internalDownloadLimiter(proxy, cfg)
 	return &internalDownloader{
-		proxy:  proxy,
-		store:  newInternalTaskStore(kvd),
-		limit:  limit,
-		logger: logger.Named("internal-downloader"),
-		queued: map[string]struct{}{},
-		active: map[string]struct{}{},
+		proxy:     proxy,
+		store:     newInternalTaskStore(kvd),
+		scheduler: limit,
+		logger:    logger.Named("internal-downloader"),
+		queued:    map[string]struct{}{},
+		active:    map[string]struct{}{},
 	}
-}
-
-func effectiveDownloadThreads(cfg *config.Config) int {
-	return config.EffectiveThreads(cfg)
 }
 
 func effectiveDownloadLimit(cfg *config.Config) int {
 	return config.EffectiveLimit(cfg)
 }
 
-func internalDownloadLimiter(proxy *httpdl.Proxy, cfg *config.Config) *transfer.Limiter {
-	if proxy != nil && proxy.Limiter() != nil {
-		return proxy.Limiter()
+func internalDownloadLimiter(proxy *httpdl.Proxy, cfg *config.Config) *transfer.Scheduler {
+	if proxy != nil && proxy.Scheduler() != nil {
+		return proxy.Scheduler()
 	}
 	if cfg == nil {
 		cfg = config.Get()
 	}
-	var httpCfg config.HTTPConfig
-	if cfg != nil {
-		httpCfg = cfg.HTTP
-	}
-	return transfer.NewLimiter(effectiveDownloadLimit(cfg), effectiveDownloadThreads(cfg), httpdl.MemoryBufferSlots(httpCfg.Buffer))
+	return transfer.NewScheduler(effectiveDownloadLimit(cfg), config.EffectivePoolSize(cfg))
 }
 
 func (d *internalDownloader) Start(ctx context.Context) error {
@@ -335,6 +327,10 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		d.markError(ctx, record, errors.New("download link record not found"))
 		return
 	}
+	if task.Media == nil {
+		d.markError(ctx, record, errors.New("download media is not available"))
+		return
+	}
 	if task.FileSize > 0 {
 		record.Total = task.FileSize
 	}
@@ -364,11 +360,11 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		return
 	}
 
-	if d.limit == nil {
+	if d.scheduler == nil {
 		d.markError(ctx, record, errors.New("download limiter is not initialized"))
 		return
 	}
-	lease, err := d.limit.Acquire(ctx, record.ID)
+	lease, err := d.scheduler.Acquire(ctx, record.ID, task.Media.DC)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -416,7 +412,7 @@ func (d *internalDownloader) runTask(ctx context.Context, id string) {
 		w:         file,
 		speed:     &speedCalc{},
 	}
-	err = d.proxy.Stream(ctx, task, lease, completed, record.Total-1, writer)
+	err = d.proxy.StreamParallel(ctx, task, lease, completed, record.Total-1, writer)
 	closeErr := file.Close()
 	if closeErr != nil && err == nil {
 		err = closeErr

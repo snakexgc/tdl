@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	appdownload "github.com/snakexgc/tdl/app/download"
+	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -13,13 +15,13 @@ type Options struct {
 	FilenameMaxLength       int
 	SkipSame                bool
 	PoolSize                int
-	Threads                 int
 	Limit                   int
 	Download                bool
 	TriggerReactions        []string
 	Include                 []string
 	Exclude                 []string
-	FileSizeMB              int64
+	FileSizeMinMB           int64
+	FileSizeMaxMB           int64
 	Forward                 bool
 	ForwardMode             string
 	ForwardTarget           string
@@ -29,6 +31,8 @@ type Options struct {
 	ForwardDedupeTTL        time.Duration
 	ForwardTriggerReactions []string
 	Notify                  NotifyFunc
+	HTTPService             *httpdl.Service
+	DownloadSubmitter       appdownload.Submitter
 	messageLinks            <-chan messageLinkSubmission
 }
 
@@ -44,13 +48,13 @@ func DefaultOptions(cfg *config.Config) Options {
 		Template:                fileNameConfigTemplate(config.EffectiveFilename(cfg)),
 		FilenameMaxLength:       config.EffectiveFilenameMax(cfg),
 		PoolSize:                config.EffectivePoolSize(cfg),
-		Threads:                 config.EffectiveThreads(cfg),
 		Limit:                   config.EffectiveLimit(cfg),
 		Download:                cfg.Modules.Watch,
 		TriggerReactions:        append([]string(nil), cfg.TriggerReactions...),
 		Include:                 append([]string(nil), cfg.Include...),
 		Exclude:                 append([]string(nil), cfg.Exclude...),
-		FileSizeMB:              cfg.FileSizeMB,
+		FileSizeMinMB:           cfg.FileSizeMinMB,
+		FileSizeMaxMB:           cfg.FileSizeMaxMB,
 		Forward:                 cfg.Modules.Forward,
 		ForwardMode:             config.EffectiveForwardMode(cfg),
 		ForwardTarget:           cfg.Forward.Target,
@@ -62,13 +66,6 @@ func DefaultOptions(cfg *config.Config) Options {
 	}
 }
 
-func effectiveWatchOptionThreads(value int, cfg *config.Config) int {
-	if value < 1 {
-		return config.EffectiveThreads(cfg)
-	}
-	return value
-}
-
 func effectiveWatchOptionLimit(value int, cfg *config.Config) int {
 	if value < 1 {
 		return config.EffectiveLimit(cfg)
@@ -77,7 +74,7 @@ func effectiveWatchOptionLimit(value int, cfg *config.Config) int {
 }
 
 func effectiveWatchOptionPoolSize(value int, cfg *config.Config) int {
-	if value < 0 {
+	if value < 1 {
 		return config.EffectivePoolSize(cfg)
 	}
 	return value

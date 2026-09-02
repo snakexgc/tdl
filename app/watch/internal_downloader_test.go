@@ -37,24 +37,36 @@ func TestValidateWatchConfigAllowsInternalModeWithoutAria2(t *testing.T) {
 	require.NoError(t, validateWatchConfig(cfg))
 }
 
-func TestInternalModeUsesConfiguredDownloadThreads(t *testing.T) {
+func TestValidateWatchConfigDoesNotOwnHTTPServerLifecycle(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Downloader.Mode = config.DownloaderModeAria2
+	cfg.Modules.HTTP = false
+	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
+	cfg.Aria2.RPCURL = ""
+
+	require.NoError(t, validateWatchConfig(cfg))
+}
+
+func TestInternalModeUsesConfiguredPoolSize(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.Threads = 3
+	cfg.PoolSize = 3
 	cfg.Limit = 2
 	opts := DefaultOptions(cfg)
 
-	require.Equal(t, 3, effectiveDownloadThreads(cfg))
+	require.Equal(t, 3, config.EffectivePoolSize(cfg))
 	require.Equal(t, 2, effectiveDownloadLimit(cfg))
 
 	runtime := newWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
-	require.True(t, runtime.proxy.Limiter() == runtime.internal.limit)
+	require.True(t, runtime.proxy.Scheduler() == runtime.internal.scheduler)
 
-	lease, err := runtime.internal.limit.Acquire(context.Background(), testDocument1)
+	lease, err := runtime.internal.scheduler.Acquire(context.Background(), testDocument1, 2)
 	require.NoError(t, err)
-	require.Equal(t, 3, lease.MaxWorkers())
+	require.Equal(t, 3, lease.Capacity())
 	lease.Release()
 }
 
@@ -279,18 +291,18 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 	streamCalled := make(chan struct{})
 	done := make(chan struct{})
 	proxy := httpdl.NewProxy(config.HTTPConfig{}, 1, 2, &httpdl.PoolHolder{}, kvd, nil)
-	blockingLease, err := proxy.Limiter().Acquire(ctx, "other")
+	blockingLease, err := proxy.Scheduler().Acquire(ctx, "other", task.Media.DC)
 	require.NoError(t, err)
-	proxy.SetStream(func(ctx context.Context, task *httpdl.Task, lease *transfer.Lease, start, end int64, w io.Writer) error {
+	proxy.SetStream(func(ctx context.Context, task *httpdl.Task, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
 		close(streamCalled)
 		_, err := w.Write(bytes.Repeat([]byte("x"), int(end-start+1)))
 		return err
 	})
 	downloader := &internalDownloader{
-		proxy:  proxy,
-		store:  store,
-		limit:  proxy.Limiter(),
-		logger: zap.NewNop(),
+		proxy:     proxy,
+		store:     store,
+		scheduler: proxy.Scheduler(),
+		logger:    zap.NewNop(),
 	}
 
 	go func() {

@@ -69,6 +69,27 @@
   min-width: 0;
 }
 
+.file-size-range-control {
+  display: grid;
+  grid-template-columns: minmax(72px, 112px) 24px minmax(72px, 112px);
+  align-items: center;
+  justify-content: start;
+  gap: 6px;
+}
+
+.file-size-range-control input {
+  min-width: 0;
+  text-align: center;
+}
+
+.range-separator {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
 .field .tag-input:focus-within {
   box-shadow: var(--focus);
   border-color: var(--primary);
