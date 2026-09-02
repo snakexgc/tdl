@@ -26,7 +26,8 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
   "trigger_reactions": [], // 指定触发下载的表情，如 ["👍", "🔥"]；为空时任意表情都可以触发
   "include": [], // 只下载指定扩展名，如 `["mp4", "mp3"]`，与exclude互斥
   "exclude": ["png","jpg"], // 排除指定扩展名，如 `["png", "jpg"]`与include互斥
-  "file_size_mb": 0, // 文件大小过滤，单位 MB；0 表示不限制，小于该大小的文件会在后缀过滤后跳过
+  "file_size_min_mb": 0, // 文件大小左边界，单位 MB；0 表示不限制最小值
+  "file_size_max_mb": 0, // 文件大小右边界，单位 MB；0 表示不限制最大值；左右边界均包含在内
   "http": {
     "address": "0.0.0.0", // HTTP 下载代理监听地址
     "port": 22334, // HTTP 下载代理监听端口
@@ -80,6 +81,8 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 }
 ```
 
+文件大小范围的左右边界均包含在内：`1 ~ 5` 仅下载 1MB 至 5MB 的文件，`0 ~ 5` 只限制最大值，`5 ~ 0` 只限制最小值，`0 ~ 0` 完全不限制。非法范围（例如 `5 ~ 2`）会提示并按 `0 ~ 0` 处理。
+
 HTTP 下载代理兼容标准单 Range、`multipart/byteranges` 多 Range、HEAD 和 `If-Range` 断点续传语义，不依赖 aria2 专有行为。每次 Telegram `upload.getFile`（包括重试）才占用一个 DC 许可，请求结束后立即释放；向慢速 HTTP 客户端写入时不占用 DC 许可，也不维护跨请求的文件字节缓存。任意数量的外部下载器分片都会进入同一套按 DC、按文件 FIFO 且工作保守的调度：同一文件的 Range 优先使用尽可能多的空闲连接，当前文件没有待处理分片时后续文件可立即利用剩余连接。每个 DC 最多同时执行 `pool_size` 个 Telegram 文件请求，绝不会因为客户端增加 HTTP 连接或分片数而突破该上限。
 
 HTTP Server 会把成功发送完毕的 GET Range 持久化到对应下载链接记录，并合并并行、重试和重叠分片；当已发送区间完整覆盖文件后，KV 管理会将其显示为“已下载（HTTP）”。HEAD、失败或中断的响应不会计入完成状态。
@@ -98,7 +101,8 @@ HTTP Server 会把成功发送完毕的 GET Range 持久化到对应下载链接
 | `trigger_reactions`    | 触发下载的表情列表，如 `["👍", "🔥"]`；为空时任意表情都可以触发                                         |
 | `include`              | 只下载指定扩展名，如 `["mp4", "mp3"]`                                                       |
 | `exclude`              | 排除指定扩展名，如 `["png", "jpg"]`                                                        |
-| `file_size_mb`         | 文件大小过滤，单位 MB；`0` 表示不限制，小于该大小的文件会在 `include`/`exclude` 后跳过               |
+| `file_size_min_mb`     | 文件大小左边界，单位 MB；`0` 表示不限制最小值；旧版 `file_size_mb` 会自动迁移为此项               |
+| `file_size_max_mb`     | 文件大小右边界，单位 MB；`0` 表示不限制最大值；两个非零边界均包含在下载范围内               |
 | `limit`                | 同时下载的文件任务数量；默认 2 |
 | `pool_size`            | 每个 Telegram DC 的连接池与 `upload.getFile` 并发上限；默认 8，设置为 0 或负数会恢复为 8；同时作为 aria2 的 `split` 和 `max-connection-per-server`，其他下载器即使请求更多 Range 也只会在服务端排队 |
 | `ntp`                  | NTP 时间校准服务器；留空时启动会检测内置服务器并保存最快可用项，已填写时会先按 3 秒超时重试 3 次 |

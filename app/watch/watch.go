@@ -32,7 +32,6 @@ import (
 	"github.com/snakexgc/tdl/pkg/kv"
 	pkgtclient "github.com/snakexgc/tdl/pkg/tclient"
 	"github.com/snakexgc/tdl/pkg/tplfunc"
-	"github.com/snakexgc/tdl/pkg/utils"
 )
 
 const bytesPerMegabyte int64 = 1024 * 1024
@@ -51,6 +50,7 @@ type Watcher struct {
 	include          map[string]struct{}
 	exclude          map[string]struct{}
 	minFileSizeBytes int64
+	maxFileSizeBytes int64
 	forward          *forwardRuntime
 }
 
@@ -70,9 +70,7 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Forward && len(opts.ForwardListen) == 0 {
 		color.Yellow("⚠️ modules.forward is enabled but forward.listen is empty")
 	}
-	if opts.FileSizeMB < 0 {
-		return errors.New("file_size_mb must be greater than or equal to 0")
-	}
+	opts.FileSizeMinMB, opts.FileSizeMaxMB, _ = config.NormalizeFileSizeRange(opts.FileSizeMinMB, opts.FileSizeMaxMB)
 	opts.Limit = effectiveWatchOptionLimit(opts.Limit, cfg)
 	opts.PoolSize = effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
@@ -185,11 +183,7 @@ func Run(ctx context.Context, opts Options) error {
 			color.Green("   HTTP Range connections per aria2 task: %d", opts.PoolSize)
 		}
 		color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
-		if opts.FileSizeMB > 0 {
-			color.Green("   Min file size: %s (%d MB)", utils.Byte.FormatBinaryBytes(fileSizeMBToBytes(opts.FileSizeMB)), opts.FileSizeMB)
-		} else {
-			color.Green("   Min file size: unlimited")
-		}
+		color.Green("   File size range: %d ~ %d MB (0 means unlimited)", opts.FileSizeMinMB, opts.FileSizeMaxMB)
 	}
 	if opts.Forward {
 		color.Green("   Forward mode: %s", opts.ForwardMode)
@@ -249,7 +243,8 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		triggerReactions: newTriggerReactionSet(opts.TriggerReactions),
 		include:          filterMap.New(opts.Include, addPrefixDot),
 		exclude:          filterMap.New(opts.Exclude, addPrefixDot),
-		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMB),
+		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMinMB),
+		maxFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMaxMB),
 	}
 
 	// Register reaction handlers whenever download or forward is enabled. Forward

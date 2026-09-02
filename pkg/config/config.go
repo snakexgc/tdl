@@ -118,7 +118,8 @@ type Config struct {
 	TriggerReactions []string         `json:"trigger_reactions"`
 	Include          []string         `json:"include"`
 	Exclude          []string         `json:"exclude"`
-	FileSizeMB       int64            `json:"file_size_mb"`
+	FileSizeMinMB    int64            `json:"file_size_min_mb"`
+	FileSizeMaxMB    int64            `json:"file_size_max_mb"`
 	HTTP             HTTPConfig       `json:"http"`
 	WebUI            WebUIConfig      `json:"webui"`
 	Modules          ModulesConfig    `json:"modules"`
@@ -143,7 +144,8 @@ func DefaultConfig() *Config {
 		TriggerReactions: []string{},
 		Include:          []string{},
 		Exclude:          []string{},
-		FileSizeMB:       0,
+		FileSizeMinMB:    0,
+		FileSizeMaxMB:    0,
 		HTTP: HTTPConfig{
 			Address:              DefaultHTTPAddress,
 			Port:                 DefaultHTTPPort,
@@ -195,6 +197,31 @@ func DefaultConfig() *Config {
 			TriggerReactions: []string{},
 		},
 	}
+}
+
+// UnmarshalJSON keeps configurations written before the file-size range was
+// introduced compatible. The former file_size_mb value becomes the lower
+// bound unless the new lower-bound field is present explicitly.
+func (cfg *Config) UnmarshalJSON(data []byte) error {
+	type configJSON Config
+	decoded := configJSON(*cfg)
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*cfg = Config(decoded)
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, hasNewMinimum := fields["file_size_min_mb"]; hasNewMinimum {
+		return nil
+	}
+	legacy, hasLegacyMinimum := fields["file_size_mb"]
+	if !hasLegacyMinimum {
+		return nil
+	}
+	return json.Unmarshal(legacy, &cfg.FileSizeMinMB)
 }
 
 func NormalizeNamespace(namespace string) (string, error) {
@@ -318,6 +345,16 @@ func EffectiveForwardDedupeTTL(cfg *Config) int {
 		return 600
 	}
 	return cfg.Forward.DedupeTTLSeconds
+}
+
+// NormalizeFileSizeRange returns a usable inclusive range in MB. Zero means
+// that the corresponding boundary is unlimited. Any invalid range is reset
+// as a whole so callers never apply only part of a malformed setting.
+func NormalizeFileSizeRange(minMB, maxMB int64) (normalizedMinMB, normalizedMaxMB int64, valid bool) {
+	if minMB < 0 || maxMB < 0 || (minMB > 0 && maxMB > 0 && minMB > maxMB) {
+		return 0, 0, false
+	}
+	return minMB, maxMB, true
 }
 
 func HTTPListenAddr(cfg *Config) string {
@@ -448,9 +485,7 @@ func Validate(cfg *Config) error {
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	cfg.Filename = EffectiveFilename(cfg)
 	cfg.FilenameMax = EffectiveFilenameMax(cfg)
-	if cfg.FileSizeMB < 0 {
-		return errors.New("file_size_mb must be greater than or equal to 0")
-	}
+	cfg.FileSizeMinMB, cfg.FileSizeMaxMB, _ = NormalizeFileSizeRange(cfg.FileSizeMinMB, cfg.FileSizeMaxMB)
 	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
 	if err != nil {
 		return err

@@ -57,7 +57,8 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Equal(t, DefaultFilename, cfg.Filename)
 	require.Equal(t, DefaultFilenameMax, cfg.FilenameMax)
 	require.Empty(t, cfg.TriggerReactions)
-	require.Zero(t, cfg.FileSizeMB)
+	require.Zero(t, cfg.FileSizeMinMB)
+	require.Zero(t, cfg.FileSizeMaxMB)
 }
 
 func TestLoadAllowsDisablingAria2ModuleAndAutoDownload(t *testing.T) {
@@ -197,16 +198,58 @@ func TestLoadRejectsInvalidNamespace(t *testing.T) {
 	require.Contains(t, err.Error(), "English letters only")
 }
 
-func TestLoadRejectsNegativeFileSizeMB(t *testing.T) {
+func TestLoadNormalizesInvalidFileSizeRange(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"file_size_mb":-1}`), 0o644))
+	for name, content := range map[string]string{
+		"negative minimum": `{"file_size_min_mb":-1,"file_size_max_mb":5}`,
+		"negative maximum": `{"file_size_min_mb":1,"file_size_max_mb":-5}`,
+		"descending range": `{"file_size_min_mb":5,"file_size_max_mb":2}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "config.json")
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	_, err := Load(path)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "file_size_mb")
+			cfg, err := Load(path)
+			require.NoError(t, err)
+			require.Zero(t, cfg.FileSizeMinMB)
+			require.Zero(t, cfg.FileSizeMaxMB)
+		})
+	}
+}
+
+func TestLoadSupportsFileSizeRangeAndMigratesLegacyMinimum(t *testing.T) {
+	t.Parallel()
+
+	t.Run("inclusive range", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "config.json")
+		require.NoError(t, os.WriteFile(path, []byte(`{"file_size_min_mb":1,"file_size_max_mb":5}`), 0o644))
+
+		cfg, err := Load(path)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cfg.FileSizeMinMB)
+		require.Equal(t, int64(5), cfg.FileSizeMaxMB)
+	})
+
+	t.Run("legacy minimum", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "config.json")
+		require.NoError(t, os.WriteFile(path, []byte(`{"file_size_mb":5}`), 0o644))
+
+		cfg, err := Load(path)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), cfg.FileSizeMinMB)
+		require.Zero(t, cfg.FileSizeMaxMB)
+		require.NoError(t, Save(path, cfg))
+
+		saved, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NotContains(t, string(saved), `"file_size_mb"`)
+		require.Contains(t, string(saved), `"file_size_min_mb": 5`)
+		require.Contains(t, string(saved), `"file_size_max_mb": 0`)
+	})
 }
 
 func TestNormalizeNamespaceAllowsEnglishLetters(t *testing.T) {

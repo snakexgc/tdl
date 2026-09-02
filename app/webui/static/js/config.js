@@ -28,7 +28,7 @@ const sections = [
       ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
       ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
       ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],
-      ["file_size_mb", "文件大小过滤", "number", "单位 MB；填 0 表示不限制，小于该大小的文件会在扩展名过滤后跳过。"],
+      ["file_size_min_mb", "文件大小范围", "sizeRange", "单位 MB；左右边界均包含在内，任一边填 0 表示该侧不限制。", "file_size_max_mb"],
     ],
   },
   {
@@ -152,6 +152,8 @@ function renderField(field) {
     control = renderTagInput(path, type, value || []);
   } else if (type === "password") {
     control = `<input data-config-control type="password" data-path="${escapeAttr(path)}" data-type="${type}" value="" placeholder="留空保持不变">`;
+  } else if (type === "sizeRange") {
+    control = renderFileSizeRangeInput(path, options, value, getPath(state.config, options));
   } else {
     control = `<input data-config-control type="${type === "number" ? "number" : "text"}" data-path="${escapeAttr(path)}" data-type="${type}" value="${escapeAttr(value ?? "")}">`;
   }
@@ -160,6 +162,16 @@ function renderField(field) {
       <label>${escapeHTML(label)}</label>
       ${control}
       <small>${escapeHTML(help || path)}</small>
+    </div>
+  `;
+}
+
+function renderFileSizeRangeInput(minPath, maxPath, minValue, maxValue) {
+  return `
+    <div class="file-size-range-control" data-file-size-range>
+      <input data-config-control data-file-size-min type="number" min="0" step="1" inputmode="numeric" data-path="${escapeAttr(minPath)}" data-type="number" value="${escapeAttr(minValue ?? 0)}" aria-label="文件大小左边界（MB）">
+      <span class="range-separator" aria-hidden="true">~</span>
+      <input data-config-control data-file-size-max type="number" min="0" step="1" inputmode="numeric" data-path="${escapeAttr(maxPath)}" data-type="number" value="${escapeAttr(maxValue ?? 0)}" aria-label="文件大小右边界（MB）">
     </div>
   `;
 }
@@ -325,6 +337,7 @@ function setListControlDisabled(control, disabled) {
 async function saveConfig(event) {
   event.preventDefault();
   commitPendingTagInputs();
+  const fileSizeRangeWasReset = normalizeFileSizeRangeInputs();
   const status = document.getElementById("config-status");
   status.className = "notice";
   status.textContent = "正在保存...";
@@ -342,8 +355,10 @@ async function saveConfig(event) {
     });
     state.config = data.config;
     renderConfigForm();
-    status.className = "notice success";
-    status.textContent = data.message || "配置已保存";
+    status.className = fileSizeRangeWasReset ? "notice warn" : "notice success";
+    status.textContent = fileSizeRangeWasReset
+      ? "文件大小范围输入有误，已按 0 ~ 0（不限制）保存。"
+      : (data.message || "配置已保存");
     state.aria2Loaded = false;
     document.getElementById("aria2-frame").removeAttribute("src");
     if (document.getElementById("view-downloads").classList.contains("active")) {
@@ -355,6 +370,37 @@ async function saveConfig(event) {
     status.className = "notice error";
     status.textContent = error.message;
   }
+}
+
+function normalizeFileSizeRangeInputs() {
+  const control = document.querySelector("#config-form [data-file-size-range]");
+  if (!control) return false;
+
+  const minInput = control.querySelector("[data-file-size-min]");
+  const maxInput = control.querySelector("[data-file-size-max]");
+  const parseBoundary = (input) => {
+    const raw = input?.value.trim() || "0";
+    const value = Number(raw);
+    return {
+      value,
+      valid: Number.isSafeInteger(value) && value >= 0,
+    };
+  };
+  const minimum = parseBoundary(minInput);
+  const maximum = parseBoundary(maxInput);
+  const valid = minimum.valid && maximum.valid
+    && (minimum.value === 0 || maximum.value === 0 || minimum.value <= maximum.value);
+
+  if (!valid) {
+    window.alert("文件大小范围输入有误，将按 0 ~ 0（不限制）处理。");
+    minInput.value = "0";
+    maxInput.value = "0";
+    return true;
+  }
+
+  minInput.value = String(minimum.value);
+  maxInput.value = String(maximum.value);
+  return false;
 }
 
 function fieldValue(input, type) {

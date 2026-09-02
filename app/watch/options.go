@@ -20,7 +20,8 @@ type Options struct {
 	TriggerReactions        []string
 	Include                 []string
 	Exclude                 []string
-	FileSizeMB              int64
+	FileSizeMinMB           int64
+	FileSizeMaxMB           int64
 	Forward                 bool
 	ForwardMode             string
 	ForwardTarget           string
@@ -52,7 +53,8 @@ func DefaultOptions(cfg *config.Config) Options {
 		TriggerReactions:        append([]string(nil), cfg.TriggerReactions...),
 		Include:                 append([]string(nil), cfg.Include...),
 		Exclude:                 append([]string(nil), cfg.Exclude...),
-		FileSizeMB:              cfg.FileSizeMB,
+		FileSizeMinMB:           cfg.FileSizeMinMB,
+		FileSizeMaxMB:           cfg.FileSizeMaxMB,
 		Forward:                 cfg.Modules.Forward,
 		ForwardMode:             config.EffectiveForwardMode(cfg),
 		ForwardTarget:           cfg.Forward.Target,
