@@ -20,6 +20,7 @@ import (
 
 const (
 	aria2ControlBatchSize = 1000
+	aria2DownloaderName   = "aria2"
 	aria2StatusComplete   = "complete"
 	aria2StatusPaused     = "paused"
 	aria2StatusError      = "error"
@@ -101,7 +102,7 @@ func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) 
 }
 
 func (c *Controller) Name() string {
-	return "aria2"
+	return aria2DownloaderName
 }
 
 // Submit implements download.Submitter. Task creation and link generation stay

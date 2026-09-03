@@ -58,7 +58,7 @@ func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Ma
 }
 
 func (m *Manager) Name() string {
-	return "aria2"
+	return aria2DownloaderName
 }
 
 func (m *Manager) Submit(ctx context.Context, submission appdownload.Submission) (appdownload.Result, error) {

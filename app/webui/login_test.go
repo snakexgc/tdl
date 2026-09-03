@@ -37,7 +37,7 @@ func TestWebCodeAuthenticatorPromptsOnlyAfterCodeSent(t *testing.T) {
 	require.Eventually(t, func() bool {
 		flow.mu.Lock()
 		defer flow.mu.Unlock()
-		return flow.stage == "code" && flow.status == loginStatusCodeSent
+		return flow.stage == loginStageCode && flow.status == loginStatusCodeSent
 	}, time.Second, 10*time.Millisecond)
 
 	require.NoError(t, flow.sendCode("12345"))
@@ -48,17 +48,17 @@ func TestWebCodeAuthenticatorPromptsOnlyAfterCodeSent(t *testing.T) {
 
 func TestWebLoginFlowKeepsRetryPromptUntilNextSubmit(t *testing.T) {
 	flow := &webLoginFlow{
-		stage:  "code",
+		stage:  loginStageCode,
 		status: "验证码已发送，请直接输入 Telegram 收到的原始验证码。",
 		codeCh: make(chan string, 1),
 	}
 
 	require.NoError(t, flow.authInputError(context.Background(), login.AuthInputCode, errors.New("bad code")))
-	require.Equal(t, "code", flow.stage)
+	require.Equal(t, loginStageCode, flow.stage)
 	require.Equal(t, "验证码不正确，请重新输入。", flow.status)
 	require.Equal(t, "验证码不正确，请重新输入。", flow.errText)
 
-	flow.prompt("code", "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
+	flow.prompt(loginStageCode, "验证码已发送，请直接输入 Telegram 收到的原始验证码。")
 	require.Equal(t, "验证码不正确，请重新输入。", flow.status)
 	require.Equal(t, "验证码不正确，请重新输入。", flow.errText)
 
