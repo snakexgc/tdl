@@ -19,6 +19,7 @@ const (
 	webLoginTimeout = 10 * time.Minute
 
 	loginStageSendingCode = "sending_code"
+	loginStageCode        = "code"
 	loginStageDone        = "done"
 	loginStageFailed      = "failed"
 
@@ -300,7 +301,7 @@ func (a webCodeAuthenticator) Phone(ctx context.Context) (string, error) {
 
 func (a webCodeAuthenticator) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
 	// gotd only asks for the code after Telegram has acknowledged SendCode.
-	a.flow.prompt("code", loginStatusCodeSent)
+	a.flow.prompt(loginStageCode, loginStatusCodeSent)
 	return a.flow.waitCode(ctx)
 }
 
@@ -319,14 +320,6 @@ func (a webCodeAuthenticator) SignUp(_ context.Context) (auth.UserInfo, error) {
 
 func (a webCodeAuthenticator) AcceptTermsOfService(_ context.Context, tos tg.HelpTermsOfService) error {
 	return &auth.SignUpRequired{TermsOfService: tos}
-}
-
-func (f *webLoginFlow) set(stage, status string) {
-	f.muSet(func() {
-		f.stage = stage
-		f.status = status
-		f.errText = ""
-	})
 }
 
 func (f *webLoginFlow) prompt(stage, status string) {
@@ -374,7 +367,7 @@ func (f *webLoginFlow) waitCode(ctx context.Context) (string, error) {
 		if code == "" {
 			return "", errors.New("code is empty")
 		}
-		f.verifying("code", "正在验证验证码...")
+		f.verifying(loginStageCode, "正在验证验证码...")
 		return code, nil
 	}
 }
@@ -398,12 +391,12 @@ func (f *webLoginFlow) sendCode(code string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.stage != "code" {
+	if f.stage != loginStageCode {
 		return errors.New("验证码尚未发送，请稍候。")
 	}
 	select {
 	case f.codeCh <- code:
-		f.stage = "code"
+		f.stage = loginStageCode
 		f.status = "正在验证验证码..."
 		f.errText = ""
 		return nil

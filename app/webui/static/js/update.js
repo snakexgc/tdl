@@ -38,7 +38,7 @@ function renderUpdateInfo(update) {
     return;
   }
   const runtimeLabel = update.docker
-    ? "Docker 镜像"
+    ? "Docker 容器"
     : (update.runtime === "binary" ? "本机二进制" : (update.runtime || "本机二进制"));
   const rows = [
     ["当前版本", update.current_version || "-"],
@@ -51,9 +51,8 @@ function renderUpdateInfo(update) {
     ["更新文件", update.asset_name || "-"],
     ["发布地址", update.latest_url || "-"],
   ];
-  if (update.update_command) {
-    rows.push(["更新方式", "使用 Docker Compose 更新容器"]);
-    rows.push(["更新命令", update.update_command]);
+  if (update.docker) {
+    rows.push(["更新方式", "仅更新容器内的 tdl 程序，不更新或重建 Docker 容器"]);
   }
   target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
   notes.textContent = update.release_notes || "";
@@ -62,7 +61,7 @@ function renderUpdateInfo(update) {
   status.textContent = update.message || (update.needs_update ? "发现新版本。" : "当前已是最新版本。");
   const applyBtn = document.getElementById("apply-update");
   applyBtn.disabled = !update.needs_update || !update.can_update;
-  applyBtn.textContent = update.docker ? "请使用 Docker Compose 更新" : "下载并更新";
+  applyBtn.textContent = update.docker ? "更新容器内 tdl" : "下载并更新";
 }
 
 async function applyUpdate() {
@@ -72,7 +71,10 @@ async function applyUpdate() {
   if (!state.update || !state.update.needs_update || !state.update.can_update) {
     return;
   }
-  if (!confirm(`确认更新到 ${state.update.latest_version}？程序会自动重启。`)) return;
+  const restartHint = state.update.docker
+    ? "tdl 程序会在当前容器内原地重启，Docker 容器不会更新或重建。"
+    : "程序会自动重启。";
+  if (!confirm(`确认更新到 ${state.update.latest_version}？${restartHint}`)) return;
   const status = document.getElementById("update-status");
   status.className = "notice";
   status.textContent = "正在下载更新...";

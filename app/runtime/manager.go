@@ -683,7 +683,7 @@ func (m *Manager) aria2State(cfg *config.Config) webui.ModuleState {
 	err := m.aria2Err
 	m.mu.Unlock()
 	enabled := cfg != nil && cfg.Modules.Aria2
-	status := moduleStatusNotStarted
+	var status string
 	switch {
 	case !enabled:
 		status = "已关闭"

@@ -35,7 +35,7 @@ const (
 	runtimeBinary     = "binary"
 	runtimeDocker     = "docker"
 	dockerVersionMark = "-origin-"
-	dockerUpdateCmd   = "docker compose pull && docker compose up -d"
+	dockerEnv         = "TDL_DOCKER"
 	flagSource        = "--source"
 	flagTarget        = "--target"
 	flagPID           = "--pid"
@@ -58,7 +58,6 @@ type Info struct {
 	PublishedAt    time.Time `json:"published_at,omitempty"`
 	AssetName      string    `json:"asset_name,omitempty"`
 	AssetURL       string    `json:"asset_url,omitempty"`
-	UpdateCommand  string    `json:"update_command,omitempty"`
 	NeedsUpdate    bool      `json:"needs_update"`
 	CanUpdate      bool      `json:"can_update"`
 	Message        string    `json:"message"`
@@ -95,38 +94,35 @@ func CheckLatestFrom(ctx context.Context, repository, proxyURL string) (Info, er
 	if err != nil {
 		return info, err
 	}
+	return infoForRelease(info, release), nil
+}
 
+func infoForRelease(info Info, release githubRelease) Info {
 	info.LatestVersion = release.TagName
 	info.LatestName = release.Name
 	info.LatestURL = release.HTMLURL
 	info.ReleaseNotes = release.Body
 	info.PublishedAt = release.PublishedAt
-	info.NeedsUpdate = needsUpdate(consts.Version, release.TagName)
+	info.NeedsUpdate = needsUpdate(info.CurrentVersion, release.TagName)
 
-	if info.Docker {
-		info.UpdateCommand = dockerUpdateCmd
-	} else {
-		if asset, ok := chooseAsset(release.Assets); ok {
-			info.AssetName = asset.Name
-			info.AssetURL = asset.BrowserDownloadURL
-			info.CanUpdate = info.NeedsUpdate
-		} else if info.NeedsUpdate {
-			info.Message = fmt.Sprintf("未找到适用于 %s/%s 的发布资产", runtime.GOOS, runtime.GOARCH)
-		}
+	if asset, ok := chooseAsset(release.Assets); ok {
+		info.AssetName = asset.Name
+		info.AssetURL = asset.BrowserDownloadURL
+		info.CanUpdate = info.NeedsUpdate
+	} else if info.NeedsUpdate {
+		info.Message = fmt.Sprintf("未找到适用于 %s/%s 的发布资产", runtime.GOOS, runtime.GOARCH)
 	}
 
 	if !info.NeedsUpdate {
-		if info.Docker {
-			info.Message = fmt.Sprintf("当前已是最新版本。如需更新容器，请执行 `%s`", dockerUpdateCmd)
-		} else {
-			info.Message = "当前已是最新版本"
-		}
-	} else if info.Docker {
-		info.Message = fmt.Sprintf("发现新版本。当前运行在 Docker 镜像中，请在服务器执行 `%s` 更新容器。", dockerUpdateCmd)
+		info.Message = "当前已是最新版本"
 	} else if info.CanUpdate {
-		info.Message = "发现新版本，可以更新"
+		if info.Docker {
+			info.Message = "发现新版本，可以直接更新容器内的 tdl 程序；Docker 容器不会更新或重建"
+		} else {
+			info.Message = "发现新版本，可以更新"
+		}
 	}
-	return info, nil
+	return info
 }
 
 func DownloadLatest(ctx context.Context, proxyURL string) (Plan, Info, error) {
@@ -182,6 +178,15 @@ func StartApply(plan Plan, targetPath string, args []string) error {
 			return errors.Wrap(err, "get executable path")
 		}
 		targetPath = exe
+	}
+	if isDockerRuntime(consts.Version) && runtime.GOOS != goosWindows {
+		if err := replaceExecutable(plan.SourcePath, targetPath); err != nil {
+			return err
+		}
+		if err := execUpdatedProcess(targetPath, args); err != nil {
+			return errors.Wrap(err, "restart updated executable in Docker container")
+		}
+		return nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -240,7 +245,7 @@ func StartAttached(path string, args []string, cwd string) error {
 }
 
 func currentInfo(repository string) Info {
-	docker := isDockerVersion(consts.Version)
+	docker := isDockerRuntime(consts.Version)
 	runtimeType := runtimeBinary
 	if docker {
 		runtimeType = runtimeDocker
@@ -438,6 +443,21 @@ func needsUpdate(current, latest string) bool {
 
 func isDockerVersion(version string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(version)), dockerVersionMark)
+}
+
+func isDockerRuntime(version string) bool {
+	if isDockerVersion(version) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(dockerEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	if runtime.GOOS == goosWindows {
+		return false
+	}
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
 }
 
 func releaseVersionForCompare(version string) string {

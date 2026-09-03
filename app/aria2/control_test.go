@@ -19,6 +19,7 @@ const (
 	testGIDURLPaused       = "url-paused"
 	testGIDURLWaiting      = "url-waiting"
 	testGIDNew             = "new-gid"
+	testVideoFilename      = "video.mp4"
 )
 
 func TestAria2ControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing.T) {
@@ -105,7 +106,7 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 		TaskID:      testDocument1,
 		DownloadURL: testDownloadURL1,
 		Dir:         testDownloadDir,
-		Out:         "video.mp4",
+		Out:         testVideoFilename,
 		CreatedAt:   time.Now(),
 	}))
 
@@ -153,7 +154,7 @@ func TestAria2ControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	require.Equal(t, 1, retried.Matched)
 	require.Equal(t, 1, retried.Changed)
 	require.Equal(t, []string{testDownloadURL1}, client.addedURIs)
-	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: "video.mp4", Connections: 6}}, client.addedOptions)
+	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: testVideoFilename, Connections: 6}}, client.addedOptions)
 	require.Equal(t, []string{testGIDRegisteredError}, client.removedResults)
 
 	records, err := store.Records(ctx)
@@ -179,13 +180,13 @@ func TestAria2ControllerSubmitsGeneratedHTTPLink(t *testing.T) {
 		TaskID:      testDocument1,
 		DownloadURL: testDownloadURL1,
 		Dir:         testDownloadDir,
-		Out:         "video.mp4",
-		FullPath:    testDownloadDir + "/video.mp4",
+		Out:         testVideoFilename,
+		FullPath:    testDownloadDir + "/" + testVideoFilename,
 	})
 	require.NoError(t, err)
-	require.Equal(t, appdownload.Result{Target: "aria2", ID: testGIDNew}, result)
+	require.Equal(t, appdownload.Result{Target: aria2DownloaderName, ID: testGIDNew}, result)
 	require.Equal(t, []string{testDownloadURL1}, client.addedURIs)
-	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: "video.mp4", Connections: 8}}, client.addedOptions)
+	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: testVideoFilename, Connections: 8}}, client.addedOptions)
 
 	records, err := store.Records(ctx)
 	require.NoError(t, err)
