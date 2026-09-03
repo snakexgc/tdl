@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 ARG VERSION="dev"
 ARG COMMIT="unknown"
@@ -30,7 +30,8 @@ FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates tzdata && mkdir -p /app /data
 
-ENV TDL_HOME=/data
+ENV TDL_HOME=/data \
+    TDL_DOCKER=true
 
 WORKDIR /data
 

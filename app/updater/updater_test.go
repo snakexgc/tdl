@@ -27,6 +27,40 @@ func TestNeedsUpdateDockerOriginVersion(t *testing.T) {
 	require.True(t, needsUpdate("v3.6.0-origin-master", "v3.6.1"))
 }
 
+func TestDockerRuntimeCanBeMarkedByEnvironment(t *testing.T) {
+	t.Setenv(dockerEnv, "true")
+	require.True(t, isDockerRuntime("v3.6.0"))
+}
+
+func TestDockerReleaseCanUpdateProgramInPlace(t *testing.T) {
+	osName := goreleaserOSName(runtime.GOOS)
+	archName := goreleaserArchName(runtime.GOARCH)
+	ext := ".tar.gz"
+	if runtime.GOOS == goosWindows {
+		ext = ".zip"
+	}
+	assetName := "tdl_" + osName + "_" + archName + ext
+
+	info := infoForRelease(Info{
+		CurrentVersion: "v3.6.0-origin-master",
+		GOOS:           runtime.GOOS,
+		GOARCH:         runtime.GOARCH,
+		Docker:         true,
+	}, githubRelease{
+		TagName: "v3.6.1",
+		Assets: []githubAsset{{
+			Name:               assetName,
+			BrowserDownloadURL: "https://example.com/" + assetName,
+		}},
+	})
+
+	require.True(t, info.NeedsUpdate)
+	require.True(t, info.CanUpdate)
+	require.Equal(t, assetName, info.AssetName)
+	require.NotEmpty(t, info.AssetURL)
+	require.Contains(t, info.Message, "Docker 容器不会更新或重建")
+}
+
 // goreleaserArchName returns the goreleaser archive arch string for the current
 // GOARCH, matching the replacements in .goreleaser.yaml.
 func goreleaserArchName(arch string) string {
