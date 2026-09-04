@@ -1,9 +1,9 @@
+version: 2
 project_name: tdl
 dist: .tdl/dist
 snapshot:
   # release.yml supplies the requested yyyyMMdd_<channel>_<shortSHA> version.
-  # GoReleaser v1 uses name_template (renamed to version_template in v2.2).
-  name_template: '{{ .Env.RELEASE_VERSION }}'
+  version_template: '{{ .Env.RELEASE_VERSION }}'
 env:
   - GO111MODULE=on
 builds:
@@ -36,16 +36,20 @@ builds:
 checksum:
   name_template: '{{ .ProjectName }}_checksums.txt'
 archives:
-  - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
-    replacements:
-      darwin: MacOS
-      linux: Linux
-      windows: Windows
-      386: 32bit
-      amd64: 64bit
+  - name_template: >-
+      {{ .ProjectName }}_
+      {{- if eq .Os "darwin" }}MacOS
+      {{- else if eq .Os "linux" }}Linux
+      {{- else if eq .Os "windows" }}Windows
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "386" }}32bit
+      {{- else if eq .Arch "amd64" }}64bit
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - README*.md
       - LICENSE
