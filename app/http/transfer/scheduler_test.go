@@ -194,6 +194,51 @@ func TestSchedulerCancellationWhileWaitingForFileSlotDoesNotLeak(t *testing.T) {
 	next.Release()
 }
 
+func TestSchedulerCanceledFollowerCannotOrphanActivation(t *testing.T) {
+	s := NewScheduler(1, 1)
+	blocking := mustAcquireTask(t, s, "blocking", 2)
+
+	type acquireResult struct {
+		lease *TaskLease
+		err   error
+	}
+	leaderResult := make(chan acquireResult, 1)
+	go func() {
+		lease, err := s.Acquire(context.Background(), "target", 2)
+		leaderResult <- acquireResult{lease: lease, err: err}
+	}()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		state := s.files["target"]
+		return state != nil && state.refs == 1 && state.activating != nil
+	}, time.Second, time.Millisecond)
+
+	followerCtx, cancelFollower := context.WithCancel(context.Background())
+	followerResult := make(chan error, 1)
+	go func() {
+		_, err := s.Acquire(followerCtx, "target", 2)
+		followerResult <- err
+	}()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.files["target"].refs == 2
+	}, time.Second, time.Millisecond)
+	cancelFollower()
+	require.ErrorIs(t, <-followerResult, context.Canceled)
+
+	blocking.Release()
+	result := <-leaderResult
+	require.NoError(t, result.err)
+	chunk := mustAcquireChunks(t, result.lease, 1)[0]
+	chunk.Release()
+	result.lease.Release()
+
+	next := mustAcquireTask(t, s, "next", 2)
+	next.Release()
+}
+
 func TestSchedulerTaskReleaseWakesQueuedChunk(t *testing.T) {
 	s := NewScheduler(1, 1)
 	lease := mustAcquireTask(t, s, "task", 2)

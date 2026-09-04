@@ -351,7 +351,7 @@ func splitPathParts(value string) []string {
 	parts := make([]string, 0, len(fields))
 	for _, field := range fields {
 		field = strings.TrimSpace(field)
-		if field == "" || field == "." {
+		if field == "" || field == "." || field == ".." {
 			continue
 		}
 		parts = append(parts, field)
@@ -370,7 +370,7 @@ func joinTargetPath(base string, parts ...string) string {
 	cleanParts := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.Trim(part, `/\`)
-		if part == "" || part == "." {
+		if part == "" || part == "." || part == ".." {
 			continue
 		}
 		cleanParts = append(cleanParts, part)

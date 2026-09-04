@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fatih/color"
@@ -94,6 +95,9 @@ type Manager struct {
 	requestReboot func()
 	requestUpdate func(updater.Plan)
 
+	applyMu        sync.Mutex
+	transitionMu   sync.Mutex
+	applyVersion   atomic.Uint64
 	mu             sync.Mutex
 	notify         watch.NotifyFunc
 	botCancel      context.CancelFunc
@@ -222,8 +226,29 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 }
 
 func (m *Manager) ApplyConfig(cfg *config.Config) {
+	if m == nil {
+		return
+	}
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+
 	if cfg == nil {
 		cfg = config.Get()
+	}
+	if cfg == nil {
+		return
+	}
+	version := m.applyVersion.Add(1)
+	_ = m.applyConfigLocked(cfg, version, true, context.Background())
+}
+
+// applyConfigLocked reconciles every managed module against one config
+// generation. The caller must hold applyMu. Background stops are generation
+// checked and serialized with starts, so an older ApplyConfig cannot stop a
+// module that a newer config has already enabled.
+func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bool, watchCtx context.Context) error {
+	if watchCtx == nil {
+		watchCtx = context.Background()
 	}
 	restartHTTP := m.httpService.UpdateConfig(cfg)
 	nextWatchMode := config.EffectiveDownloaderMode(cfg)
@@ -243,12 +268,14 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 	m.mu.Unlock()
 
 	if aria2ConfigChanged {
-		m.StopAria2Manager()
-		manager := aria2.NewManager(cfg, m.namespaceKV, logctx.From(m.parent))
-		m.mu.Lock()
-		m.aria2Mgr = manager
-		m.aria2Config = nextAria2Config
-		m.mu.Unlock()
+		m.transition(version, func() {
+			m.StopAria2Manager()
+			manager := aria2.NewManager(cfg, m.namespaceKV, logctx.From(m.parent))
+			m.mu.Lock()
+			m.aria2Mgr = manager
+			m.aria2Config = nextAria2Config
+			m.mu.Unlock()
+		})
 	}
 	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
 	restartWatch := m.watchCtrl.Running() &&
@@ -259,33 +286,81 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 			(aria2ConfigChanged && nextAria2Auto))
 
 	if cfg.Modules.HTTP {
-		if restartHTTP && m.httpCtrl.Running() {
-			m.StopHTTP()
-		}
-		m.StartHTTP()
+		m.transition(version, func() {
+			if restartHTTP && m.httpCtrl.Running() {
+				m.StopHTTP()
+			}
+			m.StartHTTP()
+		})
 	} else {
-		go m.StopHTTP()
+		m.stopForConfig(version, async, m.StopHTTP)
 	}
 	if cfg.Modules.Aria2 {
-		m.StartAria2Manager()
+		m.transition(version, m.StartAria2Manager)
 	} else {
-		go m.StopAria2Manager()
+		m.stopForConfig(version, async, m.StopAria2Manager)
 	}
 
 	if cfg.Modules.Bot {
-		m.StartBot()
+		m.transition(version, m.StartBot)
 	} else {
-		go m.StopBot()
+		m.stopForConfig(version, async, m.StopBot)
 	}
 	if cfg.Modules.Watch || cfg.Modules.Forward {
 		if restartWatch {
-			m.restartWatchAsync()
+			if async {
+				m.runTransition(version, func() {
+					m.StopWatch()
+					_ = m.StartWatch(watchCtx)
+				})
+			} else {
+				var err error
+				m.transition(version, func() {
+					m.StopWatch()
+					err = m.StartWatch(watchCtx)
+				})
+				if err != nil {
+					return err
+				}
+			}
+		} else if async {
+			m.runTransition(version, func() { _ = m.StartWatch(watchCtx) })
 		} else {
-			go m.StartWatch(context.Background())
+			var err error
+			m.transition(version, func() { err = m.StartWatch(watchCtx) })
+			if err != nil {
+				return err
+			}
 		}
 	} else {
-		go m.StopWatch()
+		m.stopForConfig(version, async, m.StopWatch)
 	}
+	return nil
+}
+
+func (m *Manager) transition(version uint64, fn func()) bool {
+	if fn == nil {
+		return false
+	}
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+	if m.applyVersion.Load() != version {
+		return false
+	}
+	fn()
+	return true
+}
+
+func (m *Manager) runTransition(version uint64, fn func()) {
+	go m.transition(version, fn)
+}
+
+func (m *Manager) stopForConfig(version uint64, async bool, stop func()) {
+	if async {
+		m.runTransition(version, stop)
+		return
+	}
+	m.transition(version, stop)
 }
 
 func (m *Manager) ModuleStates() []webui.ModuleState {
@@ -309,6 +384,12 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 }
 
 func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool) (webui.ModuleState, error) {
+	if m == nil {
+		return webui.ModuleState{}, errors.New("module manager is not initialized")
+	}
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+
 	next, err := config.Clone(config.Get())
 	if err != nil {
 		return webui.ModuleState{}, err
@@ -335,44 +416,21 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 	if err := config.Set(next); err != nil {
 		return webui.ModuleState{}, err
 	}
+	version := m.applyVersion.Add(1)
+	if err := m.applyConfigLocked(next, version, false, ctx); err != nil {
+		return webui.ModuleState{}, err
+	}
 
 	switch id {
 	case moduleIDBot:
-		if enabled {
-			m.StartBot()
-		} else {
-			m.StopBot()
-		}
 		return m.botState(next), nil
 	case moduleIDWatch:
-		if enabled {
-			_ = m.StartWatch(ctx)
-		} else {
-			if !next.Modules.Forward {
-				m.StopWatch()
-			} else if m.watchCtrl.Running() {
-				m.restartWatchAsync()
-			}
-		}
 		return m.watchState(next), nil
 	case moduleIDHTTP:
-		if enabled {
-			m.StartHTTP()
-		} else {
-			m.StopHTTP()
-		}
 		return m.httpState(next), nil
 	case moduleIDAria2:
-		m.ApplyConfig(next)
 		return m.aria2State(next), nil
 	case moduleIDForward:
-		if enabled {
-			_ = m.StartWatch(ctx)
-		} else if !next.Modules.Watch {
-			m.StopWatch()
-		} else if m.watchCtrl.Running() {
-			m.restartWatchAsync()
-		}
 		return m.forwardState(next), nil
 	default:
 		return webui.ModuleState{}, fmt.Errorf("unknown module %q", id)
@@ -513,7 +571,9 @@ func (m *Manager) StartAria2Manager() {
 	m.aria2Err = nil
 	m.mu.Unlock()
 
-	m.httpService.Proxy().SetTelegramFileErrorReporter(manager)
+	if m.httpService != nil && m.httpService.Proxy() != nil {
+		m.httpService.Proxy().SetTelegramFileErrorReporter(manager)
+	}
 	go func() {
 		err := manager.Run(ctx)
 		m.mu.Lock()
@@ -549,16 +609,6 @@ func (m *Manager) StopAria2Manager() {
 	if m.httpService != nil && m.httpService.Proxy() != nil {
 		m.httpService.Proxy().SetTelegramFileErrorReporter(nil)
 	}
-}
-
-// restartWatchAsync stops the running watcher and starts it again on a
-// background context, off the caller's goroutine. Used when a config or module
-// change requires the watch loop to be rebuilt with fresh options.
-func (m *Manager) restartWatchAsync() {
-	go func() {
-		m.StopWatch()
-		_ = m.StartWatch(context.Background())
-	}()
 }
 
 func (m *Manager) Shutdown() {

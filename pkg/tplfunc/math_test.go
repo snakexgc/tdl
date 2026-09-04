@@ -3,6 +3,7 @@ package tplfunc
 import (
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"text/template"
 )
@@ -46,7 +47,7 @@ func TestRand(t *testing.T) {
 	}
 }
 
-func TestRandPanic(t *testing.T) {
+func TestRandRejectsInvalidRange(t *testing.T) {
 	m := FuncMap(Rand())
 	got := strings.Builder{}
 
@@ -61,4 +62,20 @@ func TestRandPanic(t *testing.T) {
 		t.Errorf("rand() expected error, got nil")
 		return
 	}
+}
+
+func TestRandConcurrent(t *testing.T) {
+	m := FuncMap(Rand())
+	tpl := template.Must(template.New("test").Funcs(m).Parse(`{{ rand 0 100 }}`))
+
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Go(func() {
+			var got strings.Builder
+			if err := tpl.Execute(&got, nil); err != nil {
+				t.Errorf("rand() error = %v", err)
+			}
+		})
+	}
+	wg.Wait()
 }

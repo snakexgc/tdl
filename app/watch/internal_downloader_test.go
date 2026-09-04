@@ -159,6 +159,31 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestInternalDownloadControllerKeepsRecordWhenFileDeleteFails(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kvd := newMemoryTaskStorage()
+	store := newInternalTaskStore(kvd)
+	nonEmptyDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(nonEmptyDir, "child"), []byte("x"), 0o644))
+	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+		ID:        testDocument1,
+		TaskID:    testDocument1,
+		Path:      nonEmptyDir,
+		Status:    InternalDownloadStatusQueued,
+		CreatedAt: time.Now(),
+	}))
+
+	result, err := NewInternalDownloadController(kvd).Delete(ctx, []string{testDocument1})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Errors)
+	require.Zero(t, result.Changed)
+	_, ok, err := store.Get(ctx, testDocument1)
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
 func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) {
 	t.Parallel()
 

@@ -153,6 +153,14 @@ func TestRetryAria2ConnectionRetriesConnectionErrorOnly(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
+func TestAria2RetryIntervalUsesCappedExponentialBackoff(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 2*time.Second, nextAria2RetryInterval(time.Second))
+	require.Equal(t, maxConnectRetryInterval, nextAria2RetryInterval(maxConnectRetryInterval/2))
+	require.Equal(t, maxConnectRetryInterval, nextAria2RetryInterval(maxConnectRetryInterval))
+}
+
 func filesWithURI(uri string) []aria2File {
 	return []aria2File{{URIs: []aria2URI{{URI: uri}}}}
 }

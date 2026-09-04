@@ -133,6 +133,27 @@ func TestEditMessageReactionSkipsQueueWhenContextCanceled(t *testing.T) {
 	require.Empty(t, w.jobCh)
 }
 
+func TestEditMessageReactionRemovalClearsDedup(t *testing.T) {
+	w := &Watcher{jobCh: make(chan downloadJob, 2), opts: Options{Download: true}}
+	msg := &tg.Message{
+		ID:     116103,
+		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
+		Reactions: tg.MessageReactions{
+			Results: []tg.ReactionCount{testReactionCount(true)},
+		},
+	}
+
+	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
+	require.Len(t, w.jobCh, 1)
+
+	msg.Reactions = tg.MessageReactions{}
+	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
+
+	msg.Reactions.Results = []tg.ReactionCount{testReactionCount(true)}
+	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
+	require.Len(t, w.jobCh, 2)
+}
+
 func TestShouldTriggerForwardReactionIgnoresListenSet(t *testing.T) {
 	// Empty listen set with a configured trigger reaction is a valid
 	// "react to forward" setup: reacting must still trigger a forward.

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,4 +63,17 @@ func TestAria2AutoDownloadDoesNotReconfigureManager(t *testing.T) {
 	cfg.Aria2.AutoDownload = !cfg.Aria2.AutoDownload
 
 	require.Equal(t, before, effectiveAria2ManagerConfig(cfg))
+}
+
+func TestStaleConfigTransitionIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	manager := &Manager{}
+	manager.applyVersion.Store(2)
+	var called atomic.Bool
+
+	require.False(t, manager.transition(1, func() { called.Store(true) }))
+	require.False(t, called.Load())
+	require.True(t, manager.transition(2, func() { called.Store(true) }))
+	require.True(t, called.Load())
 }

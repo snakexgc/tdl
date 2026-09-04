@@ -19,6 +19,7 @@ const (
 	aria2ShutdownRetryInterval = time.Second
 
 	DefaultConnectRetryInterval = 10 * time.Second
+	maxConnectRetryInterval     = time.Minute
 )
 
 type ReconnectClient interface {
@@ -316,6 +317,7 @@ func RetryConnectionWithInterval(ctx context.Context, logger *zap.Logger, action
 		retryInterval = DefaultConnectRetryInterval
 	}
 
+	delay := min(retryInterval, maxConnectRetryInterval)
 	for {
 		err := fn()
 		if err == nil {
@@ -327,12 +329,12 @@ func RetryConnectionWithInterval(ctx context.Context, logger *zap.Logger, action
 
 		logger.Warn("Cannot connect to aria2 RPC, retrying",
 			zap.String("action", action),
-			zap.Duration("retry_interval", retryInterval),
+			zap.Duration("retry_interval", delay),
 			zap.Error(err))
 		color.Yellow("⚠️ Cannot connect to aria2 RPC while trying to %s: %v", action, err)
-		color.Yellow("🔄 Retrying in %v...", retryInterval)
+		color.Yellow("🔄 Retrying in %v...", delay)
 
-		timer := time.NewTimer(retryInterval)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
@@ -344,7 +346,15 @@ func RetryConnectionWithInterval(ctx context.Context, logger *zap.Logger, action
 			return ctx.Err()
 		case <-timer.C:
 		}
+		delay = nextAria2RetryInterval(delay)
 	}
+}
+
+func nextAria2RetryInterval(current time.Duration) time.Duration {
+	if current >= maxConnectRetryInterval/2 {
+		return maxConnectRetryInterval
+	}
+	return current * 2
 }
 
 func retryAria2ConnectionWithInterval(ctx context.Context, logger *zap.Logger, action string, retryInterval time.Duration, fn func() error) error {

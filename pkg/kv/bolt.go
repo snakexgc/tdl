@@ -67,7 +67,11 @@ func (b *bolt) MigrateTo() (Meta, error) {
 		}
 
 		return db.db.View(func(tx *bbolt.Tx) error {
-			return tx.Bucket(db.ns).ForEach(func(k, v []byte) error {
+			bucket := tx.Bucket(db.ns)
+			if bucket == nil {
+				return errors.New("namespace bucket is missing")
+			}
+			return bucket.ForEach(func(k, v []byte) error {
 				meta[ns][string(k)] = bytes.Clone(v)
 				return nil
 			})

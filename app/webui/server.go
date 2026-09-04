@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gotd/td/tg"
@@ -46,8 +47,11 @@ const (
 	userSessionKey = "session"
 	userAppKey     = "app"
 
-	webUICookieName = "tdl_webui_session"
-	webUISessionTTL = 24 * time.Hour
+	webUICookieName         = "tdl_webui_session"
+	webUISessionTTL         = 24 * time.Hour
+	webUILoginFailureWindow = time.Minute
+	webUILoginLockout       = 5 * time.Minute
+	webUIMaxLoginFailures   = 5
 
 	fieldUsingDefaultCredentials = "using_default_credentials"
 	fieldNamespace               = "namespace"
@@ -98,10 +102,14 @@ type Server struct {
 
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
+	loginMu   sync.Mutex
+	logins    map[string]loginFailure
 
 	dashboardMu         sync.Mutex
 	dashboardLastBytes  int64
 	dashboardLastSample time.Time
+
+	shutdownRequested atomic.Bool
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -139,6 +147,7 @@ func NewServer(opts Options) *Server {
 		opts:     opts,
 		login:    newWebLoginManager(opts),
 		sessions: map[string]time.Time{},
+		logins:   map[string]loginFailure{},
 	}
 }
 

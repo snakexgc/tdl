@@ -70,9 +70,15 @@ jobs:
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64,arm
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 1
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v4.6.0
@@ -98,6 +104,7 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ steps.args.outputs.commit }}
             COMMIT_DATE=${{ steps.args.outputs.commit_date }}
+            BUILD_MAX_PROCS=2
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: true
           provenance: false

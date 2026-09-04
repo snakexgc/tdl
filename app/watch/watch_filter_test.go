@@ -16,6 +16,7 @@ func TestWatcherMatchFilterAppliesExtensionBeforeFileSizeRange(t *testing.T) {
 	}
 
 	require.True(t, w.matchFilter("clip.mp4", 1024*1024))
+	require.True(t, w.matchFilter("CLIP.MP4", 1024*1024))
 	require.True(t, w.matchFilter("clip.mp4", 5*1024*1024))
 	require.False(t, w.matchFilter("clip.mkv", 2*1024*1024))
 	require.False(t, w.matchFilter("clip.mp4", 1024*1024-1))
@@ -31,6 +32,7 @@ func TestWatcherMatchFilterAppliesExcludeAndDisabledFileSizeRange(t *testing.T) 
 
 	require.True(t, w.matchFilter("archive.zip", 1<<40))
 	require.False(t, w.matchFilter("photo.jpg", 10))
+	require.False(t, w.matchFilter("PHOTO.JPG", 10))
 }
 
 func TestWatcherMatchFileSizeFilterSupportsUnboundedSides(t *testing.T) {

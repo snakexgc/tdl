@@ -1,6 +1,7 @@
 package tplfunc
 
 import (
+	"fmt"
 	"text/template"
 	"time"
 
@@ -19,16 +20,20 @@ func Now() Func {
 
 func FormatDate() Func {
 	return func(funcMap template.FuncMap) {
-		funcMap["formatDate"] = func(args ...any) string {
+		funcMap["formatDate"] = func(args ...any) (string, error) {
 			switch len(args) {
 			case 0:
-				panic("formatDate() requires at least 1 argument")
+				return "", fmt.Errorf("formatDate() requires at least 1 argument")
 			case 1:
-				return time.Unix(cast.ToInt64(args[0]), 0).Format("20060102150405")
+				return time.Unix(cast.ToInt64(args[0]), 0).Format("20060102150405"), nil
 			case 2:
-				return time.Unix(cast.ToInt64(args[0]), 0).Format(args[1].(string))
+				format, ok := args[1].(string)
+				if !ok {
+					return "", fmt.Errorf("formatDate() format must be a string, got %T", args[1])
+				}
+				return time.Unix(cast.ToInt64(args[0]), 0).Format(format), nil
 			default:
-				panic("formatDate() requires at most 2 arguments")
+				return "", fmt.Errorf("formatDate() requires at most 2 arguments")
 			}
 		}
 	}

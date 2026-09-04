@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	"github.com/snakexgc/tdl/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/utils"
 )
@@ -140,7 +142,24 @@ func listenAria2Events(ctx context.Context, wsURL string, notifier *botNotifier,
 			continue
 		}
 
-		go handleAria2Event(ctx, notifier, factory, tracker, event.Method, gid)
+		go runAria2EventHandler(ctx, event.Method, gid, func() {
+			handleAria2Event(ctx, notifier, factory, tracker, event.Method, gid)
+		})
+	}
+}
+
+func runAria2EventHandler(ctx context.Context, method, gid string, handler func()) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logctx.From(ctx).Error("Recovered panic in aria2 event handler",
+				zap.String("method", method),
+				zap.String("gid", gid),
+				zap.Any("panic", recovered),
+				zap.Stack("stack"))
+		}
+	}()
+	if handler != nil {
+		handler()
 	}
 }
 

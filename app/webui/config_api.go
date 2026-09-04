@@ -36,6 +36,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, errors.New("namespace must be changed from user management"))
 				return
 			}
+			if isBlankWebUIUsernamePatch(path, raw) {
+				writeError(w, http.StatusBadRequest, errors.New("webui.username cannot be blank"))
+				return
+			}
 			if isBlankSensitivePatch(path, raw) {
 				continue
 			}
@@ -116,8 +120,13 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("update is not available in this mode"))
 		return
 	}
+	if !s.shutdownRequested.CompareAndSwap(false, true) {
+		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
+		return
+	}
 	plan, info, err := updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.Get()))
 	if err != nil {
+		s.shutdownRequested.Store(false)
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -141,6 +150,10 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("reboot is not available in this mode"))
 		return
 	}
+	if !s.shutdownRequested.CompareAndSwap(false, true) {
+		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldMessage: "正在重启 tdl"})
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -158,6 +171,14 @@ func publicConfig(cfg *config.Config) *config.Config {
 	next.WebUI.Password = ""
 	next.ProxyPassword = ""
 	return next
+}
+
+func isBlankWebUIUsernamePatch(path string, raw json.RawMessage) bool {
+	if !strings.EqualFold(strings.TrimSpace(path), "webui.username") {
+		return false
+	}
+	var value string
+	return json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) == ""
 }
 
 func isBlankSensitivePatch(path string, raw json.RawMessage) bool {
