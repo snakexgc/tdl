@@ -46,7 +46,7 @@ jobs:
               echo "version=${GITHUB_REF_NAME#v}"
             } >> "$GITHUB_OUTPUT"
           else
-            # GoReleaser v1.18.2 parses the nearest tag even in snapshot mode.
+            # GoReleaser parses the nearest tag even in snapshot mode.
             # Date-based prerelease tags are intentionally not SemVer. Hide all
             # non-stable tags in this disposable checkout before the snapshot
             # build so they cannot become GoReleaser's inferred base version.
@@ -83,7 +83,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: v1.18.2
+          version: v2.18.0
           args: ${{ steps.release.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
