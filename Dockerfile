@@ -12,14 +12,16 @@ COPY . .
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
+ARG BUILD_MAX_PROCS=2
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg \
     set -eux; \
     goarm="${TARGETVARIANT#v}"; \
     if [ "$TARGETARCH" != "arm" ]; then goarm=""; fi; \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$goarm \
-    go build -trimpath \
+    GOMAXPROCS=$BUILD_MAX_PROCS CGO_ENABLED=0 \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$goarm \
+    go build -p=$BUILD_MAX_PROCS -v -trimpath \
     -ldflags "-s -w \
     -X github.com/snakexgc/tdl/pkg/consts.Version=${VERSION}  \
     -X github.com/snakexgc/tdl/pkg/consts.Commit=${COMMIT}  \
