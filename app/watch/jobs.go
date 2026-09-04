@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
@@ -151,6 +153,9 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 	}
 	result.Queued = len(prepared)
 	result.Skipped = collection.skipped
+	if w.runtime.ensureOutputDirs {
+		prepared = uniquifyInternalTargets(prepared, w.opts.FilenameMaxLength)
+	}
 
 	w.notify(ctx, "%s\n链接：%s\n文件总数：%d\n需要下载：%d\n跳过：%d", downloadJobNotice(job), job.link, collection.total, len(prepared), collection.skipped)
 	if len(prepared) == 0 {
@@ -181,6 +186,42 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 	}
 
 	return result, nil
+}
+
+func uniquifyInternalTargets(tasks []preparedFileTask, maxNameBytes int) []preparedFileTask {
+	if len(tasks) < 2 {
+		return tasks
+	}
+	if maxNameBytes <= 0 || maxNameBytes > 255 {
+		maxNameBytes = 255
+	}
+	used := make(map[string]struct{}, len(tasks))
+	for i := range tasks {
+		originalOut := tasks[i].out
+		candidate := originalOut
+		for sequence := 2; ; sequence++ {
+			fullPath := joinTargetPath(tasks[i].dir, candidate)
+			key := strings.ToLower(filepath.Clean(fullPath))
+			if _, exists := used[key]; !exists {
+				used[key] = struct{}{}
+				tasks[i].out = candidate
+				tasks[i].fullPath = fullPath
+				prefix, _ := splitRenderedNameLeaf(tasks[i].fileName)
+				tasks[i].fileName = prefix + candidate
+				break
+			}
+			candidate = fileNameWithConflictSuffix(originalOut, sequence, maxNameBytes)
+		}
+	}
+	return tasks
+}
+
+func fileNameWithConflictSuffix(name string, sequence, maxBytes int) string {
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	suffix := fmt.Sprintf(" (%d)", sequence)
+	stem = truncateBytesKeepingRunes(stem, max(0, maxBytes-len(suffix)-len(ext)))
+	return limitFileNameSegmentBytes(stem+suffix+ext, maxBytes)
 }
 
 func downloadJobNotice(job downloadJob) string {

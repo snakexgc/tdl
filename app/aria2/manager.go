@@ -114,18 +114,19 @@ func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duratio
 	if retryInterval <= 0 {
 		retryInterval = DefaultConnectRetryInterval
 	}
+	delay := min(retryInterval, maxConnectRetryInterval)
 	for {
 		err := m.client.SetMaxConcurrentDownloads(ctx, m.limit)
 		if err == nil {
 			return nil
 		}
-		if errors.Is(err, context.Canceled) || !IsConnectionError(err) {
+		if errors.Is(err, context.Canceled) {
 			return err
 		}
-		m.logger.Warn("Cannot connect to aria2 RPC, retrying",
-			zap.Duration("retry_interval", retryInterval),
+		m.logger.Warn("Aria2 manager is not ready, retrying",
+			zap.Duration("retry_interval", delay),
 			zap.Error(err))
-		timer := time.NewTimer(retryInterval)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
@@ -137,5 +138,6 @@ func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duratio
 			return ctx.Err()
 		case <-timer.C:
 		}
+		delay = nextAria2RetryInterval(delay)
 	}
 }

@@ -588,10 +588,51 @@ func Save(path string, cfg *Config) error {
 		return errors.Wrap(err, "marshal config")
 	}
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := writeFileAtomic(path, data, 0o644); err != nil {
 		return errors.Wrap(err, "write config file")
 	}
 
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
+	}
+	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	if err := temp.Chmod(perm); err != nil {
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+
+	// Persist the directory entry where the platform supports syncing a
+	// directory. The rename itself is still atomic if this best-effort sync is
+	// unavailable (for example on Windows).
+	if parent, err := os.Open(dir); err == nil {
+		_ = parent.Sync()
+		_ = parent.Close()
+	}
 	return nil
 }
 

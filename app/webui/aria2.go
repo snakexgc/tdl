@@ -50,7 +50,6 @@ func fetchAria2DashboardStat(ctx context.Context, cfg config.Aria2Config) (aria2
 
 	var stat aria2GlobalStat
 	if err := callAria2(ctx, cfg, "aria2.getGlobalStat", []any{}, &stat); err != nil {
-		result.Available = true
 		return result, err
 	}
 	result.Available = true

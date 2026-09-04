@@ -1,6 +1,9 @@
 package watch
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"strings"
+)
 
 func (w *Watcher) matchFilter(name string, size int64) bool {
 	if !w.matchExtensionFilter(name) {
@@ -10,7 +13,7 @@ func (w *Watcher) matchFilter(name string, size int64) bool {
 }
 
 func (w *Watcher) matchExtensionFilter(name string) bool {
-	ext := filepath.Ext(name)
+	ext := normalizeExtension(filepath.Ext(name))
 	if len(w.include) > 0 {
 		if _, ok := w.include[ext]; !ok {
 			return false
@@ -43,6 +46,11 @@ func fileSizeMBToBytes(mb int64) int64 {
 }
 
 func addPrefixDot(v string) string {
+	return normalizeExtension(v)
+}
+
+func normalizeExtension(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
 	if v == "" || v[0] == '.' {
 		return v
 	}

@@ -167,6 +167,26 @@ func TestResolveTargetPathUsesTargetStyle(t *testing.T) {
 	require.Equal(t, `/root/download/202604/sub/video.mp4`, full)
 }
 
+func TestResolveTargetPathDoesNotTraverseParent(t *testing.T) {
+	dir, out, full := resolveTargetPath(`/root/download`, `../outside.mp4`)
+	require.Equal(t, `/root/download`, dir)
+	require.Equal(t, `outside.mp4`, out)
+	require.Equal(t, `/root/download/outside.mp4`, full)
+}
+
+func TestUniquifyInternalTargetsAddsConflictSuffix(t *testing.T) {
+	tasks := []preparedFileTask{
+		{fileName: "album/video.mp4", dir: `/downloads/album`, out: "video.mp4", fullPath: `/downloads/album/video.mp4`},
+		{fileName: "album/video.mp4", dir: `/downloads/album`, out: "video.mp4", fullPath: `/downloads/album/video.mp4`},
+	}
+
+	got := uniquifyInternalTargets(tasks, 255)
+	require.Equal(t, "video.mp4", got[0].out)
+	require.Equal(t, "video (2).mp4", got[1].out)
+	require.Equal(t, `/downloads/album/video (2).mp4`, got[1].fullPath)
+	require.Equal(t, "album/video (2).mp4", got[1].fileName)
+}
+
 func TestPrepareAria2OutputRootUsesConfiguredRemoteDirWithoutLocalAccess(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "downloads")
 	cfg := config.DefaultConfig()

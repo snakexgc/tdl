@@ -127,6 +127,29 @@ func TestRoutesAuthenticateWithWebSessionCookie(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `id="view-user"`)
 }
 
+func TestLoginRateLimitBlocksRepeatedFailures(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+	server := NewServer(Options{})
+
+	for range webUIMaxLoginFailures {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		req.RemoteAddr = "192.0.2.10:1234"
+		rec := httptest.NewRecorder()
+		server.handleAuthLogin(rec, req)
+		require.Equal(t, http.StatusUnauthorized, rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+	req.RemoteAddr = "192.0.2.10:5678"
+	rec := httptest.NewRecorder()
+	server.handleAuthLogin(rec, req)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.NotEmpty(t, rec.Header().Get("Retry-After"))
+}
+
 func TestRoutesServeAppShellForViewPaths(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()
@@ -222,6 +245,67 @@ func TestConfigAPIExposesSplitListenFields(t *testing.T) {
 	require.Equal(t, "0.0.0.0", webUICfg["address"])
 	require.Equal(t, float64(22335), webUICfg["port"])
 	require.NotContains(t, webUICfg, "listen")
+}
+
+func TestConfigAPIRejectsBlankWebUIUsername(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	previous, err := config.Clone(cfg)
+	require.NoError(t, err)
+	defer func() { *cfg = *previous }()
+
+	cfg.WebUI.Username = webUITestUsername
+	cfg.WebUI.Password = webUITestPassword
+
+	handler := NewServer(Options{}).routes()
+	login := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+webUITestUsername+`","password":"`+webUITestPassword+`"}`))
+	loginRec := httptest.NewRecorder()
+	handler.ServeHTTP(loginRec, login)
+	require.Equal(t, http.StatusOK, loginRec.Code)
+	require.NotEmpty(t, loginRec.Result().Cookies())
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"values":{"webui.username":"   "}}`))
+	request.AddCookie(loginRec.Result().Cookies()[0])
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, webUITestUsername, config.Get().WebUI.Username)
+}
+
+func TestAria2DashboardUnavailableWhenRPCRequestFails(t *testing.T) {
+	stat, err := fetchAria2DashboardStat(context.Background(), config.Aria2Config{
+		RPCURL: "http://127.0.0.1:0",
+	})
+
+	require.Error(t, err)
+	require.False(t, stat.Available)
+}
+
+func TestRebootRequestRejectsReentry(t *testing.T) {
+	called := make(chan struct{}, 2)
+	server := NewServer(Options{RequestReboot: func() { called <- struct{}{} }})
+
+	first := httptest.NewRequest(http.MethodPost, "/api/reboot", nil)
+	firstRecorder := httptest.NewRecorder()
+	server.handleReboot(firstRecorder, first)
+	require.Equal(t, http.StatusOK, firstRecorder.Code)
+
+	second := httptest.NewRequest(http.MethodPost, "/api/reboot", nil)
+	secondRecorder := httptest.NewRecorder()
+	server.handleReboot(secondRecorder, second)
+	require.Equal(t, http.StatusConflict, secondRecorder.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("reboot callback was not called")
+	}
+	select {
+	case <-called:
+		t.Fatal("reboot callback was called more than once")
+	case <-time.After(250 * time.Millisecond):
+	}
 }
 
 func TestRoutesRejectUnauthenticatedAPIWithJSON(t *testing.T) {

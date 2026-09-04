@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +15,12 @@ import (
 
 	"github.com/snakexgc/tdl/pkg/config"
 )
+
+type loginFailure struct {
+	count        int
+	windowStart  time.Time
+	blockedUntil time.Time
+}
 
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +59,7 @@ func (s *Server) sessionOK(r *http.Request) bool {
 
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
+	s.pruneSessionsLocked(now)
 	expiresAt, ok := s.sessions[token]
 	if !ok || !expiresAt.After(now) {
 		delete(s.sessions, token)
@@ -66,6 +75,7 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	s.sessionMu.Lock()
+	s.pruneSessionsLocked(time.Now())
 	s.sessions[token] = time.Now().Add(webUISessionTTL)
 	s.sessionMu.Unlock()
 
@@ -159,6 +169,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "POST")
 		return
 	}
+	if retryAfter, blocked := s.loginBlocked(r, time.Now()); blocked {
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
+		writeError(w, http.StatusTooManyRequests, errors.New("too many failed login attempts; try again later"))
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -169,9 +184,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := config.Get()
 	if cfg == nil || !credentialsOK(strings.TrimSpace(req.Username), req.Password, cfg.WebUI.Username, cfg.WebUI.Password) {
+		s.recordLoginFailure(r, time.Now())
 		writeError(w, http.StatusUnauthorized, errors.New("用户名或密码错误"))
 		return
 	}
+	s.clearLoginFailures(r)
 	if err := s.issueSession(w, r); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -180,6 +197,71 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		"ok":                         true,
 		fieldUsingDefaultCredentials: config.UsesDefaultWebUICredentials(cfg),
 	})
+}
+
+func (s *Server) pruneSessionsLocked(now time.Time) {
+	for token, expiresAt := range s.sessions {
+		if !expiresAt.After(now) {
+			delete(s.sessions, token)
+		}
+	}
+}
+
+func (s *Server) loginBlocked(r *http.Request, now time.Time) (time.Duration, bool) {
+	key := loginClientKey(r)
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	s.pruneLoginFailuresLocked(now)
+	failure, ok := s.logins[key]
+	if !ok || !failure.blockedUntil.After(now) {
+		return 0, false
+	}
+	return failure.blockedUntil.Sub(now), true
+}
+
+func (s *Server) recordLoginFailure(r *http.Request, now time.Time) {
+	key := loginClientKey(r)
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	s.pruneLoginFailuresLocked(now)
+	failure := s.logins[key]
+	if failure.windowStart.IsZero() || now.Sub(failure.windowStart) >= webUILoginFailureWindow {
+		failure = loginFailure{windowStart: now}
+	}
+	failure.count++
+	if failure.count >= webUIMaxLoginFailures {
+		failure.blockedUntil = now.Add(webUILoginLockout)
+	}
+	s.logins[key] = failure
+}
+
+func (s *Server) clearLoginFailures(r *http.Request) {
+	s.loginMu.Lock()
+	delete(s.logins, loginClientKey(r))
+	s.loginMu.Unlock()
+}
+
+func (s *Server) pruneLoginFailuresLocked(now time.Time) {
+	for key, failure := range s.logins {
+		if failure.blockedUntil.After(now) || now.Sub(failure.windowStart) < webUILoginFailureWindow {
+			continue
+		}
+		delete(s.logins, key)
+	}
+}
+
+func loginClientKey(r *http.Request) string {
+	if r == nil {
+		return "unknown"
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	if value := strings.TrimSpace(r.RemoteAddr); value != "" {
+		return value
+	}
+	return "unknown"
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {

@@ -28,6 +28,14 @@ func TestHandleAria2EventIgnoresEventsWhenConfigNil(t *testing.T) {
 	require.Empty(t, notifierBot.messagesText())
 }
 
+func TestRunAria2EventHandlerRecoversPanic(t *testing.T) {
+	require.NotPanics(t, func() {
+		runAria2EventHandler(context.Background(), aria2EventDownloadStart, "gid-1", func() {
+			panic("boom")
+		})
+	})
+}
+
 func TestNotifyAria2DownloadCompleteWithoutFiles(t *testing.T) {
 	notifierBot := &fakeBotAPI{}
 	notifier := newBotNotifier(notifierBot, []int64{1})

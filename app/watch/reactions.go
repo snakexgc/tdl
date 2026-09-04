@@ -16,6 +16,7 @@ import (
 
 func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.UpdateMessageReactions) error {
 	peerID := tutil.GetPeerID(update.Peer)
+	key := reactionDedupKey(peerID, update.MsgID)
 
 	peerType := "unknown"
 	switch update.Peer.(type) {
@@ -43,12 +44,16 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 	if w.opts.Download {
 		isMine := w.isMyMessageReactions(ctx, &update.Reactions, peerID, update.MsgID)
 		if !isMine {
+			// A removal or a change to a non-trigger reaction ends this dedupe
+			// window, so adding the configured reaction again can enqueue anew.
+			if !update.Reactions.Min {
+				w.dedup.Delete(key)
+			}
 			logctx.From(ctx).Info("Reaction is not mine, skipping",
 				zap.Int64("peer_id", peerID),
 				zap.Int("msg_id", update.MsgID))
 		} else {
 			inputPeer := w.peerToInputPeer(update.Peer, e)
-			key := fmt.Sprintf("%d:%d", peerID, update.MsgID)
 			if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
 				logctx.From(ctx).Info("Duplicate reaction, skipping",
 					zap.Int64("peer_id", peerID),
@@ -111,13 +116,17 @@ func (w *Watcher) onEditChannelMessage(ctx context.Context, e tg.Entities, updat
 }
 
 func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg *tg.Message) error {
+	peerID := tutil.GetPeerID(msg.PeerID)
+	key := reactionDedupKey(peerID, msg.ID)
 	if msg.Reactions.GetResults() == nil || len(msg.Reactions.Results) == 0 {
+		if !msg.Reactions.Min {
+			w.dedup.Delete(key)
+		}
 		logctx.From(ctx).Debug("EditMessage has no reactions, skipping",
 			zap.Int("msg_id", msg.ID))
 		return nil
 	}
 
-	peerID := tutil.GetPeerID(msg.PeerID)
 	reactionsJSON, _ := json.Marshal(msg.Reactions)
 	logctx.From(ctx).Info("Reaction detected via EditMessage",
 		zap.Int64("peer_id", peerID),
@@ -128,12 +137,14 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 
 	if w.opts.Download {
 		if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
+			if !msg.Reactions.Min {
+				w.dedup.Delete(key)
+			}
 			logctx.From(ctx).Info("Reaction via EditMessage is not mine, skipping",
 				zap.Int64("peer_id", peerID),
 				zap.Int("msg_id", msg.ID))
 		} else {
 			inputPeer := w.peerToInputPeer(msg.PeerID, e)
-			key := fmt.Sprintf("%d:%d", peerID, msg.ID)
 			if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
 				logctx.From(ctx).Info("Duplicate reaction (via EditMessage), skipping",
 					zap.Int64("peer_id", peerID),
@@ -177,6 +188,10 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	}
 
 	return nil
+}
+
+func reactionDedupKey(peerID int64, msgID int) string {
+	return fmt.Sprintf("%d:%d", peerID, msgID)
 }
 
 func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.MessageReactions, peerID int64, msgID int) bool {

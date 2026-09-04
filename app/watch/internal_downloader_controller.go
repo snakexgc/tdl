@@ -226,6 +226,7 @@ func (c *InternalDownloadController) Delete(ctx context.Context, ids []string) (
 		if record.Status != InternalDownloadStatusComplete && record.Path != "" {
 			if err := os.Remove(record.Path); err != nil && !os.IsNotExist(err) {
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: delete partial file: %v", id, err))
+				continue
 			}
 		}
 		if err := c.store.Remove(ctx, id); err != nil {

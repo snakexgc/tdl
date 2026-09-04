@@ -18,7 +18,7 @@ const sections = [
       ["proxy_password", "代理密码", "password", "代理需要认证时填写；没有认证时留空，保存时留空表示保持原密码。"],
       ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
       ["limit", "并发下载数", "number", "与 tdl --limit 一致，限制同时下载的文件任务数量。"],
-      ["pool_size", "每 DC 下载容量", "number", "同时限制每个 Telegram DC 的连接池和下载流；默认 8，填 0 或负数会恢复为 8。"],
+      ["pool_size", "每 DC 下载容量", "number", "同时限制每个 Telegram DC 的连接池和下载流，并作为 aria2 的 split 与 max-connection-per-server；默认 8，填 0 或负数会恢复为 8。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
       ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],

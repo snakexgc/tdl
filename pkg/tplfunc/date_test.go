@@ -112,3 +112,20 @@ func TestCustomFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatDateRejectsInvalidArguments(t *testing.T) {
+	tests := []string{
+		`{{ formatDate }}`,
+		`{{ formatDate 0 123 }}`,
+		`{{ formatDate 0 "2006" "extra" }}`,
+	}
+	for _, text := range tests {
+		t.Run(text, func(t *testing.T) {
+			var got strings.Builder
+			err := template.Must(template.New("test").Funcs(FuncMap(FormatDate())).Parse(text)).Execute(&got, nil)
+			if err == nil {
+				t.Fatalf("formatDate() expected an error for %s", text)
+			}
+		})
+	}
+}
