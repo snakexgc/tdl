@@ -41,7 +41,6 @@ jobs:
             prev_tag="$(git describe --tags --match "v*" --abbrev=0 HEAD^ 2>/dev/null || true)"
             {
               echo "mode=stable"
-              echo "args=release --clean --timeout 1h"
               echo "prev_tag=${prev_tag}"
               echo "version=${GITHUB_REF_NAME#v}"
             } >> "$GITHUB_OUTPUT"
@@ -71,7 +70,6 @@ jobs:
             prerelease_tag="${release_date}_${channel}_${short_sha}"
             {
               echo "mode=prerelease"
-              echo "args=release --snapshot --clean --timeout 1h"
               echo "tag=${prerelease_tag}"
               echo "version=${prerelease_tag}"
               echo "channel=${channel}"
@@ -79,16 +77,45 @@ jobs:
               echo "short_sha=${short_sha}"
             } >> "$GITHUB_OUTPUT"
           fi
-      - name: Run GoReleaser
+      - name: Install GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: v2.18.0
-          args: ${{ steps.release.outputs.args }}
+          install-only: true
+      - name: Run GoReleaser
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.release.outputs.prev_tag }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_MODE: ${{ steps.release.outputs.mode }}
+          # A GoReleaser task starts a go build process, which has its own
+          # parallel compiler workers. Bound both levels to avoid runner OOM.
+          GOMAXPROCS: "2"
+        run: |
+          set -euo pipefail
+
+          release_args=(release --clean --timeout 2h --parallelism 1)
+          if [[ "$RELEASE_MODE" == "prerelease" ]]; then
+            release_args+=(--snapshot)
+          fi
+
+          monitor_resources() {
+            while sleep 60; do
+              echo "::group::GoReleaser resource usage at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              free -h || true
+              df -h . || true
+              ps -eo pid,ppid,pcpu,pmem,rss,etime,comm --sort=-rss | sed -n '1,15p' || true
+              echo "::endgroup::"
+            done
+          }
+
+          monitor_resources &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
+
+          goreleaser "${release_args[@]}"
       - name: Publish prerelease
         if: steps.release.outputs.mode == 'prerelease'
         env:
