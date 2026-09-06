@@ -1,17 +1,10 @@
 name: docker
 
 on:
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: "Git ref to build"
-        required: true
-        default: "master"
   push:
-    branches:
-      - master
     tags:
-      - "v*"
+      - "v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][1-9]*"
+      - "!v*_dev_*"
 
 permissions:
   contents: read
@@ -25,38 +18,40 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
       - name: Docker metadata
         id: meta
         shell: bash
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          ref_name="${GITHUB_REF_NAME}"
-          sha_short="$(git rev-parse --short HEAD)"
+          set -euo pipefail
 
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            ref_name="${{ inputs.ref }}"
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]{8})([1-9][0-9]*)$ ]]; then
+            echo "Docker release tag must use vYYYYMMDDN (for example v202609043)" >&2
+            exit 1
+          fi
+          tag_date="${BASH_REMATCH[1]}"
+          parsed_date="$(date -u -d "${tag_date:0:4}-${tag_date:4:2}-${tag_date:6:2}" +%Y%m%d 2>/dev/null || true)"
+          if [[ "$parsed_date" != "$tag_date" ]]; then
+            echo "Docker release tag contains an invalid date: ${tag_date}" >&2
+            exit 1
           fi
 
-          ref_name="${ref_name#refs/tags/}"
-          ref_name="${ref_name#refs/heads/}"
-          version="${ref_name#v}"
-          tag_name="${ref_name//\//-}"
-          tag_name="${tag_name//+/-}"
-          version_tag="${version//+/-}"
+          git fetch --force --no-tags origin master:refs/remotes/origin/master
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/master; then
+            echo "Docker release tag ${GITHUB_REF_NAME} does not point to a commit on master" >&2
+            exit 1
+          fi
+
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          release_tag="${GITHUB_REF_NAME}"
+          short_sha="$(git rev-parse --short HEAD)"
+          version="${release_tag}_docker"
           {
             echo "version=$version"
             echo "tags<<EOF"
-            echo "${image}:${tag_name}"
-            if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([+-].*)?$ ]]; then
-              echo "${image}:${version_tag}"
-              if [[ "$version" != *-* ]]; then
-                echo "${image}:${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-                echo "${image}:latest"
-              fi
-            fi
-            echo "${image}:sha-${sha_short}"
+            echo "${image}:${release_tag}"
+            echo "${image}:latest"
+            echo "${image}:sha-${short_sha}"
             echo "EOF"
             echo "labels<<EOF"
             echo "org.opencontainers.image.title=${GITHUB_REPOSITORY#*/}"

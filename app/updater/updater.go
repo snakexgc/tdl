@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,20 +27,21 @@ import (
 )
 
 const (
-	DefaultRepository = "snakexgc/tdl"
-	githubAPIBase     = "https://api.github.com"
-	updateTimeout     = 3 * time.Minute
-	goosWindows       = "windows"
-	goosDarwin        = "darwin"
-	archAMD64         = "amd64"
-	runtimeBinary     = "binary"
-	runtimeDocker     = "docker"
-	dockerVersionMark = "-origin-"
-	dockerEnv         = "TDL_DOCKER"
-	flagSource        = "--source"
-	flagTarget        = "--target"
-	flagPID           = "--pid"
-	flagCWD           = "--cwd"
+	DefaultRepository   = "snakexgc/tdl"
+	githubAPIBase       = "https://api.github.com"
+	updateTimeout       = 3 * time.Minute
+	goosWindows         = "windows"
+	goosDarwin          = "darwin"
+	archAMD64           = "amd64"
+	runtimeBinary       = "binary"
+	runtimeDocker       = "docker"
+	dockerVersionMark   = "-origin-"
+	dockerVersionSuffix = "_docker"
+	dockerEnv           = "TDL_DOCKER"
+	flagSource          = "--source"
+	flagTarget          = "--target"
+	flagPID             = "--pid"
+	flagCWD             = "--cwd"
 )
 
 type Info struct {
@@ -433,6 +435,9 @@ func needsUpdate(current, latest string) bool {
 	if current == "" || strings.EqualFold(current, "dev") || strings.EqualFold(current, "unknown") {
 		return true
 	}
+	if result, ok := compareDateVersions(current, latest); ok {
+		return result < 0
+	}
 	currentSemver := canonicalVersion(current)
 	latestSemver := canonicalVersion(latest)
 	if currentSemver != "" && latestSemver != "" {
@@ -441,8 +446,49 @@ func needsUpdate(current, latest string) bool {
 	return strings.TrimPrefix(current, "v") != strings.TrimPrefix(latest, "v")
 }
 
+func compareDateVersions(current, latest string) (int, bool) {
+	currentDate, currentEdition, currentOK := parseDateVersion(current)
+	latestDate, latestEdition, latestOK := parseDateVersion(latest)
+	if !currentOK || !latestOK {
+		return 0, false
+	}
+	if currentDate < latestDate {
+		return -1, true
+	}
+	if currentDate > latestDate {
+		return 1, true
+	}
+	if currentEdition < latestEdition {
+		return -1, true
+	}
+	if currentEdition > latestEdition {
+		return 1, true
+	}
+	return 0, true
+}
+
+func parseDateVersion(version string) (date, edition int, ok bool) {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if len(version) < 9 || version[8] == '0' {
+		return 0, 0, false
+	}
+	if _, err := time.Parse("20060102", version[:8]); err != nil {
+		return 0, 0, false
+	}
+	date, err := strconv.Atoi(version[:8])
+	if err != nil {
+		return 0, 0, false
+	}
+	edition, err = strconv.Atoi(version[8:])
+	if err != nil || edition < 1 {
+		return 0, 0, false
+	}
+	return date, edition, true
+}
+
 func isDockerVersion(version string) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(version)), dockerVersionMark)
+	version = strings.ToLower(strings.TrimSpace(version))
+	return strings.Contains(version, dockerVersionMark) || strings.HasSuffix(version, dockerVersionSuffix)
 }
 
 func isDockerRuntime(version string) bool {
@@ -465,6 +511,9 @@ func releaseVersionForCompare(version string) string {
 	lower := strings.ToLower(version)
 	if idx := strings.Index(lower, dockerVersionMark); idx >= 0 {
 		return strings.TrimSpace(version[:idx])
+	}
+	if strings.HasSuffix(lower, dockerVersionSuffix) {
+		return strings.TrimSpace(version[:len(version)-len(dockerVersionSuffix)])
 	}
 	return version
 }

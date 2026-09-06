@@ -2,7 +2,7 @@ version: 2
 project_name: tdl
 dist: .tdl/dist
 snapshot:
-  # release.yml supplies the requested yyyyMMdd_<channel>_<shortSHA> version.
+  # release.yml supplies the requested vyyyyMMdd_dev_<shortSHA> version.
   version_template: '{{ .Env.RELEASE_VERSION }}'
 env:
   - GO111MODULE=on
@@ -13,7 +13,7 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/snakexgc/tdl/pkg/consts.Version={{ .Version }}
+      - -X github.com/snakexgc/tdl/pkg/consts.Version={{ .Env.RELEASE_VERSION }}
       - -X github.com/snakexgc/tdl/pkg/consts.Commit={{ .ShortCommit }}
       - -X github.com/snakexgc/tdl/pkg/consts.CommitDate={{ .CommitDate }}
       - -X github.com/snakexgc/tdl/pkg/consts.GOARM={{ .Arm }}
