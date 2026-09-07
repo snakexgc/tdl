@@ -1,13 +1,12 @@
 name: release
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - dev
-      - master
     tags:
-      - 'v*'
+      - 'v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][1-9]*'
+      - '!v*_dev_*'
 
 permissions:
   contents: write
@@ -38,41 +37,51 @@ jobs:
           set -euo pipefail
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            prev_tag="$(git describe --tags --match "v*" --abbrev=0 HEAD^ 2>/dev/null || true)"
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]{8})([1-9][0-9]*)$ ]]; then
+              echo "Stable release tag must use vYYYYMMDDN (for example v202609043)" >&2
+              exit 1
+            fi
+            tag_date="${BASH_REMATCH[1]}"
+            parsed_date="$(date -u -d "${tag_date:0:4}-${tag_date:4:2}-${tag_date:6:2}" +%Y%m%d 2>/dev/null || true)"
+            if [[ "$parsed_date" != "$tag_date" ]]; then
+              echo "Stable release tag contains an invalid date: ${tag_date}" >&2
+              exit 1
+            fi
+
+            git fetch --force --no-tags origin master:refs/remotes/origin/master
+            if ! git merge-base --is-ancestor HEAD refs/remotes/origin/master; then
+              echo "Stable release tag ${GITHUB_REF_NAME} does not point to a commit on master" >&2
+              exit 1
+            fi
+
+            prev_tag="$(git describe --tags --match "v*" --exclude "v*_dev_*" --abbrev=0 HEAD^ 2>/dev/null || true)"
             {
               echo "mode=stable"
               echo "prev_tag=${prev_tag}"
-              echo "version=${GITHUB_REF_NAME#v}"
+              echo "version=${GITHUB_REF_NAME}"
             } >> "$GITHUB_OUTPUT"
           else
-            # GoReleaser parses the nearest tag even in snapshot mode.
-            # Date-based prerelease tags are intentionally not SemVer. Hide all
-            # non-stable tags in this disposable checkout before the snapshot
-            # build so they cannot become GoReleaser's inferred base version.
+            # The preview version is supplied explicitly. Hide all tags in this
+            # disposable checkout so GoReleaser cannot infer an old SemVer or a
+            # date-based stable version as the snapshot base.
             while IFS= read -r tag; do
-              if [[ -n "$tag" && ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              if [[ -n "$tag" ]]; then
                 git tag --delete "$tag"
               fi
             done < <(git tag --list)
 
-            case "$GITHUB_REF_NAME" in
-              dev|master)
-                channel="$GITHUB_REF_NAME"
-                ;;
-              *)
-                echo "Prereleases can only be built from dev or master, got: ${GITHUB_REF_NAME}" >&2
-                exit 1
-                ;;
-            esac
+            if [[ "$GITHUB_REF" != "refs/heads/dev" ]]; then
+              echo "Prereleases can only be built from dev, got: ${GITHUB_REF}" >&2
+              exit 1
+            fi
 
             release_date="$(TZ=Asia/Shanghai date +%Y%m%d)"
             short_sha="$(git rev-parse --short HEAD)"
-            prerelease_tag="${release_date}_${channel}_${short_sha}"
+            prerelease_tag="v${release_date}_dev_${short_sha}"
             {
               echo "mode=prerelease"
               echo "tag=${prerelease_tag}"
               echo "version=${prerelease_tag}"
-              echo "channel=${channel}"
               echo "release_date=${release_date}"
               echo "short_sha=${short_sha}"
             } >> "$GITHUB_OUTPUT"

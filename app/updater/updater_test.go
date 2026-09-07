@@ -11,25 +11,35 @@ const (
 	testArchAMD64     = "amd64"
 	testOSDarwin      = "darwin"
 	testChecksumsFile = "tdl_checksums.txt"
+	testDockerVersion = "v202609042_docker"
 )
 
-func TestNeedsUpdateSemverAndDev(t *testing.T) {
-	require.True(t, needsUpdate("dev", "v1.2.3"))
-	require.True(t, needsUpdate("1.2.2", "v1.2.3"))
-	require.False(t, needsUpdate("v1.2.3", "v1.2.3"))
-	require.False(t, needsUpdate("v1.2.4", "v1.2.3"))
+func TestNeedsUpdateDateVersionAndDev(t *testing.T) {
+	require.True(t, needsUpdate("dev", "v202609043"))
+	require.True(t, needsUpdate("v202609042", "v202609043"))
+	require.False(t, needsUpdate("v202609043", "v202609043"))
+	require.False(t, needsUpdate("v202609044", "v202609043"))
+	require.True(t, needsUpdate("v202609049", "v2026090410"))
+	require.True(t, needsUpdate("v2026090410", "v202609051"))
 }
 
 func TestNeedsUpdateDockerOriginVersion(t *testing.T) {
-	require.True(t, isDockerVersion("v3.6.0-origin-master"))
-	require.Equal(t, "v3.6.0", releaseVersionForCompare("v3.6.0-origin-master"))
-	require.False(t, needsUpdate("v3.6.0-origin-master", "v3.6.0"))
-	require.True(t, needsUpdate("v3.6.0-origin-master", "v3.6.1"))
+	require.True(t, isDockerVersion("v202609042-origin-master"))
+	require.Equal(t, "v202609042", releaseVersionForCompare("v202609042-origin-master"))
+	require.False(t, needsUpdate("v202609042-origin-master", "v202609042"))
+	require.True(t, needsUpdate("v202609042-origin-master", "v202609043"))
+}
+
+func TestNeedsUpdateDockerSuffixVersion(t *testing.T) {
+	require.True(t, isDockerVersion(testDockerVersion))
+	require.Equal(t, "v202609042", releaseVersionForCompare(testDockerVersion))
+	require.False(t, needsUpdate(testDockerVersion, "v202609042"))
+	require.True(t, needsUpdate(testDockerVersion, "v202609043"))
 }
 
 func TestDockerRuntimeCanBeMarkedByEnvironment(t *testing.T) {
 	t.Setenv(dockerEnv, "true")
-	require.True(t, isDockerRuntime("v3.6.0"))
+	require.True(t, isDockerRuntime("v202609043"))
 }
 
 func TestDockerReleaseCanUpdateProgramInPlace(t *testing.T) {
@@ -42,12 +52,12 @@ func TestDockerReleaseCanUpdateProgramInPlace(t *testing.T) {
 	assetName := "tdl_" + osName + "_" + archName + ext
 
 	info := infoForRelease(Info{
-		CurrentVersion: "v3.6.0-origin-master",
+		CurrentVersion: "v202609042-origin-master",
 		GOOS:           runtime.GOOS,
 		GOARCH:         runtime.GOARCH,
 		Docker:         true,
 	}, githubRelease{
-		TagName: "v3.6.1",
+		TagName: "v202609043",
 		Assets: []githubAsset{{
 			Name:               assetName,
 			BrowserDownloadURL: "https://example.com/" + assetName,

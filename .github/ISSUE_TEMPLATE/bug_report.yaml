@@ -50,7 +50,7 @@ body:
         // output
         ```
       placeholder: |
-        Version: 0.14.1
+        Version: v202609043
         Commit: 3021de5
         Date: 2024-01-05T16:27:43Z
 
