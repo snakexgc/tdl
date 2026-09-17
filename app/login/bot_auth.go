@@ -11,8 +11,9 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/storage/keygen"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage/keygen"
 	"github.com/snakexgc/tdl/pkg/key"
 	"github.com/snakexgc/tdl/pkg/tclient"
 )
@@ -347,7 +348,19 @@ func runWithTemporarySession(
 		return nil, errors.Wrap(err, "set temporary app")
 	}
 
+	credentials, err := tclient.ResolveApp(ctx, tmp)
+	if err != nil {
+		return nil, err
+	}
+	if err := tmp.Set(ctx, key.App(), []byte(credentials.Preset)); err != nil {
+		return nil, err
+	}
+	if err := tmp.Set(ctx, tgauth.FingerprintKey, []byte(tgauth.Fingerprint(credentials.App))); err != nil {
+		return nil, err
+	}
+
 	c, err := tclient.New(ctx, tclient.Options{
+		AppOverride:      &credentials.App,
 		KV:               tmp,
 		Proxy:            opts.Proxy,
 		NTP:              opts.NTP,
@@ -407,11 +420,21 @@ func commitTemporarySession(ctx context.Context, tmp storage.Storage, dst storag
 	if err != nil {
 		return errors.Wrap(err, "load temporary session")
 	}
-	if err = dst.Set(ctx, keygen.New("session"), session); err != nil {
-		return errors.Wrap(err, "store session")
+	mode, err := tmp.Get(ctx, key.App())
+	if errors.Is(err, storage.ErrNotFound) {
+		mode = []byte(tclient.AppDesktop)
+	} else if err != nil {
+		return err
 	}
-	if err = dst.Set(ctx, key.App(), []byte(tclient.AppDesktop)); err != nil {
-		return errors.Wrap(err, "store app")
+	fingerprint, err := tmp.Get(ctx, tgauth.FingerprintKey)
+	if errors.Is(err, storage.ErrNotFound) {
+		app, ok := tclient.Apps[string(mode)]
+		if !ok {
+			return errors.New("unknown temporary application preset")
+		}
+		fingerprint = []byte(tgauth.Fingerprint(app))
+	} else if err != nil {
+		return err
 	}
-	return nil
+	return tgauth.CommitSession(ctx, dst, session, string(mode), string(fingerprint))
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/snakexgc/tdl/rte"
 )
 
 const controllerStopTimeout = 10 * time.Second
@@ -17,12 +19,13 @@ type Controller struct {
 	opts   Options
 	notify NotifyFunc
 
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	running bool
-	lastErr error
-	submit  chan messageLinkSubmission
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	done     chan struct{}
+	running  bool
+	lastErr  error
+	submit   chan messageLinkSubmission
+	policies *rte.Runtime
 }
 
 func NewController(parent context.Context, opts Options, notify NotifyFunc) *Controller {
@@ -52,6 +55,24 @@ func (c *Controller) Start() bool {
 	opts := c.opts
 	opts.Notify = c.notify
 	opts.messageLinks = submit
+	var policies *rte.Runtime
+	if (opts.Filter == nil) != (opts.Naming == nil) {
+		cancel()
+		c.lastErr = fmt.Errorf("filter and naming ports must be injected together")
+		c.mu.Unlock()
+		return false
+	}
+	if opts.Filter == nil {
+		var err error
+		policies, opts.Filter, opts.Naming, err = startPolicies(ctx, string(opts.Account), opts)
+		if err != nil {
+			cancel()
+			c.lastErr = err
+			c.mu.Unlock()
+			return false
+		}
+	}
+	c.policies = policies
 	c.running = true
 	c.cancel = cancel
 	c.done = done
@@ -62,6 +83,9 @@ func (c *Controller) Start() bool {
 	go func() {
 		err := runControllerWatch(ctx, opts)
 		cancel()
+		if policies != nil {
+			_ = policies.Stop(context.Background())
+		}
 
 		if err != nil && !stderrors.Is(err, context.Canceled) && c.notify != nil {
 			c.notify(context.Background(), fmt.Sprintf("监听下载已停止：%v\n请检查配置或重新登录。", err))
@@ -73,6 +97,7 @@ func (c *Controller) Start() bool {
 			c.cancel = nil
 			c.done = nil
 			c.submit = nil
+			c.policies = nil
 			if err != nil && !stderrors.Is(err, context.Canceled) {
 				c.lastErr = err
 			}
@@ -114,6 +139,16 @@ func (c *Controller) UpdateOptions(opts Options) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.policies != nil {
+		if err := c.policies.ReconfigureBatch(c.parent, map[string]map[string]any{
+			filterComponentID: filterConfig(opts),
+			namingComponentID: namingConfig(opts),
+		}); err != nil {
+			c.lastErr = fmt.Errorf("reconfigure policies: %w", err)
+			return
+		}
+		c.lastErr = nil
+	}
 	c.opts = opts
 }
 

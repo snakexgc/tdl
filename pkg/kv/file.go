@@ -10,7 +10,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/mitchellh/mapstructure"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/validator"
 )
 

@@ -10,13 +10,20 @@ import (
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 )
 
 func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.UpdateMessageReactions) error {
+	if ctx.Err() != nil {
+		return nil
+	}
 	peerID := tutil.GetPeerID(update.Peer)
-	key := reactionDedupKey(peerID, update.MsgID)
+	key := w.reactionKey(peerID, update.MsgID)
+	policy, err := w.reactionPolicy(ctx)
+	if err != nil {
+		return err
+	}
 
 	peerType := "unknown"
 	switch update.Peer.(type) {
@@ -47,14 +54,14 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 			// A removal or a change to a non-trigger reaction ends this dedupe
 			// window, so adding the configured reaction again can enqueue anew.
 			if !update.Reactions.Min {
-				w.dedup.Delete(key)
+				policy.Forget(key)
 			}
 			logctx.From(ctx).Info("Reaction is not mine, skipping",
 				zap.Int64("peer_id", peerID),
 				zap.Int("msg_id", update.MsgID))
 		} else {
 			inputPeer := w.peerToInputPeer(update.Peer, e)
-			if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
+			if !policy.Claim(ctx, key) {
 				logctx.From(ctx).Info("Duplicate reaction, skipping",
 					zap.Int64("peer_id", peerID),
 					zap.Int("msg_id", update.MsgID))
@@ -74,7 +81,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 						zap.Int64("peer_id", peerID),
 						zap.Int("msg_id", update.MsgID),
 						zap.Error(err))
-					w.dedup.Delete(key)
+					policy.Forget(key)
 				} else {
 					select {
 					case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
@@ -82,7 +89,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 						logctx.From(ctx).Warn("Submission queue full, dropping job",
 							zap.Int64("peer_id", peerID),
 							zap.Int("msg_id", update.MsgID))
-						w.dedup.Delete(key)
+						policy.Forget(key)
 						w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
 					}
 				}
@@ -116,11 +123,18 @@ func (w *Watcher) onEditChannelMessage(ctx context.Context, e tg.Entities, updat
 }
 
 func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg *tg.Message) error {
+	if ctx.Err() != nil {
+		return nil
+	}
 	peerID := tutil.GetPeerID(msg.PeerID)
-	key := reactionDedupKey(peerID, msg.ID)
+	key := w.reactionKey(peerID, msg.ID)
+	policy, err := w.reactionPolicy(ctx)
+	if err != nil {
+		return err
+	}
 	if msg.Reactions.GetResults() == nil || len(msg.Reactions.Results) == 0 {
 		if !msg.Reactions.Min {
-			w.dedup.Delete(key)
+			policy.Forget(key)
 		}
 		logctx.From(ctx).Debug("EditMessage has no reactions, skipping",
 			zap.Int("msg_id", msg.ID))
@@ -138,14 +152,14 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	if w.opts.Download {
 		if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
 			if !msg.Reactions.Min {
-				w.dedup.Delete(key)
+				policy.Forget(key)
 			}
 			logctx.From(ctx).Info("Reaction via EditMessage is not mine, skipping",
 				zap.Int64("peer_id", peerID),
 				zap.Int("msg_id", msg.ID))
 		} else {
 			inputPeer := w.peerToInputPeer(msg.PeerID, e)
-			if _, loaded := w.dedup.LoadOrStore(key, struct{}{}); loaded {
+			if !policy.Claim(ctx, key) {
 				logctx.From(ctx).Info("Duplicate reaction (via EditMessage), skipping",
 					zap.Int64("peer_id", peerID),
 					zap.Int("msg_id", msg.ID))
@@ -165,7 +179,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 						zap.Int64("peer_id", peerID),
 						zap.Int("msg_id", msg.ID),
 						zap.Error(err))
-					w.dedup.Delete(key)
+					policy.Forget(key)
 				} else {
 					select {
 					case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
@@ -173,7 +187,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 						logctx.From(ctx).Warn("Submission queue full, dropping job",
 							zap.Int64("peer_id", peerID),
 							zap.Int("msg_id", msg.ID))
-						w.dedup.Delete(key)
+						policy.Forget(key)
 						w.notify(ctx, "下载队列已满，已丢弃本次触发。\n消息：%s", msgLink)
 					}
 				}
@@ -190,132 +204,22 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	return nil
 }
 
-func reactionDedupKey(peerID int64, msgID int) string {
-	return fmt.Sprintf("%d:%d", peerID, msgID)
+func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.MessageReactions, _ int64, _ int) bool {
+	policy, err := w.reactionPolicy(ctx)
+	return err == nil && policy.Matches(ctx, w.reactionInput(reactions, false))
 }
 
-func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.MessageReactions, peerID int64, msgID int) bool {
-	if reactions == nil {
-		return false
-	}
-	if reactions.Min {
-		logctx.From(ctx).Info("Reactions.Min=true, cannot determine ownership, skipping",
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msgID))
-		return false
-	}
-
-	myReactionSeen := false
-	if recent, ok := reactions.GetRecentReactions(); ok {
-		for _, r := range recent {
-			emoji := reactionEmoji(r.Reaction)
-			logctx.From(ctx).Debug("Checking RecentReaction",
-				zap.Bool("my", r.My),
-				zap.String("emoji", emoji),
-				zap.Int64("peer_id", tutil.GetPeerID(r.PeerID)))
-			if r.My {
-				myReactionSeen = true
-				if !w.matchesTriggerReaction(emoji) {
-					logctx.From(ctx).Info("My reaction does not match configured trigger, skipping",
-						zap.String("emoji", emoji),
-						zap.Int64("peer_id", peerID),
-						zap.Int("msg_id", msgID))
-					continue
-				}
-				logctx.From(ctx).Info("Found my reaction via RecentReactions",
-					zap.String("emoji", emoji),
-					zap.Int64("peer_id", peerID),
-					zap.Int("msg_id", msgID))
-				return true
-			}
-		}
-	}
-
-	for _, rc := range reactions.Results {
-		emoji := reactionEmoji(rc.Reaction)
-		chosenOrder, ok := rc.GetChosenOrder()
-		logctx.From(ctx).Debug("Checking Result ChosenOrder",
-			zap.String("emoji", emoji),
-			zap.Int("count", rc.Count),
-			zap.Bool("chosen", ok),
-			zap.Int("chosen_order", chosenOrder))
-		if ok {
-			myReactionSeen = true
-			if !w.matchesTriggerReaction(emoji) {
-				logctx.From(ctx).Info("My reaction via ChosenOrder does not match configured trigger, skipping",
-					zap.String("emoji", emoji),
-					zap.Int64("peer_id", peerID),
-					zap.Int("msg_id", msgID))
-				continue
-			}
-			logctx.From(ctx).Info("Found my reaction via ChosenOrder",
-				zap.String("emoji", emoji),
-				zap.Int("chosen_order", chosenOrder),
-				zap.Int64("peer_id", peerID),
-				zap.Int("msg_id", msgID))
-			return true
-		}
-	}
-
-	if myReactionSeen {
-		logctx.From(ctx).Info("My reaction did not match any configured trigger",
-			zap.Int("results_count", len(reactions.Results)),
-			zap.Int64("peer_id", peerID),
-			zap.Int("msg_id", msgID))
-		return false
-	}
-
-	logctx.From(ctx).Info("Reaction is NOT mine (both methods failed)",
-		zap.Int("results_count", len(reactions.Results)),
-		zap.Int64("peer_id", peerID),
-		zap.Int("msg_id", msgID))
-	return false
-}
-
-func (w *Watcher) matchesTriggerReaction(emoji string) bool {
-	if len(w.triggerReactions) == 0 {
-		return true
-	}
-	_, ok := w.triggerReactions[normalizeTriggerReaction(emoji)]
-	return ok
-}
-
-// shouldTriggerForwardReaction reports whether a reaction update should trigger
-// an on-demand forward: forwarding must be enabled and the current user's
-// reaction must match the forward trigger set. An empty trigger set matches any
-// emoji (mirroring the download trigger). It is deliberately independent of the
-// auto-forward listen set, so reacting forwards a message from any peer.
 func (w *Watcher) shouldTriggerForwardReaction(reactions *tg.MessageReactions) bool {
 	return w.forward != nil && w.forward.enabled && w.hasMyForwardReactionTrigger(reactions)
 }
 
-// matchesForwardTrigger reports whether an emoji matches the forward trigger
-// set. An empty set matches every emoji.
-func (w *Watcher) matchesForwardTrigger(emoji string) bool {
-	if w.forward == nil || len(w.forward.triggerReactions) == 0 {
-		return true
-	}
-	_, ok := w.forward.triggerReactions[normalizeTriggerReaction(emoji)]
-	return ok
-}
-
 func (w *Watcher) hasMyForwardReactionTrigger(reactions *tg.MessageReactions) bool {
-	if w.forward == nil || reactions == nil || reactions.Min {
+	if w.forward == nil {
 		return false
 	}
-	if recent, ok := reactions.GetRecentReactions(); ok {
-		for _, r := range recent {
-			if r.My && w.matchesForwardTrigger(reactionEmoji(r.Reaction)) {
-				return true
-			}
-		}
-	}
-	for _, rc := range reactions.Results {
-		if _, ok := rc.GetChosenOrder(); ok && w.matchesForwardTrigger(reactionEmoji(rc.Reaction)) {
-			return true
-		}
-	}
-	return false
+	ctx := context.Background()
+	policy, err := w.reactionPolicy(ctx)
+	return err == nil && policy.Matches(ctx, w.reactionInput(reactions, true))
 }
 
 func newTriggerReactionSet(values []string) map[string]struct{} {

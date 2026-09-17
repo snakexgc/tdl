@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/kv"
 )
 
@@ -46,18 +48,23 @@ func cleanCurrentNamespaceKV(ctx context.Context, engine kv.Storage, namespace s
 			result.Kept++
 			continue
 		}
-		if err := namespaceKV.Delete(ctx, key); err != nil {
+		deleted, err := taskhub.DeleteSnapshotKey(ctx, namespaceKV, key, pairs[key])
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", key, err))
 			continue
 		}
-		result.Deleted++
+		if deleted {
+			result.Deleted++
+		} else {
+			result.Kept++
+		}
 	}
 	return result, nil
 }
 
 func preserveKVKey(key string) bool {
 	switch key {
-	case "session", "app":
+	case "session", "app", tgauth.FingerprintKey:
 		return true
 	}
 

@@ -11,11 +11,10 @@ import (
 
 	appforward "github.com/snakexgc/tdl/app/forward"
 	"github.com/snakexgc/tdl/app/watch"
-	"github.com/snakexgc/tdl/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
-func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, namespaceKV storage.Storage) (bool, error) {
+func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, queue *appforward.Queue) (bool, error) {
 	cmd, _, payload := tu.ParseCommandPayload(text)
 	if "/"+cmd != botCmdForward {
 		return false, nil
@@ -41,12 +40,12 @@ func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, nam
 	if len(normalized) == 0 {
 		return true, sendMessage(ctx, msg.Chat.ID, forwardUsage())
 	}
-	if namespaceKV == nil {
+	if queue == nil {
 		return true, sendMessage(ctx, msg.Chat.ID, "转发失败：Telegram 用户数据未准备好。")
 	}
 
 	cfg := config.Get()
-	ids, err := appforward.Jobs().EnqueueLinks(ctx, normalized, target, "", config.EffectiveForwardMode(cfg), cfg.Forward.Silent)
+	ids, err := queue.EnqueueLinks(ctx, normalized, target, "", config.EffectiveForwardMode(cfg), cfg.Forward.Silent)
 	if err != nil {
 		return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("加入转发队列失败：%v", err))
 	}

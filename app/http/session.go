@@ -11,10 +11,10 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/snakexgc/tdl/app/http/transfer"
-	"github.com/snakexgc/tdl/core/dcpool"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/tmedia"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/internal/core/dcpool"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
 )
 
 type poolHolder struct {

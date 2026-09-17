@@ -12,6 +12,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
+	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/app/bot"
@@ -21,10 +22,15 @@ import (
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/app/webui"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 const (
@@ -39,8 +45,9 @@ const (
 )
 
 type Options struct {
-	RequestReboot func()
-	RequestUpdate func(updater.Plan)
+	ComponentConfigDir string
+	RequestReboot      func()
+	RequestUpdate      func(updater.Plan)
 }
 
 type aria2ManagerConfig struct {
@@ -79,7 +86,14 @@ func watchAutoDownloadEnabled(cfg *config.Config) bool {
 }
 
 type Manager struct {
-	parent context.Context
+	botComponents  *rte.Runtime
+	componentStore *rteconfig.Store
+	policyErr      error
+	policies       *rte.Runtime
+	filter         ports.FilterRules
+	naming         ports.NamingRules
+	parent         context.Context
+	forwardQueue   *appforward.Queue
 
 	kvEngine    kv.Storage
 	namespaceKV storage.Storage
@@ -121,15 +135,10 @@ func Run(ctx context.Context, opts Options) error {
 		return errors.Wrap(err, "open kv storage")
 	}
 
-	// Bind the persistent forward queue to the namespace KV so the bot, watcher
-	// worker and WebUI all share one durable, single-flight queue.
-	appforward.ConfigureQueue(namespaceKV)
-
 	opts.RequestReboot = wrapShutdown(cancel, opts.RequestReboot)
 	opts.RequestUpdate = wrapUpdateShutdown(cancel, opts.RequestUpdate)
 
 	manager := NewManager(runCtx, engine, namespaceKV, opts)
-	appforward.Jobs().SetNotifier(manager.Notify)
 	webStarted := manager.StartWebUI(runCtx)
 	manager.ApplyConfig(config.Get())
 
@@ -163,8 +172,19 @@ func wrapUpdateShutdown(cancel context.CancelFunc, fn func(updater.Plan)) func(u
 
 func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Storage, opts Options) *Manager {
 	cfg := config.Get()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	var componentStore *rteconfig.Store
+	if opts.ComponentConfigDir != "" {
+		componentStore = rteconfig.NewStore(opts.ComponentConfigDir)
+	}
+	host, filter, naming, policyErr := newPolicyHostStored(ctx, cfg, componentStore)
 	manager := &Manager{
+		componentStore: componentStore,
+		policies:       host, filter: filter, naming: naming, policyErr: policyErr,
 		parent:         ctx,
+		forwardQueue:   appforward.NewQueue(namespaceKV),
 		kvEngine:       engine,
 		namespaceKV:    namespaceKV,
 		requestReboot:  opts.RequestReboot,
@@ -177,6 +197,7 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		aria2Auto:      watchAutoDownloadEnabled(cfg),
 		aria2Config:    effectiveAria2ManagerConfig(cfg),
 	}
+	manager.forwardQueue.SetNotifier(manager.Notify)
 	manager.httpService = httpdl.NewService(cfg, namespaceKV, logctx.From(ctx))
 	manager.httpCtrl = httpdl.NewController(ctx, manager.httpService)
 	manager.aria2Mgr = aria2.NewManager(cfg, namespaceKV, logctx.From(ctx))
@@ -198,15 +219,17 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 	errCh := make(chan error, 1)
 	go func() {
 		err := webui.Run(ctx, webui.Options{
-			KVEngine:        m.kvEngine,
-			Namespace:       cfg.Namespace,
-			NamespaceKV:     m.namespaceKV,
-			AfterConfigSave: m.ApplyConfig,
-			OnLoginSuccess:  m.onLoginSuccess,
-			RequestReboot:   m.requestReboot,
-			RequestUpdate:   m.requestUpdate,
-			WatchRunning:    m.watchCtrl.Running,
-			ModuleManager:   m,
+			KVEngine:         m.kvEngine,
+			ForwardQueue:     m.forwardQueue,
+			Namespace:        cfg.Namespace,
+			NamespaceKV:      m.namespaceKV,
+			AfterConfigSave:  m.ApplyConfig,
+			OnLoginSuccess:   m.onLoginSuccess,
+			RequestReboot:    m.requestReboot,
+			RequestUpdate:    m.requestUpdate,
+			WatchRunning:     m.watchCtrl.Running,
+			ModuleManager:    m,
+			ComponentManager: m,
 		})
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
 			color.Yellow("WebUI stopped: %v", err)
@@ -239,7 +262,9 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 		return
 	}
 	version := m.applyVersion.Add(1)
-	_ = m.applyConfigLocked(cfg, version, true, context.Background())
+	if err := m.applyConfigLocked(cfg, version, true, context.Background()); err != nil {
+		logctx.From(m.parent).Error("apply configuration failed", zap.Error(err))
+	}
 }
 
 // applyConfigLocked reconciles every managed module against one config
@@ -249,6 +274,19 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bool, watchCtx context.Context) error {
 	if watchCtx == nil {
 		watchCtx = context.Background()
+	}
+	m.mu.Lock()
+	host := m.policies
+	m.mu.Unlock()
+	if host == nil {
+		next, filter, naming, err := newPolicyHostStored(m.parent, cfg, m.componentStore)
+		m.mu.Lock()
+		m.policies, m.filter, m.naming, m.policyErr = next, filter, naming, err
+		m.mu.Unlock()
+	} else if m.componentStore == nil {
+		if err := host.ReconfigureBatch(watchCtx, watch.PolicyValues(watch.DefaultOptions(cfg))); err != nil {
+			return fmt.Errorf("reconfigure policy host: %w", err)
+		}
 	}
 	restartHTTP := m.httpService.UpdateConfig(cfg)
 	nextWatchMode := config.EffectiveDownloaderMode(cfg)
@@ -462,7 +500,10 @@ func (m *Manager) StartBot() {
 
 	go func() {
 		err := bot.Run(ctx, bot.Options{
+			ComponentStore:        m.componentStore,
+			SetComponentHost:      func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
 			Token:                 cfg.Bot.Token,
+			ForwardQueue:          m.forwardQueue,
 			AllowedUsers:          cfg.Bot.AllowedUsers,
 			Proxy:                 config.EffectiveProxy(cfg),
 			Namespace:             cfg.Namespace,
@@ -523,6 +564,12 @@ func (m *Manager) StopBot() {
 }
 
 func (m *Manager) StartWatch(ctx context.Context) error {
+	m.mu.Lock()
+	policyErr := m.policyErr
+	m.mu.Unlock()
+	if policyErr != nil {
+		return policyErr
+	}
 	cfg := config.Get()
 	if cfg == nil || (!cfg.Modules.Watch && !cfg.Modules.Forward) {
 		return nil
@@ -534,7 +581,9 @@ func (m *Manager) StartWatch(ctx context.Context) error {
 		return err
 	}
 	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
-	m.watchCtrl.Start()
+	if !m.watchCtrl.Start() {
+		return m.watchCtrl.LastError()
+	}
 	return nil
 }
 
@@ -616,6 +665,16 @@ func (m *Manager) Shutdown() {
 	m.StopAria2Manager()
 	m.StopHTTP()
 	m.StopWatch()
+	m.mu.Lock()
+	host := m.policies
+	m.mu.Unlock()
+	if host != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), moduleStopTimeout)
+		defer cancel()
+		if err := host.Stop(ctx); err != nil {
+			logctx.From(m.parent).Error("stop policy host", zap.Error(err))
+		}
+	}
 }
 
 func (m *Manager) Notify(ctx context.Context, text string) {
@@ -685,6 +744,12 @@ func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
 		status = "已停止：" + err.Error()
 	} else if cfg != nil && cfg.Modules.Watch {
 		status = "已启用，等待 Telegram 用户登录或启动。"
+	}
+	m.mu.Lock()
+	policyErr := m.policyErr
+	m.mu.Unlock()
+	if policyErr != nil {
+		status = policyErr.Error()
 	}
 	return webui.ModuleState{
 		ID:          moduleIDWatch,
@@ -811,7 +876,11 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 
 func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts := watch.DefaultOptions(cfg)
+	m.mu.Lock()
+	opts.Filter, opts.Naming = m.filter, m.naming
+	m.mu.Unlock()
 	opts.HTTPService = m.httpService
+	opts.ForwardQueue = m.forwardQueue
 	if watchAutoDownloadEnabled(cfg) {
 		m.mu.Lock()
 		opts.DownloadSubmitter = m.aria2Mgr
@@ -827,4 +896,91 @@ func (m *Manager) setBotStopped(status string, err error) {
 	m.botDone = nil
 	m.botStatus = status
 	m.botErr = err
+}
+
+// The daemon owns policies independently of watcher reconnects and module toggles.
+func newPolicyHost(ctx context.Context, cfg *config.Config) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
+	return newPolicyHostStored(ctx, cfg, nil)
+}
+
+func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconfig.Store) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
+	registry, err := application.Registry()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	account := types.AccountID(cfg.Namespace)
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	values := watch.PolicyValues(watch.DefaultOptions(cfg))
+	enabled := make(map[string]bool, len(values))
+	for id := range values {
+		enabled[id] = true
+		if store != nil {
+			doc, err := store.Load(ctx, id)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			values[id], enabled[id] = doc.Values, doc.Enabled
+		}
+	}
+	host, err := registry.Build(account, enabled, values)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	fail := func(err error) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
+		_ = host.Stop(context.Background())
+		return nil, nil, nil, err
+	}
+	for _, status := range host.Start(ctx) {
+		if status.State != rte.Running {
+			return fail(fmt.Errorf("%s: %s", status.ID, status.Detail))
+		}
+	}
+	filter, err := host.Resolve(ports.FilterRulesName)
+	if err != nil {
+		return fail(err)
+	}
+	naming, err := host.Resolve(ports.NamingRulesName)
+	if err != nil {
+		return fail(err)
+	}
+	return host, filter.(ports.FilterRules), naming.(ports.NamingRules), nil
+}
+
+func (m *Manager) ComponentConfigurations() ([]rte.Configuration, bool) {
+	m.mu.Lock()
+	policies, botHost := m.policies, m.botComponents
+	m.mu.Unlock()
+	configurations := []rte.Configuration{}
+	for _, host := range []*rte.Runtime{policies, botHost} {
+		if host == nil {
+			continue
+		}
+		for _, configuration := range host.Configurations() {
+			if strings.HasPrefix(configuration.ID, "host.") {
+				continue
+			}
+			configurations = append(configurations, configuration)
+		}
+	}
+	return configurations, m.componentStore != nil
+}
+
+func (m *Manager) SaveComponentConfiguration(ctx context.Context, id string, values map[string]any) error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+	if m.componentStore == nil {
+		return fmt.Errorf("component configuration directory is not enabled")
+	}
+	m.mu.Lock()
+	host := m.policies
+	if id == "console.bot" || id == "notify.telegram" {
+		host = m.botComponents
+	}
+	m.mu.Unlock()
+	if host == nil {
+		return fmt.Errorf("component host is unavailable")
+	}
+	return host.PatchSaved(ctx, id, values, m.componentStore)
 }

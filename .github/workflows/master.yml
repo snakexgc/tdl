@@ -14,12 +14,6 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        directory:
-          - .
-          - core
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -32,7 +26,6 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.2
-          working-directory: ${{ matrix.directory }}
   unit-test:
     runs-on: ubuntu-22.04
     steps:
@@ -46,7 +39,7 @@ jobs:
       - name: Build
         run: go build
       - name: Unit Test
-        run: go test -v $(go list ./... | grep -v /test) # skip e2e test
+        run: go test -race ./...
   e2e-test:
     runs-on: ubuntu-22.04
     if: false # skip e2e test for now, since it is not stable

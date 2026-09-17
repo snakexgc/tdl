@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"text/template"
 	"time"
 
 	"github.com/fatih/color"
@@ -23,34 +22,30 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
-	"github.com/snakexgc/tdl/core/dcpool"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/tclient"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/dcpool"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/tclient"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/filterMap"
 	"github.com/snakexgc/tdl/pkg/kv"
 	pkgtclient "github.com/snakexgc/tdl/pkg/tclient"
-	"github.com/snakexgc/tdl/pkg/tplfunc"
 )
-
-const bytesPerMegabyte int64 = 1024 * 1024
 
 type Watcher struct {
 	opts    Options
 	pool    dcpool.Pool
 	manager *peers.Manager
-	tpl     *template.Template
 	runtime *watchRuntime
 
-	dedup            sync.Map
+	triggerOnce      sync.Once
+	trigger          ports.ReactionTrigger
+	triggerErr       error
+	triggerStop      func()
 	jobCh            chan downloadJob
 	messageLinks     <-chan messageLinkSubmission
 	triggerReactions map[string]struct{}
-	include          map[string]struct{}
-	exclude          map[string]struct{}
-	minFileSizeBytes int64
-	maxFileSizeBytes int64
 	forward          *forwardRuntime
 }
 
@@ -71,22 +66,32 @@ func Run(ctx context.Context, opts Options) error {
 		color.Yellow("⚠️ modules.forward is enabled but forward.listen is empty")
 	}
 	opts.FileSizeMinMB, opts.FileSizeMaxMB, _ = config.NormalizeFileSizeRange(opts.FileSizeMinMB, opts.FileSizeMaxMB)
+	if opts.Filter == nil || opts.Naming == nil {
+		policies, filter, naming, err := startPolicies(ctx, cfg.Namespace, opts)
+		if err != nil {
+			return errors.Wrap(err, "start policy components")
+		}
+		defer func() { _ = policies.Stop(context.Background()) }()
+		opts.Filter = filter
+		opts.Naming = naming
+	}
+	opts.Account = types.AccountID(cfg.Namespace)
+	if opts.Account == "" {
+		opts.Account = types.DefaultAccount
+	}
 	opts.Limit = effectiveWatchOptionLimit(opts.Limit, cfg)
 	opts.PoolSize = effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
-
-	tpl, err := template.New("watch").
-		Funcs(tplfunc.FuncMap(tplfunc.All...)).
-		Parse(opts.Template)
-	if err != nil {
-		return errors.Wrap(err, "parse template")
-	}
 
 	kvd, err := kv.From(ctx).Open(cfg.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "open kv storage")
 	}
 
+	if opts.ForwardQueue == nil {
+		opts.ForwardQueue = appforward.NewQueue(kvd)
+		opts.ForwardQueue.SetNotifier(opts.Notify)
+	}
 	parentCtx := ctx
 	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(parentCtx))
 	defer cancelRun()
@@ -143,7 +148,7 @@ func Run(ctx context.Context, opts Options) error {
 				return errors.Wrap(err, "prepare internal output root")
 			}
 			if fallback {
-				color.Yellow("⚠️ aria2.dir 不可用，内部下载器将使用备用目录：%s", outputRoot)
+				color.Yellow("⚠️ aria2.dir 不可用，本地下载器将使用备用目录：%s", outputRoot)
 			}
 			runtime.outputRoot = outputRoot
 			runtime.ensureOutputDirs = true
@@ -205,7 +210,7 @@ func Run(ctx context.Context, opts Options) error {
 			return nil
 		}
 
-		err := runOnce(runCtx, opts, tpl, kvd, reconnectDelay, runtime)
+		err := runOnce(runCtx, opts, kvd, reconnectDelay, runtime)
 		if err == nil || errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -221,7 +226,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
-func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime) (rerr error) {
+func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime) (rerr error) {
 	cfg := config.Get()
 	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
@@ -236,16 +241,16 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 	d := tg.NewUpdateDispatcher()
 	w := &Watcher{
 		opts:             opts,
-		tpl:              tpl,
 		runtime:          runtime,
 		jobCh:            make(chan downloadJob, 100),
 		messageLinks:     opts.messageLinks,
 		triggerReactions: newTriggerReactionSet(opts.TriggerReactions),
-		include:          filterMap.New(opts.Include, addPrefixDot),
-		exclude:          filterMap.New(opts.Exclude, addPrefixDot),
-		minFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMinMB),
-		maxFileSizeBytes: fileSizeMBToBytes(opts.FileSizeMaxMB),
 	}
+
+	if _, err := w.reactionPolicy(ctx); err != nil {
+		return err
+	}
+	defer w.triggerStop()
 
 	// Register reaction handlers whenever download or forward is enabled. Forward
 	// reacts on its trigger emoji (or any emoji when its trigger set is empty),
@@ -325,7 +330,7 @@ func runOnce(ctx context.Context, opts Options, tpl *template.Template, kvd stor
 		forwardDone := make(chan struct{})
 		go func() {
 			defer close(forwardDone)
-			if err := appforward.Jobs().Serve(egCtx, appforward.Runtime{
+			if err := opts.ForwardQueue.Serve(egCtx, appforward.Runtime{
 				Pool:     pool,
 				Manager:  w.manager,
 				PoolSize: opts.PoolSize,

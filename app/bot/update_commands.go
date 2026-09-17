@@ -87,7 +87,7 @@ func formatUpdateInfo(info updater.Info) string {
 	if info.Message != "" {
 		lines = append(lines, "状态："+info.Message)
 	}
-	if info.NeedsUpdate && !info.CanUpdate {
+	if info.NeedsUpdate && !info.CanUpdate && !info.Docker {
 		lines = append(lines, "无法自动更新：没有匹配当前平台的发布资产。")
 	}
 	return strings.Join(lines, "\n")

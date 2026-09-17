@@ -17,7 +17,8 @@ import (
 	"github.com/go-faster/errors"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/bsw/ecual/aria2rpc"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -214,7 +215,31 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
-			_ = s.opts.NamespaceKV.Set(ctx, aria2TaskKeyPrefix+record.GID, data)
+			_ = taskhub.Aria2(s.opts.NamespaceKV).Mutate(ctx, record.GID, func(current []byte, stamp time.Time) ([]byte, time.Time, error) {
+				var raw map[string]json.RawMessage
+				if err := json.Unmarshal(current, &raw); err != nil {
+					return nil, stamp, err
+				}
+				if raw == nil {
+					raw = make(map[string]json.RawMessage)
+				}
+				var update map[string]json.RawMessage
+				if err := json.Unmarshal(data, &update); err != nil {
+					return nil, stamp, err
+				}
+				for _, field := range []string{"status", "total", "completed", fieldError} {
+					if value, ok := update[field]; ok {
+						raw[field] = value
+					} else {
+						delete(raw, field)
+					}
+				}
+				if updated.Status != aria2StatusComplete {
+					stamp = time.Now()
+				}
+				next, err := json.Marshal(raw)
+				return next, stamp, err
+			})
 
 			if updated.Status == aria2StatusComplete && (updated.Total == 0 || updated.Completed >= updated.Total) {
 				taskCompleted[taskID] = true
@@ -223,95 +248,16 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 	}
 
 	now := time.Now()
-
-	aria2Index := map[string]time.Time{}
-	if idxData, err := s.opts.NamespaceKV.Get(ctx, aria2TaskIndexKey); err == nil {
-		_ = json.Unmarshal(idxData, &aria2Index)
-	}
-	for _, record := range records {
-		if record.Status != aria2StatusComplete {
-			aria2Index[record.GID] = now
-		}
-	}
-	if idxData, err := json.Marshal(aria2Index); err == nil {
-		_ = s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, idxData)
-	}
-
 	ttl := httpdl.LinkTTL(config.Get().HTTP)
-
-	downloadIndex := map[string]time.Time{}
-	if idxData, err := s.opts.NamespaceKV.Get(ctx, downloadTaskIndexKey); err == nil {
-		_ = json.Unmarshal(idxData, &downloadIndex)
-	}
 	for taskID := range taskHasAria2 {
 		if !taskCompleted[taskID] {
-			downloadIndex[taskID] = now
-			// Slide the link's real expiry clock: a queued/paused/errored task is
-			// still "active" for link-lifetime purposes even though aria2 is not
-			// fetching it, so refresh the record itself (not just the index) or the
-			// link would expire from its original creation time and 404 mid-queue.
 			s.refreshDownloadTaskActivity(ctx, taskID, now, ttl)
 		}
 	}
-	if idxData, err := json.Marshal(downloadIndex); err == nil {
-		_ = s.opts.NamespaceKV.Set(ctx, downloadTaskIndexKey, idxData)
-	}
-
-	for taskID, isCompleted := range taskCompleted {
-		if !isCompleted {
-			continue
-		}
+	for taskID := range taskCompleted {
 		s.markDownloadTaskDownloaded(ctx, taskID)
 	}
-
-	if ttl > 0 && len(downloadIndex) > 0 {
-		dlChanged := false
-		for taskID, indexedAt := range downloadIndex {
-			if !indexedAt.Add(ttl).Before(now) {
-				continue
-			}
-			// Confirm against the record's own activity clock before deleting; the
-			// download proxy refreshes records out-of-band, so the index snapshot
-			// can lag a still-active link.
-			if base, ok := s.downloadTaskActivity(ctx, taskID); ok && !base.Add(ttl).Before(now) {
-				downloadIndex[taskID] = base
-				dlChanged = true
-				continue
-			}
-			_ = s.opts.NamespaceKV.Delete(ctx, downloadTaskKeyPrefix+taskID)
-			delete(downloadIndex, taskID)
-			dlChanged = true
-		}
-		if dlChanged {
-			if idxData, err := json.Marshal(downloadIndex); err == nil {
-				_ = s.opts.NamespaceKV.Set(ctx, downloadTaskIndexKey, idxData)
-			}
-		}
-	}
-
-	arIndexChanged := false
-	for gid, createdAt := range aria2Index {
-		if ttl > 0 && createdAt.Add(ttl).Before(now) {
-			_ = s.opts.NamespaceKV.Delete(ctx, aria2TaskKeyPrefix+gid)
-			delete(aria2Index, gid)
-			arIndexChanged = true
-			continue
-		}
-		if record, ok := records[aria2TaskKeyPrefix+gid]; ok && record.TaskID != "" {
-			if _, exists := downloadIndex[record.TaskID]; !exists {
-				_ = s.opts.NamespaceKV.Delete(ctx, aria2TaskKeyPrefix+gid)
-				delete(aria2Index, gid)
-				arIndexChanged = true
-			}
-		}
-	}
-	if arIndexChanged {
-		if idxData, err := json.Marshal(aria2Index); err == nil {
-			_ = s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, idxData)
-		}
-	}
-
-	return nil
+	return taskhub.CleanupLinksAndAria2(ctx, s.opts.NamespaceKV, now, ttl)
 }
 
 func (s *Server) loadAria2Records() (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {
@@ -586,29 +532,7 @@ func (s *Server) saveAria2Record(ctx context.Context, record aria2TaskRecord) er
 	if err != nil {
 		return errors.Wrap(err, "marshal aria2 task record")
 	}
-	if err := s.opts.NamespaceKV.Set(ctx, aria2TaskKeyPrefix+record.GID, data); err != nil {
-		return errors.Wrap(err, "save aria2 task record")
-	}
-
-	index := map[string]time.Time{}
-	indexData, err := s.opts.NamespaceKV.Get(ctx, aria2TaskIndexKey)
-	if err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return errors.Wrap(err, "load aria2 task index")
-	}
-	if len(indexData) > 0 {
-		if err := json.Unmarshal(indexData, &index); err != nil {
-			return errors.Wrap(err, "decode aria2 task index")
-		}
-	}
-	index[record.GID] = record.CreatedAt
-	next, err := json.Marshal(index)
-	if err != nil {
-		return errors.Wrap(err, "marshal aria2 task index")
-	}
-	if err := s.opts.NamespaceKV.Set(ctx, aria2TaskIndexKey, next); err != nil {
-		return errors.Wrap(err, "save aria2 task index")
-	}
-	return nil
+	return taskhub.Aria2(s.opts.NamespaceKV).Merge(ctx, record.GID, data, record.CreatedAt)
 }
 
 func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
@@ -636,13 +560,7 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 		timeout = 30 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, cfg.Aria2.RPCURL, bytes.NewReader(body))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.Wrap(err, "create aria2 request"))
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := aria2rpc.Forward(r.Context(), client, cfg.Aria2.RPCURL, body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, errors.Wrap(err, "forward aria2 request"))
 		return
@@ -879,46 +797,15 @@ func aria2StatusKeys() []string {
 }
 
 func callAria2(ctx context.Context, cfg config.Aria2Config, method string, params []any, result any) error {
-	if cfg.Secret != "" {
-		params = append([]any{"token:" + cfg.Secret}, params...)
-	}
-	body, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "tdl-webui",
-		"method":  method,
-		"params":  params,
-	})
-	if err != nil {
-		return err
-	}
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.RPCURL, bytes.NewReader(body))
+	raw, err := aria2rpc.Call(ctx, &http.Client{Timeout: timeout}, cfg.RPCURL, cfg.Secret, method, params, 1)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: timeout}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	var decoded struct {
-		Result json.RawMessage `json:"result"`
-		Error  *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return err
-	}
-	if decoded.Error != nil {
-		return fmt.Errorf("aria2 rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
-	}
-	return json.Unmarshal(decoded.Result, result)
+	return json.Unmarshal(raw, result)
 }
 
 func aria2Lengths(status aria2Status) (total, completed int64) {

@@ -4,12 +4,18 @@ import (
 	"context"
 	"time"
 
-	appdownload "github.com/snakexgc/tdl/app/download"
+	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type Options struct {
+	ForwardQueue            *appforward.Queue
+	Account                 types.AccountID
+	Filter                  ports.FilterRules
+	Naming                  ports.NamingRules
 	Dir                     string
 	Template                string
 	FilenameMaxLength       int
@@ -32,7 +38,7 @@ type Options struct {
 	ForwardTriggerReactions []string
 	Notify                  NotifyFunc
 	HTTPService             *httpdl.Service
-	DownloadSubmitter       appdownload.Submitter
+	DownloadSubmitter       ports.DownloadExecutor
 	messageLinks            <-chan messageLinkSubmission
 }
 
@@ -44,8 +50,9 @@ func DefaultOptions(cfg *config.Config) Options {
 	}
 
 	return Options{
+		Account:                 types.AccountID(cfg.Namespace),
 		Dir:                     cfg.DownloadDir,
-		Template:                fileNameConfigTemplate(config.EffectiveFilename(cfg)),
+		Template:                config.EffectiveFilename(cfg),
 		FilenameMaxLength:       config.EffectiveFilenameMax(cfg),
 		PoolSize:                config.EffectivePoolSize(cfg),
 		Limit:                   config.EffectiveLimit(cfg),

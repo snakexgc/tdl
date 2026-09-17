@@ -73,7 +73,7 @@ export async function loadDownloads(force = false) {
     state.downloaderMode = "aria2";
   }
 
-  if (state.downloaderMode === "internal") {
+  if (state.downloaderMode === "local") {
     state.aria2Loaded = false;
     const frame = document.getElementById("aria2-frame");
     const guide = document.getElementById("aria2-guide");
@@ -158,7 +158,7 @@ function hideAria2Guide() {
 function startInternalDownloadPolling() {
   if (state.internalDownloadPoll) return;
   state.internalDownloadPoll = window.setInterval(() => {
-    if (!document.getElementById("view-downloads").classList.contains("active") || state.downloaderMode !== "internal") {
+    if (!document.getElementById("view-downloads").classList.contains("active") || state.downloaderMode !== "local") {
       stopInternalDownloadPolling();
       return;
     }
@@ -203,7 +203,7 @@ async function loadInternalDownloads(options = {}) {
 function renderInternalDownloads() {
   const body = document.getElementById("internal-download-body");
   if (!state.internalDownloads.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">没有内部下载任务</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty">没有本地下载任务</td></tr>`;
     updateInternalSelectionState();
     return;
   }
@@ -319,7 +319,7 @@ function selectInternalDownloads(mode) {
 async function runInternalDownloadBulkAction(action) {
   const ids = Array.from(state.selectedInternalDownloads);
   if (!ids.length) {
-    setInternalDownloadStatus("请先选择需要处理的内部下载任务。", "error");
+    setInternalDownloadStatus("请先选择需要处理的本地下载任务。", "error");
     return;
   }
   if (action === "delete" && !confirm(`删除选中的 ${ids.length} 个下载任务？未完成的本地文件会一并删除。`)) return;
@@ -329,7 +329,7 @@ async function runInternalDownloadBulkAction(action) {
 async function runInternalDownloadAction(action, ids) {
   const uniqueIDs = Array.from(new Set(ids)).filter(Boolean);
   if (!uniqueIDs.length) {
-    setInternalDownloadStatus("请先选择需要处理的内部下载任务。", "error");
+    setInternalDownloadStatus("请先选择需要处理的本地下载任务。", "error");
     return;
   }
   setInternalDownloadStatus(internalActionPending(action));

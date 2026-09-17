@@ -14,7 +14,8 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/app/login"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/tclient"
 )
@@ -244,7 +245,7 @@ func (s *Server) deleteUserSession(ctx context.Context, namespace string) (int, 
 	}
 
 	deleted := 0
-	for _, key := range []string{userSessionKey, userAppKey} {
+	for _, key := range []string{userSessionKey, userAppKey, tgauth.FingerprintKey} {
 		ok, err := deleteUserKey(ctx, kvd, key)
 		if err != nil {
 			return deleted, err

@@ -11,7 +11,7 @@ import (
 	"go.etcd.io/bbolt"
 	"go.uber.org/multierr"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/validator"
 )
 

@@ -8,8 +8,8 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/snakexgc/tdl/core/forwarder"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/forwarder"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 

@@ -1,7 +1,6 @@
 package aria2
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/snakexgc/tdl/bsw/ecual/aria2rpc"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -54,25 +54,6 @@ func NewClient(cfg config.Aria2Config) *Client {
 	}
 }
 
-type aria2RPCRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	Method  string `json:"method"`
-	ID      string `json:"id"`
-	Params  []any  `json:"params"`
-}
-
-type aria2RPCResponse struct {
-	Result json.RawMessage `json:"result"`
-	Error  *aria2RPCError  `json:"error"`
-	ID     string          `json:"id"`
-	Extra  json.RawMessage `json:"-"`
-}
-
-type aria2RPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
 func IsConnectionError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
@@ -97,70 +78,7 @@ func IsConnectionError(err error) bool {
 }
 
 func (c *Client) callRaw(ctx context.Context, method string, params []any) (json.RawMessage, error) {
-	if c.rpcURL == "" {
-		return nil, errors.New("aria2 rpc_url is empty")
-	}
-
-	if c.secret != "" {
-		params = append([]any{"token:" + c.secret}, params...)
-	}
-
-	body, err := json.Marshal(aria2RPCRequest{
-		JSONRPC: "2.0",
-		Method:  method,
-		ID:      "tdl-watch",
-		Params:  params,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "marshal aria2 request")
-	}
-
-	const (
-		maxAttempts = 6
-		retryDelay  = time.Second
-	)
-
-	var resp *http.Response
-	for attempt := range maxAttempts {
-		var req *http.Request
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.rpcURL, bytes.NewReader(body))
-		if err != nil {
-			return nil, errors.Wrap(err, "create aria2 request")
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err = c.httpClient.Do(req)
-		if err == nil {
-			break
-		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || attempt == maxAttempts-1 {
-			return nil, errors.Wrap(err, "do aria2 request")
-		}
-		select {
-		case <-ctx.Done():
-			return nil, errors.Wrap(ctx.Err(), "do aria2 request")
-		case <-time.After(retryDelay):
-		}
-	}
-	defer resp.Body.Close()
-
-	var decoded aria2RPCResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return nil, errors.Wrap(err, "decode aria2 response")
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if decoded.Error != nil {
-			return nil, fmt.Errorf("aria2 rpc status %d: %s", resp.StatusCode, decoded.Error.Message)
-		}
-		return nil, fmt.Errorf("aria2 rpc status %d", resp.StatusCode)
-	}
-
-	if decoded.Error != nil {
-		return nil, fmt.Errorf("aria2 rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
-	}
-
-	return decoded.Result, nil
+	return aria2rpc.Call(ctx, c.httpClient, c.rpcURL, c.secret, method, params, 6)
 }
 
 func (c *Client) callString(ctx context.Context, method string, params []any) (string, error) {

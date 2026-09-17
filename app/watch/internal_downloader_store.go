@@ -4,23 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
-
-const (
-	internalTaskKeyPrefix = "watch.internal.task."
-	internalTaskIndexKey  = "watch.internal.index"
-)
-
-type persistentInternalTaskIndex map[string]time.Time
 
 type internalTaskStore struct {
-	mu sync.Mutex
 	kv storage.Storage
 }
 
@@ -47,23 +39,11 @@ func (s *internalTaskStore) Save(ctx context.Context, record internalDownloadRec
 	}
 	record.UpdatedAt = now
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	data, err := json.Marshal(record)
 	if err != nil {
 		return errors.Wrap(err, "marshal internal download record")
 	}
-	if err := s.kv.Set(ctx, internalTaskStorageKey(record.ID), data); err != nil {
-		return errors.Wrap(err, "persist internal download record")
-	}
-
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	index[record.ID] = record.CreatedAt
-	return s.saveIndex(ctx, index)
+	return s.collection().Put(ctx, record.ID, data, record.CreatedAt)
 }
 
 func (s *internalTaskStore) Get(ctx context.Context, id string) (internalDownloadRecord, bool, error) {
@@ -71,10 +51,7 @@ func (s *internalTaskStore) Get(ctx context.Context, id string) (internalDownloa
 		return internalDownloadRecord{}, false, nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.getLocked(ctx, id)
+	return s.get(ctx, id)
 }
 
 func (s *internalTaskStore) Records(ctx context.Context) (map[string]internalDownloadRecord, error) {
@@ -83,31 +60,18 @@ func (s *internalTaskStore) Records(ctx context.Context) (map[string]internalDow
 		return result, nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	index, err := s.loadIndex(ctx)
+	records, err := s.collection().Records(ctx)
 	if err != nil {
 		return nil, err
 	}
-	changed := false
-	for id := range index {
-		record, ok, err := s.getLocked(ctx, id)
+	for id, data := range records {
+		record, err := decodeInternalRecord(id, data)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			delete(index, id)
-			changed = true
-			continue
-		}
 		result[id] = record
 	}
-	if changed {
-		if err := s.saveIndex(ctx, index); err != nil {
-			return nil, err
-		}
-	}
+
 	return result, nil
 }
 
@@ -116,22 +80,11 @@ func (s *internalTaskStore) Remove(ctx context.Context, id string) error {
 		return nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.kv.Delete(ctx, internalTaskStorageKey(id)); err != nil {
-		return errors.Wrap(err, "delete internal download record")
-	}
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	delete(index, id)
-	return s.saveIndex(ctx, index)
+	return s.collection().Remove(ctx, id)
 }
 
-func (s *internalTaskStore) getLocked(ctx context.Context, id string) (internalDownloadRecord, bool, error) {
-	data, err := s.kv.Get(ctx, internalTaskStorageKey(id))
+func (s *internalTaskStore) get(ctx context.Context, id string) (internalDownloadRecord, bool, error) {
+	data, err := s.collection().Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return internalDownloadRecord{}, false, nil
@@ -139,9 +92,14 @@ func (s *internalTaskStore) getLocked(ctx context.Context, id string) (internalD
 		return internalDownloadRecord{}, false, errors.Wrap(err, "load internal download record")
 	}
 
+	record, err := decodeInternalRecord(id, data)
+	return record, err == nil, err
+}
+
+func decodeInternalRecord(id string, data []byte) (internalDownloadRecord, error) {
 	var record internalDownloadRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return internalDownloadRecord{}, false, errors.Wrap(err, "decode internal download record")
+		return internalDownloadRecord{}, errors.Wrap(err, "decode internal download record")
 	}
 	if record.ID == "" {
 		record.ID = id
@@ -152,39 +110,9 @@ func (s *internalTaskStore) getLocked(ctx context.Context, id string) (internalD
 	if record.Status == "" {
 		record.Status = InternalDownloadStatusQueued
 	}
-	return record, true, nil
+	return record, nil
 }
 
-func (s *internalTaskStore) loadIndex(ctx context.Context) (persistentInternalTaskIndex, error) {
-	data, err := s.kv.Get(ctx, internalTaskIndexKey)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return persistentInternalTaskIndex{}, nil
-		}
-		return nil, errors.Wrap(err, "load internal download index")
-	}
-
-	var index persistentInternalTaskIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, errors.Wrap(err, "decode internal download index")
-	}
-	if index == nil {
-		index = persistentInternalTaskIndex{}
-	}
-	return index, nil
-}
-
-func (s *internalTaskStore) saveIndex(ctx context.Context, index persistentInternalTaskIndex) error {
-	data, err := json.Marshal(index)
-	if err != nil {
-		return errors.Wrap(err, "marshal internal download index")
-	}
-	if err := s.kv.Set(ctx, internalTaskIndexKey, data); err != nil {
-		return errors.Wrap(err, "save internal download index")
-	}
-	return nil
-}
-
-func internalTaskStorageKey(id string) string {
-	return internalTaskKeyPrefix + id
+func (s *internalTaskStore) collection() *taskhub.Collection {
+	return taskhub.Local(s.kv)
 }

@@ -13,10 +13,10 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/snakexgc/tdl/core/dcpool"
-	"github.com/snakexgc/tdl/core/forwarder"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/dcpool"
+	"github.com/snakexgc/tdl/internal/core/forwarder"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -51,7 +51,7 @@ type Runtime struct {
 	PoolSize int
 }
 
-// Queue is a process-wide, persistent, single-flight forward task queue. Jobs
+// Queue is a namespace-owned, persistent, single-flight forward task queue. Jobs
 // are durably stored so they survive restarts; a single worker drains them one
 // at a time and auto-retries transient failures with backoff.
 type Queue struct {
@@ -67,17 +67,10 @@ type Queue struct {
 	seq atomic.Uint64
 }
 
-var defaultQueue = &Queue{wake: make(chan struct{}, 1)}
-
-// Jobs returns the process-wide forward queue.
-func Jobs() *Queue { return defaultQueue }
-
-// ConfigureQueue binds the queue to the namespace KV store. Call once at daemon
-// startup before any module enqueues or serves.
-func ConfigureQueue(kv storage.Storage) {
-	defaultQueue.mu.Lock()
-	defer defaultQueue.mu.Unlock()
-	defaultQueue.store = newJobStore(kv)
+// NewQueue creates a namespace-owned queue. The composition root shares this
+// instance with producers, controls and the single worker.
+func NewQueue(kv storage.Storage) *Queue {
+	return &Queue{wake: make(chan struct{}, 1), store: newJobStore(kv)}
 }
 
 // SetNotifier registers a callback invoked when a job fails permanently (after

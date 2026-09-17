@@ -52,7 +52,7 @@ function renderUpdateInfo(update) {
     ["发布地址", update.latest_url || "-"],
   ];
   if (update.docker) {
-    rows.push(["更新方式", "仅更新容器内的 tdl 程序，不更新或重建 Docker 容器"]);
+    rows.push(["更新方式", "请拉取新镜像并重启容器"]);
   }
   target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
   notes.textContent = update.release_notes || "";
@@ -61,7 +61,7 @@ function renderUpdateInfo(update) {
   status.textContent = update.message || (update.needs_update ? "发现新版本。" : "当前已是最新版本。");
   const applyBtn = document.getElementById("apply-update");
   applyBtn.disabled = !update.needs_update || !update.can_update;
-  applyBtn.textContent = update.docker ? "更新容器内 tdl" : "下载并更新";
+  applyBtn.textContent = update.docker ? "请更新容器镜像" : "下载并更新";
 }
 
 async function applyUpdate() {
@@ -71,9 +71,7 @@ async function applyUpdate() {
   if (!state.update || !state.update.needs_update || !state.update.can_update) {
     return;
   }
-  const restartHint = state.update.docker
-    ? "tdl 程序会在当前容器内原地重启，Docker 容器不会更新或重建。"
-    : "程序会自动重启。";
+  const restartHint = "程序会自动重启。";
   if (!confirm(`确认更新到 ${state.update.latest_version}？${restartHint}`)) return;
   const status = document.getElementById("update-status");
   status.className = "notice";

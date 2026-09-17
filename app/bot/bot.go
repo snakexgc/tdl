@@ -21,14 +21,20 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	appforward "github.com/snakexgc/tdl/app/forward"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/util/netutil"
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/util/netutil"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 var processRebootRequested atomic.Bool
@@ -38,6 +44,9 @@ var (
 )
 
 type Options struct {
+	ComponentStore        *rteconfig.Store
+	SetComponentHost      func(*rte.Runtime)
+	ForwardQueue          *appforward.Queue
 	Token                 string
 	AllowedUsers          []int64
 	Proxy                 string
@@ -106,14 +115,26 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return errors.Wrap(err, "get bot info")
 	}
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
-	notifier := newBotNotifier(bot, opts.AllowedUsers)
-	allowed := newAllowedUsers(opts.AllowedUsers)
+	account := types.AccountID(opts.Namespace)
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	host, console, notifications, err := application.BotHost(ctx, account, &botNotificationTransport{sender: bot, editor: bot}, opts.AllowedUsers, opts.ComponentStore)
+	if err != nil {
+		return errors.Wrap(err, "start bot components")
+	}
+	notifier := &botNotifier{host: host, service: notifications, account: account}
+	defer notifier.Close()
+	if opts.SetComponentHost != nil {
+		opts.SetComponentHost(host)
+		defer opts.SetComponentHost(nil)
+	}
 	if opts.SetNotifier != nil {
 		opts.SetNotifier(notifier.Notify)
 		defer opts.SetNotifier(nil)
 	}
 
-	if err := configureBotMenu(ctx, bot); err != nil {
+	if err := configureBotMenu(ctx, bot, console); err != nil {
 		return errors.Wrap(err, "create bot menu")
 	}
 
@@ -130,6 +151,11 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			ReconnectTimeout: opts.ReconnectTimeout,
 		}
 	}
+	if opts.ForwardQueue == nil {
+		opts.ForwardQueue = appforward.NewQueue(kvd)
+		opts.ForwardQueue.SetNotifier(notifier.Notify)
+	}
+	opts.Watch.ForwardQueue = opts.ForwardQueue
 	sessionOpts := sessionOptionsForKV(kvd)
 	watchCtrl := opts.WatchControl
 	ownsWatch := false
@@ -242,7 +268,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	updateController := newTDLUpdateController(requestUpdate)
 	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
-		if !allowed.Contains(query.From.ID) {
+		if !console.Allowed(account, query.From.ID) {
 			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
 			return nil
 		}
@@ -258,8 +284,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		chatID := update.Message.Chat.ID
 
 		// check if user is allowed
-		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
+		if console.Allowed(account, fromID) {
+			return handleAllowedMessage(ctx, update.Message, loginMgr, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd, opts.ForwardQueue, console)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -335,29 +361,13 @@ func versionSummary() string {
 	)
 }
 
-func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
-	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
-		Commands: []telego.BotCommand{
-			{Command: "start", Description: "开始使用并显示下载器控制键盘"},
-			{Command: "menu", Description: "显示当前下载器控制键盘"},
-			{Command: "help", Description: "查看当前下载器帮助"},
-			{Command: "info", Description: "查看当前下载器信息"},
-			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
-			{Command: "cancel_login", Description: "取消正在进行的登录"},
-			{Command: "forward", Description: "回复 Telegram 消息链接并转发"},
-			{Command: "downloads", Description: "查看当前下载器管理命令"},
-			{Command: "downloads_active", Description: "查看正在下载的任务"},
-			{Command: "downloads_waiting", Description: "查看等待或暂停的任务"},
-			{Command: "downloads_stopped", Description: "查看已完成或停止的任务"},
-			{Command: "downloads_overview", Description: "查看下载任务概况"},
-			{Command: "downloads_pause_all", Description: "暂停全部下载任务"},
-			{Command: "downloads_start_all", Description: "开始全部下载任务"},
-			{Command: "aria2_retry", Description: "重试已停止的下载任务"},
-			{Command: "reboot", Description: "重启(不推荐)"},
-			{Command: "update_tdl", Description: "检查并更新 tdl"},
-			{Command: "clean_kv", Description: "清空KV缓存(危险)"},
-		},
-	})
+func configureBotMenu(ctx context.Context, bot *telego.Bot, console ports.Console) error {
+	commands := console.Commands()
+	menu := make([]telego.BotCommand, 0, len(commands))
+	for _, command := range commands {
+		menu = append(menu, telego.BotCommand{Command: command.Name, Description: command.Description})
+	}
+	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{Commands: menu})
 }
 
 func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl, opts login.SessionOptions, autoStart bool) startupState {
@@ -447,13 +457,15 @@ func handleAllowedMessage(
 	kvEngine kv.Storage,
 	namespace string,
 	namespaceKV storage.Storage,
+	forwardQueue *appforward.Queue,
+	console ports.Console,
 ) error {
 	fromID := msg.From.ID
 	chatID := msg.Chat.ID
 	text := strings.TrimSpace(msg.Text)
 
 	if msg.Chat.Type != telego.ChatTypePrivate {
-		if isPrivateCommand(text) {
+		if console.PrivateCommand(strings.TrimPrefix(commandName(text), "/")) {
 			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 				tu.ID(chatID),
 				"请在私聊中发送控制命令。",
@@ -471,7 +483,7 @@ func handleAllowedMessage(
 	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
 		return err
 	}
-	if handled, err := handleForwardCommand(ctx, msg, text, namespaceKV); handled || err != nil {
+	if handled, err := handleForwardCommand(ctx, msg, text, forwardQueue); handled || err != nil {
 		return err
 	}
 	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
@@ -548,23 +560,6 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 		tu.ID(chatID),
 		fmt.Sprintf("请在命令后填写用户名，例如：%s alice。\n用户名只能使用英文字母，用来区分保存在 .tdl 目录下的登录数据。", command),
 	))
-}
-
-func isPrivateCommand(text string) bool {
-	switch commandName(text) {
-	case botCmdStart, botCmdMenu, botCmdHelp, botCmdInfo,
-		botCmdForward, "/login_code", "/cancel_login", "/reboot",
-		botCmdDownloads, botCmdDownloadsHelp, botCmdDownloadsActive, botCmdDownloadsWaiting, botCmdDownloadsStopped,
-		botCmdDownloadsOverview, botCmdDownloadsPauseAll, botCmdDownloadsStartAll,
-		botCmdInternal, botCmdInternalHelp, botCmdInternalActive, botCmdInternalWaiting, botCmdInternalStopped,
-		botCmdInternalOverview, botCmdInternalPauseAll, botCmdInternalStartAll,
-		"/update_tdl", botCmdAria2, botCmdAria2Help, botCmdAria2Active, botCmdAria2Waiting, botCmdAria2Stopped,
-		botCmdAria2Overview, botCmdAria2PauseAll, botCmdAria2StartAll, botCmdAria2Retry,
-		"/clean_kv":
-		return true
-	default:
-		return false
-	}
 }
 
 // newBot creates a telego Bot instance with optional proxy support.

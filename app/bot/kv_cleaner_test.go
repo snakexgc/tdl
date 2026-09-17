@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/kv"
 )
 
@@ -35,16 +35,16 @@ func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {
 
 	result, err := cleanCurrentNamespaceKV(ctx, engine, "default", namespaceKV)
 	require.NoError(t, err)
-	require.Equal(t, 5, result.Kept)
-	require.Equal(t, 5, result.Deleted)
+	require.Equal(t, 7, result.Kept)
+	require.Equal(t, 3, result.Deleted)
 
 	require.Contains(t, engine.meta["default"], "session")
 	require.Contains(t, engine.meta["default"], "app")
 	require.Contains(t, engine.meta["default"], "peers:key:user:1")
 	require.Contains(t, engine.meta["default"], "state:42")
 	require.Contains(t, engine.meta["default"], "chan:42")
-	require.NotContains(t, engine.meta["default"], "watch.download.index")
-	require.NotContains(t, engine.meta["default"], "watch.aria2.index")
+	require.JSONEq(t, "{}", string(engine.meta["default"]["watch.download.index"]))
+	require.JSONEq(t, "{}", string(engine.meta["default"]["watch.aria2.index"]))
 	require.NotContains(t, engine.meta["default"], "resume:file")
 	require.Contains(t, engine.meta["other"], "watch.download.index")
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/go-faster/errors"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 )
@@ -96,12 +96,5 @@ func internalDownloadDirData(task *httpdl.Task) downloadDirData {
 	if id == "0" {
 		id = task.ID
 	}
-	return downloadDirData{
-		ID:               id,
-		Name:             safePathSegment(id),
-		MessageID:        strconv.Itoa(task.MessageID),
-		TriggerMessageID: strconv.Itoa(task.MessageID),
-		FileName:         task.FileName,
-		Time:             time.Now(),
-	}
+	return downloadDirData{ID: id, Name: safePathSegment(id), Time: time.Now()}
 }

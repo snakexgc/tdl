@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	appdownload "github.com/snakexgc/tdl/app/download"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 const (
@@ -184,13 +185,32 @@ func TestAria2ControllerSubmitsGeneratedHTTPLink(t *testing.T) {
 		FullPath:    testDownloadDir + "/" + testVideoFilename,
 	})
 	require.NoError(t, err)
-	require.Equal(t, appdownload.Result{Target: aria2DownloaderName, ID: testGIDNew}, result)
+	require.Equal(t, appdownload.Result{Account: types.DefaultAccount, Target: aria2DownloaderName, ID: testGIDNew}, result)
 	require.Equal(t, []string{testDownloadURL1}, client.addedURIs)
 	require.Equal(t, []aria2AddURIOptions{{Dir: testDownloadDir, Out: testVideoFilename, Connections: 8}}, client.addedOptions)
 
 	records, err := store.Records(ctx)
 	require.NoError(t, err)
 	require.Equal(t, testDocument1, records[testGIDNew].TaskID)
+}
+
+func TestAria2SubmissionRejectsAnotherAccountBeforeRPC(t *testing.T) {
+	client := &fakeAria2ControlClient{addedGID: testGIDNew}
+	store := NewTaskStore(newMemoryTaskStorage())
+	controller := &Controller{account: "alice", client: client, store: store, logger: zap.NewNop()}
+	_, err := controller.Submit(context.Background(), types.DownloadSubmission{
+		Account: "bob", TaskID: testDocument1, DownloadURL: testDownloadURL1,
+	})
+	require.ErrorContains(t, err, "account mismatch")
+	require.Empty(t, client.addedURIs)
+	records, err := store.Records(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, records)
+	result, err := controller.Submit(context.Background(), types.DownloadSubmission{
+		Account: "alice", TaskID: testDocument1, DownloadURL: testDownloadURL1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.AccountID("alice"), result.Account)
 }
 
 func TestTaskNamePrefersBittorrentInfoPathThenURI(t *testing.T) {

@@ -45,7 +45,7 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           release_tag="${GITHUB_REF_NAME}"
           short_sha="$(git rev-parse --short HEAD)"
-          version="${release_tag}_docker"
+          version="${release_tag}"
           {
             echo "version=$version"
             echo "tags<<EOF"

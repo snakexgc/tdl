@@ -14,15 +14,18 @@ import (
 
 	"github.com/gotd/td/tg"
 
+	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
 )
 
-//go:embed index.html login.html aria2ng.html static views
+//go:embed index.html login.html aria2ng.html components.html static views
 var assets embed.FS
 
 func init() {
@@ -37,8 +40,8 @@ func init() {
 const (
 	downloadTaskKeyPrefix = httpdl.DownloadTaskKeyPrefix
 	downloadTaskIndexKey  = httpdl.DownloadTaskIndexKey
-	aria2TaskKeyPrefix    = "watch.aria2.task."
-	aria2TaskIndexKey     = "watch.aria2.index"
+	aria2TaskKeyPrefix    = taskhub.Aria2Prefix
+	aria2TaskIndexKey     = taskhub.Aria2Index
 
 	aria2StatusComplete    = "complete"
 	tdlAria2PieceSize      = "1024K"
@@ -58,6 +61,7 @@ const (
 	fieldDeleted                 = "deleted"
 	valueTrue                    = "true"
 	fieldMessage                 = "message"
+	fieldError                   = "error"
 	fieldDefault                 = "default"
 
 	actionDelete = "delete"
@@ -68,16 +72,23 @@ const (
 )
 
 type Options struct {
-	Context         context.Context
-	KVEngine        kv.Storage
-	Namespace       string
-	NamespaceKV     storage.Storage
-	AfterConfigSave func(*config.Config)
-	OnLoginSuccess  func(*tg.User)
-	RequestReboot   func()
-	RequestUpdate   func(updater.Plan)
-	WatchRunning    func() bool
-	ModuleManager   ModuleManager
+	ComponentManager ComponentManager
+	ForwardQueue     *appforward.Queue
+	Context          context.Context
+	KVEngine         kv.Storage
+	Namespace        string
+	NamespaceKV      storage.Storage
+	AfterConfigSave  func(*config.Config)
+	OnLoginSuccess   func(*tg.User)
+	RequestReboot    func()
+	RequestUpdate    func(updater.Plan)
+	WatchRunning     func() bool
+	ModuleManager    ModuleManager
+}
+
+type ComponentManager interface {
+	ComponentConfigurations() ([]rte.Configuration, bool)
+	SaveComponentConfiguration(context.Context, string, map[string]any) error
 }
 
 type ModuleManager interface {
@@ -143,6 +154,9 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func NewServer(opts Options) *Server {
+	if opts.ForwardQueue == nil {
+		opts.ForwardQueue = appforward.NewQueue(opts.NamespaceKV)
+	}
 	return &Server{
 		opts:     opts,
 		login:    newWebLoginManager(opts),
@@ -161,6 +175,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/logout", s.authFunc(s.handleAuthLogout))
 	mux.HandleFunc("/views/", s.authFunc(s.handleViewAsset))
+	mux.HandleFunc("/components.html", s.authFunc(s.handleAsset("components.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("/aria2ng.html", s.authFunc(s.handleAsset("aria2ng.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("/aria2/jsonrpc", s.authFunc(s.handleAria2Proxy))
 	mux.HandleFunc("/api/heartbeat", s.authFunc(s.handleHeartbeat))
@@ -184,6 +199,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/login/password", s.authFunc(s.handleLoginPassword))
 	mux.HandleFunc("/api/login/cancel", s.authFunc(s.handleLoginCancel))
 	mux.HandleFunc("/api/modules", s.authFunc(s.handleModules))
+	mux.HandleFunc("/api/components", s.authFunc(s.handleComponents))
 	mux.HandleFunc("/api/config", s.authFunc(s.handleConfig))
 	mux.HandleFunc("/api/update/check", s.authFunc(s.handleUpdateCheck))
 	mux.HandleFunc("/api/update/apply", s.authFunc(s.handleUpdateApply))
@@ -240,8 +256,8 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{
-		"ok":    false,
-		"error": err.Error(),
+		"ok":       false,
+		fieldError: err.Error(),
 	})
 }
 

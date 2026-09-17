@@ -10,8 +10,9 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
 )
 
 type downloadTask struct {
@@ -240,165 +241,99 @@ func NewTaskStore(kv storage.Storage, ttl ...time.Duration) *TaskStore {
 }
 
 func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.kv != nil {
-		if err := s.cleanupExpiredLocked(ctx, time.Now()); err != nil {
-			return errors.Wrap(err, "cleanup expired download tasks")
-		}
-
-		persisted, err := persistentDownloadTaskFromTask(task)
-		if err != nil {
-			return errors.Wrap(err, "create persistent download task")
-		}
-		data, err := json.Marshal(persisted)
-		if err != nil {
-			return errors.Wrap(err, "marshal persistent download task")
-		}
-		if existing, getErr := s.kv.Get(ctx, downloadTaskStorageKey(task.ID)); getErr == nil {
-			data, err = mergeDownloadTaskData(existing, data)
-			if err != nil {
-				return errors.Wrap(err, "merge persistent download task")
-			}
-		} else if !errors.Is(getErr, storage.ErrNotFound) {
-			return errors.Wrap(getErr, "load existing persistent download task")
-		}
-		if err := s.kv.Set(ctx, downloadTaskStorageKey(task.ID), data); err != nil {
-			return errors.Wrap(err, "persist download task")
-		}
-		if err := s.addIndexEntryLocked(ctx, task.ID, downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt)); err != nil {
-			return errors.Wrap(err, "index persistent download task")
-		}
+	if task == nil {
+		return errors.New("download task is nil")
 	}
-
-	s.tasks[task.ID] = task
-	return nil
+	if s.kv == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		copy := *task
+		s.tasks[task.ID] = &copy
+		return nil
+	}
+	if err := s.CleanupExpired(ctx, time.Now()); err != nil {
+		return err
+	}
+	persisted, err := persistentDownloadTaskFromTask(task)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(persisted)
+	if err != nil {
+		return err
+	}
+	return taskhub.Links(s.kv).Merge(ctx, task.ID, data, downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt))
 }
 
 func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, error) {
 	now := time.Now()
-
-	s.mu.RLock()
-	task, ok := s.tasks[id]
-	ttl := s.ttl
-	s.mu.RUnlock()
-	if ok {
-		if !isDownloadTaskExpired(downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt), now, ttl) {
-			s.touch(ctx, id, nil, now)
-			return task, true, nil
-		}
-		// The cached copy looks expired, but the persisted record may have been
-		// refreshed out-of-band (the WebUI activity sync only writes KV, not this
-		// in-memory map). The cached LastActiveAt is never newer than KV, so
-		// re-check KV before evicting to avoid deleting a still-active link.
-		if s.kv != nil {
-			refreshed, ok2, err := s.reload(ctx, id, now)
-			if err != nil {
-				return nil, false, err
-			}
-			if ok2 {
-				return refreshed, true, nil
-			}
-		}
-		if err := s.delete(ctx, id); err != nil {
-			return nil, false, err
-		}
-		return nil, false, nil
-	}
-
+	ttl := s.TTL()
 	if s.kv == nil {
-		return nil, false, nil
-	}
-
-	return s.reload(ctx, id, now)
-}
-
-// reload loads the persisted task from KV, evicting it when it has truly expired
-// (by its own activity clock). On success it caches the parsed task and refreshes
-// its activity so an active download keeps the link alive.
-func (s *taskStore) reload(ctx context.Context, id string, now time.Time) (*downloadTask, bool, error) {
-	data, err := s.kv.Get(ctx, downloadTaskStorageKey(id))
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			s.mu.Lock()
-			delete(s.tasks, id)
-			s.mu.Unlock()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		task, ok := s.tasks[id]
+		if !ok {
 			return nil, false, nil
 		}
-		return nil, false, errors.Wrap(err, "load persistent download task")
-	}
-
-	var persisted persistentDownloadTask
-	if err := json.Unmarshal(data, &persisted); err != nil {
-		return nil, false, errors.Wrap(err, "decode persistent download task")
-	}
-	if isDownloadTaskExpired(downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt), now, s.TTL()) {
-		if err := s.delete(ctx, id); err != nil {
-			return nil, false, err
+		if isDownloadTaskExpired(downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt), now, ttl) {
+			delete(s.tasks, id)
+			return nil, false, nil
 		}
+		copy := *task
+		return &copy, true, nil
+	}
+	var task *downloadTask
+	err := taskhub.Links(s.kv).Mutate(ctx, id, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
+		var persisted persistentDownloadTask
+		if err := json.Unmarshal(data, &persisted); err != nil {
+			return nil, stamp, err
+		}
+		if isDownloadTaskExpired(downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt), now, ttl) {
+			return nil, stamp, nil
+		}
+		var err error
+		task, err = persisted.ToTask()
+		if err != nil {
+			return nil, stamp, errors.Wrap(err, "restore persistent download task")
+		}
+		if ttl > 0 {
+			updated, changed, err := SetDownloadTaskLastActive(data, now, downloadTaskRefreshInterval(ttl))
+			if err != nil {
+				return nil, stamp, err
+			}
+			if changed {
+				data, stamp, task.LastActiveAt = updated, now, now
+			}
+		}
+		return data, stamp, nil
+	})
+	if errors.Is(err, storage.ErrNotFound) {
 		return nil, false, nil
 	}
-
-	task, err := persisted.ToTask()
 	if err != nil {
-		return nil, false, errors.Wrap(err, "restore persistent download task")
+		return nil, false, err
 	}
-
-	s.mu.Lock()
-	s.tasks[id] = task
-	s.mu.Unlock()
-
-	s.touch(ctx, id, data, now)
-	return task, true, nil
-}
-
-// touch slides the link's expiry by stamping LastActiveAt=now on both the record
-// and the index. It edits the raw record JSON (rather than re-marshalling the
-// in-memory task) so out-of-band fields such as the WebUI "downloaded" flag are
-// preserved. The write is throttled to one per refresh interval and is
-// best-effort: a failed refresh just means the next request will retry.
-func (s *taskStore) touch(ctx context.Context, id string, data []byte, now time.Time) {
-	if s == nil || s.kv == nil {
-		return
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.ttl == 0 {
-		return
-	}
-
-	if data == nil {
-		var err error
-		data, err = s.kv.Get(ctx, downloadTaskStorageKey(id))
-		if err != nil {
-			return
-		}
-	}
-
-	updated, changed, err := SetDownloadTaskLastActive(data, now, downloadTaskRefreshInterval(s.ttl))
-	if err != nil || !changed {
-		return
-	}
-	if err := s.kv.Set(ctx, downloadTaskStorageKey(id), updated); err != nil {
-		return
-	}
-	if task, ok := s.tasks[id]; ok && task != nil {
-		task.LastActiveAt = now
-	}
-	_ = s.addIndexEntryLocked(ctx, id, now)
+	return task, task != nil, nil
 }
 
 func (s *taskStore) CleanupExpired(ctx context.Context, now time.Time) error {
 	if s.kv == nil {
 		return nil
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.cleanupExpiredLocked(ctx, now)
+	ttl := s.TTL()
+	if ttl <= 0 {
+		return nil
+	}
+	return taskhub.Links(s.kv).Sweep(ctx, func(data []byte, stamp time.Time) (bool, error) {
+		var persisted persistentDownloadTask
+		if err := json.Unmarshal(data, &persisted); err != nil {
+			return false, err
+		}
+		if base := downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt); !base.IsZero() {
+			stamp = base
+		}
+		return isDownloadTaskExpired(stamp, now, ttl), nil
+	})
 }
 
 func (s *taskStore) TTL() time.Duration {
@@ -417,130 +352,6 @@ func (s *taskStore) SetTTL(ttl time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ttl = ttl
-}
-
-func (s *taskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {
-	if s.ttl == 0 {
-		return nil
-	}
-
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-
-	changed := false
-	for id, indexedAt := range index {
-		if !isDownloadTaskExpired(indexedAt, now, s.ttl) {
-			continue
-		}
-
-		// The index timestamp may lag the record (the WebUI activity sync and this
-		// store both write it). Confirm against the record's own activity clock
-		// before deleting so a refreshed link is never culled.
-		base := indexedAt
-		data, err := s.kv.Get(ctx, downloadTaskStorageKey(id))
-		switch {
-		case err == nil:
-			var persisted persistentDownloadTask
-			if json.Unmarshal(data, &persisted) == nil {
-				if recBase := downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt); !recBase.IsZero() {
-					base = recBase
-				}
-			}
-		case errors.Is(err, storage.ErrNotFound):
-			delete(index, id)
-			delete(s.tasks, id)
-			changed = true
-			continue
-		default:
-			return errors.Wrap(err, "load download task for cleanup")
-		}
-
-		if !isDownloadTaskExpired(base, now, s.ttl) {
-			if !base.Equal(indexedAt) {
-				index[id] = base
-				changed = true
-			}
-			continue
-		}
-
-		if err := s.kv.Delete(ctx, downloadTaskStorageKey(id)); err != nil {
-			return errors.Wrap(err, "delete expired download task")
-		}
-		delete(index, id)
-		delete(s.tasks, id)
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return s.saveIndex(ctx, index)
-}
-
-func (s *taskStore) addIndexEntryLocked(ctx context.Context, id string, createdAt time.Time) error {
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	index[id] = createdAt
-	return s.saveIndex(ctx, index)
-}
-
-func (s *taskStore) delete(ctx context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.deleteLocked(ctx, id)
-}
-
-func (s *taskStore) deleteLocked(ctx context.Context, id string) error {
-	if s.kv != nil {
-		if err := s.kv.Delete(ctx, downloadTaskStorageKey(id)); err != nil {
-			return errors.Wrap(err, "delete persistent download task")
-		}
-		index, err := s.loadIndex(ctx)
-		if err != nil {
-			return err
-		}
-		delete(index, id)
-		if err := s.saveIndex(ctx, index); err != nil {
-			return err
-		}
-	}
-
-	delete(s.tasks, id)
-	return nil
-}
-
-func (s *taskStore) loadIndex(ctx context.Context) (persistentDownloadTaskIndex, error) {
-	data, err := s.kv.Get(ctx, downloadTaskIndexKey)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return persistentDownloadTaskIndex{}, nil
-		}
-		return nil, errors.Wrap(err, "load download task index")
-	}
-
-	var index persistentDownloadTaskIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, errors.Wrap(err, "decode download task index")
-	}
-	if index == nil {
-		index = persistentDownloadTaskIndex{}
-	}
-	return index, nil
-}
-
-func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskIndex) error {
-	data, err := json.Marshal(index)
-	if err != nil {
-		return errors.Wrap(err, "marshal download task index")
-	}
-	if err := s.kv.Set(ctx, downloadTaskIndexKey, data); err != nil {
-		return errors.Wrap(err, "save download task index")
-	}
-	return nil
 }
 
 func isDownloadTaskExpired(createdAt, now time.Time, ttl time.Duration) bool {

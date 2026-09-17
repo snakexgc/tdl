@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
 // Forward jobs are persisted to the namespace KV so a serial queue can survive
@@ -18,11 +18,6 @@ import (
 // logical source message (which may expand to an album) to forward to one
 // destination. The worker re-resolves peers and re-fetches the message at run
 // time, so nothing session-bound needs to be serialized.
-
-const (
-	jobKeyPrefix = "forward.job."
-	jobIndexKey  = "forward.index"
-)
 
 // Job lifecycle statuses.
 const (
@@ -77,19 +72,20 @@ func (j Job) terminal() bool {
 	return j.Status == StatusDone || j.Status == StatusError
 }
 
-type jobIndex map[string]time.Time
-
 type jobStore struct {
-	mu sync.Mutex
-	kv storage.Storage
+	collection *taskhub.Collection
 }
 
 func newJobStore(kv storage.Storage) *jobStore {
-	return &jobStore{kv: kv}
+	s := &jobStore{}
+	if kv != nil {
+		s.collection = taskhub.Forward(kv)
+	}
+	return s
 }
 
 func (s *jobStore) Save(ctx context.Context, job Job) error {
-	if s == nil || s.kv == nil {
+	if s == nil || s.collection == nil {
 		return errors.New("forward job storage is not configured")
 	}
 	if strings.TrimSpace(job.ID) == "" {
@@ -103,99 +99,64 @@ func (s *jobStore) Save(ctx context.Context, job Job) error {
 		job.CreatedAt = now
 	}
 	job.UpdatedAt = now
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	data, err := json.Marshal(job)
 	if err != nil {
 		return errors.Wrap(err, "marshal forward job")
 	}
-	if err := s.kv.Set(ctx, jobKeyPrefix+job.ID, data); err != nil {
-		return errors.Wrap(err, "persist forward job")
-	}
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	index[job.ID] = job.CreatedAt
-	return s.saveIndex(ctx, index)
+	return s.collection.Put(ctx, job.ID, data, job.CreatedAt)
 }
 
 func (s *jobStore) Get(ctx context.Context, id string) (Job, bool, error) {
-	if s == nil || s.kv == nil || id == "" {
+	if s == nil || s.collection == nil || id == "" {
 		return Job{}, false, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.getLocked(ctx, id)
+	data, err := s.collection.Get(ctx, id)
+	if errors.Is(err, storage.ErrNotFound) {
+		return Job{}, false, nil
+	}
+	if err != nil {
+		return Job{}, false, err
+	}
+	job, err := decodeJob(id, data)
+	return job, err == nil, err
 }
 
 func (s *jobStore) Records(ctx context.Context) ([]Job, error) {
-	if s == nil || s.kv == nil {
+	if s == nil || s.collection == nil {
 		return nil, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	index, err := s.loadIndex(ctx)
+	records, err := s.collection.Records(ctx)
 	if err != nil {
 		return nil, err
 	}
-	jobs := make([]Job, 0, len(index))
-	changed := false
-	for id := range index {
-		job, ok, err := s.getLocked(ctx, id)
+	jobs := make([]Job, 0, len(records))
+	for id, data := range records {
+		job, err := decodeJob(id, data)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			delete(index, id)
-			changed = true
-			continue
-		}
 		jobs = append(jobs, job)
 	}
-	if changed {
-		if err := s.saveIndex(ctx, index); err != nil {
-			return nil, err
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+			return jobs[i].ID < jobs[j].ID
 		}
-	}
-	sort.SliceStable(jobs, func(i, j int) bool {
 		return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
 	})
 	return jobs, nil
 }
 
 func (s *jobStore) Remove(ctx context.Context, id string) error {
-	if s == nil || s.kv == nil || id == "" {
+	if s == nil || s.collection == nil || id == "" {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.kv.Delete(ctx, jobKeyPrefix+id); err != nil {
-		return errors.Wrap(err, "delete forward job")
-	}
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	delete(index, id)
-	return s.saveIndex(ctx, index)
+	return s.collection.Remove(ctx, id)
 }
 
-func (s *jobStore) getLocked(ctx context.Context, id string) (Job, bool, error) {
-	data, err := s.kv.Get(ctx, jobKeyPrefix+id)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return Job{}, false, nil
-		}
-		return Job{}, false, errors.Wrap(err, "load forward job")
-	}
+func decodeJob(id string, data []byte) (Job, error) {
 	var job Job
 	if err := json.Unmarshal(data, &job); err != nil {
-		return Job{}, false, errors.Wrap(err, "decode forward job")
+		return Job{}, errors.Wrap(err, "decode forward job")
 	}
 	if job.ID == "" {
 		job.ID = id
@@ -203,34 +164,5 @@ func (s *jobStore) getLocked(ctx context.Context, id string) (Job, bool, error) 
 	if job.Status == "" {
 		job.Status = StatusQueued
 	}
-	return job, true, nil
-}
-
-func (s *jobStore) loadIndex(ctx context.Context) (jobIndex, error) {
-	data, err := s.kv.Get(ctx, jobIndexKey)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return jobIndex{}, nil
-		}
-		return nil, errors.Wrap(err, "load forward job index")
-	}
-	var index jobIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, errors.Wrap(err, "decode forward job index")
-	}
-	if index == nil {
-		index = jobIndex{}
-	}
-	return index, nil
-}
-
-func (s *jobStore) saveIndex(ctx context.Context, index jobIndex) error {
-	data, err := json.Marshal(index)
-	if err != nil {
-		return errors.Wrap(err, "marshal forward job index")
-	}
-	if err := s.kv.Set(ctx, jobIndexKey, data); err != nil {
-		return errors.Wrap(err, "save forward job index")
-	}
-	return nil
+	return job, nil
 }

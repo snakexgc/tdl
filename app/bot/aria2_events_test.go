@@ -7,13 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 // TestHandleAria2EventIgnoresEventsWhenConfigNil verifies that when no config is loaded
 // (config.Get() == nil), the factory is never called and no messages are sent.
 func TestHandleAria2EventIgnoresEventsWhenConfigNil(t *testing.T) {
 	notifierBot := &fakeBotAPI{}
-	notifier := newBotNotifier(notifierBot, []int64{1})
+	notifier, err := newBotNotifier(context.Background(), types.DefaultAccount, notifierBot, []int64{1})
+	require.NoError(t, err)
+	t.Cleanup(notifier.Close)
 	tracker := newAria2ProgressTracker()
 
 	for _, method := range []string{
@@ -38,7 +41,9 @@ func TestRunAria2EventHandlerRecoversPanic(t *testing.T) {
 
 func TestNotifyAria2DownloadCompleteWithoutFiles(t *testing.T) {
 	notifierBot := &fakeBotAPI{}
-	notifier := newBotNotifier(notifierBot, []int64{1})
+	notifier, err := newBotNotifier(context.Background(), types.DefaultAccount, notifierBot, []int64{1})
+	require.NoError(t, err)
+	t.Cleanup(notifier.Close)
 
 	notifyAria2DownloadComplete(context.Background(), notifier, aria2.DownloadStatus{GID: "gid-1"})
 

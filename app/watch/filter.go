@@ -1,58 +1,15 @@
 package watch
 
 import (
-	"path/filepath"
-	"strings"
+	"context"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
 func (w *Watcher) matchFilter(name string, size int64) bool {
-	if !w.matchExtensionFilter(name) {
-		return false
+	if w.opts.Filter == nil {
+		return true
 	}
-	return w.matchFileSizeFilter(size)
-}
-
-func (w *Watcher) matchExtensionFilter(name string) bool {
-	ext := normalizeExtension(filepath.Ext(name))
-	if len(w.include) > 0 {
-		if _, ok := w.include[ext]; !ok {
-			return false
-		}
-	}
-	if len(w.exclude) > 0 {
-		if _, ok := w.exclude[ext]; ok {
-			return false
-		}
-	}
-	return true
-}
-
-func (w *Watcher) matchFileSizeFilter(size int64) bool {
-	if w.minFileSizeBytes > 0 && size < w.minFileSizeBytes {
-		return false
-	}
-	return w.maxFileSizeBytes <= 0 || size <= w.maxFileSizeBytes
-}
-
-func fileSizeMBToBytes(mb int64) int64 {
-	if mb <= 0 {
-		return 0
-	}
-	const maxInt64 = int64(1<<63 - 1)
-	if mb > maxInt64/bytesPerMegabyte {
-		return maxInt64
-	}
-	return mb * bytesPerMegabyte
-}
-
-func addPrefixDot(v string) string {
-	return normalizeExtension(v)
-}
-
-func normalizeExtension(v string) string {
-	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "" || v[0] == '.' {
-		return v
-	}
-	return "." + v
+	ok, _ := w.opts.Filter.ShouldHandle(context.Background(), ports.FilterInput{Account: w.opts.Account, Name: name, Size: size})
+	return ok
 }

@@ -1,0 +1,49 @@
+package rte
+
+import (
+	"encoding/json"
+
+	"github.com/snakexgc/tdl/interfaces/manifest"
+)
+
+// Configuration describes a running component for a schema-driven HMI.
+// Sensitive values are omitted; callers never receive references to live data.
+type Configuration struct {
+	ID     string                 `json:"id"`
+	Title  string                 `json:"title"`
+	State  State                  `json:"state"`
+	Fields []manifest.ConfigField `json:"fields"`
+	Values map[string]any         `json:"values"`
+}
+
+func (r *Runtime) Configurations() []Configuration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]Configuration, 0, len(r.order))
+	for _, id := range r.order {
+		item := r.instances[id]
+		m := item.registration.Manifest
+		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Values: map[string]any{}}
+		for _, field := range m.Config {
+			if field.Secret {
+				field.Default = ""
+			} else {
+				var value any
+				if item.config.Get(field.Name, &value) == nil {
+					entry.Values[field.Name] = value
+				}
+			}
+			// Schema fields may contain pointer bounds or slice defaults.
+			data, err := json.Marshal(field)
+			if err != nil {
+				continue
+			}
+			var copied manifest.ConfigField
+			if json.Unmarshal(data, &copied) == nil {
+				entry.Fields = append(entry.Fields, copied)
+			}
+		}
+		result = append(result, entry)
+	}
+	return result
+}

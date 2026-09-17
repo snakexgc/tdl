@@ -32,6 +32,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for path, raw := range req.Values {
+			if s.opts.ComponentManager != nil {
+				_, editable := s.opts.ComponentManager.ComponentConfigurations()
+				if editable && componentPolicyPath(path) {
+					writeError(w, http.StatusBadRequest, errors.New("edit filtering and naming in the component configuration page"))
+					return
+				}
+			}
 			if strings.EqualFold(strings.TrimSpace(path), "namespace") {
 				writeError(w, http.StatusBadRequest, errors.New("namespace must be changed from user management"))
 				return
@@ -45,6 +52,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := setConfigJSONValue(next, path, raw); err != nil {
 				writeError(w, http.StatusBadRequest, errors.Wrapf(err, "set %s", path))
+				return
+			}
+		}
+		if err := config.Validate(next); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if s.opts.ComponentManager != nil {
+			_, editable := s.opts.ComponentManager.ComponentConfigurations()
+			if editable && !reflect.DeepEqual(next.Bot.AllowedUsers, config.Get().Bot.AllowedUsers) {
+				writeError(w, http.StatusBadRequest, errors.New("edit bot permissions in the component configuration page"))
 				return
 			}
 		}
@@ -170,6 +188,7 @@ func publicConfig(cfg *config.Config) *config.Config {
 	next.Aria2.Secret = ""
 	next.WebUI.Password = ""
 	next.ProxyPassword = ""
+	next.Telegram.APIHash = ""
 	return next
 }
 
@@ -183,7 +202,7 @@ func isBlankWebUIUsernamePatch(path string, raw json.RawMessage) bool {
 
 func isBlankSensitivePatch(path string, raw json.RawMessage) bool {
 	switch strings.ToLower(strings.TrimSpace(path)) {
-	case "bot.token", "aria2.secret", "webui.password", "proxy_password":
+	case "bot.token", "aria2.secret", "webui.password", "proxy_password", "telegram.api_hash":
 	default:
 		return false
 	}
@@ -286,5 +305,14 @@ func mapKeyValue(typ reflect.Type, raw string) (reflect.Value, error) {
 		return reflect.ValueOf(raw).Convert(typ), nil
 	default:
 		return reflect.Value{}, fmt.Errorf("unsupported map key type %s", typ)
+	}
+}
+
+func componentPolicyPath(path string) bool {
+	switch strings.ToLower(strings.Join(splitConfigPath(path), ".")) {
+	case "include", "exclude", "file_size_min_mb", "file_size_max_mb", "filename", "download_dir", "filename_max_length", "filenamemax":
+		return true
+	default:
+		return false
 	}
 }

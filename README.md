@@ -6,8 +6,6 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 
 当前教程还在不断完善，遇到问题欢迎在issues中或者电报群反馈！
 
-Docker 部署也可以直接在控制面板更新：更新器只替换当前容器内的 `tdl` 程序，并以原 PID 启动新版本，不会拉取镜像、更新或重建 Docker 容器。同一容器重启后仍会使用更新后的程序；如果删除并重新创建容器，则会恢复为镜像自带的版本。
-
 ### JSON 配置说明
 
 ```jsonc
@@ -50,7 +48,7 @@ Docker 部署也可以直接在控制面板更新：更新器只替换当前容�
     "forward": false // 监听转发模块
   },
   "downloader": {
-    "mode": "aria2" // 下载器模式：aria2 或 internal
+    "mode": "aria2" // 下载器模式：aria2 或 local；旧值 internal 自动归一化为 local
   },
   "aria2": {
     "auto_download": true, // 表情触发并生成临时 HTTP 链接后，自动提交到 aria2
@@ -121,7 +119,7 @@ HTTP Server 会把成功发送完毕的 GET Range 持久化到对应下载链接
 | `modules.http`         | 独立的 HTTP 下载代理模块；只负责启停 `/download` 文件流服务，关闭或重启它不会连带重启监听下载/aria2 自动化 |
 | `modules.aria2`        | 独立的 aria2 管理模块；负责 RPC 连接、任务恢复和异常监控，不负责监听表情或提供 HTTP 文件流 |
 | `modules.forward`      | 监听转发模块；监听配置的 Telegram 对象并转发新消息 |
-| `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`internal` 使用 tdl 内部简易本地下载器                                  |
+| `downloader.mode`      | 下载器模式；`aria2` 使用外部 aria2，`local` 使用 tdl 本地下载器；兼容旧值 `internal`                                  |
 | `aria2.auto_download`  | 表情触发并生成临时 HTTP 链接后是否自动提交到 aria2；仅在 watch、aria2 模块均启用且下载器模式为 `aria2` 时生效 |
 | `aria2.rpc_url`        | aria2 JSON-RPC 地址                                                                 |
 | `bot.notify.on_download_start` | 下载开始时机器人发送通知消息；默认 `false` |

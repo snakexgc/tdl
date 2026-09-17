@@ -5,62 +5,28 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"text/template"
 	"time"
 
 	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/core/tmedia"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/tplfunc"
 )
 
 const (
 	testGroupName    = "Group Name"
 	testTriggerTitle = "Trigger Title"
 	testVideoFile    = "video.mp4"
+	testMP4Extension = "mp4"
+	testMKVExtension = "mkv"
 	testMediaCaption = "media caption"
 )
 
-func TestRenderDownloadDirTemplate(t *testing.T) {
-	data := downloadDirData{
-		ID:               "12345",
-		Name:             testGroupName,
-		MessageTitle:     testTriggerTitle,
-		MessageID:        "7",
-		TriggerMessageID: "6",
-		FileName:         testVideoFile,
-		AlbumID:          "999",
-		Time:             time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
-	}
-
-	require.Equal(t, []string{"2026", "04", testGroupName}, renderDownloadDir(`Y/M/G`, data))
-	require.Equal(t, []string{"202604" + testGroupName}, renderDownloadDir(`Y&M&G`, data))
-	require.Equal(t, []string{"202604", testGroupName, "23"}, renderDownloadDir(`Y&M\G\D`, data))
-	require.Equal(t, []string{"TriggerTitle", testGroupName}, renderDownloadDir(`I/G`, data))
-	require.Equal(t, []string{"12345", "7", "6", "999"}, renderDownloadDir(`P/S/R/A`, data))
-	require.Equal(t, []string{"video"}, renderDownloadDir(`F`, data))
-}
-
-func TestFileNameConfigTemplateAliases(t *testing.T) {
-	require.Equal(t,
-		`{{ .G }}-{{ .I }}-{{ .P }}-{{ .S }}-{{ .R }}-{{ .F }}`,
-		fileNameConfigTemplate("G-I-P-S-R-F"),
-	)
-	require.Equal(t,
-		`{{ .P }}_{{ .S }}_{{ .F }}`,
-		fileNameConfigTemplate(config.DefaultFilename),
-	)
-}
-
 func TestRenderFileNameTemplateUsesMessageTitleAndPeerName(t *testing.T) {
-	tpl := template.Must(template.New("watch").
-		Funcs(tplfunc.FuncMap(tplfunc.All...)).
-		Parse(fileNameConfigTemplate("G-I-F")))
-	w := &Watcher{tpl: tpl}
+	w := namingWatcher(t, "G-I-F", 255)
 
-	got, err := w.renderFileName(
+	got, err := renderFileNameForTest(w,
 		12345,
 		testGroupName,
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
@@ -74,13 +40,10 @@ func TestRenderFileNameTemplateUsesMessageTitleAndPeerName(t *testing.T) {
 }
 
 func TestRenderFileNameFAndIAlwaysConcatenated(t *testing.T) {
-	tpl := template.Must(template.New("watch").
-		Funcs(tplfunc.FuncMap(tplfunc.All...)).
-		Parse(fileNameConfigTemplate("G-I-F")))
-	w := &Watcher{tpl: tpl, opts: Options{Template: fileNameConfigTemplate("G-I-F")}}
+	w := namingWatcher(t, "G-I-F", 255)
 
 	// F contains the same text as I — both must appear; no dedup suppression.
-	got, err := w.renderFileName(
+	got, err := renderFileNameForTest(w,
 		12345,
 		testGroupName,
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
@@ -94,14 +57,11 @@ func TestRenderFileNameFAndIAlwaysConcatenated(t *testing.T) {
 }
 
 func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
-	pattern := fileNameConfigTemplate("G-I-F")
-	tpl := template.Must(template.New("watch").
-		Funcs(tplfunc.FuncMap(tplfunc.All...)).
-		Parse(pattern))
+	pattern := "G-I-F"
 	// 50-byte limit: "FullGroupName-" (14) + I + "-video-file.mp4" (15) = 29 fixed bytes; I gets up to 21 bytes.
-	w := &Watcher{tpl: tpl, opts: Options{Template: pattern, FilenameMaxLength: 50}}
+	w := namingWatcher(t, pattern, 50)
 
-	got, err := w.renderFileName(
+	got, err := renderFileNameForTest(w,
 		12345,
 		"FullGroupName",
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
@@ -114,18 +74,15 @@ func TestRenderFileNameLengthLimitShrinksOnlyMessageTitleAlias(t *testing.T) {
 	require.LessOrEqual(t, len(got), 50) // byte count
 	require.True(t, strings.HasPrefix(got, "FullGroupName-"))
 	require.True(t, strings.HasSuffix(got, "-video-file.mp4"))
-	require.Contains(t, got, safeMessageTitleMarker)
+	require.Contains(t, got, "...")
 }
 
 func TestRenderFileNameLengthLimitFallsBackWhenNoMessageTitleAlias(t *testing.T) {
-	pattern := fileNameConfigTemplate("F")
-	tpl := template.Must(template.New("watch").
-		Funcs(tplfunc.FuncMap(tplfunc.All...)).
-		Parse(pattern))
+	pattern := "F"
 	// 20-byte limit; fallback hard-truncates, no "..." inserted.
-	w := &Watcher{tpl: tpl, opts: Options{Template: pattern, FilenameMaxLength: 20}}
+	w := namingWatcher(t, pattern, 20)
 
-	got, err := w.renderFileName(
+	got, err := renderFileNameForTest(w,
 		12345,
 		testGroupName,
 		time.Date(2026, 4, 23, 10, 11, 12, 0, time.UTC),
@@ -137,16 +94,7 @@ func TestRenderFileNameLengthLimitFallsBackWhenNoMessageTitleAlias(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, got, 20) // byte count (all ASCII here)
 	require.True(t, strings.HasSuffix(got, ".mp4"))
-	require.NotContains(t, got, safeMessageTitleMarker)
-}
-
-func TestSafeMessageTitleSegmentKeepsOnlyChineseEnglishDigitsAndCompacts(t *testing.T) {
-	require.Equal(t, "标题ABC123", safeMessageTitleSegment(" 标题!@#ABC-123_ "))
-	require.Equal(t, "untitled", safeMessageTitleSegment(" !@# -_ "))
-
-	got := safeMessageTitleSegment(strings.Repeat("甲", 60) + "!@#" + strings.Repeat("B", 60))
-	require.Equal(t, strings.Repeat("甲", 47)+"..."+strings.Repeat("B", 30), got)
-	require.Len(t, []rune(got), safeMessageTitleMaxRunes)
+	require.NotContains(t, got, "...")
 }
 
 func TestJoinTargetPathKeepsTargetFilesystemStyle(t *testing.T) {
@@ -176,12 +124,14 @@ func TestResolveTargetPathDoesNotTraverseParent(t *testing.T) {
 
 func TestUniquifyInternalTargetsAddsConflictSuffix(t *testing.T) {
 	tasks := []preparedFileTask{
-		{fileName: "album/video.mp4", dir: `/downloads/album`, out: "video.mp4", fullPath: `/downloads/album/video.mp4`},
-		{fileName: "album/video.mp4", dir: `/downloads/album`, out: "video.mp4", fullPath: `/downloads/album/video.mp4`},
+		{fileName: "album/video.mp4", dir: `/downloads/album`, out: testVideoFile, fullPath: `/downloads/album/video.mp4`},
+		{fileName: "album/video.mp4", dir: `/downloads/album`, out: testVideoFile, fullPath: `/downloads/album/video.mp4`},
 	}
 
-	got := uniquifyInternalTargets(tasks, 255)
-	require.Equal(t, "video.mp4", got[0].out)
+	w := namingWatcher(t, "F", 255)
+	got, err := w.uniquifyInternalTargets(context.Background(), tasks)
+	require.NoError(t, err)
+	require.Equal(t, testVideoFile, got[0].out)
 	require.Equal(t, "video (2).mp4", got[1].out)
 	require.Equal(t, `/downloads/album/video (2).mp4`, got[1].fullPath)
 	require.Equal(t, "album/video (2).mp4", got[1].fileName)
@@ -216,4 +166,19 @@ type fakeAria2GlobalDirGetter struct {
 
 func (f fakeAria2GlobalDirGetter) GetGlobalDir(ctx context.Context) (string, error) {
 	return f.dir, f.err
+}
+
+func namingWatcher(t *testing.T, pattern string, maximum int) *Watcher {
+	t.Helper()
+	opts := Options{Template: pattern, FilenameMaxLength: maximum}
+	host, filter, naming, err := startPolicies(context.Background(), "default", opts)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
+	opts.Filter, opts.Naming = filter, naming
+	return &Watcher{opts: opts}
+}
+
+func renderFileNameForTest(w *Watcher, dialogID int64, peerName string, at time.Time, msg, trigger *tg.Message, media *tmedia.Media) (string, error) {
+	target, err := w.renderTarget(context.Background(), "", "", dialogID, peerName, at, msg, trigger, media)
+	return target.FileName, err
 }

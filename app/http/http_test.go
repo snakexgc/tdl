@@ -22,10 +22,10 @@ import (
 	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/app/http/transfer"
-	"github.com/snakexgc/tdl/core/dcpool"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/tmedia"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/internal/core/dcpool"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -400,7 +400,7 @@ func TestTaskStoreRecordsConcurrentHTTPRangesWithoutLostUpdates(t *testing.T) {
 		wg.Add(1)
 		go func(offset int64) {
 			defer wg.Done()
-			_, err := store.recordHTTPDelivery(context.Background(), task.ID, task.FileSize, []downloadRange{{start: offset, end: offset}}, time.Now())
+			_, err := newTaskStore(kvd, time.Hour).recordHTTPDelivery(context.Background(), task.ID, task.FileSize, []downloadRange{{start: offset, end: offset}}, time.Now())
 			errCh <- err
 		}(offset)
 	}
@@ -1713,4 +1713,13 @@ func (m *memoryTaskStorage) Delete(ctx context.Context, key string) error {
 
 	delete(m.data, key)
 	return nil
+}
+
+// saveIndex seeds a deliberately stale legacy index for expiry regression tests.
+func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskIndex) error {
+	data, err := json.Marshal(index)
+	if err != nil {
+		return err
+	}
+	return s.kv.Set(ctx, downloadTaskIndexKey, data)
 }

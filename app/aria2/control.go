@@ -13,8 +13,8 @@ import (
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	appdownload "github.com/snakexgc/tdl/app/download"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -42,6 +42,7 @@ type ControlClient interface {
 }
 
 type Controller struct {
+	account       types.AccountID
 	client        ControlClient
 	store         *TaskStore
 	publicBaseURL string
@@ -93,6 +94,7 @@ func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) 
 	}
 
 	return &Controller{
+		account:       types.AccountID(cfg.Namespace),
 		client:        NewClient(cfg.Aria2),
 		store:         NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP)),
 		publicBaseURL: cfg.HTTP.PublicBaseURL,
@@ -107,12 +109,19 @@ func (c *Controller) Name() string {
 
 // Submit implements download.Submitter. Task creation and link generation stay
 // in watch/HTTP; this controller owns only aria2 RPC submission and bookkeeping.
-func (c *Controller) Submit(ctx context.Context, submission appdownload.Submission) (appdownload.Result, error) {
+func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmission) (types.DownloadResult, error) {
 	if c == nil || c.client == nil {
-		return appdownload.Result{}, errors.New("aria2 controller is not initialized")
+		return types.DownloadResult{}, errors.New("aria2 controller is not initialized")
+	}
+	account := c.account
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	if submission.Account != "" && submission.Account != account {
+		return types.DownloadResult{}, errors.New("download account mismatch")
 	}
 	if strings.TrimSpace(submission.DownloadURL) == "" {
-		return appdownload.Result{}, errors.New("download url is empty")
+		return types.DownloadResult{}, errors.New("download url is empty")
 	}
 
 	gid, err := c.client.AddURI(ctx, submission.DownloadURL, AddURIOptions{
@@ -121,7 +130,7 @@ func (c *Controller) Submit(ctx context.Context, submission appdownload.Submissi
 		Connections: c.connections,
 	})
 	if err != nil {
-		return appdownload.Result{}, errors.Wrap(err, "add aria2 uri")
+		return types.DownloadResult{}, errors.Wrap(err, "add aria2 uri")
 	}
 	if err := c.store.Add(ctx, TaskRecord{
 		GID:         gid,
@@ -143,7 +152,7 @@ func (c *Controller) Submit(ctx context.Context, submission appdownload.Submissi
 		zap.String("task_id", submission.TaskID),
 		zap.String("download_url", submission.DownloadURL),
 		zap.String("target_path", submission.FullPath))
-	return appdownload.Result{Target: c.Name(), ID: gid}, nil
+	return types.DownloadResult{Account: account, Target: c.Name(), ID: gid}, nil
 }
 
 func (c *Controller) Overview(ctx context.Context) (Overview, error) {

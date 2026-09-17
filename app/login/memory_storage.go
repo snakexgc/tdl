@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
 type memoryStorage struct {

@@ -2,4 +2,4 @@ Version: {{ .Version }}
 Commit: {{ .Commit }}
 Date: {{ .Date }}
 
-{{ .GoVersion }} {{ .GOOS }}/{{ .GOARCH }}
+{{ .GoVersion }} {{ .GOOS }}/{{ .GOARCH }}{{ if .GOARM }} GOARM={{ .GOARM }}{{ end }}

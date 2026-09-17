@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
@@ -13,10 +11,11 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	appdownload "github.com/snakexgc/tdl/app/download"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/tmedia"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -48,11 +47,12 @@ type fileCollection struct {
 }
 
 type preparedFileTask struct {
-	file     fileTask
-	fileName string
-	dir      string
-	out      string
-	fullPath string
+	file         fileTask
+	fileName     string
+	dir          string
+	out          string
+	fullPath     string
+	maxNameBytes int
 }
 
 func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
@@ -151,11 +151,15 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 		}
 		prepared = append(prepared, task)
 	}
-	result.Queued = len(prepared)
 	result.Skipped = collection.skipped
 	if w.runtime.ensureOutputDirs {
-		prepared = uniquifyInternalTargets(prepared, w.opts.FilenameMaxLength)
+		var err error
+		prepared, err = w.uniquifyInternalTargets(ctx, prepared)
+		if err != nil {
+			return result, err
+		}
 	}
+	result.Queued = len(prepared)
 
 	w.notify(ctx, "%s\n链接：%s\n文件总数：%d\n需要下载：%d\n跳过：%d", downloadJobNotice(job), job.link, collection.total, len(prepared), collection.skipped)
 	if len(prepared) == 0 {
@@ -188,40 +192,19 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 	return result, nil
 }
 
-func uniquifyInternalTargets(tasks []preparedFileTask, maxNameBytes int) []preparedFileTask {
-	if len(tasks) < 2 {
-		return tasks
+func (w *Watcher) uniquifyInternalTargets(ctx context.Context, tasks []preparedFileTask) ([]preparedFileTask, error) {
+	targets := make([]ports.NamingResult, len(tasks))
+	for i, task := range tasks {
+		targets[i] = ports.NamingResult{FileName: task.fileName, Dir: task.dir, Out: task.out, FullPath: task.fullPath, MaxBytes: task.maxNameBytes}
 	}
-	if maxNameBytes <= 0 || maxNameBytes > 255 {
-		maxNameBytes = 255
+	unique, err := w.opts.Naming.Unique(ctx, targets)
+	if err != nil {
+		return nil, err
 	}
-	used := make(map[string]struct{}, len(tasks))
-	for i := range tasks {
-		originalOut := tasks[i].out
-		candidate := originalOut
-		for sequence := 2; ; sequence++ {
-			fullPath := joinTargetPath(tasks[i].dir, candidate)
-			key := strings.ToLower(filepath.Clean(fullPath))
-			if _, exists := used[key]; !exists {
-				used[key] = struct{}{}
-				tasks[i].out = candidate
-				tasks[i].fullPath = fullPath
-				prefix, _ := splitRenderedNameLeaf(tasks[i].fileName)
-				tasks[i].fileName = prefix + candidate
-				break
-			}
-			candidate = fileNameWithConflictSuffix(originalOut, sequence, maxNameBytes)
-		}
+	for i, target := range unique {
+		tasks[i].fileName, tasks[i].out, tasks[i].fullPath = target.FileName, target.Out, target.FullPath
 	}
-	return tasks
-}
-
-func fileNameWithConflictSuffix(name string, sequence, maxBytes int) string {
-	ext := filepath.Ext(name)
-	stem := strings.TrimSuffix(name, ext)
-	suffix := fmt.Sprintf(" (%d)", sequence)
-	stem = truncateBytesKeepingRunes(stem, max(0, maxBytes-len(suffix)-len(ext)))
-	return limitFileNameSegmentBytes(stem+suffix+ext, maxBytes)
+	return tasks, nil
 }
 
 func downloadJobNotice(job downloadJob) string {
@@ -299,13 +282,12 @@ func (w *Watcher) resolvePeer(ctx context.Context, peerID int64) (tg.InputPeerCl
 func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFileTask, bool, error) {
 	dialogID := tutil.GetInputPeerID(file.peer)
 	data := w.downloadDirData(ctx, file)
-	fileName, err := w.renderFileName(dialogID, data.Name, data.Time, file.msg, file.triggerMsg, file.media)
+	target, err := w.renderTarget(ctx, w.runtime.outputRoot, data.ID, dialogID, data.Name, data.Time, file.msg, file.triggerMsg, file.media)
 	if err != nil {
 		return preparedFileTask{}, false, err
 	}
 
-	baseDir := joinTargetPath(w.runtime.outputRoot, renderDownloadDir(w.opts.Dir, data)...)
-	dir, out, fullPath := resolveTargetPath(baseDir, fileName)
+	fileName, dir, out, fullPath := target.FileName, target.Dir, target.Out, target.FullPath
 	if w.runtime.ensureOutputDirs && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return preparedFileTask{}, false, errors.Wrap(err, "create target directory")
@@ -321,11 +303,12 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 	}
 
 	return preparedFileTask{
-		file:     file,
-		fileName: fileName,
-		dir:      dir,
-		out:      out,
-		fullPath: fullPath,
+		file:         file,
+		fileName:     fileName,
+		dir:          dir,
+		out:          out,
+		fullPath:     fullPath,
+		maxNameBytes: target.MaxBytes,
 	}, false, nil
 }
 
@@ -338,7 +321,7 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 	}
 
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
-		if _, err := w.runtime.internal.Add(ctx, task, prepared); err != nil {
+		if _, err := w.runtime.local.Submit(ctx, types.DownloadSubmission{Account: w.reactionAccount(), TaskID: task.ID, Dir: prepared.dir, Out: prepared.out, FullPath: prepared.fullPath}); err != nil {
 			return errors.Wrap(err, "queue internal download")
 		}
 		logctx.From(ctx).Info("Queued internal download task",
@@ -370,7 +353,8 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return nil
 	}
 
-	result, err := w.opts.DownloadSubmitter.Submit(ctx, appdownload.Submission{
+	result, err := w.opts.DownloadSubmitter.Submit(ctx, types.DownloadSubmission{
+		Account:     w.reactionAccount(),
 		TaskID:      task.ID,
 		DownloadURL: downloadURL,
 		Dir:         prepared.dir,

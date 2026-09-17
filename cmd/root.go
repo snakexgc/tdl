@@ -12,9 +12,9 @@ import (
 
 	"github.com/snakexgc/tdl/app/bot"
 	tdlruntime "github.com/snakexgc/tdl/app/runtime"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/util/fsutil"
-	"github.com/snakexgc/tdl/core/util/logutil"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/util/fsutil"
+	"github.com/snakexgc/tdl/internal/core/util/logutil"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
@@ -39,11 +39,14 @@ func New() *cobra.Command {
 	cobra.MousetrapHelpText = ""
 
 	// 初始化 JSON 配置
-	if err := config.Init(consts.HomeDir); err != nil {
-		panic(errors.Wrap(err, "init config"))
+	bootstrapErr := consts.InitPaths()
+	if bootstrapErr == nil {
+		bootstrapErr = config.Init(consts.HomeDir)
 	}
-
 	cfg := config.Get()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 
 	cmd := &cobra.Command{
 		Use:           "tdl",
@@ -54,6 +57,9 @@ func New() *cobra.Command {
 			return runBot(cmd)
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if bootstrapErr != nil {
+				return errors.Wrap(bootstrapErr, "initialize application")
+			}
 			// init logger
 			debug, level := cfg.Debug, zap.InfoLevel
 			if debug {
@@ -107,6 +113,7 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
+	cmd.Flags().String("component-config", "", "directory for migrated filter and naming configuration")
 	cmd.AddCommand(NewVersion())
 
 	return cmd
@@ -116,9 +123,14 @@ func runBot(cmd *cobra.Command) error {
 	if err := ensureStartupNTP(cmd.Context()); err != nil {
 		return err
 	}
+	directory, err := cmd.Flags().GetString("component-config")
+	if err != nil {
+		return err
+	}
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
-		RequestReboot: bot.RequestReboot,
-		RequestUpdate: bot.RequestUpdate,
+		ComponentConfigDir: directory,
+		RequestReboot:      bot.RequestReboot,
+		RequestUpdate:      bot.RequestUpdate,
 	})
 }
 

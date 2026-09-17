@@ -14,6 +14,7 @@ import (
 
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -383,45 +384,7 @@ func (s *Server) markDownloadTaskDownloaded(ctx context.Context, taskID string) 
 	if s.opts.NamespaceKV == nil || taskID == "" {
 		return
 	}
-	data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
-	if err != nil {
-		return
-	}
-	data, changed, err := markDownloadTaskDataDownloaded(data, taskID)
-	if err != nil || !changed {
-		return
-	}
-	_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, data)
-}
-
-func markDownloadTaskDataDownloaded(data []byte, taskID string) ([]byte, bool, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, false, err
-	}
-	if raw == nil {
-		raw = map[string]json.RawMessage{}
-	}
-	if downloadedRaw, ok := raw["downloaded"]; ok {
-		var downloaded bool
-		if err := json.Unmarshal(downloadedRaw, &downloaded); err == nil && downloaded {
-			return data, false, nil
-		}
-	}
-
-	raw["downloaded"] = json.RawMessage(valueTrue)
-	if idRaw, ok := raw["id"]; !ok || string(idRaw) == `""` || strings.TrimSpace(string(idRaw)) == "" {
-		idData, err := json.Marshal(taskID)
-		if err != nil {
-			return nil, false, err
-		}
-		raw["id"] = idData
-	}
-	updated, err := json.Marshal(raw)
-	if err != nil {
-		return nil, false, err
-	}
-	return updated, true, nil
+	_ = taskhub.Links(s.opts.NamespaceKV).MarkDownloaded(ctx, taskID)
 }
 
 // downloadTaskActivity returns the record's sliding expiry base (LastActiveAt,
@@ -452,15 +415,13 @@ func (s *Server) refreshDownloadTaskActivity(ctx context.Context, taskID string,
 	if s.opts.NamespaceKV == nil || taskID == "" || ttl <= 0 {
 		return
 	}
-	data, err := s.opts.NamespaceKV.Get(ctx, downloadTaskKeyPrefix+taskID)
-	if err != nil {
-		return
-	}
-	updated, changed, err := httpdl.SetDownloadTaskLastActive(data, now, httpdl.RefreshInterval(ttl))
-	if err != nil || !changed {
-		return
-	}
-	_ = s.opts.NamespaceKV.Set(ctx, downloadTaskKeyPrefix+taskID, updated)
+	_ = taskhub.Links(s.opts.NamespaceKV).Mutate(ctx, taskID, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
+		updated, changed, err := httpdl.SetDownloadTaskLastActive(data, now, httpdl.RefreshInterval(ttl))
+		if changed {
+			stamp = now
+		}
+		return updated, stamp, err
+	})
 }
 
 func hasPersistentDownloadMedia(data []byte) bool {
@@ -502,7 +463,7 @@ func (s *Server) deleteDownloadLink(ctx context.Context, id string) (int, error)
 	}
 
 	deleted := 0
-	if err := s.opts.NamespaceKV.Delete(ctx, downloadTaskKeyPrefix+id); err != nil {
+	if err := taskhub.Links(s.opts.NamespaceKV).Remove(ctx, id); err != nil {
 		return deleted, errors.Wrap(err, "delete download task")
 	}
 	deleted++
@@ -511,11 +472,11 @@ func (s *Server) deleteDownloadLink(ctx context.Context, id string) (int, error)
 	if err != nil {
 		return deleted, nil
 	}
-	for key, record := range records {
+	for _, record := range records {
 		if record.TaskID != id {
 			continue
 		}
-		if err := s.opts.NamespaceKV.Delete(ctx, key); err != nil {
+		if err := taskhub.Aria2(s.opts.NamespaceKV).Remove(ctx, record.GID); err != nil {
 			return deleted, errors.Wrap(err, "delete aria2 task record")
 		}
 		deleted++

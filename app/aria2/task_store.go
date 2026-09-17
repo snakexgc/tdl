@@ -3,17 +3,17 @@ package aria2
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
 const (
-	aria2TaskKeyPrefix = "watch.aria2.task."
-	aria2TaskIndexKey  = "watch.aria2.index"
+	aria2TaskKeyPrefix = taskhub.Aria2Prefix
+	aria2TaskIndexKey  = taskhub.Aria2Index
 
 	DefaultTaskTTL = 24 * time.Hour
 )
@@ -33,10 +33,7 @@ type TaskRecord struct {
 
 type aria2TaskRecord = TaskRecord
 
-type persistentAria2TaskIndex map[string]time.Time
-
 type TaskStore struct {
-	mu  sync.Mutex
 	kv  storage.Storage
 	ttl time.Duration
 }
@@ -59,97 +56,49 @@ func (s *TaskStore) Add(ctx context.Context, record TaskRecord) error {
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now()
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.cleanupExpiredLocked(ctx, time.Now()); err != nil {
+	if err := s.cleanup(ctx); err != nil {
 		return err
 	}
-
 	data, err := json.Marshal(record)
 	if err != nil {
-		return errors.Wrap(err, "marshal aria2 task record")
-	}
-	if err := s.kv.Set(ctx, aria2TaskStorageKey(record.GID), data); err != nil {
-		return errors.Wrap(err, "persist aria2 task record")
-	}
-
-	index, err := s.loadIndex(ctx)
-	if err != nil {
 		return err
 	}
-	index[record.GID] = record.CreatedAt
-	return s.saveIndex(ctx, index)
+	return taskhub.Aria2(s.kv).Merge(ctx, record.GID, data, record.CreatedAt)
 }
 
 func (s *TaskStore) GIDs(ctx context.Context) (map[string]struct{}, error) {
-	result := map[string]struct{}{}
-	if s == nil || s.kv == nil {
-		return result, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.cleanupExpiredLocked(ctx, time.Now()); err != nil {
-		return nil, err
-	}
-
-	index, err := s.loadIndex(ctx)
+	records, err := s.Records(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for gid := range index {
+	result := make(map[string]struct{}, len(records))
+	for gid := range records {
 		result[gid] = struct{}{}
 	}
 	return result, nil
 }
 
 func (s *TaskStore) Records(ctx context.Context) (map[string]TaskRecord, error) {
-	result := map[string]TaskRecord{}
+	result := make(map[string]TaskRecord)
 	if s == nil || s.kv == nil {
 		return result, nil
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.cleanupExpiredLocked(ctx, time.Now()); err != nil {
+	if err := s.cleanup(ctx); err != nil {
 		return nil, err
 	}
-
-	index, err := s.loadIndex(ctx)
+	records, err := taskhub.Aria2(s.kv).Records(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	changed := false
-	for gid := range index {
-		data, err := s.kv.Get(ctx, aria2TaskStorageKey(gid))
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				delete(index, gid)
-				changed = true
-				continue
-			}
-			return nil, errors.Wrap(err, "load aria2 task record")
-		}
-
+	for gid, data := range records {
 		var record TaskRecord
 		if err := json.Unmarshal(data, &record); err != nil {
-			return nil, errors.Wrap(err, "decode aria2 task record")
+			return nil, err
 		}
 		if record.GID == "" {
 			record.GID = gid
 		}
 		result[record.GID] = record
-	}
-
-	if changed {
-		if err := s.saveIndex(ctx, index); err != nil {
-			return nil, err
-		}
 	}
 	return result, nil
 }
@@ -158,87 +107,20 @@ func (s *TaskStore) Remove(ctx context.Context, gid string) error {
 	if s == nil || s.kv == nil || gid == "" {
 		return nil
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.kv.Delete(ctx, aria2TaskStorageKey(gid)); err != nil {
-		return errors.Wrap(err, "delete aria2 task record")
-	}
-
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	delete(index, gid)
-	return s.saveIndex(ctx, index)
+	return taskhub.Aria2(s.kv).Remove(ctx, gid)
 }
 
-func (s *TaskStore) cleanupExpiredLocked(ctx context.Context, now time.Time) error {
-	if s.ttl == 0 {
+func (s *TaskStore) cleanup(ctx context.Context) error {
+	if s.ttl <= 0 {
 		return nil
 	}
-
-	index, err := s.loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-
-	changed := false
-	for gid, createdAt := range index {
-		if !isTaskExpired(createdAt, now, s.ttl) {
-			continue
-		}
-		if err := s.kv.Delete(ctx, aria2TaskStorageKey(gid)); err != nil {
-			return errors.Wrap(err, "delete expired aria2 task record")
-		}
-		delete(index, gid)
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return s.saveIndex(ctx, index)
+	now := time.Now()
+	return taskhub.Aria2(s.kv).Sweep(ctx, func(_ []byte, stamp time.Time) (bool, error) {
+		return isTaskExpired(stamp, now, s.ttl), nil
+	})
 }
 
-func (s *TaskStore) loadIndex(ctx context.Context) (persistentAria2TaskIndex, error) {
-	data, err := s.kv.Get(ctx, aria2TaskIndexKey)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return persistentAria2TaskIndex{}, nil
-		}
-		return nil, errors.Wrap(err, "load aria2 task index")
-	}
-
-	var index persistentAria2TaskIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, errors.Wrap(err, "decode aria2 task index")
-	}
-	if index == nil {
-		index = persistentAria2TaskIndex{}
-	}
-	return index, nil
-}
-
-func (s *TaskStore) saveIndex(ctx context.Context, index persistentAria2TaskIndex) error {
-	data, err := json.Marshal(index)
-	if err != nil {
-		return errors.Wrap(err, "marshal aria2 task index")
-	}
-	if err := s.kv.Set(ctx, aria2TaskIndexKey, data); err != nil {
-		return errors.Wrap(err, "save aria2 task index")
-	}
-	return nil
-}
-
-func StorageKey(gid string) string {
-	return aria2TaskKeyPrefix + gid
-}
-
-func aria2TaskStorageKey(gid string) string {
-	return StorageKey(gid)
-}
-
+func StorageKey(gid string) string { return aria2TaskKeyPrefix + gid }
 func isTaskExpired(createdAt, now time.Time, ttl time.Duration) bool {
 	return ttl > 0 && !createdAt.IsZero() && now.Sub(createdAt) > ttl
 }

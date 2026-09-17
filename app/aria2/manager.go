@@ -7,9 +7,10 @@ import (
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	appdownload "github.com/snakexgc/tdl/app/download"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/rte/schedule"
 )
 
 // Manager owns aria2 connectivity, recovery and monitoring. It is deliberately
@@ -39,6 +40,7 @@ func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Ma
 	client := NewClient(cfg.Aria2)
 	store := NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP))
 	controller := &Controller{
+		account:       types.AccountID(cfg.Namespace),
 		client:        client,
 		store:         store,
 		publicBaseURL: cfg.HTTP.PublicBaseURL,
@@ -61,9 +63,9 @@ func (m *Manager) Name() string {
 	return aria2DownloaderName
 }
 
-func (m *Manager) Submit(ctx context.Context, submission appdownload.Submission) (appdownload.Result, error) {
+func (m *Manager) Submit(ctx context.Context, submission types.DownloadSubmission) (types.DownloadResult, error) {
 	if m == nil || m.controller == nil {
-		return appdownload.Result{}, errors.New("aria2 manager is not initialized")
+		return types.DownloadResult{}, errors.New("aria2 manager is not initialized")
 	}
 	return m.controller.Submit(ctx, submission)
 }
@@ -89,8 +91,19 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 
 	m.logger.Info("Aria2 manager connected", zap.Int("max_concurrent_downloads", m.limit))
-	go m.regulator.Run(ctx)
-	go m.monitor.Run(ctx)
+	governors := schedule.New(ctx)
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := governors.Stop(stopCtx); err != nil {
+			m.logger.Warn("Governor shutdown timed out", zap.Error(err))
+		}
+	}()
+	for name, run := range map[string]func(context.Context){"telegram-errors": m.regulator.Run, "zero-speed": m.monitor.Run} {
+		if err := governors.Run(name, 0, 0, func(ctx context.Context) error { run(ctx); return nil }, func(err error) { m.logger.Error("Aria2 governor failed", zap.String("governor", name), zap.Error(err)) }); err != nil {
+			return err
+		}
+	}
 	if count, err := ResumeStartupPausedTasks(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			m.logger.Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
@@ -100,6 +113,12 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
+	stopCtx, cancelGovernors := context.WithTimeout(context.Background(), 5*time.Second)
+	stopErr := governors.Stop(stopCtx)
+	cancelGovernors()
+	if stopErr != nil {
+		return errors.Wrap(stopErr, "stop aria2 governors")
+	}
 	if paused, err := PauseTDLTasksForShutdown(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			m.logger.Warn("Failed to pause aria2 tasks during manager shutdown", zap.Error(err))

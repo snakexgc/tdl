@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/snakexgc/tdl/bsw/ecual/aria2rpc"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -27,7 +28,7 @@ const (
 func TestAria2AddURIWithoutSecret(t *testing.T) {
 	t.Parallel()
 
-	var reqBody aria2RPCRequest
+	var reqBody aria2rpc.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
@@ -68,7 +69,7 @@ func TestAria2AddURIWithoutSecret(t *testing.T) {
 func TestAria2AddURIWithPoolSizeConnections(t *testing.T) {
 	t.Parallel()
 
-	var reqBody aria2RPCRequest
+	var reqBody aria2rpc.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
@@ -96,7 +97,7 @@ func TestAria2AddURIWithPoolSizeConnections(t *testing.T) {
 func TestAria2AddURIWithSecret(t *testing.T) {
 	t.Parallel()
 
-	var reqBody aria2RPCRequest
+	var reqBody aria2rpc.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
@@ -133,7 +134,7 @@ func TestAria2AddURIWithSecret(t *testing.T) {
 func TestAria2AddTorrentWithOptions(t *testing.T) {
 	t.Parallel()
 
-	var reqBody aria2RPCRequest
+	var reqBody aria2rpc.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
@@ -166,7 +167,7 @@ func TestAria2AddTorrentWithOptions(t *testing.T) {
 func TestAria2SetMaxConcurrentDownloads(t *testing.T) {
 	t.Parallel()
 
-	var reqBody aria2RPCRequest
+	var reqBody aria2rpc.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 		w.Header().Set("Content-Type", "application/json")
@@ -206,9 +207,9 @@ func TestAria2SetMaxConcurrentDownloadsInvalidLimit(t *testing.T) {
 func TestAria2TellAndPauseMethods(t *testing.T) {
 	t.Parallel()
 
-	var requests []aria2RPCRequest
+	var requests []aria2rpc.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req aria2RPCRequest
+		var req aria2rpc.Request
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		requests = append(requests, req)
 		w.Header().Set("Content-Type", "application/json")

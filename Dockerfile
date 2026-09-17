@@ -25,15 +25,15 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -ldflags "-s -w \
     -X github.com/snakexgc/tdl/pkg/consts.Version=${VERSION}  \
     -X github.com/snakexgc/tdl/pkg/consts.Commit=${COMMIT}  \
-    -X github.com/snakexgc/tdl/pkg/consts.CommitDate=${COMMIT_DATE}" \
+    -X github.com/snakexgc/tdl/pkg/consts.CommitDate=${COMMIT_DATE} \
+    -X github.com/snakexgc/tdl/pkg/consts.GOARM=${goarm}" \
     -o /out/tdl
 
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates tzdata && mkdir -p /app /data
 
-ENV TDL_HOME=/data \
-    TDL_DOCKER=true
+ENV TDL_HOME=/data
 
 WORKDIR /data
 

@@ -22,11 +22,12 @@ import (
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 
-	"github.com/snakexgc/tdl/app/http/transfer"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/tmedia"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -65,8 +66,8 @@ const (
 )
 
 const (
-	downloadTaskKeyPrefix  = "watch.download."
-	downloadTaskIndexKey   = "watch.download.index"
+	downloadTaskKeyPrefix  = taskhub.LinkPrefix
+	downloadTaskIndexKey   = taskhub.LinkIndex
 	defaultDownloadTaskTTL = 24 * time.Hour
 	sourceRegistryIdleTTL  = 2 * time.Minute
 	telegramFileErrorTTL   = time.Minute

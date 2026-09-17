@@ -62,7 +62,7 @@ export function initKV() {
     const deleteButton = event.target.closest("[data-delete-link]");
     if (deleteButton) {
       const id = deleteButton.dataset.deleteLink;
-      const suffix = state.downloaderMode === "internal" ? "关联的内部下载任务会一并移除。" : "不会删除 aria2 中已存在的下载任务。";
+      const suffix = state.downloaderMode === "local" ? "关联的本地下载任务会一并移除。" : "不会删除 aria2 中已存在的下载任务。";
       if (!confirm(`删除链接记录 ${id}？${suffix}`)) return;
       await api(`/api/kv/links/${encodeURIComponent(id)}`, { method: "DELETE" });
       state.selectedKV.delete(id);
@@ -143,7 +143,7 @@ function renderKVTable() {
 function renderKVRow(item) {
   const expires = item.permanent ? "永久" : item.expires_at ? formatTime(item.expires_at) : "-";
   const selected = state.selectedKV.has(item.id) ? "checked" : "";
-  const downloadLabel = state.downloaderMode === "internal" ? "加入队列" : "发送到 aria2";
+  const downloadLabel = state.downloaderMode === "local" ? "加入队列" : "发送到 aria2";
   return `
     <tr class="${item.expired ? "row-expired" : ""}">
       <td class="select-col">
@@ -170,7 +170,7 @@ function renderKVRow(item) {
 }
 
 function renderDownloadEntries(item) {
-  if (state.downloaderMode === "internal") {
+  if (state.downloaderMode === "local") {
     return renderInternalEntries(item);
   }
   return renderAria2Entries(item);
@@ -316,7 +316,7 @@ function updateKVSelectionState() {
   selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
 
   const count = state.selectedKV.size;
-  const downloadText = state.downloaderMode === "internal" ? "加入下载队列" : "发送到 aria2";
+  const downloadText = state.downloaderMode === "local" ? "加入下载队列" : "发送到 aria2";
   document.getElementById("download-selected").textContent = count ? `${downloadText} (${count})` : downloadText;
   document.getElementById("delete-selected").textContent = count ? `批量删除 (${count})` : "批量删除";
 }
@@ -328,11 +328,11 @@ async function runKVAction(action, ids, options = {}) {
     return;
   }
   if (action === "delete" && options.confirm !== false) {
-    const suffix = state.downloaderMode === "internal" ? "关联的内部下载任务会一并移除。" : "此操作不会删除 aria2 中已存在的下载任务。";
+    const suffix = state.downloaderMode === "local" ? "关联的本地下载任务会一并移除。" : "此操作不会删除 aria2 中已存在的下载任务。";
     if (!confirm(`确认删除 ${uniqueIDs.length} 条链接记录？${suffix}`)) return;
   }
 
-  const pendingText = state.downloaderMode === "internal" ? "正在加入内部下载队列..." : "正在将链接提交到 aria2...";
+  const pendingText = state.downloaderMode === "local" ? "正在加入内部下载队列..." : "正在将链接提交到 aria2...";
   setKVStatus(action === "download" ? pendingText : "正在删除链接记录...");
   try {
     const data = await api("/api/kv/links/actions", {
@@ -354,7 +354,7 @@ async function runKVAction(action, ids, options = {}) {
 function kvActionMessage(action, data) {
   const errors = data.errors && data.errors.length ? `；失败 ${data.errors.length} 项：${data.errors.join("；")}` : "";
   if (action === "download") {
-    const target = state.downloaderMode === "internal" ? "内部下载队列" : "aria2 下载队列";
+    const target = state.downloaderMode === "local" ? "内部下载队列" : "aria2 下载队列";
     return `已将 ${data.added || 0} 条链接提交到 ${target}，跳过 ${data.skipped || 0} 条${errors}`;
   }
   return `已删除 ${data.deleted || 0} 条 KV 记录${errors}`;

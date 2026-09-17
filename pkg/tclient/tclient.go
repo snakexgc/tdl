@@ -2,18 +2,22 @@ package tclient
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/tclient"
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/tclient"
+	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/key"
 )
 
 type Options struct {
+	AppOverride      *App
 	KV               storage.Storage
 	Proxy            string
 	NTP              string
@@ -21,21 +25,55 @@ type Options struct {
 	UpdateHandler    telegram.UpdateHandler
 }
 
-func GetApp(kv storage.Storage) (App, error) {
-	mode, err := kv.Get(context.TODO(), key.App())
-	if err != nil {
+func ResolveApp(ctx context.Context, kv storage.Storage) (types.TelegramCredentials, error) {
+	mode, err := kv.Get(ctx, key.App())
+	if errors.Is(err, storage.ErrNotFound) {
 		mode = []byte(AppBuiltin)
+	} else if err != nil {
+		return types.TelegramCredentials{}, err
 	}
-	app, ok := Apps[string(mode)]
-	if !ok {
-		return App{}, fmt.Errorf("can't find app: %s, please try re-login", mode)
+	var settings types.TelegramCredentialsConfig
+	account := types.DefaultAccount
+	if cfg := config.Get(); cfg != nil {
+		settings = cfg.Telegram
+		if cfg.Namespace != "" {
+			account = types.AccountID(cfg.Namespace)
+		}
 	}
+	return application.ResolveTelegramCredentials(ctx, account, string(mode), settings)
+}
 
-	return app, nil
+func GetApp(ctx context.Context, kv storage.Storage) (App, error) {
+	selected, err := ResolveApp(ctx, kv)
+	if err != nil {
+		return App{}, err
+	}
+	// The saved app marker describes the existing session, not a new preset
+	// selected in configuration. Read it separately for legacy fingerprinting.
+	mode, err := kv.Get(ctx, key.App())
+	if errors.Is(err, storage.ErrNotFound) {
+		mode = []byte(AppBuiltin)
+	} else if err != nil {
+		return App{}, err
+	}
+	legacy, err := application.TelegramPreset(string(mode))
+	if err != nil {
+		return App{}, err
+	}
+	if err := tgauth.ValidateCredentials(ctx, kv, selected.App, legacy); err != nil {
+		return App{}, err
+	}
+	return selected.App, nil
 }
 
 func New(ctx context.Context, o Options, login bool, middlewares ...telegram.Middleware) (*telegram.Client, error) {
-	app, err := GetApp(o.KV)
+	var app App
+	var err error
+	if o.AppOverride != nil {
+		app = *o.AppOverride
+	} else {
+		app, err = GetApp(ctx, o.KV)
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "get app")
 	}

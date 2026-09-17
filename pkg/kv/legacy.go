@@ -10,7 +10,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"go.etcd.io/bbolt"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/validator"
 )
 

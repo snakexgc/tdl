@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/http/transfer"
-	"github.com/snakexgc/tdl/core/storage"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 

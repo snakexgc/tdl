@@ -2,12 +2,11 @@ package watch
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
-	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
 func shouldRunInternalDownload(status string) bool {
@@ -82,22 +81,5 @@ func markPersistentDownloadTaskDownloaded(ctx context.Context, kvd storage.Stora
 	if kvd == nil || taskID == "" {
 		return
 	}
-	key := httpdl.TaskStorageKey(taskID)
-	data, err := kvd.Get(ctx, key)
-	if err != nil {
-		return
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return
-	}
-	if downloaded, _ := raw["downloaded"].(bool); downloaded {
-		return
-	}
-	raw["downloaded"] = true
-	data, err = json.Marshal(raw)
-	if err != nil {
-		return
-	}
-	_ = kvd.Set(ctx, key, data)
+	_ = taskhub.Links(kvd).MarkDownloaded(ctx, taskID)
 }

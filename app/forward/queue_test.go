@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
 // memStorage is an in-memory storage.Storage for queue tests.
@@ -42,7 +42,25 @@ func (m *memStorage) Delete(_ context.Context, key string) error {
 }
 
 func newTestQueue() *Queue {
-	return &Queue{wake: make(chan struct{}, 1), store: newJobStore(newMemStorage())}
+	return NewQueue(newMemStorage())
+}
+
+func TestQueueInstancesAreIsolated(t *testing.T) {
+	first, second := newTestQueue(), newTestQueue()
+	ctx := context.Background()
+	ids, err := first.EnqueueLinks(ctx, []string{"https://t.me/c/1/2"}, "", "", "default", false)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("enqueue: %v, %v", ids, err)
+	}
+	items, err := second.List(ctx)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("another queue observed jobs: %v, %v", items, err)
+	}
+	select {
+	case <-second.wake:
+		t.Fatal("another queue received wakeup")
+	default:
+	}
 }
 
 func TestQueueEnqueueAndList(t *testing.T) {

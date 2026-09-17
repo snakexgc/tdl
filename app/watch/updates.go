@@ -8,7 +8,7 @@ import (
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
-	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/logctx"
 )
 
 type loggingUpdateHandler struct {

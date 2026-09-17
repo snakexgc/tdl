@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 )
@@ -399,7 +399,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 		TaskID:      testDocumentID,
 		DownloadURL: "http://127.0.0.1:22334/download/" + testDocumentID,
 		CreatedAt:   createdAt,
-		Status:      "error",
+		Status:      fieldError,
 		Error:       "EOF",
 	})
 	require.NoError(t, err)

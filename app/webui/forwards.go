@@ -18,7 +18,7 @@ func (s *Server) handleForwards(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	queue := appforward.Jobs()
+	queue := s.opts.ForwardQueue
 	items, err := queue.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -49,7 +49,7 @@ func (s *Server) handleForwardActions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	queue := appforward.Jobs()
+	queue := s.opts.ForwardQueue
 	var (
 		result appforward.ActionResult
 		err    error

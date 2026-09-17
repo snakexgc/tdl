@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/aria2"
-	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/utils"
 )

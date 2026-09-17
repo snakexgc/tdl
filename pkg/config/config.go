@@ -12,6 +12,9 @@ import (
 	"sync"
 
 	"github.com/go-faster/errors"
+
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 const (
@@ -28,8 +31,10 @@ const (
 )
 
 const (
-	DownloaderModeAria2    = "aria2"
-	DownloaderModeInternal = "internal"
+	DownloaderModeAria2 = "aria2"
+	DownloaderModeLocal = "local"
+	// DownloaderModeInternal is kept as a source-compatible name during migration.
+	DownloaderModeInternal = DownloaderModeLocal
 )
 
 const (
@@ -102,31 +107,32 @@ type ForwardConfig struct {
 
 // Config 全局配置结构
 type Config struct {
-	Proxy            string           `json:"proxy"`
-	ProxyUsername    string           `json:"proxy_username"`
-	ProxyPassword    string           `json:"proxy_password"`
-	Namespace        string           `json:"namespace"`
-	Debug            bool             `json:"debug"`
-	Limit            int              `json:"limit"`
-	PoolSize         int              `json:"pool_size"`
-	Delay            int              `json:"delay"`
-	NTP              string           `json:"ntp"`
-	ReconnectTimeout int              `json:"reconnect_timeout"`
-	DownloadDir      string           `json:"download_dir"`
-	Filename         string           `json:"filename"`
-	FilenameMax      int              `json:"filename_max_length"`
-	TriggerReactions []string         `json:"trigger_reactions"`
-	Include          []string         `json:"include"`
-	Exclude          []string         `json:"exclude"`
-	FileSizeMinMB    int64            `json:"file_size_min_mb"`
-	FileSizeMaxMB    int64            `json:"file_size_max_mb"`
-	HTTP             HTTPConfig       `json:"http"`
-	WebUI            WebUIConfig      `json:"webui"`
-	Modules          ModulesConfig    `json:"modules"`
-	Downloader       DownloaderConfig `json:"downloader"`
-	Aria2            Aria2Config      `json:"aria2"`
-	Bot              BotConfig        `json:"bot"`
-	Forward          ForwardConfig    `json:"forward"`
+	Telegram         types.TelegramCredentialsConfig `json:"telegram"`
+	Proxy            string                          `json:"proxy"`
+	ProxyUsername    string                          `json:"proxy_username"`
+	ProxyPassword    string                          `json:"proxy_password"`
+	Namespace        string                          `json:"namespace"`
+	Debug            bool                            `json:"debug"`
+	Limit            int                             `json:"limit"`
+	PoolSize         int                             `json:"pool_size"`
+	Delay            int                             `json:"delay"`
+	NTP              string                          `json:"ntp"`
+	ReconnectTimeout int                             `json:"reconnect_timeout"`
+	DownloadDir      string                          `json:"download_dir"`
+	Filename         string                          `json:"filename"`
+	FilenameMax      int                             `json:"filename_max_length"`
+	TriggerReactions []string                        `json:"trigger_reactions"`
+	Include          []string                        `json:"include"`
+	Exclude          []string                        `json:"exclude"`
+	FileSizeMinMB    int64                           `json:"file_size_min_mb"`
+	FileSizeMaxMB    int64                           `json:"file_size_max_mb"`
+	HTTP             HTTPConfig                      `json:"http"`
+	WebUI            WebUIConfig                     `json:"webui"`
+	Modules          ModulesConfig                   `json:"modules"`
+	Downloader       DownloaderConfig                `json:"downloader"`
+	Aria2            Aria2Config                     `json:"aria2"`
+	Bot              BotConfig                       `json:"bot"`
+	Forward          ForwardConfig                   `json:"forward"`
 }
 
 // DefaultConfig 返回默认配置
@@ -298,6 +304,8 @@ func NormalizeDownloaderMode(mode string) (string, error) {
 		return DownloaderModeAria2, nil
 	}
 	switch mode {
+	case "internal": // Existing config files remain readable.
+		return DownloaderModeLocal, nil
 	case DownloaderModeAria2, DownloaderModeInternal:
 		return mode, nil
 	default:
@@ -473,6 +481,11 @@ func Validate(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config is nil")
 	}
+	cfg.Telegram.APIHash = strings.TrimSpace(cfg.Telegram.APIHash)
+	cfg.Telegram.BuiltinPreset = strings.TrimSpace(cfg.Telegram.BuiltinPreset)
+	if err := application.ValidateTelegramCredentials(cfg.Telegram); err != nil {
+		return errors.Wrap(err, "telegram credentials")
+	}
 	namespace, err := NormalizeNamespace(cfg.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "validate namespace")
@@ -588,7 +601,7 @@ func Save(path string, cfg *Config) error {
 		return errors.Wrap(err, "marshal config")
 	}
 
-	if err := writeFileAtomic(path, data, 0o644); err != nil {
+	if err := writeFileAtomic(path, data, 0o600); err != nil {
 		return errors.Wrap(err, "write config file")
 	}
 

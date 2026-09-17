@@ -11,7 +11,9 @@ import (
 	"github.com/go-faster/errors"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -155,8 +157,18 @@ func (c *InternalDownloadController) AddLink(ctx context.Context, cfg *config.Co
 		return InternalDownloadInfo{}, err
 	}
 	data := internalDownloadDirData(task)
-	baseDir := joinTargetPath(root, renderDownloadDir(cfg.DownloadDir, data)...)
-	dir, out, fullPath := resolveTargetPath(baseDir, task.FileName)
+	policies, _, naming, err := startPolicies(ctx, cfg.Namespace, DefaultOptions(cfg))
+	if err != nil {
+		return InternalDownloadInfo{}, err
+	}
+	defer func() { _ = policies.Stop(context.Background()) }()
+	target, err := naming.Render(ctx, ports.NamingInput{Account: types.AccountID(cfg.Namespace), BaseDir: root, RenderedName: task.FileName, Data: ports.NamingData{
+		DirectoryID: data.ID, PeerName: data.Name, MessageID: task.MessageID, TriggerMessageID: task.MessageID, FileName: task.FileName, DownloadedAt: data.Time,
+	}})
+	if err != nil {
+		return InternalDownloadInfo{}, err
+	}
+	dir, out, fullPath := target.Dir, target.Out, target.FullPath
 	record := internalDownloadRecord{
 		ID:        task.ID,
 		TaskID:    task.ID,

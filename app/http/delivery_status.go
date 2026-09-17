@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 )
 
 const httpDeliveryField = "http_delivery"
@@ -73,61 +75,54 @@ func (s *taskStore) recordHTTPDelivery(ctx context.Context, id string, fileSize 
 		completedAt = time.Now()
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	key := downloadTaskStorageKey(id)
-	data, err := s.kv.Get(ctx, key)
-	if err != nil {
-		return false, errors.Wrap(err, "load HTTP delivery task")
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return false, errors.Wrap(err, "decode HTTP delivery task")
-	}
-	if raw == nil {
-		raw = map[string]json.RawMessage{}
-	}
-
-	var delivery persistentHTTPDelivery
-	if value := raw[httpDeliveryField]; len(value) > 0 {
-		if err := json.Unmarshal(value, &delivery); err != nil {
-			return false, errors.Wrap(err, "decode persisted HTTP delivery")
+	complete := false
+	err := taskhub.Links(s.kv).Mutate(ctx, id, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return nil, stamp, errors.Wrap(err, "decode HTTP delivery task")
 		}
-	}
-	if delivery.FileSize != fileSize && (len(delivery.Ranges) > 0 || !delivery.CompletedAt.IsZero()) {
-		delivery = persistentHTTPDelivery{}
-	}
-	delivery.FileSize = fileSize
-	if !delivery.CompletedAt.IsZero() {
-		return false, nil
-	}
+		if raw == nil {
+			raw = map[string]json.RawMessage{}
+		}
 
-	added := make([]persistentHTTPDeliveryRange, 0, len(ranges))
-	for _, selected := range ranges {
-		added = append(added, persistentHTTPDeliveryRange{Start: selected.start, End: selected.end})
-	}
-	delivery.Ranges = mergeHTTPDeliveryRanges(append(delivery.Ranges, added...), fileSize)
-	complete := fileSize == 0 || (len(delivery.Ranges) == 1 && delivery.Ranges[0].Start == 0 && delivery.Ranges[0].End == fileSize-1)
-	if complete {
-		delivery.CompletedAt = completedAt
-		delivery.Ranges = nil
-		raw["downloaded"] = json.RawMessage("true")
-	}
+		var delivery persistentHTTPDelivery
+		if value := raw[httpDeliveryField]; len(value) > 0 {
+			if err := json.Unmarshal(value, &delivery); err != nil {
+				return nil, stamp, errors.Wrap(err, "decode persisted HTTP delivery")
+			}
+		}
+		if delivery.FileSize != fileSize && (len(delivery.Ranges) > 0 || !delivery.CompletedAt.IsZero()) {
+			delivery = persistentHTTPDelivery{}
+		}
+		delivery.FileSize = fileSize
+		if !delivery.CompletedAt.IsZero() {
+			return data, stamp, nil
+		}
 
-	deliveryData, err := json.Marshal(delivery)
-	if err != nil {
-		return false, errors.Wrap(err, "encode HTTP delivery")
-	}
-	raw[httpDeliveryField] = deliveryData
-	updated, err := json.Marshal(raw)
-	if err != nil {
-		return false, errors.Wrap(err, "encode HTTP delivery task")
-	}
-	if err := s.kv.Set(ctx, key, updated); err != nil {
-		return false, errors.Wrap(err, "persist HTTP delivery task")
-	}
-	return complete, nil
+		added := make([]persistentHTTPDeliveryRange, 0, len(ranges))
+		for _, selected := range ranges {
+			added = append(added, persistentHTTPDeliveryRange{Start: selected.start, End: selected.end})
+		}
+		delivery.Ranges = mergeHTTPDeliveryRanges(append(delivery.Ranges, added...), fileSize)
+		complete = fileSize == 0 || (len(delivery.Ranges) == 1 && delivery.Ranges[0].Start == 0 && delivery.Ranges[0].End == fileSize-1)
+		if complete {
+			delivery.CompletedAt = completedAt
+			delivery.Ranges = nil
+			raw["downloaded"] = json.RawMessage("true")
+		}
+
+		deliveryData, err := json.Marshal(delivery)
+		if err != nil {
+			return nil, stamp, errors.Wrap(err, "encode HTTP delivery")
+		}
+		raw[httpDeliveryField] = deliveryData
+		updated, err := json.Marshal(raw)
+		if err != nil {
+			return nil, stamp, errors.Wrap(err, "encode HTTP delivery task")
+		}
+		return updated, stamp, nil
+	})
+	return complete, err
 }
 
 func mergeHTTPDeliveryRanges(ranges []persistentHTTPDeliveryRange, fileSize int64) []persistentHTTPDeliveryRange {
@@ -170,25 +165,4 @@ func mergeHTTPDeliveryRanges(ranges []persistentHTTPDeliveryRange, fileSize int6
 		merged = append(merged, next)
 	}
 	return merged
-}
-
-// mergeDownloadTaskData overlays current task metadata while preserving
-// status fields owned by HTTP, aria2/internal synchronization, and future
-// versions of the record.
-func mergeDownloadTaskData(existing, current []byte) ([]byte, error) {
-	var oldRaw map[string]json.RawMessage
-	if err := json.Unmarshal(existing, &oldRaw); err != nil {
-		return nil, err
-	}
-	var currentRaw map[string]json.RawMessage
-	if err := json.Unmarshal(current, &currentRaw); err != nil {
-		return nil, err
-	}
-	if oldRaw == nil {
-		oldRaw = map[string]json.RawMessage{}
-	}
-	for key, value := range currentRaw {
-		oldRaw[key] = value
-	}
-	return json.Marshal(oldRaw)
 }

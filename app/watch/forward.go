@@ -12,9 +12,9 @@ import (
 	"go.uber.org/zap"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
-	"github.com/snakexgc/tdl/core/forwarder"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/forwarder"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 )
 
 type forwardRuntime struct {
@@ -238,7 +238,7 @@ func (w *Watcher) enqueueForwardMessage(ctx context.Context, e tg.Entities, msg 
 		zap.Int("msg_id", msg.ID),
 		zap.Int64("target_id", w.forward.target.ID()))
 
-	if _, err := appforward.Jobs().EnqueueMessage(ctx, peerID, msg.ID, originName,
+	if _, err := w.opts.ForwardQueue.EnqueueMessage(ctx, peerID, msg.ID, originName,
 		w.opts.ForwardTarget, w.forward.target.VisibleName(),
 		appforward.ConfigModeName(w.forward.mode), w.opts.ForwardSilent); err != nil {
 		notifyCtx := context.WithoutCancel(ctx)

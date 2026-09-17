@@ -11,6 +11,15 @@ const proxySchemes = ["socks5://", "socks5h://", "http://", "https://"];
 
 const sections = [
   {
+    title: "Telegram 应用凭据",
+    fields: [
+      ["telegram.api_id", "API ID", "number", "与 API Hash 一起填写时使用自己的应用凭据；两项都留空则沿用内置凭据。可在 my.telegram.org 申请。"],
+      ["telegram.api_hash", "API Hash", "password", "与 API ID 成对填写；保存时留空表示保持已保存的值。凭据变化后可能需要重新登录，已有会话不会被删除。"],
+      ["telegram.builtin_preset", "内置预设", "select", "留空沿用当前会话的预设；新登录默认 desktop。内置预设属于第三方应用，建议使用自己申请的凭据。", ["", "builtin", "desktop"]],
+      ["telegram.use_builtin", "使用内置凭据", "bool", "开启后暂时停用自定义凭据，保留已填写的 API ID 和 Hash，方便恢复原设置。"],
+    ],
+  },
+  {
     title: "基础",
     fields: [
       ["proxy", "代理地址", "proxy", "选择代理协议后，只填写 IP 或域名加端口，例如 127.0.0.1:1080。"],
@@ -62,7 +71,7 @@ const sections = [
   {
     title: "下载器",
     fields: [
-      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；internal 使用 tdl 内部下载器；并发文件数由 limit 控制，每个 DC 的连接与下载流由 pool_size 控制。", ["aria2", "internal"]],
+      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；local 使用 tdl 本地下载器；并发文件数由 limit 控制，每个 DC 的连接与下载流由 pool_size 控制。", ["aria2", "local"]],
     ],
   },
   {

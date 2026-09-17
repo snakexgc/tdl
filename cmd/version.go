@@ -28,6 +28,7 @@ func NewVersion() *cobra.Command {
 				"GoVersion": runtime.Version(),
 				"GOOS":      runtime.GOOS,
 				"GOARCH":    runtime.GOARCH,
+				"GOARM":     consts.GOARM,
 			}); err != nil {
 				return err
 			}
