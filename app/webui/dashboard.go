@@ -30,7 +30,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	now := time.Now()
 	metricErrors := map[string]string{}
 
@@ -142,7 +142,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	writeJSON(w, http.StatusOK, map[string]any{
 		fieldNamespace:  s.namespace(),
 		"watch_running": s.watchRunning(),

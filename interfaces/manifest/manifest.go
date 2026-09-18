@@ -1,7 +1,11 @@
 // Package manifest describes components independently of their implementations.
 package manifest
 
-import "reflect"
+import (
+	"reflect"
+
+	"github.com/snakexgc/tdl/interfaces/types"
+)
 
 type FieldType string
 
@@ -13,13 +17,16 @@ const (
 )
 
 type ConfigField struct {
-	Name    string    `json:"name"`
-	Title   string    `json:"title"`
-	Type    FieldType `json:"type"`
-	Default any       `json:"default"`
-	Min     *int64    `json:"min,omitempty"`
-	Max     *int64    `json:"max,omitempty"`
-	Secret  bool      `json:"secret,omitempty"`
+	Choices         []string  `json:"choices,omitempty"`
+	Format          string    `json:"format,omitempty"`
+	RestartRequired bool      `json:"restart_required,omitempty"`
+	Name            string    `json:"name"`
+	Title           string    `json:"title"`
+	Type            FieldType `json:"type"`
+	Default         any       `json:"default"`
+	Min             *int64    `json:"min,omitempty"`
+	Max             *int64    `json:"max,omitempty"`
+	Secret          bool      `json:"secret,omitempty"`
 }
 
 // Port versions use a compatible major version and a minimum minor version.
@@ -41,6 +48,7 @@ type Require struct {
 }
 
 type Manifest struct {
+	Commands   []types.ConsoleCommand
 	ID         string
 	Title      string
 	Provides   []Port
@@ -53,6 +61,10 @@ type Manifest struct {
 
 // Page declares a same-origin feature entry owned by a component.
 type Page struct {
-	Path  string `json:"path"`
-	Title string `json:"title"`
+	Path   string `json:"path"`
+	Title  string `json:"title"`
+	View   string `json:"view,omitempty"`
+	Module string `json:"module,omitempty"`
+	Style  string `json:"style,omitempty"`
+	Order  int    `json:"order,omitempty"`
 }

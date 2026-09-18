@@ -38,16 +38,6 @@ func New() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
 	cobra.MousetrapHelpText = ""
 
-	// 初始化 JSON 配置
-	bootstrapErr := consts.InitPaths()
-	if bootstrapErr == nil {
-		bootstrapErr = config.Init(consts.HomeDir)
-	}
-	cfg := config.Get()
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-
 	cmd := &cobra.Command{
 		Use:           "tdl",
 		Short:         "Telegram Downloader, but more than a downloader",
@@ -57,9 +47,16 @@ func New() *cobra.Command {
 			return runBot(cmd)
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if bootstrapErr != nil {
-				return errors.Wrap(bootstrapErr, "initialize application")
+			if cmd.Name() == migrateConfigCommand {
+				return nil
 			}
+			if err := consts.InitPaths(); err != nil {
+				return err
+			}
+			if err := config.Init(consts.HomeDir); err != nil {
+				return err
+			}
+			cfg := config.Get()
 			// init logger
 			debug, level := cfg.Debug, zap.InfoLevel
 			if debug {
@@ -91,6 +88,9 @@ func New() *cobra.Command {
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Name() == migrateConfigCommand {
+				return nil
+			}
 			return multierr.Combine(
 				kv.From(cmd.Context()).Close(),
 				logctx.From(cmd.Context()).Sync(),
@@ -114,18 +114,20 @@ func New() *cobra.Command {
 	})
 
 	cmd.Flags().String("component-config", "", "directory for component configuration")
-	cmd.AddCommand(NewVersion())
+	cmd.AddCommand(NewVersion(), NewMigrateConfig())
 
 	return cmd
 }
 
 func runBot(cmd *cobra.Command) error {
-	if err := ensureStartupNTP(cmd.Context()); err != nil {
-		return err
-	}
 	directory, err := cmd.Flags().GetString("component-config")
 	if err != nil {
 		return err
+	}
+	if directory == "" {
+		if err := ensureStartupNTP(cmd.Context()); err != nil {
+			return err
+		}
 	}
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
 		ComponentConfigDir: directory,

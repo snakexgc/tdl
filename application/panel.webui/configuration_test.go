@@ -39,13 +39,25 @@ func TestConfigurationPortProtectsOwnedFieldsAndSecrets(t *testing.T) {
 		require.Error(t, err, path)
 	}
 	require.Zero(t, store.saves)
-	result, err := service.Patch(ctx, map[string]json.RawMessage{"bot.token": json.RawMessage(`""`), "limit": json.RawMessage("4")})
+	result, err := service.Patch(ctx, map[string]json.RawMessage{"debug": json.RawMessage("true")})
 	require.NoError(t, err)
-	require.Equal(t, 4, result.Limit)
+	require.True(t, result.Debug)
 	require.Empty(t, result.Bot.Token)
 	require.Empty(t, result.WebUI.Password)
 	require.Equal(t, "secret", store.value.Bot.Token)
 	require.Equal(t, "private", store.value.WebUI.Password)
-	result.Limit = 88
-	require.Equal(t, 4, store.value.Limit)
+	result.Debug = false
+	require.True(t, store.value.Debug)
+}
+
+func TestConfigurationRedactsCredentialBearingConnectionURLs(t *testing.T) {
+	cfg := &types.RuntimeConfig{Proxy: "socks5://user:private@localhost:1080", Aria2: types.Aria2Config{RPCURL: "https://user:private@localhost/rpc?token=private"}}
+	public := PublicConfig(cfg)
+	encoded, err := json.Marshal(public)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "private")
+	require.NotEmpty(t, cfg.Proxy)
+	require.NotEmpty(t, cfg.Aria2.RPCURL)
+	require.True(t, IsBlankSensitivePatch("proxy", json.RawMessage(`""`)))
+	require.True(t, IsBlankSensitivePatch("aria2.rpc_url", json.RawMessage(`""`)))
 }

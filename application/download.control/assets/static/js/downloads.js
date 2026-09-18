@@ -3,7 +3,6 @@ import { state } from "./state.js";
 import { api } from "./api.js";
 import { escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
 import { navigate } from "./router.js";
-import { loadConfig } from "./config.js";
 
 const internalDownloadRefreshMS = 1000;
 
@@ -11,8 +10,7 @@ export function initDownloads() {
   document.getElementById("reload-aria2").addEventListener("click", () => loadDownloads(true));
   document.getElementById("aria2-retry-check").addEventListener("click", () => loadDownloads(true));
   document.getElementById("aria2-open-config").addEventListener("click", async () => {
-    navigate("config");
-    await loadConfig();
+    await navigate("config");
     requestAnimationFrame(() => {
       const input = document.querySelector('#config-form [data-path="aria2.rpc_url"]');
       if (input) {
@@ -414,3 +412,5 @@ function updateInternalSelectionState() {
     if (button) button.disabled = count === 0;
   });
 }
+
+export const page = { init: initDownloads, load: loadDownloads, stop: stopInternalDownloadPolling };

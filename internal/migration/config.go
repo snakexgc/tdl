@@ -10,12 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/componentconfig"
 	legacy "github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
 )
 
@@ -23,7 +22,7 @@ type Plan struct {
 	Account    types.AccountID `json:"account"`
 	Components []string        `json:"components"`
 	// Values never appear in a preview or log: they can contain credentials.
-	values map[string]map[string]any
+	documents map[string]config.Document
 }
 
 func Prepare(reader io.Reader) (*Plan, error) {
@@ -54,68 +53,46 @@ func Prepare(reader io.Reader) (*Plan, error) {
 	if err := legacy.Validate(cfg); err != nil {
 		return nil, err
 	}
-	stringsValue := func(values []string) []string { return append([]string{}, values...) }
-	recipients := make([]string, 0, len(cfg.Bot.AllowedUsers))
-	for _, id := range cfg.Bot.AllowedUsers {
-		recipients = append(recipients, strconv.FormatInt(id, 10))
+	catalog, err := application.Catalog()
+	if err != nil {
+		return nil, err
 	}
-	values := map[string]map[string]any{
-		"console.bot":         {"allowed_users": recipients},
-		"notify.telegram":     {"recipients": recipients},
-		"account.telegram":    {"api_id": cfg.Telegram.APIID, "api_hash": cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, "use_builtin": cfg.Telegram.UseBuiltin},
-		"filter.rules":        {"include": stringsValue(cfg.Include), "exclude": stringsValue(cfg.Exclude), "min_mb": cfg.FileSizeMinMB, "max_mb": cfg.FileSizeMaxMB},
-		"naming.rules":        {"filename": legacy.EffectiveFilename(cfg), "directory": cfg.DownloadDir, "max_bytes": legacy.EffectiveFilenameMax(cfg)},
-		"trigger.reaction":    {"download": stringsValue(cfg.TriggerReactions), "forward": stringsValue(cfg.Forward.TriggerReactions)},
-		"trigger.messagelink": {},
-		"update.self":         {"proxy": legacy.EffectiveProxy(cfg)},
+	documents, err := componentconfig.Export(cfg, catalog)
+	if err != nil {
+		return nil, err
 	}
-	plan := &Plan{Account: types.AccountID(cfg.Namespace), values: values}
-	for id := range values {
+	plan := &Plan{Account: types.AccountID(cfg.Namespace), documents: documents}
+	for id := range documents {
 		plan.Components = append(plan.Components, id)
 	}
 	sort.Strings(plan.Components)
 	return plan, nil
 }
 
-func (p *Plan) start(ctx context.Context) (*rte.Runtime, error) {
-	registry, err := application.Registry()
-	if err != nil {
-		return nil, err
-	}
-	enabled := make(map[string]bool, len(p.Components))
-	for _, id := range p.Components {
-		enabled[id] = true
-	}
-	host, err := registry.Build(p.Account, enabled, p.values)
-	if err != nil {
-		return nil, err
-	}
-	for _, status := range host.Start(ctx) {
-		if status.State != rte.Running {
-			_ = host.Stop(context.Background())
-			return nil, fmt.Errorf("%s: %s", status.ID, status.Detail)
-		}
-	}
-	return host, nil
-}
-
 func (p *Plan) Validate(ctx context.Context) error {
-	host, err := p.start(ctx)
+	catalog, err := application.Catalog()
 	if err != nil {
 		return err
 	}
-	return host.Stop(ctx)
+	for _, id := range p.Components {
+		if _, err := catalog.View(ctx, id, p.documents[id].Values); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Write refuses existing destinations, even empty directories. It exports to an
 // exclusively created directory; on failure it removes only files it created.
 // A completion marker is written last so incomplete output is identifiable.
 func (p *Plan) Write(ctx context.Context, destination string) error {
-	host, err := p.start(ctx)
+	if err := p.Validate(ctx); err != nil {
+		return err
+	}
+	catalog, err := application.Catalog()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = host.Stop(context.Background()) }()
 	target, err := filepath.Abs(destination)
 	if err != nil {
 		return err
@@ -131,8 +108,16 @@ func (p *Plan) Write(ctx context.Context, destination string) error {
 			_ = os.RemoveAll(target)
 		}
 	}()
-	if err := host.ExportConfig(ctx, config.NewStore(target)); err != nil {
-		return err
+	store := config.NewStore(target)
+	for _, id := range p.Components {
+		document := p.documents[id]
+		view, err := catalog.View(ctx, id, document.Values)
+		if err != nil {
+			return err
+		}
+		if err := store.Save(ctx, id, document.Enabled, view); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err

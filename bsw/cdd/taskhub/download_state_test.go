@@ -26,9 +26,9 @@ func TestDownloadStatePersistenceAndStaleObservations(t *testing.T) {
 	created, err := local.Create(ctx, types.LocalDownloadRecord{ID: "local"})
 	require.NoError(t, err)
 	require.Equal(t, types.DownloadQueued, created.State)
-	_, err = local.Update(ctx, "local", func(record *types.LocalDownloadRecord) bool { record.Status = "complete"; return true })
+	_, err = local.Update(ctx, "local", func(record *types.LocalDownloadRecord) bool { record.Status = testRemoteComplete; return true })
 	require.NoError(t, err)
-	_, err = local.Update(ctx, "local", func(record *types.LocalDownloadRecord) bool { record.Status = "active"; return true })
+	_, err = local.Update(ctx, "local", func(record *types.LocalDownloadRecord) bool { record.Status = testRemoteActive; return true })
 	require.ErrorContains(t, err, "state transition")
 	current, _, err := local.Get(ctx, "local")
 	require.NoError(t, err)
@@ -42,13 +42,13 @@ func TestDownloadStatePersistenceAndStaleObservations(t *testing.T) {
 	baseline := records["gid"]
 	require.Equal(t, types.DownloadQueued, baseline.State)
 	finished := baseline
-	finished.Status = "complete"
+	finished.Status = testRemoteComplete
 	finished.Total, finished.Completed = 10, 10
 	applied, err := remote.Report(ctx, finished, baseline.Revision)
 	require.NoError(t, err)
 	require.True(t, applied)
 	stale := baseline
-	stale.Status = "active"
+	stale.Status = testRemoteActive
 	applied, err = remote.Report(ctx, stale, baseline.Revision)
 	require.NoError(t, err)
 	require.False(t, applied)

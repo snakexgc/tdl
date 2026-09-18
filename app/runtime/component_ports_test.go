@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/migration"
@@ -28,6 +29,7 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
 	m := &Manager{policies: host, filter: filter, naming: naming, componentStore: store}
+	require.NoError(t, m.initDirectory())
 	opts := m.watchOptions(cfg)
 	require.NotNil(t, opts.Reaction)
 	require.NotNil(t, opts.MessageLinks)
@@ -46,7 +48,7 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 	require.NoError(t, m.SaveComponentConfiguration(ctx, "update.self", map[string]any{"proxy": "http://user:password@127.0.0.1:8080"}))
 	entries, editable := m.ComponentConfigurations()
 	require.True(t, editable)
-	require.Len(t, entries, 6)
+	require.Len(t, entries, 17)
 	encoded, err := json.Marshal(entries)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "imported-secret")
@@ -72,10 +74,29 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 
 func TestUnavailableProductionPortsDoNotFallBack(t *testing.T) {
 	m := &Manager{}
+	require.NoError(t, m.initDirectory())
 	_, err := m.Resolve(context.Background(), types.DefaultAccount, "builtin")
 	require.Error(t, err)
 	_, err = m.Check(context.Background())
 	require.Error(t, err)
 	_, _, err = m.Download(context.Background())
 	require.Error(t, err)
+}
+
+func TestDisabledFilterPreservesIndependentAccountPort(t *testing.T) {
+	ctx := context.Background()
+	catalog, err := application.Catalog()
+	require.NoError(t, err)
+	store := rteconfig.NewStore(t.TempDir())
+	view, err := catalog.View(ctx, "filter.rules", nil)
+	require.NoError(t, err)
+	require.NoError(t, store.Save(ctx, "filter.rules", false, view))
+	host, filter, naming, err := newPolicyHostStored(ctx, config.DefaultConfig(), store)
+	require.Error(t, err)
+	require.NotNil(t, host)
+	defer func() { require.NoError(t, host.Stop(ctx)) }()
+	require.Nil(t, filter)
+	require.NotNil(t, naming)
+	_, err = host.Resolve(ports.TelegramCredentialsName)
+	require.NoError(t, err)
 }

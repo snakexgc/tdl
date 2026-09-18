@@ -1,122 +1,116 @@
-// Client-side path router built on the History API.
-//
-// Each view maps to a real path (/dashboard, /user, ...). The server serves the
-// app shell for every such path, so a refresh or deep link lands on the right
-// view instead of always falling back to the dashboard.
-import { loadDashboard, stopDashboardPolling } from "./dashboard.js";
-import { loadDownloads, stopInternalDownloadPolling } from "./downloads.js";
-import { loadForwards, stopForwardPolling } from "./forwards.js";
-import { loadKV } from "./kv.js";
-import { loadUser, loadLoginStatus } from "./user.js";
-import { loadModules } from "./modules.js";
-import { loadConfig } from "./config.js";
-import { loadUpdateStatus } from "./update.js";
+// Components declare their pages and lifecycle hooks; the shell has no feature list.
 import { api } from "./api.js";
+import { escapeHTML } from "./utils.js";
 
-export const views = ["dashboard", "user", "config", "downloads", "forwards", "kv", "modules", "update"];
+const pages = new Map();
+let current;
+let generation = 0;
 
-const titles = {
-  dashboard: "仪表盘",
-  user: "用户管理",
-  config: "配置文件",
-  downloads: "下载管理",
-  forwards: "转发监控",
-  kv: "KV 管理",
-  modules: "模块管理",
-  update: "检查更新",
-};
-
-function viewFromPath(pathname) {
-  const slug = (pathname || "/").replace(/^\/+/, "").replace(/\/.*$/, "");
-  return views.includes(slug) ? slug : "dashboard";
-}
-
-function pathForView(view) {
-  return `/${view}`;
-}
-
-export function initRouter() {
-  bindNavigation();
-  loadComponentNavigation();
-  window.addEventListener("popstate", () => {
-    const view = viewFromPath(window.location.pathname);
-    applyView(view);
-    loadViewData(view);
-  });
-  const view = viewFromPath(window.location.pathname);
-  applyView(view);
-  loadViewData(view);
-}
-
-function bindNavigation() {
-  document.querySelectorAll(".nav-item[data-view]").forEach((button) => {
-    button.addEventListener("click", () => navigate(button.dataset.view));
-  });
-}
-
-async function loadComponentNavigation() {
-  try {
-    const data = await api("/api/components");
-    const nav = document.querySelector("nav.nav");
-    if (!nav) return;
-    const seen = new Set();
-    for (const component of data.components || []) {
-      for (const page of component.pages || []) {
-        const url = new URL(page.path, window.location.origin);
-        if (url.origin !== window.location.origin || seen.has(url.pathname)) continue;
-        seen.add(url.pathname);
-        const view = url.pathname.replace(/^\//, "");
-        const existing = Array.from(nav.querySelectorAll("[data-view]")).find(item => item.dataset.view === view);
-        if (existing) {
-          const label = existing.querySelector("span");
-          if (label) label.textContent = page.title;
-          existing.dataset.component = component.id;
-          titles[view] = page.title;
-        } else {
-          const link = document.createElement("a");
-          link.className = "nav-item";
-          link.href = url.pathname + url.search + url.hash;
-          link.textContent = page.title;
-          link.dataset.component = component.id;
-          nav.append(link);
-        }
-      }
-    }
-    applyView(viewFromPath(window.location.pathname));
-  } catch {
-    // Standalone and temporarily unavailable hosts retain their existing navigation.
+function localPath(value) {
+  const url = new URL(value, window.location.origin);
+  if (url.origin !== window.location.origin || !value.startsWith("/") || value.startsWith("//")) {
+    throw new Error("组件资源必须使用同源路径。");
   }
+  return url.pathname;
+}
+
+export async function initRouter() {
+  const data = await api("/api/components");
+  const declarations = (data.components || []).filter(component => component.enabled !== false)
+    .flatMap(component => (component.pages || []).map(page => ({ ...page, owner: component.id })))
+    .sort((a, b) => (a.order || 100) - (b.order || 100) || a.path.localeCompare(b.path));
+  const host = document.getElementById("view-host");
+  const nav = document.querySelector("nav.nav");
+  host.replaceChildren();
+  nav.replaceChildren();
+  for (const page of declarations) {
+    const path = localPath(page.path);
+    const link = document.createElement("a");
+    link.className = "nav-item";
+    link.href = path;
+    link.textContent = page.title;
+    link.dataset.component = page.owner;
+    if (page.view) {
+      if (!/^[a-z][a-z0-9_-]*$/.test(page.view) || pages.has(path)) throw new Error("无效的组件页面声明。");
+      const section = document.createElement("div");
+      section.className = "view";
+      section.id = `page-${page.view}`;
+      host.append(section);
+      if (page.style) {
+        const style = document.createElement("link");
+        style.rel = "stylesheet";
+        style.href = localPath(page.style);
+        document.head.append(style);
+      }
+      if (page.module) page.module = localPath(page.module);
+      pages.set(path, { ...page, path, section, link });
+      link.dataset.view = page.view;
+      link.addEventListener("click", event => {
+        if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        navigate(path);
+      });
+    }
+    nav.append(link);
+  }
+  window.addEventListener("popstate", () => { void show(window.location.pathname); });
+  window.addEventListener("pagehide", stopPages);
+  await show(window.location.pathname);
+}
+
+export function stopPages() {
+  ++generation;
+  for (const page of pages.values()) page.hooks?.stop?.();
 }
 
 export function navigate(view) {
-  if (!views.includes(view)) view = "dashboard";
-  const path = pathForView(view);
-  if (window.location.pathname !== path) {
-    window.history.pushState({ view }, "", path);
-  }
-  applyView(view);
-  loadViewData(view);
+  const path = view.startsWith("/") ? view : `/${view}`;
+  if (window.location.pathname !== path) window.history.pushState({}, "", path);
+  return show(path);
 }
 
-function applyView(view) {
-  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
-  document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
-  document.title = `${titles[view] || "管理面板"} · TDL 管理面板`;
-  if (view !== "dashboard") stopDashboardPolling();
-  if (view !== "downloads") stopInternalDownloadPolling();
-  if (view !== "forwards") stopForwardPolling();
+async function show(path) {
+  const page = pages.get(path) || (path === "/" ? pages.values().next().value : null);
+  if (current !== page) current?.hooks?.stop?.();
+  current = page;
+  const activeGeneration = ++generation;
+  for (const entry of pages.values()) {
+    entry.section.classList.toggle("active", entry === page);
+    entry.section.querySelectorAll(".view").forEach(view => view.classList.toggle("active", entry === page));
+    entry.link.classList.toggle("active", entry === page);
+  }
+  let unavailable = document.getElementById("page-unavailable");
+  if (!page) {
+    if (!unavailable) {
+      unavailable = document.createElement("div");
+      unavailable.id = "page-unavailable";
+      unavailable.className = "notice error";
+      document.getElementById("view-host").append(unavailable);
+    }
+    unavailable.hidden = false;
+    unavailable.textContent = "页面不可用，所属组件可能已停用。";
+    return;
+  }
+  if (unavailable) unavailable.hidden = true;
+  document.title = `${page.title} · TDL 管理面板`;
+  try {
+    page.ready ||= mount(page);
+    await page.ready;
+    if (activeGeneration === generation) await page.hooks?.load?.();
+    if (current !== page) page.hooks?.stop?.();
+  } catch (error) {
+    page.section.innerHTML = `<div class="notice error">${escapeHTML(error.message)}</div>`;
+    page.ready = null;
+  }
 }
 
-function loadViewData(view) {
-  if (view === "dashboard") loadDashboard();
-  if (view === "downloads") loadDownloads();
-  if (view === "forwards") loadForwards();
-  if (view === "kv") loadKV();
-  if (view === "user") {
-    loadUser();
-    loadLoginStatus();
-  }
-  if (view === "modules") loadModules();
-  if (view === "config") loadConfig();
-  if (view === "update") loadUpdateStatus();
+async function mount(page) {
+  const response = await fetch(`/views/${page.view}.html`, { credentials: "same-origin" });
+  if (response.status === 401) { window.location.href = "/login"; throw new Error("登录已过期。"); }
+  if (!response.ok) throw new Error(`无法载入 ${page.title}`);
+  page.section.innerHTML = await response.text();
+  // Legacy fragments include their own view root. Visibility belongs to the shell.
+  page.section.querySelectorAll(".view").forEach(view => view.classList.toggle("active", current === page));
+  page.hooks = page.module ? (await import(page.module)).page : {};
+  await page.hooks?.init?.();
 }

@@ -5,18 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
-	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/tclient"
 )
 
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +21,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	sessions, sessionsErr := s.listUserSessions(r.Context())
 	resp := map[string]any{
 		fieldNamespace:  s.namespace(),
@@ -81,72 +78,21 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	namespace, err := config.NormalizeNamespace(req.Namespace)
+	changed, err := s.accountActions.Switch(r.Context(), types.AccountID(s.namespace()), req.Namespace)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-
-	cfg := config.Get()
-	if cfg != nil && cfg.Namespace == namespace {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":           true,
-			fieldNamespace: namespace,
-			fieldMessage:   "当前已经是该用户。",
-		})
-		return
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldNamespace: strings.TrimSpace(req.Namespace), "restarting": changed})
+	if changed {
+		go func() { time.Sleep(200 * time.Millisecond); s.opts.RequestReboot() }()
 	}
-	exists, err := s.userSessionExists(r.Context(), namespace)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if !exists {
-		writeError(w, http.StatusBadRequest, errors.New("请选择已有登录用户，未登录的用户请先在用户登录页面完成登录。"))
-		return
-	}
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	next, err := config.Clone(cfg)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	next.Namespace = namespace
-	if err := config.Set(next); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		fieldNamespace: namespace,
-		fieldMessage:   "用户已切换，正在重启以加载该用户的数据。",
-	})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.opts.RequestReboot()
-	}()
 }
 
 type userSessionOption = ports.SessionOption
 
 func (s *Server) listUserSessions(ctx context.Context) ([]userSessionOption, error) {
 	return s.sessionCatalog.List(ctx)
-}
-
-func (s *Server) userSessionExists(ctx context.Context, namespace string) (bool, error) {
-	sessions, err := s.listUserSessions(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, session := range sessions {
-		if session.Namespace == namespace {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
@@ -193,140 +139,12 @@ func (s *Server) handleSpamCheck(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "POST")
 		return
 	}
-	if s.opts.NamespaceKV == nil {
-		writeError(w, http.StatusBadRequest, errors.New("no active session"))
-		return
-	}
-	cfg := config.Get()
-	checkCtx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
-	defer cancel()
-	clean, err := checkSpamStatus(checkCtx, login.SessionOptions{
-		Connections: s.opts.Connections, Credentials: s.opts.Credentials, Account: types.AccountID(s.opts.Namespace),
-		KV:               s.opts.NamespaceKV,
-		Proxy:            config.EffectiveProxy(cfg),
-		NTP:              cfg.NTP,
-		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
-	})
+	clean, err := s.accountActions.CheckSpam(r.Context(), types.AccountID(s.namespace()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"clean": clean})
-}
-
-func checkSpamStatus(ctx context.Context, opts login.SessionOptions) (bool, error) {
-	if opts.KV == nil {
-		return false, errors.New("session storage is nil")
-	}
-	const replyTimeout = 20 * time.Second
-	replyCh := make(chan string, 8)
-	var spambotID int64
-
-	handler := telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
-		id := atomic.LoadInt64(&spambotID)
-		if id == 0 {
-			return nil
-		}
-		collectSpambotMessages(u, id, replyCh)
-		return nil
-	})
-
-	c, err := tclient.New(ctx, tclient.Options{
-		Connections: opts.Connections, Credentials: opts.Credentials, Account: opts.Account,
-		KV:               opts.KV,
-		Proxy:            opts.Proxy,
-		NTP:              opts.NTP,
-		ReconnectTimeout: opts.ReconnectTimeout,
-		UpdateHandler:    handler,
-	}, false)
-	if err != nil {
-		return false, errors.Wrap(err, "create client")
-	}
-
-	var clean bool
-	if err := c.Run(ctx, func(ctx context.Context) error {
-		resolved, err := c.API().ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: "spambot"})
-		if err != nil {
-			return errors.Wrap(err, "resolve @spambot")
-		}
-		var spambotPeer tg.InputPeerClass
-		var spambotUID int64
-		for _, u := range resolved.Users {
-			user, ok := u.AsNotEmpty()
-			if !ok {
-				continue
-			}
-			spambotUID = user.ID
-			spambotPeer = user.AsInputPeer()
-			break
-		}
-		if spambotPeer == nil {
-			return errors.New("could not resolve @spambot")
-		}
-		atomic.StoreInt64(&spambotID, spambotUID)
-
-		_, err = c.API().MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
-			Peer:     spambotPeer,
-			Message:  "/start",
-			RandomID: time.Now().UnixNano(),
-		})
-		if err != nil {
-			return errors.Wrap(err, "send /start to @spambot")
-		}
-
-		timer := time.NewTimer(replyTimeout)
-		defer timer.Stop()
-		select {
-		case reply := <-replyCh:
-			clean = strings.HasPrefix(strings.ToLower(reply), "good news")
-			return nil
-		case <-timer.C:
-			return errors.New("timeout waiting for @spambot reply")
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}); err != nil {
-		return false, err
-	}
-	return clean, nil
-}
-
-func collectSpambotMessages(u tg.UpdatesClass, spambotID int64, ch chan<- string) {
-	var updates []tg.UpdateClass
-	switch upd := u.(type) {
-	case *tg.Updates:
-		updates = upd.Updates
-	case *tg.UpdatesCombined:
-		updates = upd.Updates
-	case *tg.UpdateShort:
-		updates = []tg.UpdateClass{upd.Update}
-	}
-	for _, update := range updates {
-		msg, ok := extractUserMessage(update, spambotID)
-		if !ok {
-			continue
-		}
-		select {
-		case ch <- msg:
-		default:
-		}
-	}
-}
-
-func extractUserMessage(update tg.UpdateClass, fromID int64) (string, bool) {
-	newMsg, ok := update.(*tg.UpdateNewMessage)
-	if !ok {
-		return "", false
-	}
-	msg, ok := newMsg.Message.(*tg.Message)
-	if !ok || msg.Out {
-		return "", false
-	}
-	peer, ok := msg.PeerID.(*tg.PeerUser)
-	if !ok || peer.UserID != fromID {
-		return "", false
-	}
-	return msg.Message, true
 }
 
 func telegramUserInfo(user *tg.User) map[string]any {

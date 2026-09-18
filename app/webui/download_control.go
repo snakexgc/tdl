@@ -29,7 +29,7 @@ func (s *Server) downloadControl() ports.DownloadControl {
 	}
 	return application.DownloadControl(s.downloadAccount(), map[string]ports.DownloadBackend{
 		localDownloadExecutor:      s.internalDownloadController(),
-		config.DownloaderModeAria2: aria2.NewController(config.Get(), s.opts.NamespaceKV, nil),
+		config.DownloaderModeAria2: aria2.NewController(config.From(s.opts.Context), s.opts.NamespaceKV, nil),
 	})
 }
 

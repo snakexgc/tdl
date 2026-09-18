@@ -22,8 +22,21 @@ func (r LinkRepository) Snapshot(ctx context.Context) (map[string][]byte, error)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if r.Engine == nil || r.Namespace == "" {
+	if r.Store == nil && r.Engine == nil {
 		return nil, errors.New("namespace storage is not configured")
+	}
+	if r.Engine == nil {
+		result := map[string][]byte{}
+		for _, collection := range []*Collection{Links(r.Store), Aria2(r.Store)} {
+			records, err := collection.Records(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for id, data := range records {
+				result[collection.prefix+id] = append([]byte(nil), data...)
+			}
+		}
+		return result, ctx.Err()
 	}
 	meta, err := r.Engine.MigrateTo()
 	if err != nil {
@@ -41,7 +54,7 @@ func (r LinkRepository) Snapshot(ctx context.Context) (map[string][]byte, error)
 // Remove atomically removes source metadata and its remote associations.
 // Active local execution must be stopped through the download control port first.
 func (r LinkRepository) Remove(ctx context.Context, id string) (int, error) {
-	if r.Store == nil {
+	if r.Store == nil && r.Engine == nil {
 		return 0, errors.New("namespace storage is not configured")
 	}
 	if id == "" || id == "index" || strings.ContainsAny(id, "/\\") {

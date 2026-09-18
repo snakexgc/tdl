@@ -47,3 +47,28 @@ func TestComponentRouteOwnershipPreservesAuthentication(t *testing.T) {
 		require.True(t, seen[path], path)
 	}
 }
+
+func TestComponentPagesDeclareTheirOwnLoaders(t *testing.T) {
+	catalog, err := Catalog()
+	require.NoError(t, err)
+	seen := map[string]bool{}
+	for _, definition := range catalog.Definitions() {
+		for _, page := range definition.Manifest.Pages {
+			require.False(t, seen[page.Path], "duplicate page: %s", page.Path)
+			seen[page.Path] = true
+			if page.View == "" {
+				continue
+			}
+			for _, path := range []string{"views/" + page.View + ".html", page.Module[1:], page.Style[1:]} {
+				_, err := fs.ReadFile(definition.Assets, path)
+				require.NoError(t, err, "%s must own %s", definition.Manifest.ID, path)
+			}
+			data, err := fs.ReadFile(definition.Assets, page.Module[1:])
+			require.NoError(t, err)
+			require.Contains(t, string(data), "export const page =")
+		}
+	}
+	for _, path := range []string{"/user", "/downloads", "/forwards", "/config", "/modules", "/kv", "/update", "/dashboard"} {
+		require.True(t, seen[path], path)
+	}
+}

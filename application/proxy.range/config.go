@@ -20,6 +20,11 @@ func Manifest() manifest.Manifest {
 		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
 	}
 	return manifest.Manifest{ID: ID, Title: "HTTP Range 代理", Provides: []manifest.Port{manifest.PortOf[http.Handler](ports.RangeHandlerName, 1, 0)}, Config: []manifest.ConfigField{
+		manifest.Text("address", "Listen address", "0.0.0.0", false, true),
+		manifest.Number("port", "Listen port", 22334, 1, 65535, true),
+		manifest.FormattedText("public_base_url", "Public download URL", "", "url", false, true),
+		manifest.Number("link_ttl_hours", "Download link lifetime (hours)", 24, 0, 876000, true),
+
 		field(clientWaitField, "等待账号连接超时（秒）", 30, 600),
 		field("persist_timeout_seconds", "传输记录保存超时（秒）", 5, 300),
 		field("task_cleanup_seconds", "过期任务清理间隔（秒）", 3600, 86400),
@@ -70,4 +75,10 @@ func (h *Handler) Reconfigure(ctx context.Context, view config.View) error {
 	}
 	commit()
 	return nil
+}
+
+// ValidateConfiguration validates offline edits without acquiring resources.
+func ValidateConfiguration(ctx context.Context, view config.View) error {
+	_, err := (&Handler{}).PrepareConfig(ctx, view)
+	return err
 }

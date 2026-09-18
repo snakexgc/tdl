@@ -150,7 +150,7 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 		return
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	user := ""
 	if cfg != nil {
 		user = cfg.WebUI.Username
@@ -182,7 +182,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	if cfg == nil || !credentialsOK(strings.TrimSpace(req.Username), req.Password, cfg.WebUI.Username, cfg.WebUI.Password) {
 		s.recordLoginFailure(r, time.Now())
 		writeError(w, http.StatusUnauthorized, errors.New("用户名或密码错误"))

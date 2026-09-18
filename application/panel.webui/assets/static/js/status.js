@@ -2,7 +2,6 @@
 import { state } from "./state.js";
 import { api } from "./api.js";
 import { navigate } from "./router.js";
-import { loadConfig } from "./config.js";
 
 export async function loadStatus() {
   try {
@@ -26,8 +25,7 @@ function renderCredentialWarning() {
 }
 
 export async function openCredentialSettings() {
-  navigate("config");
-  await loadConfig();
+  await navigate("config");
   requestAnimationFrame(() => {
     const input = document.querySelector('#config-form [data-path="webui.username"]');
     if (input) {

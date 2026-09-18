@@ -45,6 +45,7 @@ func TestLocalComponentProductionConfigurationSurvivesRestart(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
 	m := &Manager{localHost: host, componentStore: store}
+	require.NoError(t, m.initDirectory())
 	const intervalField = "poll_interval_ms"
 	require.NoError(t, m.SaveComponentConfiguration(ctx, local.ID, map[string]any{intervalField: 200}))
 	require.Error(t, m.SaveComponentConfiguration(ctx, local.ID, map[string]any{intervalField: -1}))

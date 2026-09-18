@@ -22,6 +22,7 @@ func TestProductionPolicyHostPreservesLastValidConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
 	manager := &Manager{policies: host, filter: filter, naming: naming}
+	require.NoError(t, manager.initDirectory())
 	opts := manager.watchOptions(cfg)
 	require.Same(t, filter, opts.Filter)
 	require.Same(t, naming, opts.Naming)
@@ -54,6 +55,7 @@ func TestProductionStoredPoliciesSurviveRestart(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
 	manager := &Manager{policies: host, filter: filter, naming: naming, componentStore: store}
+	require.NoError(t, manager.initDirectory())
 	input := ports.NamingInput{BaseDir: "/downloads", Data: ports.NamingData{FileName: "sample.mp4"}}
 	before, err := naming.Render(ctx, input)
 	require.NoError(t, err)

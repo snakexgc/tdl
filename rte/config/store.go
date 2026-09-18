@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +29,26 @@ type Document struct {
 type Store struct{ directory string }
 
 func NewStore(directory string) *Store { return &Store{directory: directory} }
+
+// Revision hashes the public document, including its immutable secret reference,
+// without exposing secret values. It supports optimistic control-plane edits.
+func (s *Store) Revision(ctx context.Context, id string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	path, err := s.path(id)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "absent", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+}
 
 func (s *Store) path(id string) (string, error) {
 	if s.directory == "" || !componentID.MatchString(id) {

@@ -33,9 +33,14 @@ func Manifest() manifest.Manifest {
 		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
 	}
 	return manifest.Manifest{
-		ID: ID, Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控"}},
+		ID: ID, Commands: Commands(), Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控", View: "forwards", Module: "/static/js/forwards.js", Style: "/static/css/forwards.css", Order: 50}},
 		Provides: []manifest.Port{manifest.PortOf[ports.ForwardTasks](ports.ForwardTasksName, 1, 0)},
 		Config: []manifest.ConfigField{
+			manifest.Choice("mode", "Forward mode", "default", []string{"default", "clone"}, true),
+			manifest.Text("target", "Destination", "", false, true),
+			manifest.Flag("silent", "Send silently", false, true),
+			manifest.Number("dedupe_ttl_seconds", "Deduplication lifetime (seconds)", 600, 0, 8640000, true),
+
 			field("poll_interval_ms", "队列扫描间隔（毫秒）", 2000, 100, 3600000),
 			field(retryBaseField, "首次重试间隔（秒）", 5, 1, 86400),
 			field("retry_max_seconds", "最大重试间隔（秒）", 300, 1, 86400),
@@ -90,4 +95,10 @@ func (p policy) backoff(attempts int) time.Duration {
 		return p.maximum
 	}
 	return delay
+}
+
+// ValidateConfiguration validates offline edits without acquiring resources.
+func ValidateConfiguration(ctx context.Context, view config.View) error {
+	_, err := (&service{}).PrepareConfig(ctx, view)
+	return err
 }

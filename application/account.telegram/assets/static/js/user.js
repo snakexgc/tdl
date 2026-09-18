@@ -590,3 +590,5 @@ function setLoginStatus(message, kind = "") {
   status.className = `notice ${kind}`.trim();
   status.textContent = message || "";
 }
+
+export const page = { init: initUser, load: () => Promise.all([loadUser(), loadLoginStatus()]) };

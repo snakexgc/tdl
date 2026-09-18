@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"slices"
+	"strings"
 
 	"github.com/snakexgc/tdl/interfaces/manifest"
 )
@@ -55,7 +58,37 @@ func validate(f manifest.ConfigField, raw []byte) error {
 	switch f.Type {
 	case manifest.String:
 		var value string
-		return json.Unmarshal(raw, &value)
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if len(f.Choices) > 0 && !slices.Contains(f.Choices, value) {
+			return fmt.Errorf("must be one of %s", strings.Join(f.Choices, ", "))
+		}
+		switch f.Format {
+		case "":
+		case "nonempty":
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("must not be empty")
+			}
+		case "url", "proxy":
+			if value == "" {
+				return nil
+			}
+			u, err := url.Parse(value)
+			if err != nil || u.Hostname() == "" || strings.ContainsAny(value, "\r\n\t ") {
+				return fmt.Errorf("invalid %s", f.Format)
+			}
+			allowed := []string{"http", "https"}
+			if f.Format == "proxy" {
+				allowed = append(allowed, "socks5", "socks5h")
+			}
+			if !slices.Contains(allowed, u.Scheme) {
+				return fmt.Errorf("unsupported %s scheme", f.Format)
+			}
+		default:
+			return fmt.Errorf("unsupported string format")
+		}
+		return nil
 	case manifest.Bool:
 		var value bool
 		return json.Unmarshal(raw, &value)
@@ -111,4 +144,13 @@ func Decode(schema []manifest.ConfigField, r io.Reader) (View, error) {
 		return View{}, fmt.Errorf("expected one JSON object")
 	}
 	return New(schema, values)
+}
+
+func (v View) EqualFields(other View, names ...string) bool {
+	for _, name := range names {
+		if !bytes.Equal(v.values[name], other.values[name]) {
+			return false
+		}
+	}
+	return true
 }

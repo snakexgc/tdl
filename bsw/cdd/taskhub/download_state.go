@@ -12,26 +12,26 @@ import (
 func mergeAria2State(previous, updates map[string]json.RawMessage) error {
 	var oldStatus, status string
 	var revision uint64
-	_ = json.Unmarshal(previous["status"], &oldStatus)
-	_ = json.Unmarshal(previous["revision"], &revision)
-	_ = json.Unmarshal(updates["status"], &status)
+	_ = json.Unmarshal(previous[fieldStatus], &oldStatus)
+	_ = json.Unmarshal(previous[fieldRevision], &revision)
+	_ = json.Unmarshal(updates[fieldStatus], &status)
 	if status == "" {
 		// AddURI bookkeeping refreshes metadata, not an observed remote state.
-		for _, field := range []string{"status", "state", "total", "completed", "error"} {
+		for _, field := range []string{fieldStatus, fieldState, fieldTotal, fieldCompleted, fieldError} {
 			delete(updates, field)
 		}
 		status = oldStatus
 		if status == "" {
 			status = "waiting"
-			updates["status"], _ = json.Marshal(status)
+			updates[fieldStatus], _ = json.Marshal(status)
 		}
 	}
 	next := types.NormalizeDownloadState(status)
 	if !types.DownloadTransition(types.NormalizeDownloadState(oldStatus), next) {
 		return fmt.Errorf("invalid aria2 state transition %q to %q", oldStatus, status)
 	}
-	updates["state"], _ = json.Marshal(next)
-	updates["revision"], _ = json.Marshal(revision + 1)
+	updates[fieldState], _ = json.Marshal(next)
+	updates[fieldRevision], _ = json.Marshal(revision + 1)
 	return nil
 }
 
@@ -58,8 +58,8 @@ func (s *Aria2Repository) Report(ctx context.Context, observation types.Aria2Tas
 			raw = map[string]json.RawMessage{}
 		}
 		for field, value := range map[string]any{
-			"status": observation.Status, "state": types.NormalizeDownloadState(observation.Status),
-			"total": observation.Total, "completed": observation.Completed, "error": observation.Error, "revision": revision + 1,
+			fieldStatus: observation.Status, fieldState: types.NormalizeDownloadState(observation.Status),
+			fieldTotal: observation.Total, fieldCompleted: observation.Completed, fieldError: observation.Error, fieldRevision: revision + 1,
 		} {
 			raw[field], _ = json.Marshal(value)
 		}
@@ -72,3 +72,14 @@ func (s *Aria2Repository) Report(ctx context.Context, observation types.Aria2Tas
 	})
 	return changed && err == nil, err
 }
+
+const fieldCompleted = "completed"
+
+const fieldError = "error"
+
+const (
+	fieldStatus   = "status"
+	fieldState    = "state"
+	fieldTotal    = "total"
+	fieldRevision = "revision"
+)

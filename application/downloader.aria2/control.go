@@ -36,6 +36,8 @@ type Controller struct {
 }
 
 type Options struct {
+	Observations  ports.Aria2Observations
+	LinkTTL       time.Duration
 	Account       types.AccountID
 	Client        ports.Aria2Client
 	Store         ports.Aria2Repository

@@ -395,3 +395,5 @@ function updateForwardSelectionState() {
     if (button) button.disabled = count === 0;
   });
 }
+
+export const page = { init: initForwards, load: loadForwards, stop: stopForwardPolling };

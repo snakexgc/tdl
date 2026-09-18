@@ -156,3 +156,5 @@ function setModuleStatus(message, kind = "") {
   status.className = `notice ${kind}`.trim();
   status.textContent = message || "";
 }
+
+export const page = { init: initModules, load: loadModules };

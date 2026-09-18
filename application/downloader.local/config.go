@@ -69,3 +69,9 @@ func (d *Worker) pauseTimeout() time.Duration {
 	}
 	return internalDownloadShutdownPauseTimeout
 }
+
+// ValidateConfiguration validates offline edits without acquiring resources.
+func ValidateConfiguration(ctx context.Context, view config.View) error {
+	_, err := (&service{}).PrepareConfig(ctx, view)
+	return err
+}

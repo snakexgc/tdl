@@ -21,7 +21,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"config": value})
+		writeJSON(w, http.StatusOK, map[string]any{"config": value, "component_managed": s.componentConfigurationOwned()})
 	case http.MethodPatch:
 		var req struct {
 			Values map[string]json.RawMessage `json:"values"`
@@ -36,9 +36,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":         true,
-			"config":     publicConfig(next),
-			fieldMessage: "配置已保存。模块开关会立即生效；监听地址、命名空间、Bot Token 等基础连接参数建议重启后再使用。",
+			"ok":                true,
+			"config":            publicConfig(next),
+			"component_managed": s.componentConfigurationOwned(),
+			fieldMessage:        "配置已保存。模块开关会立即生效；监听地址、命名空间、Bot Token 等基础连接参数建议重启后再使用。",
 		})
 	default:
 		methodNotAllowed(w, "GET, PATCH")
@@ -158,4 +159,12 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 func publicConfig(cfg *config.Config) *config.Config { return panel.PublicConfig(cfg) }
 func isBlankSensitivePatch(path string, raw json.RawMessage) bool {
 	return panel.IsBlankSensitivePatch(path, raw)
+}
+
+func (s *Server) componentConfigurationOwned() bool {
+	if s.opts.ComponentManager == nil {
+		return false
+	}
+	_, enabled := s.opts.ComponentManager.ComponentConfigurations()
+	return enabled
 }

@@ -203,7 +203,7 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 						zap.Error(err))
 					color.Red("❌ Submission failed: msg %d (%s): %v", f.file.msg.ID, f.file.media.Name, err)
 					target := "download backend"
-					if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
+					if config.EffectiveDownloaderMode(config.From(ctx)) == config.DownloaderModeInternal {
 						target = "内部下载队列"
 					} else if w.opts.DownloadSubmitter != nil {
 						target = w.opts.DownloadSubmitter.Name()
@@ -318,11 +318,11 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 		route = &current
 		if len(current.Executors) > 0 {
 			route, localPaths = &current, false
-			root = w.routedRemoteRoot()
+			root = w.routedRemoteRoot(ctx)
 			if slices.Contains(current.Executors, localExecutorName) {
 				root = current.LocalRoot
 			}
-		} else if cfg := config.Get(); cfg != nil {
+		} else if cfg := config.From(ctx); cfg != nil {
 			localPaths = config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal
 			root = cleanTargetRoot(cfg.Aria2.Dir)
 			if localPaths {
@@ -367,7 +367,7 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 }
 
 func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) error {
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	var route ports.DownloadRoute
 	if prepared.route != nil {
 		route = *prepared.route

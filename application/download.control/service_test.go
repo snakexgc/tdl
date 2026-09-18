@@ -48,7 +48,7 @@ func TestSafeBulkSelectionAndDeduplication(t *testing.T) {
 	_, err := s.Control(context.Background(), types.DownloadAction{Account: "a", Executor: localExecutor, Action: "delete_all"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"done", "failed"}, b.ids)
-	_, err = s.Control(context.Background(), types.DownloadAction{Account: "a", Executor: localExecutor, Action: "start", IDs: []string{" paused ", statusPaused, ""}})
+	_, err = s.Control(context.Background(), types.DownloadAction{Account: "a", Executor: localExecutor, Action: actionStart, IDs: []string{" paused ", statusPaused, ""}})
 	require.NoError(t, err)
 	require.Equal(t, actionResume, b.action)
 	require.Equal(t, []string{statusPaused}, b.ids)

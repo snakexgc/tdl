@@ -39,8 +39,8 @@ func NotificationHost(ctx context.Context, account types.AccountID, transport po
 }
 
 // BotHost owns console policy and notifications together, with the real transport.
-func BotHost(ctx context.Context, account types.AccountID, transport ports.NotificationTransport, users []int64, store *config.Store) (*rte.Runtime, ports.Console, ports.Notifications, error) {
-	host, err := botHost(ctx, account, transport, users, store, true)
+func BotHost(ctx context.Context, account types.AccountID, transport ports.NotificationTransport, users []int64, store *config.Store, extra ...ports.ConsoleContribution) (*rte.Runtime, ports.Console, ports.Notifications, error) {
+	host, err := botHost(ctx, account, transport, users, store, true, extra...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -49,19 +49,25 @@ func BotHost(ctx context.Context, account types.AccountID, transport ports.Notif
 		_ = host.Stop(context.Background())
 		return nil, nil, nil, err
 	}
-	notifications, err := host.Resolve(ports.NotificationsName)
+	value, err := host.Resolve(ports.NotificationsName)
 	if err != nil {
-		_ = host.Stop(context.Background())
-		return nil, nil, nil, err
+		return host, console.(ports.Console), nil, nil
 	}
-	return host, console.(ports.Console), notifications.(ports.Notifications), nil
+	return host, console.(ports.Console), value.(ports.Notifications), nil
 }
 
-func botHost(ctx context.Context, account types.AccountID, transport ports.NotificationTransport, recipients []int64, store *config.Store, withConsole bool) (*rte.Runtime, error) {
+func botHost(ctx context.Context, account types.AccountID, transport ports.NotificationTransport, recipients []int64, store *config.Store, withConsole bool, extra ...ports.ConsoleContribution) (*rte.Runtime, error) {
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	registry, err := Registry()
+	commands, err := ConsoleCommands(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	for _, contribution := range extra {
+		commands = append(commands, contribution.Commands...)
+	}
+	registry, err := Registry(commands)
 	if err != nil {
 		return nil, err
 	}
@@ -85,10 +91,10 @@ func botHost(ctx context.Context, account types.AccountID, transport ports.Notif
 			if err != nil {
 				return nil, err
 			}
-			if !document.Enabled {
+			if !document.Enabled && id == consolebot.ID {
 				return nil, fmt.Errorf("required bot component %s is disabled", id)
 			}
-			values[id] = document.Values
+			values[id], enabled[id] = document.Values, document.Enabled
 		}
 	}
 	host, err := registry.Build(account, enabled, values)
@@ -96,7 +102,7 @@ func botHost(ctx context.Context, account types.AccountID, transport ports.Notif
 		return nil, err
 	}
 	for _, status := range host.Start(ctx) {
-		if status.State != rte.Running {
+		if status.State != rte.Running && (!withConsole || status.ID == consolebot.ID) {
 			_ = host.Stop(context.Background())
 			return nil, fmt.Errorf("%s: %s", status.ID, status.Detail)
 		}

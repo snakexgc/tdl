@@ -8,9 +8,11 @@ import (
 
 	"github.com/snakexgc/tdl/application"
 	component "github.com/snakexgc/tdl/application/downloader.aria2"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
 	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
@@ -29,8 +31,16 @@ func (m *Manager) SetComponentStore(store *rteconfig.Store) {
 	m.store = store
 }
 
-func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Manager {
+func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger, engines ...kv.Storage) *Manager {
 	opts := componentOptions(cfg, kvd)
+	repository := taskhub.LinkRepository{Store: kvd, Namespace: string(opts.Account)}
+	if len(engines) > 0 {
+		repository.Engine = engines[0]
+	}
+	opts.Observations = taskhub.Aria2Observations{Links: repository}
+	if cfg != nil {
+		opts.LinkTTL = downloadLinkTTL(cfg.HTTP)
+	}
 	return &Manager{Manager: component.NewManager(opts, logger), account: opts.Account}
 }
 

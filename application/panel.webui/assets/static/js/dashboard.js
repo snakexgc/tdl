@@ -385,3 +385,5 @@ function setDashboardStatus(message, kind = "") {
   status.className = `notice ${kind}`.trim();
   status.textContent = message || "";
 }
+
+export const page = { init: initDashboard, load: loadDashboard, stop: stopDashboardPolling };

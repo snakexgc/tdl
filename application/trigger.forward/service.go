@@ -19,11 +19,15 @@ func Register(registry *rte.Registry, handler ports.ForwardIntentHandler, capaci
 	if handler == nil || capacity < 1 {
 		return errors.New("forward intents require a handler and positive capacity")
 	}
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "转发触发意图",
+	return registry.Register(Manifest(), func() rte.Component { return &service{handler: handler, capacity: capacity} })
+}
+
+func Manifest() manifest.Manifest {
+	return manifest.Manifest{
+		ID: ID, Config: []manifest.ConfigField{manifest.List("listen", "Source chats", true), manifest.Flag("listen_comments", "Listen to comments", true, true)}, Title: "转发触发意图",
 		Provides:  []manifest.Port{manifest.PortOf[ports.ForwardIntents](ports.ForwardIntentsName, 1, 0)},
 		Publishes: []string{types.ForwardRequested}, Subscribes: []string{types.ForwardRequested},
-	}, func() rte.Component { return &service{handler: handler, capacity: capacity} })
+	}
 }
 
 type service struct {

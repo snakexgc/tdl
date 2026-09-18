@@ -26,7 +26,7 @@ func TestMigrationPreviewExportAndRebuild(t *testing.T) {
 	preview, err := json.Marshal(plan)
 	require.NoError(t, err)
 	require.NotContains(t, string(preview), "secret-application-value")
-	require.Len(t, plan.Components, 8)
+	require.Len(t, plan.Components, 17)
 	target := filepath.Join(t.TempDir(), "components")
 	require.NoError(t, plan.Write(ctx, target))
 	public, err := os.ReadFile(filepath.Join(target, "swc-account.telegram.json"))

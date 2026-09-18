@@ -39,7 +39,7 @@ func TestPermissionsAndLifecycle(t *testing.T) {
 func TestCommandCatalog(t *testing.T) {
 	service := &Service{}
 	menu := service.Commands()
-	require.Len(t, menu, 18)
+	require.Len(t, menu, 1)
 	seen := map[string]bool{}
 	for _, command := range menu {
 		require.False(t, seen[command.Name], command.Name)
@@ -48,10 +48,7 @@ func TestCommandCatalog(t *testing.T) {
 		require.True(t, service.PrivateCommand(command.Name), command.Name)
 	}
 	menu[0].Name = "modified"
-	require.Equal(t, "start", service.Commands()[0].Name)
-	for _, alias := range []string{"downloads_help", "aria2_help", "internal", "internal_start_all"} {
-		require.True(t, service.PrivateCommand(alias), alias)
-	}
+	require.Equal(t, "reboot", service.Commands()[0].Name)
 	require.False(t, service.PrivateCommand("unknown"))
 	require.False(t, service.PrivateCommand(""))
 }

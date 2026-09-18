@@ -1,32 +1,22 @@
-// Package application is the only component integration point. Explicit
-// registration avoids process-wide init state and permits isolated runtimes.
+// Package application composes components explicitly, without init registries.
 package application
 
 import (
-	accounttelegram "github.com/snakexgc/tdl/application/account.telegram"
-	consolebot "github.com/snakexgc/tdl/application/console.bot"
-	filterrules "github.com/snakexgc/tdl/application/filter.rules"
-	namingrules "github.com/snakexgc/tdl/application/naming.rules"
-	notifytelegram "github.com/snakexgc/tdl/application/notify.telegram"
-	messagelink "github.com/snakexgc/tdl/application/trigger.messagelink"
-	reaction "github.com/snakexgc/tdl/application/trigger.reaction"
-	updater "github.com/snakexgc/tdl/application/update.self"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 )
 
-func Registry() (*rte.Registry, error) {
+func Registry(commandSets ...[]types.ConsoleCommand) (*rte.Registry, error) {
+	definitions, err := definitions(commandSets...)
+	if err != nil {
+		return nil, err
+	}
 	registry := rte.NewRegistry()
-	for _, register := range []func(*rte.Registry) error{
-		accounttelegram.Register,
-		consolebot.Register,
-		filterrules.Register,
-		namingrules.Register,
-		notifytelegram.Register,
-		messagelink.Register,
-		reaction.Register,
-		updater.Register,
-	} {
-		if err := register(registry); err != nil {
+	for _, definition := range definitions {
+		if definition.Factory == nil {
+			continue
+		}
+		if err := registry.Register(definition.Manifest, definition.Factory); err != nil {
 			return nil, err
 		}
 	}

@@ -9,12 +9,17 @@ import (
 // Configuration describes a running component for a schema-driven HMI.
 // Sensitive values are omitted; callers never receive references to live data.
 type Configuration struct {
-	ID     string                 `json:"id"`
-	Title  string                 `json:"title"`
-	State  State                  `json:"state"`
-	Fields []manifest.ConfigField `json:"fields"`
-	Values map[string]any         `json:"values"`
-	Pages  []manifest.Page        `json:"pages"`
+	Revision       string                 `json:"revision,omitempty"`
+	PendingRestart bool                   `json:"pending_restart,omitempty"`
+	Scope          Scope                  `json:"scope,omitempty"`
+	Enabled        bool                   `json:"enabled"`
+	Error          string                 `json:"error,omitempty"`
+	ID             string                 `json:"id"`
+	Title          string                 `json:"title"`
+	State          State                  `json:"state"`
+	Fields         []manifest.ConfigField `json:"fields"`
+	Values         map[string]any         `json:"values"`
+	Pages          []manifest.Page        `json:"pages"`
 }
 
 func (r *Runtime) Configurations() []Configuration {
@@ -24,7 +29,7 @@ func (r *Runtime) Configurations() []Configuration {
 	for _, id := range r.order {
 		item := r.instances[id]
 		m := item.registration.Manifest
-		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
+		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Enabled: true, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
 		entry.Pages = append([]manifest.Page{}, m.Pages...)
 		for _, field := range m.Config {
 			if field.Secret {

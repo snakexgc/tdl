@@ -87,6 +87,7 @@ func DefaultConfig() *Config {
 			Password: DefaultWebUIPassword,
 		},
 		Modules: ModulesConfig{
+			WebUI:   true,
 			Bot:     true,
 			Watch:   true,
 			HTTP:    true,

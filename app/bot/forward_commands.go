@@ -25,7 +25,7 @@ func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, que
 		return true, sendMessage(ctx, msg.Chat.ID, forwardUsage())
 	}
 	if target == "" {
-		target = config.Get().Forward.Target
+		target = botConfiguration(ctx).Forward.Target
 	}
 
 	sourceText := forwardSourceText(msg)
@@ -44,7 +44,7 @@ func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, que
 		return true, sendMessage(ctx, msg.Chat.ID, "转发失败：Telegram 用户数据未准备好。")
 	}
 
-	cfg := config.Get()
+	cfg := botConfiguration(ctx)
 	ids, err := queue.EnqueueLinks(ctx, normalized, target, "", config.EffectiveForwardMode(cfg), cfg.Forward.Silent)
 	if err != nil {
 		return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("加入转发队列失败：%v", err))

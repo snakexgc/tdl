@@ -365,3 +365,5 @@ function setKVStatus(message, kind = "") {
   status.className = `notice ${kind}`.trim();
   status.textContent = message || "";
 }
+
+export const page = { init: initKV, load: loadKV };

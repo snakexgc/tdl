@@ -97,6 +97,9 @@ func PublicConfig(cfg *types.RuntimeConfig) *types.RuntimeConfig {
 		next = &types.RuntimeConfig{}
 	}
 	next.Bot.Token = ""
+	next.Bot.Proxy = ""
+	next.Proxy = ""
+	next.Aria2.RPCURL = ""
 	next.Aria2.Secret = ""
 	next.WebUI.Password = ""
 	next.ProxyPassword = ""
@@ -114,7 +117,7 @@ func isBlankWebUIUsernamePatch(path string, raw json.RawMessage) bool {
 
 func IsBlankSensitivePatch(path string, raw json.RawMessage) bool {
 	switch strings.ToLower(strings.TrimSpace(path)) {
-	case "bot.token", "aria2.secret", "webui.password", "proxy_password", "telegram.api_hash":
+	case "bot.token", "bot.proxy", "proxy", "aria2.rpc_url", "aria2.secret", "webui.password", "proxy_password", "telegram.api_hash":
 	default:
 		return false
 	}
@@ -221,10 +224,6 @@ func mapKeyValue(typ reflect.Type, raw string) (reflect.Value, error) {
 }
 
 func componentPolicyPath(path string) bool {
-	switch strings.ToLower(strings.Join(splitConfigPath(path), ".")) {
-	case "include", "exclude", "file_size_min_mb", "file_size_max_mb", "filename", "download_dir", "filename_max_length", "filenamemax", "trigger_reactions", "forward.trigger_reactions", "telegram", "telegram.api_id", "telegram.api_hash", "telegram.builtin_preset", "telegram.use_builtin":
-		return true
-	default:
-		return false
-	}
+	normalized := strings.ToLower(strings.Join(splitConfigPath(path), "."))
+	return normalized != "debug" && normalized != "namespace"
 }

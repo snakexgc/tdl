@@ -89,3 +89,5 @@ async function applyUpdate() {
     status.textContent = error.message;
   }
 }
+
+export const page = { init: initUpdate, load: loadUpdateStatus };

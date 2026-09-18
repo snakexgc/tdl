@@ -20,19 +20,30 @@ const (
 	presetBuiltin = "builtin"
 )
 
-func Register(registry *rte.Registry) error {
+func Manifest() manifest.Manifest {
 	zero := int64(0)
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "Telegram 账号",
-		Pages:    []manifest.Page{{Path: "/user", Title: "用户管理"}},
+	return manifest.Manifest{
+		ID: ID, Commands: Commands(), Title: "Telegram 账号",
+		Pages:    []manifest.Page{{Path: "/user", Title: "用户管理", View: "user", Module: "/static/js/user.js", Style: "/static/css/user.css", Order: 20}},
 		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0)},
 		Config: []manifest.ConfigField{
+			manifest.FormattedText("proxy", "Telegram proxy", "", "proxy", true, true),
+			manifest.Text("ntp", "NTP server", "", false, true),
+			manifest.Number("file_limit", "Concurrent files", 1, 1, 10000, false),
+			manifest.Number("dc_pool_size", "Transfers per DC", 8, 1, 10000, false),
+			manifest.Number("delay_seconds", "Transfer delay (seconds)", 0, 0, 3600, true),
+			manifest.Number("reconnect_timeout_seconds", "Reconnect timeout (seconds)", 3, 0, 86400, true),
+
 			{Name: fieldAPIID, Title: "API ID", Type: manifest.Int, Default: 0, Min: &zero},
 			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true},
 			{Name: "builtin_preset", Title: "内置预设", Type: manifest.String, Default: ""},
 			{Name: "use_builtin", Title: "使用内置凭据", Type: manifest.Bool, Default: false},
 		},
-	}, func() rte.Component { return &Credentials{} })
+	}
+}
+
+func Register(registry *rte.Registry) error {
+	return registry.Register(Manifest(), func() rte.Component { return &Credentials{} })
 }
 
 type Credentials struct {

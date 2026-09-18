@@ -19,18 +19,24 @@ const (
 	allowedField = "allowed_users"
 )
 
-func Register(registry *rte.Registry) error {
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "Bot 控制台",
+func Manifest() manifest.Manifest {
+	return manifest.Manifest{
+		ID: ID, Commands: Commands(), Title: "Bot 控制台",
 		Provides: []manifest.Port{manifest.PortOf[ports.Console](ports.ConsoleName, 1, 0)},
-		Config:   []manifest.ConfigField{{Name: allowedField, Title: "允许的用户 ID", Type: manifest.Strings, Default: []string{}}},
-	}, func() rte.Component { return &Service{} })
+		Config:   []manifest.ConfigField{manifest.Text("token", "Bot token", "", true, true), manifest.FormattedText("proxy", "Bot proxy", "", "proxy", true, true), {Name: allowedField, Title: "允许的用户 ID", Type: manifest.Strings, Default: []string{}}},
+	}
+}
+
+func Register(registry *rte.Registry) error { return RegisterCommands(registry, Commands()) }
+func RegisterCommands(registry *rte.Registry, commands []types.ConsoleCommand) error {
+	return registry.Register(Manifest(), func() rte.Component { return &Service{commands: cloneCommands(commands)} })
 }
 
 type Service struct {
-	account types.AccountID
-	users   atomic.Pointer[map[int64]bool]
-	running atomic.Bool
+	commands []types.ConsoleCommand
+	account  types.AccountID
+	users    atomic.Pointer[map[int64]bool]
+	running  atomic.Bool
 }
 
 func (s *Service) Init(ctx context.Context, k rte.Kernel) error {
@@ -77,5 +83,24 @@ func (s *Service) Allowed(account types.AccountID, user int64) bool {
 	users := s.users.Load()
 	return users != nil && (*users)[user]
 }
-func (*Service) Commands() []types.ConsoleCommand { return commands() }
-func (*Service) PrivateCommand(name string) bool  { return privateCommand(name) }
+
+func (s *Service) Commands() []types.ConsoleCommand {
+	if s.commands == nil {
+		return cloneCommands(Commands())
+	}
+	return cloneCommands(s.commands)
+}
+
+func (s *Service) PrivateCommand(name string) bool {
+	for _, command := range s.Commands() {
+		if command.Name == name {
+			return true
+		}
+		for _, alias := range command.Aliases {
+			if alias == name {
+				return true
+			}
+		}
+	}
+	return false
+}

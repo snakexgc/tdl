@@ -30,13 +30,19 @@ func Register(registry *rte.Registry, handler ports.DownloadIntentHandler, capac
 	if resultHandler != nil {
 		provides = append(provides, manifest.PortOf[ports.DownloadRequests](ports.DownloadRequestsName, 1, 0))
 	}
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "下载触发意图",
-		Provides:  provides,
-		Publishes: []string{types.DownloadRequested}, Subscribes: []string{types.DownloadRequested},
-	}, func() rte.Component {
+	m := Manifest()
+	m.Provides = provides
+	return registry.Register(m, func() rte.Component {
 		return &service{handler: handler, resultHandler: resultHandler, capacity: capacity, pending: map[string]chan intentResponse{}}
 	})
+}
+
+func Manifest() manifest.Manifest {
+	return manifest.Manifest{
+		ID: ID, Title: "下载触发意图",
+		Provides:  []manifest.Port{manifest.PortOf[ports.DownloadIntents](ports.DownloadIntentsName, 1, 0)},
+		Publishes: []string{types.DownloadRequested}, Subscribes: []string{types.DownloadRequested},
+	}
 }
 
 type service struct {

@@ -106,7 +106,7 @@ func (s *Service) Control(ctx context.Context, request types.DownloadAction) (ty
 	action := strings.ToLower(strings.TrimSpace(request.Action))
 	all := strings.HasSuffix(action, "_all")
 	action = strings.TrimSuffix(action, "_all")
-	if action == "start" {
+	if action == actionStart {
 		action = actionResume
 	}
 	if action != "pause" && action != actionResume && action != actionDelete {

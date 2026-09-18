@@ -24,8 +24,8 @@ type preparedExecutor struct {
 	submit func(context.Context, types.DownloadSubmission) (types.DownloadResult, error)
 }
 
-func (w *Watcher) routedRemoteRoot() string {
-	if cfg := config.Get(); cfg != nil {
+func (w *Watcher) routedRemoteRoot(ctx context.Context) string {
+	if cfg := config.From(ctx); cfg != nil {
 		return cleanTargetRoot(cfg.Aria2.Dir)
 	}
 	return w.runtime.outputRoot
@@ -53,7 +53,7 @@ func (w *Watcher) submitRouted(ctx context.Context, prepared preparedFileTask, t
 					return types.DownloadResult{}, ports.ErrDownloadNotAccepted
 				}
 				data := w.downloadDirData(ctx, file)
-				remote, err := w.renderTarget(ctx, w.routedRemoteRoot(), data.ID, tutil.GetInputPeerID(file.peer), data.Name, data.Time, file.msg, file.triggerMsg, file.media)
+				remote, err := w.renderTarget(ctx, w.routedRemoteRoot(ctx), data.ID, tutil.GetInputPeerID(file.peer), data.Name, data.Time, file.msg, file.triggerMsg, file.media)
 				if err != nil {
 					return types.DownloadResult{}, fmt.Errorf("remote target: %v: %w", err, ports.ErrDownloadNotAccepted)
 				}

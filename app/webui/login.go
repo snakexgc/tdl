@@ -108,7 +108,7 @@ func (m *webLoginManager) currentNamespace() string {
 }
 
 func (m *webLoginManager) sessionOptions(namespace string, kvd storage.Storage) login.SessionOptions {
-	cfg := config.Get()
+	cfg := config.From(m.opts.Context)
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}

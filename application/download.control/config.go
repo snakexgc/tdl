@@ -20,9 +20,11 @@ const (
 
 func Manifest() manifest.Manifest {
 	return manifest.Manifest{
-		ID: ID, Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理"}}, Title: "下载任务控制",
+		ID: ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 40}}, Title: "下载任务控制",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 1, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0)},
 		Config: []manifest.ConfigField{
+			manifest.Choice("mode", "Default download mode", "aria2", []string{"aria2", "local", "internal"}, true),
+
 			{Name: executorsField, Title: "执行器优先级（local、aria2、http；空列表沿用旧模式）", Type: manifest.Strings, Default: []string{}},
 			{Name: "local_root", Title: "显式本地执行器的绝对根目录", Type: manifest.String, Default: ""},
 		},
@@ -81,4 +83,10 @@ func (s *Service) Route(ctx context.Context, account types.AccountID) (ports.Dow
 		return ports.DownloadRoute{Executors: slices.Clone(route.Executors), LocalRoot: route.LocalRoot}, nil
 	}
 	return ports.DownloadRoute{}, nil
+}
+
+// ValidateConfiguration validates offline edits without acquiring resources.
+func ValidateConfiguration(ctx context.Context, view config.View) error {
+	_, err := (&Service{}).PrepareConfig(ctx, view)
+	return err
 }

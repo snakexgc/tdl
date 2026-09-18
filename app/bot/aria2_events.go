@@ -90,12 +90,12 @@ func runAria2EventListener(ctx context.Context, notifier *botNotifier, factory a
 			return
 		}
 
-		if !aria2DownloaderEnabled() {
+		if !aria2DownloaderEnabled(ctx) {
 			waitAria2EventReconnect(ctx)
 			continue
 		}
 
-		wsURL, err := aria2WebSocketURL(config.Get().Aria2.RPCURL)
+		wsURL, err := aria2WebSocketURL(config.From(ctx).Aria2.RPCURL)
 		if err == nil {
 			_ = listenAria2Events(ctx, wsURL, notifier, factory, tracker)
 		}
@@ -164,11 +164,11 @@ func runAria2EventHandler(ctx context.Context, method, gid string, handler func(
 }
 
 func handleAria2Event(ctx context.Context, notifier *botNotifier, factory aria2ControllerFactory, tracker *aria2ProgressTracker, method, gid string) {
-	if !aria2DownloaderEnabled() {
+	if !aria2DownloaderEnabled(ctx) {
 		return
 	}
 
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	if cfg == nil {
 		return
 	}

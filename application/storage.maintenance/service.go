@@ -20,7 +20,11 @@ func Register(registry *rte.Registry, repository ports.CleanupRepository) error 
 	if repository == nil {
 		return errors.New("cleanup repository is required")
 	}
-	return registry.Register(manifest.Manifest{ID: ID, Title: "存储维护", Provides: []manifest.Port{manifest.PortOf[ports.KVMaintenance](ports.KVMaintenanceName, 1, 0)}}, func() rte.Component { return &Service{repository: repository} })
+	return registry.Register(Manifest(), func() rte.Component { return &Service{repository: repository} })
+}
+
+func Manifest() manifest.Manifest {
+	return manifest.Manifest{ID: ID, Commands: Commands(), Title: "存储维护", Provides: []manifest.Port{manifest.PortOf[ports.KVMaintenance](ports.KVMaintenanceName, 1, 0)}}
 }
 
 type Service struct {

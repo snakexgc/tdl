@@ -36,22 +36,29 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 	if err != nil {
 		return types.LinkCatalogSnapshot{}, err
 	}
-	records, recordsByTask, err := s.parseAria2Records(pairs)
+	_, recordsByTask, err := s.parseAria2Records(pairs)
 	if err != nil {
 		return types.LinkCatalogSnapshot{}, err
 	}
 
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 	statusByGID := map[string]aria2Status{}
 	var statusErrText string
-	if downloaderMode == config.DownloaderModeAria2 {
+	if downloaderMode == config.DownloaderModeAria2 && strings.TrimSpace(cfg.Aria2.RPCURL) != "" {
 		var statusErr error
-		statusByGID, statusErr = fetchAria2Statuses(ctx, cfg.Aria2)
+		statusByGID, statusErr = s.aria2Observer().Observe(ctx)
 		if statusErr != nil {
 			statusErrText = statusErr.Error()
 		} else {
-			s.discoverAria2RecordsFromDownloadLinks(ctx, pairs, records, recordsByTask, statusByGID, cfg)
+			pairs, err = a.repository.Snapshot(ctx)
+			if err != nil {
+				return types.LinkCatalogSnapshot{}, err
+			}
+			_, recordsByTask, err = s.parseAria2Records(pairs)
+			if err != nil {
+				return types.LinkCatalogSnapshot{}, err
+			}
 		}
 	}
 	internalByTask := map[string][]watch.InternalDownloadInfo{}
@@ -137,7 +144,7 @@ func (a catalogAdapter) Submission(ctx context.Context) (ports.LinkSubmissionRes
 	if err != nil {
 		return ports.LinkSubmissionResources{}, err
 	}
-	cfg := *config.Get()
+	cfg := *config.From(a.server.opts.Context)
 	cfg.Namespace = a.server.namespace()
 	records := make(map[string][]byte)
 	for key, data := range pairs {

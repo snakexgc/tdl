@@ -17,6 +17,7 @@ import (
 // Manager owns aria2 connectivity, recovery and monitoring. It is deliberately
 // independent from the Telegram watcher and HTTP server lifecycles.
 type Manager struct {
+	observer      *Observer
 	configuration atomic.Pointer[governancePolicy]
 	statusChanged chan struct{}
 	retryChanged  chan struct{}
@@ -40,6 +41,9 @@ func NewManager(opts Options, logger *zap.Logger) *Manager {
 		regulator: NewTelegramErrorRegulator(opts.Client, opts.Store, opts.PublicBaseURL, logger),
 		monitor:   NewZeroSpeedMonitor(opts.Client, opts.Store, opts.PublicBaseURL, logger),
 		limit:     opts.Limit, baseURL: opts.PublicBaseURL, logger: logger,
+	}
+	if opts.Observations != nil {
+		m.observer = &Observer{Client: opts.Client, Repository: opts.Observations, PublicBaseURL: opts.PublicBaseURL, TTL: opts.LinkTTL}
 	}
 	m.monitor.configuration = func() zeroSpeedMonitorConfig { return m.policy().monitor }
 	m.regulator.configuration = func() telegramErrorRegulatorConfig { return m.policy().regulator }
@@ -155,4 +159,11 @@ func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duratio
 		}
 		delay = min(delay*2, m.policy().maximum)
 	}
+}
+
+func (m *Manager) syncStates(ctx context.Context) error {
+	if m.observer != nil {
+		return m.observer.Sync(ctx)
+	}
+	return m.controller.SyncStates(ctx)
 }

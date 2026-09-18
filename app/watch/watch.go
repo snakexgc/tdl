@@ -56,7 +56,7 @@ type Watcher struct {
 }
 
 func Run(ctx context.Context, opts Options) error {
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	account := types.AccountID(cfg.Namespace)
 	if account == "" {
 		account = types.DefaultAccount
@@ -245,7 +245,7 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime) (rerr error) {
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
 
 	o := pkgtclient.Options{
@@ -367,7 +367,7 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 			}
 			var port ports.DownloadIntents
 			var forwardPort ports.ForwardIntents
-			intentHost, port, forwardPort, err = application.IntentHost(ctx, opts.Account, download, forward, func(intentCtx context.Context, request types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+			intentHost, port, forwardPort, err = application.IntentHostStored(ctx, opts.Account, download, forward, opts.ComponentStore, func(intentCtx context.Context, request types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
 				return w.processDownloadJob(intentCtx, eg, downloadJob{peer: protocolPeer(request.Peer), peerID: request.PeerID, msgID: request.MessageID, link: request.Link, source: request.Source})
 			})
 			if err != nil {

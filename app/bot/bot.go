@@ -46,6 +46,8 @@ var (
 )
 
 type Options struct {
+	CommandResolver       func(string, string) (any, error)
+	CommandContributions  []ports.ConsoleContribution
 	SessionChecker        ports.AccountSession
 	Connections           *tgauth.Connections
 	DownloadControl       ports.DownloadControl
@@ -126,12 +128,13 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	host, console, notifications, err := application.BotHost(ctx, account, &botNotificationTransport{sender: bot, editor: bot}, opts.AllowedUsers, opts.ComponentStore)
+	host, console, notifications, err := application.BotHost(ctx, account, &botNotificationTransport{sender: bot, editor: bot}, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...)
 	if err != nil {
 		return errors.Wrap(err, "start bot components")
 	}
 	notifier := &botNotifier{host: host, service: notifications, account: account}
 	defer notifier.Close()
+	opts.CommandContributions = append(opts.CommandContributions, declaredCommandHandlers(console.Commands(), opts.CommandResolver)...)
 	if opts.SetComponentHost != nil {
 		opts.SetComponentHost(host)
 		defer opts.SetComponentHost(nil)
@@ -186,7 +189,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return gotdLoginRunner{opts: targetOptions}, nil
 	})
 	aria2Factory := func() ports.Aria2Tasks {
-		return aria2.NewController(config.Get(), kvd, nil)
+		return aria2.NewController(config.From(ctx), kvd, nil)
 	}
 	downloadControl := opts.DownloadControl
 	if downloadControl == nil {
@@ -223,7 +226,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		if !opts.DisableAutoStartWatch {
 			notifyWatchAfterLogin(ctx, notifier, watchCtrl)
 		}
-		if aria2DownloaderEnabled() {
+		if aria2DownloaderEnabled(ctx) {
 			go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
 		}
 	}
@@ -243,7 +246,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts, !opts.DisableAutoStartWatch)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
-	if startup.WatchStarted && aria2DownloaderEnabled() {
+	if startup.WatchStarted && aria2DownloaderEnabled(ctx) {
 		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
 	}
 
@@ -302,7 +305,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	updateController := newTDLUpdateController(requestUpdate)
 	updateController.updater = opts.Updater
+	botContext := ctx
 	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
+		ctx = ctx.WithContext(config.InheritSource(ctx, botContext))
 		if !console.Allowed(account, query.From.ID) {
 			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
 			return nil
@@ -311,6 +316,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}, th.AnyCallbackQuery())
 
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
+		ctx = ctx.WithContext(config.InheritSource(ctx, botContext))
 		if update.Message == nil || update.Message.From == nil {
 			return nil
 		}
@@ -320,7 +326,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if console.Allowed(account, fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, maintenancePort, account, opts.ForwardQueue, console)
+			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, maintenancePort, account, opts.ForwardQueue, console, opts.CommandContributions...)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -493,6 +499,7 @@ func handleAllowedMessage(
 	account types.AccountID,
 	forwardQueue ports.ForwardTasks,
 	console ports.Console,
+	extras ...ports.ConsoleContribution,
 ) error {
 	fromID := msg.From.ID
 	chatID := msg.Chat.ID
@@ -508,60 +515,26 @@ func handleAllowedMessage(
 		return nil
 	}
 
-	if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
-		return err
+	if commandName(text) != "" && console != nil {
+		response, handled, err := dispatchConsoleCommand(ctx, msg, console, account, commandAdapters(ctx, msg, loginMgr, requestReboot, updateController, aria2Factory, internalFactory, maintenance, account, forwardQueue), extras)
+		if err != nil {
+			return err
+		}
+		if handled {
+			if response.Text != "" {
+				return sendMessage(ctx, chatID, response.Text)
+			}
+			return nil
+		}
 	}
-	if handled, err := handleKVCommand(ctx, msg, text, maintenance, account); handled || err != nil {
-		return err
-	}
-	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
-		return err
-	}
-	if handled, err := handleForwardCommand(ctx, msg, text, forwardQueue); handled || err != nil {
-		return err
+	// Reply keyboards and login input are transport conversations, not slash commands.
+	if commandName(text) == "" {
+		if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
+			return err
+		}
 	}
 	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
 		return err
-	}
-
-	switch commandName(text) {
-	case "/login_code":
-		loginNamespace, err := loginNamespaceFromCommand(text)
-		if err != nil {
-			sendLoginNamespaceUsage(ctx, chatID, "/login_code")
-			return nil
-		}
-		if err := loginMgr.StartCode(fromID, chatID, loginNamespace); err != nil {
-			if errors.Is(err, errLoginBusy) {
-				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
-					tu.ID(chatID),
-					"已有登录流程正在进行，请先完成或发送 /cancel_login 取消。",
-				))
-				return nil
-			}
-			return err
-		}
-		return nil
-	case "/cancel_login":
-		if loginMgr.Cancel(fromID, chatID) {
-			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在取消当前登录流程。"))
-			return nil
-		}
-		if loginMgr.Busy() {
-			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
-				tu.ID(chatID),
-				"已有登录流程正在进行，只能由发起会话取消。",
-			))
-			return nil
-		}
-		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "当前没有可取消的登录流程。"))
-		return nil
-	case "/reboot":
-		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在重启程序，稍后会收到新的启动状态。"))
-		if requestReboot != nil {
-			requestReboot()
-		}
-		return nil
 	}
 
 	if loginMgr.HandleInput(fromID, chatID, msg.Text, msg.MessageID) {

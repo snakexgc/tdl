@@ -1,5 +1,4 @@
-// swc-migrate exports supported legacy settings. The daemon still requires the
-// original config for business modules that have not completed migration.
+// swc-migrate is the compatibility entry point for the complete component export.
 package main
 
 import (
@@ -56,6 +55,6 @@ func run(source, output string, write bool) error {
 		return err
 	}
 	fmt.Println(string(preview))
-	fmt.Println("Source configuration and sessions are unchanged. Keep the source: remaining legacy modules still require it.")
+	fmt.Println("Source configuration and sessions are unchanged. Keep the source for bootstrap settings and rollback.")
 	return nil
 }

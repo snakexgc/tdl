@@ -67,6 +67,7 @@ func (r *Registry) Register(m manifest.Manifest, factory Factory) error {
 	m.Config = append([]manifest.ConfigField(nil), m.Config...)
 	for i := range m.Config {
 		field := &m.Config[i]
+		field.Choices = append([]string(nil), field.Choices...)
 		if field.Min != nil {
 			minimum := *field.Min
 			field.Min = &minimum
@@ -84,6 +85,10 @@ func (r *Registry) Register(m manifest.Manifest, factory Factory) error {
 	m.Publishes = append([]string(nil), m.Publishes...)
 	m.Subscribes = append([]string(nil), m.Subscribes...)
 	m.Pages = append([]manifest.Page(nil), m.Pages...)
+	m.Commands = append([]types.ConsoleCommand(nil), m.Commands...)
+	for i := range m.Commands {
+		m.Commands[i].Aliases = append([]string(nil), m.Commands[i].Aliases...)
+	}
 	seenPages := map[string]bool{}
 	for _, page := range m.Pages {
 		parsed, err := url.ParseRequestURI(page.Path)

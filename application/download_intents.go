@@ -9,6 +9,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
+	"github.com/snakexgc/tdl/rte/config"
 )
 
 func DownloadIntentHost(ctx context.Context, account types.AccountID, handler ports.DownloadIntentHandler) (*rte.Runtime, ports.DownloadIntents, error) {
@@ -19,6 +20,10 @@ func DownloadIntentHost(ctx context.Context, account types.AccountID, handler po
 // IntentHost owns both consumers for one connection, so shutdown drains all
 // source resolution before that connection's pool is released.
 func IntentHost(ctx context.Context, account types.AccountID, download ports.DownloadIntentHandler, forward ports.ForwardIntentHandler, results ...ports.DownloadIntentResultHandler) (*rte.Runtime, ports.DownloadIntents, ports.ForwardIntents, error) {
+	return IntentHostStored(ctx, account, download, forward, nil, results...)
+}
+
+func IntentHostStored(ctx context.Context, account types.AccountID, download ports.DownloadIntentHandler, forward ports.ForwardIntentHandler, store *config.Store, results ...ports.DownloadIntentResultHandler) (*rte.Runtime, ports.DownloadIntents, ports.ForwardIntents, error) {
 	registry := rte.NewRegistry()
 	if download == nil && forward == nil {
 		return nil, nil, nil, fmt.Errorf("intent host requires a consumer")
@@ -36,7 +41,17 @@ func IntentHost(ctx context.Context, account types.AccountID, download ports.Dow
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	host, err := registry.Build(account, nil, nil)
+	values := map[string]map[string]any{}
+	for _, definition := range registry.Definitions(rte.ConnectionScope) {
+		next, err := componentValues(ctx, definition.Manifest.ID, store)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for id, value := range next {
+			values[id] = value
+		}
+	}
+	host, err := registry.Build(account, nil, values)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -38,7 +38,7 @@ func (s *service) Init(ctx context.Context, k rte.Kernel) error {
 }
 
 func (s *service) Start(context.Context) error {
-	if err := s.runnables.RunDynamic("aria2.status", s.manager.policy().status, func() time.Duration { return s.manager.policy().status }, s.manager.statusChanged, s.manager.controller.SyncStates, nil); err != nil {
+	if err := s.runnables.RunDynamic("aria2.status", s.manager.policy().status, func() time.Duration { return s.manager.policy().status }, s.manager.statusChanged, s.manager.syncStates, nil); err != nil {
 		return err
 	}
 	return s.runnables.Run("aria2.manager", 0, 0, func(ctx context.Context) error {

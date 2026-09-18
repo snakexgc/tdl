@@ -4,26 +4,43 @@ import (
 	"errors"
 	"io/fs"
 
-	account "github.com/snakexgc/tdl/application/account.telegram"
-	download "github.com/snakexgc/tdl/application/download.control"
-	aria2 "github.com/snakexgc/tdl/application/downloader.aria2"
-	"github.com/snakexgc/tdl/application/forwarder"
-	panel "github.com/snakexgc/tdl/application/panel.webui"
-	update "github.com/snakexgc/tdl/application/update.self"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/rte"
 )
 
 // WebAssets composes component-owned resources at their existing public paths.
-func WebAssets() fs.FS {
-	return assetSources{panel.Assets(), account.Assets(), download.Assets(), aria2.Assets(), forwarder.Assets(), update.Assets()}
+func WebAssets(catalogs ...*rte.Catalog) fs.FS {
+	catalog := webCatalog(catalogs)
+	sources := assetSources{}
+	for _, definition := range catalog.Definitions() {
+		if definition.Assets != nil {
+			sources = append(sources, definition.Assets)
+		}
+	}
+	return sources
 }
 
-func WebRoutes() []types.WebRoute {
-	var routes []types.WebRoute
-	for _, group := range [][]types.WebRoute{panel.Routes(), account.Routes(), download.Routes(), aria2.Routes(), forwarder.Routes(), update.Routes()} {
-		routes = append(routes, group...)
+func WebRoutes(catalogs ...*rte.Catalog) []types.WebRoute {
+	catalog := webCatalog(catalogs)
+	routes := []types.WebRoute{}
+	for _, definition := range catalog.Definitions() {
+		for _, route := range definition.Routes {
+			route.Owner = definition.Manifest.ID
+			routes = append(routes, route)
+		}
 	}
 	return routes
+}
+
+func webCatalog(catalogs []*rte.Catalog) *rte.Catalog {
+	if len(catalogs) > 0 && catalogs[0] != nil {
+		return catalogs[0]
+	}
+	catalog, err := Catalog()
+	if err != nil {
+		panic(err)
+	}
+	return catalog
 }
 
 type assetSources []fs.FS

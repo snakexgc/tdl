@@ -16,8 +16,8 @@ const ID = "update.self"
 
 func Register(registry *rte.Registry) error {
 	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "版本更新",
-		Pages:    []manifest.Page{{Path: "/update", Title: "检查更新"}},
+		ID: ID, Commands: Commands(), Title: "版本更新",
+		Pages:    []manifest.Page{{Path: "/update", Title: "检查更新", View: "update", Module: "/static/js/update.js", Style: "/static/css/update.css", Order: 80}},
 		Provides: []manifest.Port{manifest.PortOf[ports.Updater](ports.UpdaterName, 1, 0)},
 		Config: []manifest.ConfigField{
 			{Name: "proxy", Title: "代理", Type: manifest.String, Default: "", Secret: true},

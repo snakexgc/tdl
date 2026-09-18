@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"strings"
 
 	"github.com/mymmrac/telego"
@@ -52,7 +53,7 @@ func handleDownloadCommand(
 	aria2Factory aria2ControllerFactory,
 	internalFactory internalDownloadControllerFactory,
 ) (bool, error) {
-	if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
+	if config.EffectiveDownloaderMode(botConfiguration(ctx)) == config.DownloaderModeInternal {
 		return handleInternalDownloadCommand(ctx, msg, text, internalFactory)
 	}
 	return handleAria2Command(ctx, msg, text, aria2Factory)
@@ -74,7 +75,18 @@ func handleDownloadCallback(
 	}
 }
 
-func aria2DownloaderEnabled() bool {
-	cfg := config.Get()
+func aria2DownloaderEnabled(contexts ...context.Context) bool {
+	var ctx context.Context
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	cfg := config.From(ctx)
 	return cfg != nil && cfg.Modules.Aria2 && config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2
+}
+
+func botConfiguration(ctx *th.Context) *config.Config {
+	if ctx == nil {
+		return config.Get()
+	}
+	return config.From(ctx)
 }

@@ -14,6 +14,7 @@ type BotNotifyConfig struct {
 
 // BotConfig Bot 配置
 type BotConfig struct {
+	Proxy        string          `json:"proxy,omitempty"`
 	Token        string          `json:"token"`
 	AllowedUsers []int64         `json:"allowed_users"`
 	Notify       BotNotifyConfig `json:"notify"`
@@ -36,6 +37,7 @@ type WebUIConfig struct {
 }
 
 type ModulesConfig struct {
+	WebUI   bool `json:"webui"`
 	Bot     bool `json:"bot"`
 	Watch   bool `json:"watch"`
 	HTTP    bool `json:"http"`

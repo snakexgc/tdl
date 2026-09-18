@@ -6,6 +6,8 @@ import { loadStatus } from "./status.js";
 import { loadModules } from "./modules.js";
 import { loadDownloads } from "./downloads.js";
 
+let componentManaged = false;
+
 const exclusiveListPairs = [["include", "exclude"]];
 const proxySchemes = ["socks5://", "socks5h://", "http://", "https://"];
 
@@ -124,6 +126,7 @@ export async function loadConfig() {
   try {
     const data = await api("/api/config");
     state.config = data.config;
+    componentManaged = data.component_managed === true;
     renderConfigForm();
   } catch (error) {
     status.className = "notice error";
@@ -133,7 +136,8 @@ export async function loadConfig() {
 
 function renderConfigForm() {
   const form = document.getElementById("config-form");
-  form.innerHTML = sections.map((section) => `
+  const visibleSections = componentManaged ? sections.map(section => ({ ...section, fields: section.fields.filter(field => field[0] === "debug") })).filter(section => section.fields.length) : sections;
+  form.innerHTML = visibleSections.map((section) => `
     <section class="config-section">
       <h2>${escapeHTML(section.title)}</h2>
       <div class="field-grid">
@@ -141,6 +145,12 @@ function renderConfigForm() {
       </div>
     </section>
   `).join("");
+  if (componentManaged) {
+    const link = document.createElement("a");
+    link.href = "/components.html";
+    link.textContent = "???????????????????";
+    form.prepend(link);
+  }
   initTagInputs(form);
   updateExclusiveListFields();
 }
@@ -363,6 +373,7 @@ async function saveConfig(event) {
       body: JSON.stringify({ values }),
     });
     state.config = data.config;
+    componentManaged = data.component_managed === true;
     renderConfigForm();
     status.className = fileSizeRangeWasReset ? "notice warn" : "notice success";
     status.textContent = fileSizeRangeWasReset
@@ -447,3 +458,5 @@ async function reboot() {
     status.textContent = error.message;
   }
 }
+
+export const page = { init: initConfig, load: loadConfig };

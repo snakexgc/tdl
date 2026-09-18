@@ -13,7 +13,6 @@ import (
 
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/watch"
-	downloadcontrol "github.com/snakexgc/tdl/application/download.control"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
@@ -230,7 +229,6 @@ type kvDownloadActionResult = types.LinkSubmissionResult
 func (s *Server) downloadLinks(ctx context.Context, ids []string) kvDownloadActionResult {
 	return s.downloadCatalogPort.Submit(ctx, types.AccountID(s.namespace()), ids)
 }
-func downloadURL(baseURL, taskID string) string { return downloadcontrol.DownloadURL(baseURL, taskID) }
 
 func isDownloadTaskRecordKey(key string) bool {
 	return strings.HasPrefix(key, downloadTaskKeyPrefix) && key != downloadTaskIndexKey

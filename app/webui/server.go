@@ -15,6 +15,7 @@ import (
 
 	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
@@ -29,6 +30,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 var assets = application.WebAssets()
@@ -77,6 +79,8 @@ const (
 )
 
 type Options struct {
+	Catalog          *rte.Catalog
+	ComponentStore   *rteconfig.Store
 	SessionChecker   ports.AccountSession
 	Connections      *tgauth.Connections
 	SetComponentHost func(*rte.Runtime)
@@ -122,7 +126,9 @@ type ModuleState struct {
 }
 
 type Server struct {
-	opts Options
+	assets         fs.FS
+	accountActions *accounttelegram.Actions
+	opts           Options
 
 	login               *webLoginManager
 	configuration       ports.Configuration
@@ -143,7 +149,7 @@ type Server struct {
 }
 
 func Run(ctx context.Context, opts Options) error {
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	if cfg == nil || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
 		return nil
 	}
@@ -155,16 +161,17 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	server := NewServer(opts)
+	defer func() { _ = server.accountActions.Stop(context.Background()) }()
 	defer func() { _ = server.login.Stop(context.Background()) }()
 	completed := make(chan error, 1)
-	host, err := application.PanelHost(ctx, types.AccountID(opts.Namespace), panel.Options{
+	host, err := application.PanelHostStored(ctx, types.AccountID(opts.Namespace), panel.Options{
 		Configuration:   server.configuration,
 		Sessions:        server.sessionCatalog,
 		DownloadLinks:   server.downloadLinksPort,
 		DownloadCatalog: server.downloadCatalogPort,
 		Login:           server.login.AccountLogin,
-		Address:         config.WebUIListenAddr(cfg), Handler: server.routes(), Sync: server.syncAria2Statuses, Completed: completed,
-	})
+		Address:         config.WebUIListenAddr(cfg), Handler: server.routes(), Completed: completed,
+	}, opts.ComponentStore, server.accountActions)
 	if err != nil {
 		return err
 	}
@@ -182,10 +189,18 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func NewServer(opts Options) *Server {
+	if opts.Catalog == nil {
+		var err error
+		opts.Catalog, err = application.Catalog()
+		if err != nil {
+			panic(err)
+		}
+	}
 	if opts.ForwardQueue == nil {
 		opts.ForwardQueue = appforward.NewQueue(opts.NamespaceKV)
 	}
 	server := &Server{
+		assets: application.WebAssets(opts.Catalog),
 		configuration: panel.NewConfiguration(configurationStore{saved: opts.AfterConfigSave}, func() bool {
 			if opts.ComponentManager == nil {
 				return false
@@ -201,13 +216,14 @@ func NewServer(opts Options) *Server {
 	server.sessionCatalog = accounttelegram.NewSessions(server.namespace(), tgauth.SessionRepository{Engine: opts.KVEngine, Connections: opts.Connections})
 	server.downloadLinksPort = downloadcontrol.NewLinkControl(types.AccountID(server.namespace()), taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}, server.internalDownloadController())
 	server.downloadCatalogPort = downloadcontrol.NewCatalog(types.AccountID(server.namespace()), catalogAdapter{server: server, repository: taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}})
+	server.accountActions = accounttelegram.NewActions(opts.Context, types.AccountID(server.namespace()), server.sessionCatalog, accountSelection{}, login.SpamProbe{Options: func() login.SessionOptions { return server.login.sessionOptions(server.namespace(), opts.NamespaceKV) }})
 	return server
 }
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
-	staticFS, _ := fs.Sub(assets, "static")
+	staticFS, _ := fs.Sub(s.assets, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	handlers := map[string]http.HandlerFunc{
 		"/login":                          s.handleLoginPage,
@@ -249,8 +265,14 @@ func (s *Server) routes() http.Handler {
 		"/api/system/reboot":              s.handleReboot,
 		"/":                               s.handleAppShell,
 	}
-	for _, route := range application.WebRoutes() {
+	for _, route := range application.WebRoutes(s.opts.Catalog) {
 		handler := handlers[route.Path]
+		if route.Port != "" {
+			if handler != nil {
+				panic("duplicate component route adapter: " + route.Path)
+			}
+			handler = s.componentAction(route)
+		}
 		if handler == nil {
 			panic("missing component route adapter: " + route.Path)
 		}
@@ -288,7 +310,7 @@ func (s *Server) namespace() string {
 	if s.opts.Namespace != "" {
 		return s.opts.Namespace
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	if cfg != nil {
 		return cfg.Namespace
 	}
