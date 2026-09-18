@@ -1,0 +1,415 @@
+package aria2
+
+import (
+	"context"
+	"net/url"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/fatih/color"
+	"github.com/go-faster/errors"
+	"go.uber.org/zap"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
+)
+
+const (
+	aria2TellWaitingBatchSize  = 1000
+	aria2StatusActive          = "active"
+	aria2ShutdownPauseTimeout  = 5 * time.Second
+	aria2ShutdownRetryInterval = time.Second
+
+	DefaultConnectRetryInterval = 10 * time.Second
+	maxConnectRetryInterval     = time.Minute
+)
+
+type ReconnectClient interface {
+	TellActive(ctx context.Context) ([]DownloadStatus, error)
+	TellWaiting(ctx context.Context, offset, num int) ([]DownloadStatus, error)
+	ForcePause(ctx context.Context, gid string) error
+	Unpause(ctx context.Context, gid string) error
+}
+
+func SuspendTDLTasksForReconnect(ctx context.Context, client ReconnectClient, store ports.Aria2Repository, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	registeredGIDs, err := store.GIDs(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "load tdl aria2 task registry")
+	}
+	downloadPrefix, err := aria2DownloadURLPrefix(publicBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates, err := listTDLAria2ReconnectTasks(ctx, client, registeredGIDs, downloadPrefix, logger)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		logger.Info("No tdl aria2 tasks need pausing before reconnect")
+		return nil, nil
+	}
+
+	paused := make([]string, 0, len(candidates))
+	for _, task := range candidates {
+		gid := task.GID
+		err := retryAria2Connection(ctx, logger, "force pause aria2 task", func() error {
+			return client.ForcePause(ctx, gid)
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return paused, err
+			}
+			logger.Warn("Skipping aria2 task that could not be paused",
+				zap.String("gid", gid),
+				zap.String("status", task.Status),
+				zap.Error(err))
+			continue
+		}
+
+		logger.Info("Paused tdl aria2 task before Telegram reconnect",
+			zap.String("gid", gid),
+			zap.String("status", task.Status))
+		paused = append(paused, gid)
+	}
+
+	return paused, nil
+}
+
+func ResumeTDLTasks(ctx context.Context, client ReconnectClient, gids []string, logger *zap.Logger) error {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	for _, gid := range uniqueGIDs(gids) {
+		err := retryAria2Connection(ctx, logger, "unpause aria2 task", func() error {
+			return client.Unpause(ctx, gid)
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			logger.Warn("Skipping aria2 task that could not be resumed",
+				zap.String("gid", gid),
+				zap.Error(err))
+			continue
+		}
+
+		logger.Info("Resumed tdl aria2 task after Telegram reconnect",
+			zap.String("gid", gid))
+	}
+	return nil
+}
+
+func PauseTDLTasksForShutdown(ctx context.Context, client ReconnectClient, store ports.Aria2Repository, publicBaseURL string, logger *zap.Logger) ([]string, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2ShutdownPauseTimeout)
+	defer cancel()
+
+	registeredGIDs, err := store.GIDs(shutdownCtx)
+	if err != nil {
+		return nil, errors.Wrap(err, "load tdl aria2 task registry")
+	}
+	downloadPrefix, err := aria2DownloadURLPrefix(publicBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates, err := listTDLAria2ReconnectTasks(shutdownCtx, client, registeredGIDs, downloadPrefix, logger)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		logger.Info("No tdl aria2 tasks need pausing before shutdown")
+		return nil, nil
+	}
+
+	paused := make([]string, 0, len(candidates))
+	for _, task := range candidates {
+		gid := task.GID
+		err := retryAria2ConnectionWithInterval(shutdownCtx, logger, "force pause aria2 task before shutdown", aria2ShutdownRetryInterval, func() error {
+			return client.ForcePause(shutdownCtx, gid)
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return paused, err
+			}
+			logger.Warn("Skipping aria2 task that could not be paused before shutdown",
+				zap.String("gid", gid),
+				zap.String("status", task.Status),
+				zap.Error(err))
+			continue
+		}
+
+		logger.Info("Paused tdl aria2 task before shutdown",
+			zap.String("gid", gid),
+			zap.String("status", task.Status))
+		paused = append(paused, gid)
+	}
+
+	return paused, nil
+}
+
+// ResumeStartupPausedTasks resumes any tdl-owned aria2 tasks that are paused
+// at startup (e.g., left paused by a previous shutdown). Tasks that exceed the
+// concurrent download limit are automatically queued by aria2. "waiting" tasks
+// are already queued and require no action.
+func ResumeStartupPausedTasks(ctx context.Context, client ReconnectClient, store ports.Aria2Repository, publicBaseURL string, logger *zap.Logger) (int, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	registeredGIDs, err := store.GIDs(ctx)
+	if err != nil {
+		return 0, errors.Wrap(err, "load tdl aria2 task registry")
+	}
+	downloadPrefix, err := aria2DownloadURLPrefix(publicBaseURL)
+	if err != nil {
+		return 0, err
+	}
+
+	// aria2.tellWaiting returns both "waiting" and "paused" tasks.
+	var candidates []DownloadStatus
+	for offset := 0; ; {
+		var batch []DownloadStatus
+		if err := retryAria2Connection(ctx, logger, "query aria2 waiting tasks for startup recovery", func() error {
+			var qErr error
+			batch, qErr = client.TellWaiting(ctx, offset, aria2TellWaitingBatchSize)
+			return qErr
+		}); err != nil {
+			return 0, errors.Wrap(err, "query aria2 waiting tasks")
+		}
+		for _, task := range batch {
+			if normalizedAria2Status(task.Status) != aria2StatusPaused {
+				continue
+			}
+			if !isTDLAria2Task(task, registeredGIDs, downloadPrefix) {
+				continue
+			}
+			candidates = append(candidates, task)
+		}
+		if len(batch) < aria2TellWaitingBatchSize {
+			break
+		}
+		offset += len(batch)
+	}
+
+	if len(candidates) == 0 {
+		logger.Info("No paused tdl aria2 tasks to resume at startup")
+		return 0, nil
+	}
+
+	resumed := 0
+	for _, task := range candidates {
+		gid := task.GID
+		err := retryAria2Connection(ctx, logger, "unpause tdl aria2 task at startup", func() error {
+			return client.Unpause(ctx, gid)
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return resumed, err
+			}
+			logger.Warn("Skipping paused tdl aria2 task that could not be resumed at startup",
+				zap.String("gid", gid),
+				zap.Error(err))
+			continue
+		}
+		logger.Info("Resumed paused tdl aria2 task at startup",
+			zap.String("gid", gid))
+		resumed++
+	}
+	return resumed, nil
+}
+
+func listTDLAria2ReconnectTasks(ctx context.Context, client ReconnectClient, registeredGIDs map[string]struct{}, downloadPrefix string, logger *zap.Logger) ([]DownloadStatus, error) {
+	var active []DownloadStatus
+	if err := retryAria2Connection(ctx, logger, "query aria2 active tasks", func() error {
+		var err error
+		active, err = client.TellActive(ctx)
+		return err
+	}); err != nil {
+		return nil, errors.Wrap(err, "query aria2 active tasks")
+	}
+
+	result := make([]DownloadStatus, 0, len(active))
+	seen := map[string]struct{}{}
+	appendOwned := func(task DownloadStatus) {
+		if task.GID == "" {
+			return
+		}
+		if _, ok := seen[task.GID]; ok {
+			return
+		}
+		if !isTDLAria2Task(task, registeredGIDs, downloadPrefix) {
+			return
+		}
+		seen[task.GID] = struct{}{}
+		result = append(result, task)
+	}
+
+	for _, task := range active {
+		if task.Status == "" || task.Status == aria2StatusActive {
+			appendOwned(task)
+		}
+	}
+
+	for offset := 0; ; {
+		var waiting []DownloadStatus
+		if err := retryAria2Connection(ctx, logger, "query aria2 waiting tasks", func() error {
+			var err error
+			waiting, err = client.TellWaiting(ctx, offset, aria2TellWaitingBatchSize)
+			return err
+		}); err != nil {
+			return nil, errors.Wrap(err, "query aria2 waiting tasks")
+		}
+
+		for _, task := range waiting {
+			if task.Status == "waiting" {
+				appendOwned(task)
+			}
+		}
+		if len(waiting) < aria2TellWaitingBatchSize {
+			break
+		}
+		offset += len(waiting)
+	}
+
+	return result, nil
+}
+
+func IsTDLTask(task DownloadStatus, registeredGIDs map[string]struct{}, downloadPrefix string) bool {
+	if _, ok := registeredGIDs[task.GID]; ok {
+		return true
+	}
+
+	for _, file := range task.Files {
+		for _, uri := range file.URIs {
+			if strings.HasPrefix(uri.URI, downloadPrefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isTDLAria2Task(task DownloadStatus, registeredGIDs map[string]struct{}, downloadPrefix string) bool {
+	return IsTDLTask(task, registeredGIDs, downloadPrefix)
+}
+
+func RetryConnection(ctx context.Context, logger *zap.Logger, action string, fn func() error) error {
+	return RetryConnectionWithInterval(ctx, logger, action, DefaultConnectRetryInterval, fn)
+}
+
+func retryAria2Connection(ctx context.Context, logger *zap.Logger, action string, fn func() error) error {
+	return RetryConnection(ctx, logger, action, fn)
+}
+
+func RetryConnectionWithInterval(ctx context.Context, logger *zap.Logger, action string, retryInterval time.Duration, fn func() error) error {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	if retryInterval <= 0 {
+		retryInterval = DefaultConnectRetryInterval
+	}
+
+	delay := min(retryInterval, maxConnectRetryInterval)
+	for {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, context.Canceled) || !IsConnectionError(err) {
+			return err
+		}
+
+		logger.Warn("Cannot connect to aria2 RPC, retrying",
+			zap.String("action", action),
+			zap.Duration("retry_interval", delay),
+			zap.Error(err))
+		color.Yellow("⚠️ Cannot connect to aria2 RPC while trying to %s: %v", action, err)
+		color.Yellow("🔄 Retrying in %v...", delay)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+		delay = nextAria2RetryInterval(delay)
+	}
+}
+
+func nextAria2RetryInterval(current time.Duration) time.Duration {
+	if current >= maxConnectRetryInterval/2 {
+		return maxConnectRetryInterval
+	}
+	return current * 2
+}
+
+func retryAria2ConnectionWithInterval(ctx context.Context, logger *zap.Logger, action string, retryInterval time.Duration, fn func() error) error {
+	return RetryConnectionWithInterval(ctx, logger, action, retryInterval, fn)
+}
+
+func DownloadURLPrefix(baseURL string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", errors.Wrap(err, "parse public_base_url")
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", errors.New("public_base_url must include scheme and host")
+	}
+
+	u.Path = path.Join(strings.TrimSuffix(u.Path, "/"), "download") + "/"
+	return u.String(), nil
+}
+
+func aria2DownloadURLPrefix(baseURL string) (string, error) {
+	return DownloadURLPrefix(baseURL)
+}
+
+func MergeUniqueGIDs(base, add []string) []string {
+	seen := map[string]struct{}{}
+	merged := make([]string, 0, len(base)+len(add))
+	for _, gid := range base {
+		if gid == "" {
+			continue
+		}
+		if _, ok := seen[gid]; ok {
+			continue
+		}
+		seen[gid] = struct{}{}
+		merged = append(merged, gid)
+	}
+	for _, gid := range add {
+		if gid == "" {
+			continue
+		}
+		if _, ok := seen[gid]; ok {
+			continue
+		}
+		seen[gid] = struct{}{}
+		merged = append(merged, gid)
+	}
+	return merged
+}
+
+func UniqueGIDs(gids []string) []string {
+	return MergeUniqueGIDs(nil, gids)
+}
+
+func uniqueGIDs(gids []string) []string {
+	return UniqueGIDs(gids)
+}

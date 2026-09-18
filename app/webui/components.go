@@ -7,6 +7,19 @@ import (
 	"net/http"
 )
 
+func (s *Server) handleComponentHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	manager, ok := s.opts.ComponentManager.(ComponentDiagnostics)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("component diagnostics are unavailable"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": manager.ComponentHealth()})
+}
+
 func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request) {
 	if s.opts.ComponentManager == nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("component host is unavailable"))

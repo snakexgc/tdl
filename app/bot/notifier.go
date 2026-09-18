@@ -80,7 +80,16 @@ func notificationContext(ctx context.Context) context.Context {
 	// their duration and cancels them with the Bot lifecycle.
 	return context.WithoutCancel(ctx)
 }
-func (n *botNotifier) Notify(ctx context.Context, text string) { _ = n.SendAndTrack(ctx, text) }
+
+func (n *botNotifier) Notify(ctx context.Context, text string) {
+	if n == nil || n.service == nil || text == "" {
+		return
+	}
+	if err := n.service.Enqueue(notificationContext(ctx), n.account, text); err != nil {
+		color.Yellow("Failed to queue notification: %v", err)
+	}
+}
+
 func (n *botNotifier) SendAndTrack(ctx context.Context, text string) []trackedMessage {
 	if n == nil || n.service == nil || text == "" {
 		return nil

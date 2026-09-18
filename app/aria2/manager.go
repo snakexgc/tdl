@@ -2,161 +2,66 @@ package aria2
 
 import (
 	"context"
-	"time"
+	"sync"
 
-	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
+	"github.com/snakexgc/tdl/application"
+	component "github.com/snakexgc/tdl/application/downloader.aria2"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/rte/schedule"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
-// Manager owns aria2 connectivity, recovery and monitoring. It is deliberately
-// independent from the Telegram watcher and HTTP server lifecycles.
 type Manager struct {
-	controller *Controller
-	client     *Client
-	store      *TaskStore
-	regulator  *TelegramErrorRegulator
-	monitor    *ZeroSpeedMonitor
-	limit      int
-	baseURL    string
-	logger     *zap.Logger
+	*component.Manager
+	account types.AccountID
+	mu      sync.Mutex
+	host    *rte.Runtime
+	store   *rteconfig.Store
+}
+
+func (m *Manager) SetComponentStore(store *rteconfig.Store) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.store = store
 }
 
 func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Manager {
-	if cfg == nil {
-		cfg = config.Get()
-	}
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	logger = logger.Named("aria2-manager")
-	client := NewClient(cfg.Aria2)
-	store := NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP))
-	controller := &Controller{
-		account:       types.AccountID(cfg.Namespace),
-		client:        client,
-		store:         store,
-		publicBaseURL: cfg.HTTP.PublicBaseURL,
-		connections:   config.EffectivePoolSize(cfg),
-		logger:        logger,
-	}
-	return &Manager{
-		controller: controller,
-		client:     client,
-		store:      store,
-		regulator:  NewTelegramErrorRegulator(client, store, cfg.HTTP.PublicBaseURL, logger),
-		monitor:    NewZeroSpeedMonitor(client, store, cfg.HTTP.PublicBaseURL, logger),
-		limit:      config.EffectiveLimit(cfg),
-		baseURL:    cfg.HTTP.PublicBaseURL,
-		logger:     logger,
-	}
+	opts := componentOptions(cfg, kvd)
+	return &Manager{Manager: component.NewManager(opts, logger), account: opts.Account}
 }
 
-func (m *Manager) Name() string {
-	return aria2DownloaderName
-}
-
-func (m *Manager) Submit(ctx context.Context, submission types.DownloadSubmission) (types.DownloadResult, error) {
-	if m == nil || m.controller == nil {
-		return types.DownloadResult{}, errors.New("aria2 manager is not initialized")
+func (m *Manager) Host() *rte.Runtime {
+	if m == nil {
+		return nil
 	}
-	return m.controller.Submit(ctx, submission)
-}
-
-// ReportTelegramFileError lets the optional manager react to Telegram stream
-// errors without making the HTTP package depend on aria2.
-func (m *Manager) ReportTelegramFileError(ctx context.Context, err error) {
-	if m == nil || m.regulator == nil {
-		return
-	}
-	m.regulator.ReportTelegramFileError(ctx, err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.host
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	if m == nil || m.client == nil {
-		return errors.New("aria2 manager is not initialized")
-	}
-	if err := m.waitUntilReady(ctx, DefaultConnectRetryInterval); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
+	finished := make(chan error, 1)
+	m.mu.Lock()
+	store := m.store
+	m.mu.Unlock()
+	host, err := application.Aria2DownloadHost(ctx, m.account, m.Manager, finished, store)
+	if err != nil {
 		return err
 	}
-
-	m.logger.Info("Aria2 manager connected", zap.Int("max_concurrent_downloads", m.limit))
-	governors := schedule.New(ctx)
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := governors.Stop(stopCtx); err != nil {
-			m.logger.Warn("Governor shutdown timed out", zap.Error(err))
-		}
-	}()
-	for name, run := range map[string]func(context.Context){"telegram-errors": m.regulator.Run, "zero-speed": m.monitor.Run} {
-		if err := governors.Run(name, 0, 0, func(ctx context.Context) error { run(ctx); return nil }, func(err error) { m.logger.Error("Aria2 governor failed", zap.String("governor", name), zap.Error(err)) }); err != nil {
-			return err
-		}
+	m.mu.Lock()
+	m.host = host
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.host = nil; m.mu.Unlock() }()
+	select {
+	case <-ctx.Done():
+	case err = <-finished:
 	}
-	if count, err := ResumeStartupPausedTasks(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			m.logger.Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
-		}
-	} else if count > 0 {
-		m.logger.Info("Resumed paused aria2 tasks at startup", zap.Int("count", count))
+	if stopErr := host.Stop(context.Background()); stopErr != nil {
+		return stopErr
 	}
-
-	<-ctx.Done()
-	stopCtx, cancelGovernors := context.WithTimeout(context.Background(), 5*time.Second)
-	stopErr := governors.Stop(stopCtx)
-	cancelGovernors()
-	if stopErr != nil {
-		return errors.Wrap(stopErr, "stop aria2 governors")
-	}
-	if paused, err := PauseTDLTasksForShutdown(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			m.logger.Warn("Failed to pause aria2 tasks during manager shutdown", zap.Error(err))
-		}
-	} else if len(paused) > 0 {
-		m.logger.Info("Paused aria2 tasks during manager shutdown", zap.Int("count", len(paused)))
-	}
-	return nil
-}
-
-func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duration) error {
-	if retryInterval <= 0 {
-		retryInterval = DefaultConnectRetryInterval
-	}
-	delay := min(retryInterval, maxConnectRetryInterval)
-	for {
-		err := m.client.SetMaxConcurrentDownloads(ctx, m.limit)
-		if err == nil {
-			return nil
-		}
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		m.logger.Warn("Aria2 manager is not ready, retrying",
-			zap.Duration("retry_interval", delay),
-			zap.Error(err))
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
-		delay = nextAria2RetryInterval(delay)
-	}
+	return err
 }

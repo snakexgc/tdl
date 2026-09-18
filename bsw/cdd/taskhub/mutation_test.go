@@ -17,7 +17,7 @@ import (
 
 func TestOwnedReportsDoNotLoseConcurrentState(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "db")})
+	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "db")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	first, err := engine.Open("account")

@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"io/fs"
 	"net/http"
 	"strings"
 )
@@ -31,7 +32,7 @@ func (s *Server) handleAsset(name, contentType string) http.HandlerFunc {
 }
 
 func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name, contentType string) {
-	data, err := assets.ReadFile(name)
+	data, err := fs.ReadFile(assets, name)
 	if err != nil {
 		http.Error(w, "asset not found", http.StatusNotFound)
 		return

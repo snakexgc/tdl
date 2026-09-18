@@ -6,6 +6,10 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 
 当前教程还在不断完善，遇到问题欢迎在issues中或者电报群反馈！
 
+组件化配置可通过 `--component-config <目录>` 启用，迁移步骤见 [组件开发与迁移说明](docs/components.md)，实际完成范围见 [迁移验收状态](docs/migration-status.md)。当前八个已注册组件支持独立配置；尚未拆分的业务仍需保留原 JSON 配置。
+
+字段说明见 [组件配置参考](docs/configuration.md)，可运行 `go run ./cmd/swc-docs` 重新生成；多账号并行的待办与验收要求见 [多账号清单](docs/TODO-multi-account.md)。
+
 ### JSON 配置说明
 
 ```jsonc

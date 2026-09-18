@@ -12,6 +12,8 @@ import (
 	"github.com/gotd/td/tgerr"
 
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/internal/core/storage/keygen"
 	"github.com/snakexgc/tdl/pkg/key"
@@ -19,6 +21,10 @@ import (
 )
 
 type SessionOptions struct {
+	Checker          ports.AccountSession
+	Connections      *tgauth.Connections
+	Credentials      ports.TelegramCredentials
+	Account          types.AccountID
 	KV               storage.Storage
 	Proxy            string
 	NTP              string
@@ -42,7 +48,7 @@ type InputErrorReporter interface {
 	AuthInputError(ctx context.Context, input string, err error) error
 }
 
-var ErrSessionUnauthorized = errors.New("telegram session is not authorized")
+var ErrSessionUnauthorized = ports.ErrSessionUnauthorized
 
 func CodeWithAuthenticator(ctx context.Context, opts SessionOptions, authenticator auth.UserAuthenticator) (*tg.User, error) {
 	if authenticator == nil {
@@ -68,11 +74,17 @@ func CodeWithAuthenticator(ctx context.Context, opts SessionOptions, authenticat
 }
 
 func CheckSession(ctx context.Context, opts SessionOptions) (*tg.User, error) {
+	if opts.Checker != nil {
+		user, err := opts.Checker.Check(ctx, opts.Account)
+		return protocolIdentity(user), err
+	}
 	if opts.KV == nil {
 		return nil, errors.New("session storage is nil")
 	}
 
 	c, err := tclient.New(ctx, tclient.Options{
+		Connections: opts.Connections,
+		Credentials: opts.Credentials, Account: opts.Account,
 		KV:               opts.KV,
 		Proxy:            opts.Proxy,
 		NTP:              opts.NTP,
@@ -342,13 +354,18 @@ func runWithTemporarySession(
 	if opts.KV == nil {
 		return nil, errors.New("session storage is nil")
 	}
+	ctx, release, err := opts.Connections.BeginLogin(ctx, opts.Account)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	tmp := newMemoryStorage()
 	if err := tmp.Set(ctx, key.App(), []byte(tclient.AppDesktop)); err != nil {
 		return nil, errors.Wrap(err, "set temporary app")
 	}
 
-	credentials, err := tclient.ResolveApp(ctx, tmp)
+	credentials, err := tclient.ResolveAppUsing(ctx, tmp, opts.Account, opts.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +399,7 @@ func runWithTemporarySession(
 			}
 		}
 
-		u, err := fn(ctx, c)
+		u, err := fn(ctx, c.Client)
 		if err != nil {
 			return err
 		}
@@ -391,7 +408,7 @@ func runWithTemporarySession(
 		}
 		user = u
 
-		return commitTemporarySession(ctx, tmp, opts.KV)
+		return opts.Connections.Replace(ctx, opts.Account, func() error { return commitTemporarySession(ctx, tmp, opts.KV) })
 	}); err != nil {
 		return nil, err
 	}

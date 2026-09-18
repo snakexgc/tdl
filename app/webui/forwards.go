@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 // handleForwards lists the persistent forward queue (pending, running and
@@ -51,7 +51,7 @@ func (s *Server) handleForwardActions(w http.ResponseWriter, r *http.Request) {
 	}
 	queue := s.opts.ForwardQueue
 	var (
-		result appforward.ActionResult
+		result types.ForwardActionResult
 		err    error
 	)
 	switch strings.ToLower(strings.TrimSpace(req.Action)) {
@@ -70,7 +70,7 @@ func (s *Server) handleForwardActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     len(result.Errors) == 0,
-		"result": result,
+		"ok":        len(result.Errors) == 0,
+		fieldResult: result,
 	})
 }

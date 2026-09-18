@@ -15,9 +15,10 @@ const controllerStopTimeout = 10 * time.Second
 var runControllerWatch = Run
 
 type Controller struct {
-	parent context.Context
-	opts   Options
-	notify NotifyFunc
+	process *rte.Process
+	parent  context.Context
+	opts    Options
+	notify  NotifyFunc
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
@@ -36,15 +37,16 @@ func NewController(parent context.Context, opts Options, notify NotifyFunc) *Con
 		opts = DefaultOptions(nil)
 	}
 	return &Controller{
-		parent: parent,
-		opts:   opts,
-		notify: notify,
+		parent:  parent,
+		process: rte.NewProcess(parent, opts.Account, "host.watch"),
+		opts:    opts,
+		notify:  notify,
 	}
 }
 
 func (c *Controller) Start() bool {
 	c.mu.Lock()
-	if c.running {
+	if c.running || c.process.Running() {
 		c.mu.Unlock()
 		return false
 	}
@@ -78,59 +80,64 @@ func (c *Controller) Start() bool {
 	c.done = done
 	c.lastErr = nil
 	c.submit = submit
-	c.mu.Unlock()
 
-	go func() {
-		err := runControllerWatch(ctx, opts)
+	started, startErr := c.process.Start(func(runCtx context.Context) (err error) {
+		defer func() {
+			cancel()
+			if policies != nil {
+				_ = policies.Stop(context.Background())
+			}
+
+			c.mu.Lock()
+			if c.done == done {
+				c.running = false
+				c.cancel = nil
+				c.done = nil
+				c.submit = nil
+				c.policies = nil
+				if err != nil && !stderrors.Is(err, context.Canceled) {
+					c.lastErr = err
+				}
+			}
+			c.mu.Unlock()
+
+			close(done)
+			if err != nil && !stderrors.Is(err, context.Canceled) && c.notify != nil {
+				c.notify(context.Background(), fmt.Sprintf("监听下载已停止：%v\n请检查配置或重新登录。", err))
+			}
+		}()
+		err = runControllerWatch(runCtx, opts)
+		return err
+	}, rte.Recovery{})
+	c.mu.Unlock()
+	if !started {
 		cancel()
 		if policies != nil {
 			_ = policies.Stop(context.Background())
 		}
-
-		if err != nil && !stderrors.Is(err, context.Canceled) && c.notify != nil {
-			c.notify(context.Background(), fmt.Sprintf("监听下载已停止：%v\n请检查配置或重新登录。", err))
-		}
-
 		c.mu.Lock()
-		if c.done == done {
-			c.running = false
-			c.cancel = nil
-			c.done = nil
-			c.submit = nil
-			c.policies = nil
-			if err != nil && !stderrors.Is(err, context.Canceled) {
-				c.lastErr = err
-			}
-		}
+		c.running = false
+		c.lastErr = startErr
+		c.submit = nil
+		c.done = nil
 		c.mu.Unlock()
-
-		close(done)
-	}()
-
-	return true
+	}
+	return started
 }
 
 func (c *Controller) Stop() {
-	c.mu.Lock()
-	cancel := c.cancel
-	done := c.done
-	c.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if done == nil {
-		return
-	}
-
-	timer := time.NewTimer(controllerStopTimeout)
-	defer timer.Stop()
-
-	select {
-	case <-done:
-	case <-timer.C:
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), controllerStopTimeout)
+	defer cancel()
+	_ = c.StopContext(ctx)
 }
+
+func (c *Controller) StopContext(ctx context.Context) error {
+	c.mu.Lock()
+	process := c.process
+	c.mu.Unlock()
+	return process.Stop(ctx)
+}
+func (c *Controller) Health() rte.Health { return c.process.Health() }
 
 func (c *Controller) UpdateOptions(opts Options) {
 	if opts.Template == "" {
@@ -161,11 +168,20 @@ func (c *Controller) Running() bool {
 func (c *Controller) LastError() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.lastErr
+	if c.lastErr != nil {
+		return c.lastErr
+	}
+	return c.process.LastError()
 }
 
 func (c *Controller) SubmitMessageLink(ctx context.Context, link string) (MessageLinkSubmissionResult, error) {
-	link, err := ValidateTelegramMessageHTTPLink(link)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	opts := c.opts
+	c.mu.Unlock()
+	link, err := validateMessageLink(ctx, opts, link)
 	if err != nil {
 		return MessageLinkSubmissionResult{}, err
 	}

@@ -113,7 +113,7 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
-	cmd.Flags().String("component-config", "", "directory for migrated filter and naming configuration")
+	cmd.Flags().String("component-config", "", "directory for component configuration")
 	cmd.AddCommand(NewVersion())
 
 	return cmd

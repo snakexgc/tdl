@@ -39,3 +39,24 @@ func (v *Validator) Validate(ctx context.Context, account types.AccountID, raw s
 	}
 	return ValidateTelegramMessageHTTPLink(raw)
 }
+
+// Submit orchestrates validation, protocol resolution and bounded submission.
+// Source and requests are capabilities bound to the caller's live connection.
+func (v *Validator) Submit(ctx context.Context, account types.AccountID, raw string, source ports.MessageLinkSource, requests ports.DownloadRequests) (types.DownloadSubmissionSummary, error) {
+	link, err := v.Validate(ctx, account, raw)
+	if err != nil {
+		return types.DownloadSubmissionSummary{}, err
+	}
+	if source == nil || requests == nil {
+		return types.DownloadSubmissionSummary{}, errors.New("message download resources are unavailable")
+	}
+	intent, err := source.Resolve(ctx, account, link)
+	if err != nil {
+		return types.DownloadSubmissionSummary{Link: link}, err
+	}
+	if intent.Account != account {
+		return types.DownloadSubmissionSummary{}, errors.New("message source account mismatch")
+	}
+	intent.Link, intent.Source = link, "message_link"
+	return requests.Submit(ctx, intent)
+}

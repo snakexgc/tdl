@@ -22,6 +22,23 @@ func (*componentTestManager) ComponentConfigurations() ([]rte.Configuration, boo
 	return []rte.Configuration{{ID: "naming.rules", State: rte.Running}}, true
 }
 
+func (*componentTestManager) ComponentHealth() []rte.Health {
+	return []rte.Health{{Components: []rte.ComponentHealth{{Status: rte.Status{ID: "example", State: rte.Running}}}}}
+}
+
+func TestComponentDiagnosticsRequiresSession(t *testing.T) {
+	initWebUITestConfig(t)
+	server := NewServer(Options{ComponentManager: &componentTestManager{}})
+	request := httptest.NewRequest(http.MethodGet, "/api/components/health", nil)
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, request)
+	require.Equal(t, http.StatusUnauthorized, response.Code)
+	response = httptest.NewRecorder()
+	server.handleComponentHealth(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), "example")
+}
+
 func (m *componentTestManager) SaveComponentConfiguration(_ context.Context, id string, values map[string]any) error {
 	m.savedID, m.values = id, values
 	return nil
@@ -69,6 +86,18 @@ func TestLegacyConfigurationCannotOverrideStoredBotPermissions(t *testing.T) {
 		response := httptest.NewRecorder()
 		server.handleConfig(response, request)
 		require.Equal(t, http.StatusBadRequest, response.Code)
+		require.Contains(t, response.Body.String(), "component configuration page")
+	}
+}
+
+func TestLegacyConfigurationCannotOverrideStoredAccountAndTriggers(t *testing.T) {
+	initWebUITestConfig(t)
+	server := NewServer(Options{ComponentManager: &componentTestManager{}})
+	for _, values := range []string{`{"telegram.api_id":123}`, `{"telegram":{"api_id":123,"api_hash":"hidden"}}`, `{"trigger_reactions":["👍"]}`, `{"forward":{"trigger_reactions":["👍"]}}`, `{"forward . trigger_reactions":["👍"]}`} {
+		request := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"values":`+values+`}`))
+		response := httptest.NewRecorder()
+		server.handleConfig(response, request)
+		require.Equal(t, http.StatusBadRequest, response.Code, values)
 		require.Contains(t, response.Body.String(), "component configuration page")
 	}
 }

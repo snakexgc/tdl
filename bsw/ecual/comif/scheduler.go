@@ -10,7 +10,7 @@ import (
 // Scheduler limits the number of active files globally and distributes a
 // fixed number of chunk lanes independently within each Telegram DC.
 type Scheduler struct {
-	fileTokens chan struct{}
+	fileTokens *fileLimiter
 	capacity   int
 
 	mu    sync.Mutex
@@ -69,13 +69,10 @@ func NewScheduler(maxFiles, perDCCapacity int) *Scheduler {
 	maxFiles = normalizeLimit(maxFiles)
 	perDCCapacity = normalizeLimit(perDCCapacity)
 	s := &Scheduler{
-		fileTokens: make(chan struct{}, maxFiles),
+		fileTokens: newFileLimiter(maxFiles),
 		capacity:   perDCCapacity,
 		files:      make(map[string]*taskState),
 		dcs:        make(map[int]*dcState),
-	}
-	for range maxFiles {
-		s.fileTokens <- struct{}{}
 	}
 	return s
 }
@@ -91,6 +88,8 @@ func (s *Scheduler) Capacity() int {
 	if s == nil {
 		return 1
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.capacity
 }
 
@@ -147,7 +146,7 @@ func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc int) (*ta
 			state.activating = ready
 			s.mu.Unlock()
 
-			err := acquireToken(ctx, s.fileTokens)
+			err := s.fileTokens.acquire(ctx)
 			s.completeActivation(state, ready, err == nil)
 			if err != nil {
 				s.releaseTask(state)
@@ -178,7 +177,7 @@ func (s *Scheduler) completeActivation(state *taskState, ready chan struct{}, su
 	}
 	s.mu.Unlock()
 	if releaseFile {
-		releaseToken(s.fileTokens)
+		s.fileTokens.release()
 	}
 }
 
@@ -224,7 +223,7 @@ func (l *TaskLease) Capacity() int {
 	if l == nil || l.scheduler == nil {
 		return 1
 	}
-	return l.scheduler.capacity
+	return l.scheduler.Capacity()
 }
 
 func (l *TaskLease) Release() {
@@ -269,7 +268,7 @@ func (s *Scheduler) releaseTask(state *taskState) {
 	}
 	s.mu.Unlock()
 	if releaseFile {
-		releaseToken(s.fileTokens)
+		s.fileTokens.release()
 	}
 }
 
@@ -282,7 +281,7 @@ func (s *Scheduler) releaseChunkLocked(state *taskState) {
 	dc.inFlight--
 	if state.refs == 0 && state.inFlight == 0 {
 		s.removeActiveTaskLocked(state)
-		releaseToken(s.fileTokens)
+		s.fileTokens.release()
 		return
 	}
 	s.dispatchLocked(state.dc)
@@ -405,19 +404,17 @@ func (s *Scheduler) Snapshots() []DCSnapshot {
 	return result
 }
 
-func acquireToken(ctx context.Context, tokens chan struct{}) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-tokens:
-		return nil
+// Reconfigure changes admission limits without replacing active leases. When a
+// limit shrinks, existing transfers finish and new work waits for the new budget.
+func (s *Scheduler) Reconfigure(maxFiles, perDCCapacity int) {
+	if s == nil {
+		return
 	}
-}
-
-func releaseToken(tokens chan struct{}) {
-	select {
-	case tokens <- struct{}{}:
-	default:
-		panic("download file token over-release")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.capacity = normalizeLimit(perDCCapacity)
+	s.fileTokens.resize(normalizeLimit(maxFiles))
+	for id := range s.dcs {
+		s.dispatchLocked(id)
 	}
 }

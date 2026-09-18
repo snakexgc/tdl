@@ -1,0 +1,1 @@
+-s -w -X github.com/snakexgc/tdl/pkg/consts.Version=%s -X github.com/snakexgc/tdl/pkg/consts.Commit=%s -X github.com/snakexgc/tdl/pkg/consts.CommitDate=%s -X github.com/snakexgc/tdl/pkg/consts.GOARM=%s

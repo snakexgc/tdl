@@ -55,3 +55,19 @@ func TestForwardLegacyRecordsAndMaintenance(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{}`, string(index))
 }
+
+func TestForwardUpdateDoesNotRecreateDeletedRecord(t *testing.T) {
+	ctx := context.Background()
+	store := newJobStore(newMemStorage())
+	require.NoError(t, store.Save(ctx, Job{ID: "removed", Status: StatusRunning}))
+	require.NoError(t, store.Remove(ctx, "removed"))
+	changed, err := store.Update(ctx, "removed", func(*Job) bool {
+		t.Fatal("update callback invoked for missing record")
+		return true
+	})
+	require.NoError(t, err)
+	require.False(t, changed)
+	records, err := store.Records(ctx)
+	require.NoError(t, err)
+	require.Empty(t, records)
+}

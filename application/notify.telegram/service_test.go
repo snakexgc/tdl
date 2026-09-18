@@ -14,11 +14,62 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/eventbus"
 )
 
 type testTransport struct {
 	send func(context.Context, int64, string) (int, error)
 	edit func(context.Context, int64, int, string) error
+}
+
+func TestRecipientTimeoutIsolation(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		name := "send"
+		if edit {
+			name = "edit"
+		}
+		t.Run(name, func(t *testing.T) {
+			var attempted []int64
+			request := func(ctx context.Context, id int64) error {
+				attempted = append(attempted, id)
+				if id == 1 {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+				return ctx.Err()
+			}
+			host, service := testHost(t, &testTransport{
+				send: func(ctx context.Context, id int64, _ string) (int, error) { return 42, request(ctx, id) },
+				edit: func(ctx context.Context, id int64, _ int, _ string) error { return request(ctx, id) },
+			})
+			require.NoError(t, host.Reconfigure(context.Background(), ID, map[string]any{recipientsField: []string{"1", "2"}, "timeout_seconds": 1}))
+			var err error
+			if edit {
+				err = service.Edit(context.Background(), types.DefaultAccount, []types.NotificationMessage{{Account: types.DefaultAccount, ChatID: 1, MessageID: 42}, {Account: types.DefaultAccount, ChatID: 2, MessageID: 42}}, "edited")
+			} else {
+				var refs []types.NotificationMessage
+				refs, err = service.Send(context.Background(), types.DefaultAccount, "sent")
+				require.Len(t, refs, 1)
+				require.Equal(t, int64(2), refs[0].ChatID)
+			}
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			require.Equal(t, []int64{1, 2}, attempted)
+		})
+	}
+}
+
+func TestCallerCancellationStopsFanout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var attempted []int64
+	_, service := testHost(t, &testTransport{send: func(_ context.Context, id int64, _ string) (int, error) {
+		attempted = append(attempted, id)
+		cancel()
+		return 0, context.Canceled
+	}})
+	_, err := service.Send(ctx, types.DefaultAccount, "canceled")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, []int64{1}, attempted)
 }
 
 func (t *testTransport) Send(ctx context.Context, id int64, text string) (int, error) {
@@ -125,4 +176,39 @@ func TestStopCancelsAndWaitsForActiveSend(t *testing.T) {
 	require.NoError(t, <-stopped)
 	_, err := service.Send(context.Background(), types.DefaultAccount, "late")
 	require.ErrorContains(t, err, "stopped")
+}
+
+func TestQueuedNotificationBackpressureAndStop(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	exited := make(chan struct{}, 1)
+	host, service := testHost(t, &testTransport{send: func(ctx context.Context, _ int64, _ string) (int, error) {
+		entered <- struct{}{}
+		<-ctx.Done()
+		exited <- struct{}{}
+		return 0, ctx.Err()
+	}})
+	ctx := context.Background()
+	require.ErrorContains(t, service.Enqueue(ctx, "other", "denied"), "account mismatch")
+	require.NoError(t, service.Enqueue(ctx, types.DefaultAccount, "first"))
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("event was not delivered")
+	}
+	for i := 0; i < 64; i++ {
+		require.NoError(t, service.Enqueue(ctx, types.DefaultAccount, "queued"))
+	}
+	require.ErrorIs(t, service.Enqueue(ctx, types.DefaultAccount, "overflow"), eventbus.ErrFull)
+	require.NoError(t, host.Stop(ctx))
+	select {
+	case <-exited:
+	default:
+		t.Fatal("Stop returned before notification transport exited")
+	}
+	require.Error(t, service.Enqueue(ctx, types.DefaultAccount, "late"))
+	select {
+	case <-entered:
+		t.Fatal("queued notification sent during shutdown")
+	default:
+	}
 }

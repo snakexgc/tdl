@@ -17,10 +17,10 @@ import (
 
 type recovery struct {
 	ctx     context.Context
-	backoff backoff.BackOff
+	backoff func() backoff.BackOff
 }
 
-func New(ctx context.Context, backoff backoff.BackOff) telegram.Middleware {
+func New(ctx context.Context, backoff func() backoff.BackOff) telegram.Middleware {
 	return &recovery{
 		ctx:     ctx,
 		backoff: backoff,
@@ -41,7 +41,7 @@ func (r *recovery) Handle(next tg.Invoker) telegram.InvokeFunc {
 			}
 
 			return nil
-		}, r.backoff, func(err error, duration time.Duration) {
+		}, r.backoff(), func(err error, duration time.Duration) {
 			log.Debug("Wait for connection recovery", zap.Error(err), zap.Duration("duration", duration))
 		})
 	}

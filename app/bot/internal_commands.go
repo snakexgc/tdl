@@ -11,13 +11,22 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/utils"
+)
+
+const (
+	localStatusActive   = "active"
+	localStatusQueued   = "queued"
+	localStatusPaused   = "paused"
+	localStatusComplete = "complete"
+	localStatusError    = "error"
+	localStatusRemoved  = "removed"
 )
 
 const internalCommandTimeout = 30 * time.Second
 
-type internalDownloadControllerFactory func() *watch.InternalDownloadController
+type internalDownloadControllerFactory func() *localDownloadControl
 
 func handleInternalDownloadCommand(
 	ctx *th.Context,
@@ -27,27 +36,27 @@ func handleInternalDownloadCommand(
 ) (bool, error) {
 	switch text {
 	case aria2MenuActive:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterInternalDownloads(watch.InternalDownloadStatusActive))
+		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterInternalDownloads(localStatusActive))
 	case aria2MenuWaiting:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterInternalDownloads(watch.InternalDownloadStatusQueued, watch.InternalDownloadStatusPaused))
+		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterInternalDownloads(localStatusQueued, localStatusPaused))
 	case aria2MenuStopped:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterInternalDownloads(watch.InternalDownloadStatusComplete, watch.InternalDownloadStatusError, watch.InternalDownloadStatusRemoved))
+		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterInternalDownloads(localStatusComplete, localStatusError, localStatusRemoved))
 	case aria2MenuPauseTask:
-		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要暂停的本地下载任务：", "pause", factory, filterInternalDownloads(watch.InternalDownloadStatusActive, watch.InternalDownloadStatusQueued, watch.InternalDownloadStatusError))
+		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要暂停的本地下载任务：", "pause", factory, filterInternalDownloads(localStatusActive, localStatusQueued, localStatusError))
 	case aria2MenuUnpauseTask:
-		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要恢复的本地下载任务：", "start", factory, filterInternalDownloads(watch.InternalDownloadStatusPaused, watch.InternalDownloadStatusError))
+		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要恢复的本地下载任务：", "start", factory, filterInternalDownloads(localStatusPaused, localStatusError))
 	case aria2MenuRemoveTask:
-		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要删除的本地下载任务：", "delete", factory, filterInternalDownloads(watch.InternalDownloadStatusActive, watch.InternalDownloadStatusQueued, watch.InternalDownloadStatusPaused, watch.InternalDownloadStatusError))
+		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要删除的本地下载任务：", "delete", factory, filterInternalDownloads(localStatusActive, localStatusQueued, localStatusPaused, localStatusError))
 	case aria2MenuClearStopped:
 		items, err := runInternalDownloadList(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取本地下载任务失败：%v", err))
 		}
-		ids := internalDownloadIDs(filterInternalDownloads(watch.InternalDownloadStatusComplete, watch.InternalDownloadStatusError, watch.InternalDownloadStatusRemoved)(items))
+		ids := internalDownloadIDs(filterInternalDownloads(localStatusComplete, localStatusError, localStatusRemoved)(items))
 		if len(ids) == 0 {
 			return true, sendMessage(ctx, msg.Chat.ID, "当前没有已完成/停止的本地下载任务。")
 		}
-		result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *watch.InternalDownloadController) (watch.InternalDownloadActionResult, error) {
+		result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
 			return controller.Delete(ctx, ids)
 		})
 		if err != nil {
@@ -74,17 +83,17 @@ func handleInternalDownloadCommand(
 	case botCmdDownloads, botCmdDownloadsHelp, botCmdInternal, botCmdInternalHelp:
 		return true, sendMessage(ctx, msg.Chat.ID, internalDownloadHelpMessage())
 	case botCmdDownloadsActive, botCmdInternalActive:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterInternalDownloads(watch.InternalDownloadStatusActive))
+		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterInternalDownloads(localStatusActive))
 	case botCmdDownloadsWaiting, botCmdInternalWaiting:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterInternalDownloads(watch.InternalDownloadStatusQueued, watch.InternalDownloadStatusPaused))
+		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterInternalDownloads(localStatusQueued, localStatusPaused))
 	case botCmdDownloadsStopped, botCmdInternalStopped:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterInternalDownloads(watch.InternalDownloadStatusComplete, watch.InternalDownloadStatusError, watch.InternalDownloadStatusRemoved))
+		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterInternalDownloads(localStatusComplete, localStatusError, localStatusRemoved))
 	case botCmdDownloadsPauseAll, botCmdInternalPauseAll:
-		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "暂停全部", factory, filterInternalDownloads(watch.InternalDownloadStatusActive, watch.InternalDownloadStatusQueued, watch.InternalDownloadStatusError), func(ctx context.Context, controller *watch.InternalDownloadController, ids []string) (watch.InternalDownloadActionResult, error) {
+		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "暂停全部", factory, filterInternalDownloads(localStatusActive, localStatusQueued, localStatusError), func(ctx context.Context, controller *localDownloadControl, ids []string) (types.DownloadActionResult, error) {
 			return controller.Pause(ctx, ids)
 		})
 	case botCmdDownloadsStartAll, botCmdInternalStartAll:
-		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "开始全部", factory, filterInternalDownloads(watch.InternalDownloadStatusPaused, watch.InternalDownloadStatusError), func(ctx context.Context, controller *watch.InternalDownloadController, ids []string) (watch.InternalDownloadActionResult, error) {
+		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "开始全部", factory, filterInternalDownloads(localStatusPaused, localStatusError), func(ctx context.Context, controller *localDownloadControl, ids []string) (types.DownloadActionResult, error) {
 			return controller.Start(ctx, ids)
 		})
 	case botCmdAria2, botCmdAria2Help, botCmdAria2Active, botCmdAria2Waiting, botCmdAria2Stopped, botCmdAria2Overview, botCmdAria2PauseAll, botCmdAria2StartAll, botCmdAria2Retry:
@@ -120,11 +129,11 @@ func internalDownloadBotHelpMessage(userID int64) string {
 	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n任务总览：/info\n提交下载：发送 Telegram 消息链接\n当前下载器：local\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
-func runInternalDownloadList(ctx context.Context, factory internalDownloadControllerFactory) ([]watch.InternalDownloadInfo, error) {
+func runInternalDownloadList(ctx context.Context, factory internalDownloadControllerFactory) ([]types.DownloadTask, error) {
 	if factory == nil {
 		return nil, fmt.Errorf("internal download controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), internalCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, internalCommandTimeout)
 	defer cancel()
 	return factory().List(cmdCtx)
 }
@@ -132,12 +141,12 @@ func runInternalDownloadList(ctx context.Context, factory internalDownloadContro
 func runInternalDownloadAction(
 	ctx context.Context,
 	factory internalDownloadControllerFactory,
-	action func(context.Context, *watch.InternalDownloadController) (watch.InternalDownloadActionResult, error),
-) (watch.InternalDownloadActionResult, error) {
+	action func(context.Context, *localDownloadControl) (types.DownloadActionResult, error),
+) (types.DownloadActionResult, error) {
 	if factory == nil {
-		return watch.InternalDownloadActionResult{}, fmt.Errorf("internal download controller is not configured")
+		return types.DownloadActionResult{}, fmt.Errorf("internal download controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), internalCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, internalCommandTimeout)
 	defer cancel()
 	return action(cmdCtx, factory())
 }
@@ -147,7 +156,7 @@ func sendInternalDownloadList(
 	chatID int64,
 	title string,
 	factory internalDownloadControllerFactory,
-	filter func([]watch.InternalDownloadInfo) []watch.InternalDownloadInfo,
+	filter func([]types.DownloadTask) []types.DownloadTask,
 ) error {
 	items, err := runInternalDownloadList(ctx, factory)
 	if err != nil {
@@ -166,7 +175,7 @@ func sendInternalDownloadButtons(
 	title string,
 	action string,
 	factory internalDownloadControllerFactory,
-	filter func([]watch.InternalDownloadInfo) []watch.InternalDownloadInfo,
+	filter func([]types.DownloadTask) []types.DownloadTask,
 ) error {
 	items, err := runInternalDownloadList(ctx, factory)
 	if err != nil {
@@ -200,8 +209,8 @@ func runInternalDownloadBulkCommand(
 	chatID int64,
 	actionName string,
 	factory internalDownloadControllerFactory,
-	filter func([]watch.InternalDownloadInfo) []watch.InternalDownloadInfo,
-	action func(context.Context, *watch.InternalDownloadController, []string) (watch.InternalDownloadActionResult, error),
+	filter func([]types.DownloadTask) []types.DownloadTask,
+	action func(context.Context, *localDownloadControl, []string) (types.DownloadActionResult, error),
 ) error {
 	items, err := runInternalDownloadList(ctx, factory)
 	if err != nil {
@@ -211,7 +220,7 @@ func runInternalDownloadBulkCommand(
 	if len(ids) == 0 {
 		return sendMessage(ctx, chatID, "当前没有可操作的本地下载任务。")
 	}
-	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *watch.InternalDownloadController) (watch.InternalDownloadActionResult, error) {
+	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
 		return action(ctx, controller, ids)
 	})
 	if err != nil {
@@ -240,7 +249,7 @@ func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery,
 
 	action, id := parts[1], parts[2]
 	var done string
-	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *watch.InternalDownloadController) (watch.InternalDownloadActionResult, error) {
+	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
 		switch action {
 		case actionPause:
 			done = "暂停成功"
@@ -252,7 +261,7 @@ func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery,
 			done = "删除成功"
 			return controller.Delete(ctx, []string{id})
 		default:
-			return watch.InternalDownloadActionResult{}, fmt.Errorf("unknown action: %s", action)
+			return types.DownloadActionResult{}, fmt.Errorf("unknown action: %s", action)
 		}
 	})
 	if err != nil {
@@ -267,17 +276,17 @@ func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery,
 	return sendMessage(ctx, chatID, fmt.Sprintf("%s：%s\n%s", done, id, formatInternalDownloadActionResult("操作结果", result)))
 }
 
-func filterInternalDownloads(statuses ...string) func([]watch.InternalDownloadInfo) []watch.InternalDownloadInfo {
+func filterInternalDownloads(statuses ...string) func([]types.DownloadTask) []types.DownloadTask {
 	allowed := make(map[string]struct{}, len(statuses))
 	for _, status := range statuses {
 		allowed[status] = struct{}{}
 	}
-	return func(items []watch.InternalDownloadInfo) []watch.InternalDownloadInfo {
-		filtered := make([]watch.InternalDownloadInfo, 0, len(items))
+	return func(items []types.DownloadTask) []types.DownloadTask {
+		filtered := make([]types.DownloadTask, 0, len(items))
 		for _, item := range items {
 			status := item.Status
 			if status == "" {
-				status = watch.InternalDownloadStatusQueued
+				status = localStatusQueued
 			}
 			if _, ok := allowed[status]; ok {
 				filtered = append(filtered, item)
@@ -287,7 +296,7 @@ func filterInternalDownloads(statuses ...string) func([]watch.InternalDownloadIn
 	}
 }
 
-func internalDownloadIDs(items []watch.InternalDownloadInfo) []string {
+func internalDownloadIDs(items []types.DownloadTask) []string {
 	ids := make([]string, 0, len(items))
 	for _, item := range items {
 		if item.ID != "" {
@@ -297,7 +306,7 @@ func internalDownloadIDs(items []watch.InternalDownloadInfo) []string {
 	return ids
 }
 
-func formatInternalDownloads(title string, items []watch.InternalDownloadInfo) string {
+func formatInternalDownloads(title string, items []types.DownloadTask) string {
 	const limit = 20
 
 	parts := []string{title}
@@ -321,16 +330,16 @@ func formatInternalDownloads(title string, items []watch.InternalDownloadInfo) s
 	return strings.Join(parts, "\n\n")
 }
 
-func formatInternalDownloadOverview(items []watch.InternalDownloadInfo) string {
+func formatInternalDownloadOverview(items []types.DownloadTask) string {
 	counts := map[string]int{}
 	var remainingBytes int64
 	for _, item := range items {
 		status := item.Status
 		if status == "" {
-			status = watch.InternalDownloadStatusQueued
+			status = localStatusQueued
 		}
 		counts[status]++
-		if status != watch.InternalDownloadStatusComplete && status != watch.InternalDownloadStatusRemoved {
+		if status != localStatusComplete && status != localStatusRemoved {
 			remaining := item.Total - item.Completed
 			if remaining > 0 {
 				remainingBytes += remaining
@@ -346,7 +355,7 @@ func formatInternalDownloadOverview(items []watch.InternalDownloadInfo) string {
 	}, "\n")
 }
 
-func formatInternalDownloadActionResult(action string, result watch.InternalDownloadActionResult) string {
+func formatInternalDownloadActionResult(action string, result types.DownloadActionResult) string {
 	parts := []string{
 		action + "完成。",
 		fmt.Sprintf("匹配任务：%d", result.Matched),
@@ -381,24 +390,24 @@ func formatInternalDownloadStatusCounts(counts map[string]int) string {
 
 func formatInternalDownloadStatus(status string) string {
 	switch status {
-	case "", watch.InternalDownloadStatusQueued:
+	case "", localStatusQueued:
 		return "等待中"
-	case watch.InternalDownloadStatusActive:
+	case localStatusActive:
 		return "下载中"
-	case watch.InternalDownloadStatusPaused:
+	case localStatusPaused:
 		return "已暂停"
-	case watch.InternalDownloadStatusComplete:
+	case localStatusComplete:
 		return "已完成"
-	case watch.InternalDownloadStatusError:
+	case localStatusError:
 		return "错误"
-	case watch.InternalDownloadStatusRemoved:
+	case localStatusRemoved:
 		return "已移除"
 	default:
 		return status
 	}
 }
 
-func internalDownloadName(item watch.InternalDownloadInfo) string {
+func internalDownloadName(item types.DownloadTask) string {
 	switch {
 	case strings.TrimSpace(item.FileName) != "":
 		return strings.TrimSpace(item.FileName)

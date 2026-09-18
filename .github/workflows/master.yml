@@ -40,6 +40,45 @@ jobs:
         run: go build
       - name: Unit Test
         run: go test -race ./...
+      - name: Component assembly and generated documentation
+        run: |
+          go run ./cmd/swc-check
+          go run ./cmd/swc-check -empty
+          go run ./cmd/swc-docs
+          git diff --exit-code -- docs/configuration.md
+  release-build-check:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: linux, arch: amd64}
+          - {os: linux, arch: arm64}
+          - {os: linux, arch: '386'}
+          - {os: linux, arch: riscv64}
+          - {os: linux, arch: loong64}
+          - {os: linux, arch: arm, arm: '5'}
+          - {os: linux, arch: arm, arm: '6'}
+          - {os: linux, arch: arm, arm: '7'}
+          - {os: windows, arch: amd64}
+          - {os: windows, arch: arm64}
+          - {os: windows, arch: '386'}
+          - {os: darwin, arch: amd64}
+          - {os: darwin, arch: arm64}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify release target without publishing
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_ARM: ${{ matrix.arm }}
+        run: |
+          flags=$(go run ./cmd/buildflags --version migration-check --commit "$GITHUB_SHA" --arm "$TARGET_ARM")
+          CGO_ENABLED=0 GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" GOARM="$TARGET_ARM" go build -trimpath -ldflags "$flags" -o "$RUNNER_TEMP/tdl-check" .
   e2e-test:
     runs-on: ubuntu-22.04
     if: false # skip e2e test for now, since it is not stable

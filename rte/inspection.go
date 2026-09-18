@@ -14,6 +14,7 @@ type Configuration struct {
 	State  State                  `json:"state"`
 	Fields []manifest.ConfigField `json:"fields"`
 	Values map[string]any         `json:"values"`
+	Pages  []manifest.Page        `json:"pages"`
 }
 
 func (r *Runtime) Configurations() []Configuration {
@@ -23,7 +24,8 @@ func (r *Runtime) Configurations() []Configuration {
 	for _, id := range r.order {
 		item := r.instances[id]
 		m := item.registration.Manifest
-		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Values: map[string]any{}}
+		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
+		entry.Pages = append([]manifest.Page{}, m.Pages...)
 		for _, field := range m.Config {
 			if field.Secret {
 				field.Default = ""

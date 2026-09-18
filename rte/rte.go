@@ -4,12 +4,17 @@ package rte
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/snakexgc/tdl/bsw/services/dem"
 	"github.com/snakexgc/tdl/interfaces/manifest"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte/config"
@@ -20,6 +25,7 @@ import (
 type Component interface {
 	Init(context.Context, Kernel) error
 	Start(context.Context) error
+	// Stop may be retried after an error; retain resources needed to finish cleanup.
 	Stop(context.Context) error
 	// Reconfigure must leave the old configuration intact on error.
 	Reconfigure(context.Context, config.View) error
@@ -59,8 +65,33 @@ func (r *Registry) Register(m manifest.Manifest, factory Factory) error {
 	m.Provides = append([]manifest.Port(nil), m.Provides...)
 	m.Requires = append([]manifest.Require(nil), m.Requires...)
 	m.Config = append([]manifest.ConfigField(nil), m.Config...)
+	for i := range m.Config {
+		field := &m.Config[i]
+		if field.Min != nil {
+			minimum := *field.Min
+			field.Min = &minimum
+		}
+		if field.Max != nil {
+			maximum := *field.Max
+			field.Max = &maximum
+		}
+		data, err := json.Marshal(field.Default)
+		if err != nil {
+			return fmt.Errorf("%s.%s default: %w", m.ID, field.Name, err)
+		}
+		field.Default = json.RawMessage(data)
+	}
 	m.Publishes = append([]string(nil), m.Publishes...)
 	m.Subscribes = append([]string(nil), m.Subscribes...)
+	m.Pages = append([]manifest.Page(nil), m.Pages...)
+	seenPages := map[string]bool{}
+	for _, page := range m.Pages {
+		parsed, err := url.ParseRequestURI(page.Path)
+		if err != nil || !strings.HasPrefix(page.Path, "/") || strings.HasPrefix(page.Path, "//") || strings.Contains(page.Path, "\\") || parsed.Host != "" || parsed.Scheme != "" || page.Title == "" || seenPages[page.Path] {
+			return fmt.Errorf("%s: invalid or duplicate component page", m.ID)
+		}
+		seenPages[page.Path] = true
+	}
 	r.entries[m.ID] = Registration{m, factory}
 	return nil
 }
@@ -68,10 +99,12 @@ func (r *Registry) Register(m manifest.Manifest, factory Factory) error {
 type State string
 
 const (
-	Running State = "running"
-	Failed  State = "failed"
-	Blocked State = "blocked"
-	Stopped State = "stopped"
+	Starting State = "starting"
+	Stopping State = "stopping"
+	Running  State = "running"
+	Failed   State = "failed"
+	Blocked  State = "blocked"
+	Stopped  State = "stopped"
 )
 
 type Status struct {
@@ -87,24 +120,38 @@ type instance struct {
 	initialized  bool
 	cancel       context.CancelFunc
 	runnables    *schedule.Group
+	observation  atomic.Pointer[observation]
+}
+
+type observation struct {
+	status    Status
+	runnables *schedule.Group
+}
+
+// Called under Runtime.mu; health readers only access the immutable snapshot.
+func (i *instance) setStatus(status Status) {
+	i.status = status
+	i.observation.Store(&observation{status: status, runnables: i.runnables})
 }
 
 type Runtime struct {
-	mu        sync.Mutex
-	order     []string
-	instances map[string]*instance
-	providers map[string]string
-	ports     map[string]any
-	account   types.AccountID
-	started   bool
-	stopped   bool
-	bus       *eventbus.Bus
+	mu          sync.Mutex
+	order       []string
+	instances   map[string]*instance
+	providers   map[string]string
+	ports       map[string]any
+	account     types.AccountID
+	started     bool
+	stopped     bool
+	stopping    bool
+	bus         *eventbus.Bus
+	diagnostics *dem.Store
 }
 
 // Build validates the complete graph and all configurations before invoking
 // any factories. A nil enabled map enables all registered components.
 func (r *Registry) Build(account types.AccountID, enabled map[string]bool, values map[string]map[string]any) (*Runtime, error) {
-	run := &Runtime{account: account, instances: map[string]*instance{}, providers: map[string]string{}, ports: map[string]any{}, bus: eventbus.New()}
+	run := &Runtime{account: account, instances: map[string]*instance{}, providers: map[string]string{}, ports: map[string]any{}, bus: eventbus.New(), diagnostics: dem.New(account, 128)}
 	if account == "" {
 		return nil, errors.New("account is required")
 	}
@@ -192,6 +239,9 @@ func (r *Registry) Build(account types.AccountID, enabled map[string]bool, value
 			return nil, err
 		}
 	}
+	for _, item := range run.instances {
+		item.setStatus(item.status)
+	}
 	return run, nil
 }
 
@@ -207,7 +257,7 @@ func validatePort(p manifest.Port) error {
 func (r *Runtime) Start(ctx context.Context) []Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.started || r.stopped {
+	if r.started || r.stopped || r.stopping {
 		return r.statuses()
 	}
 	r.started = true
@@ -216,7 +266,7 @@ func (r *Runtime) Start(ctx context.Context) []Status {
 		for _, req := range item.registration.Manifest.Requires {
 			provider := r.providers[req.Name]
 			if !req.Optional && r.instances[provider].status.State != Running {
-				item.status = Status{id, Blocked, "dependency unavailable: " + provider}
+				item.setStatus(Status{id, Blocked, "dependency unavailable: " + provider})
 				break
 			}
 		}
@@ -226,9 +276,10 @@ func (r *Runtime) Start(ctx context.Context) []Status {
 		runCtx, cancel := context.WithCancel(ctx)
 		item.cancel = cancel
 		kernel := Kernel{Account: r.account, Config: item.config}
-		item.runnables = schedule.New(runCtx)
+		item.runnables = schedule.NewObserved(runCtx, func(name string, err error) { r.diagnostics.Report(id, "runnable:"+name, err) })
+		item.setStatus(Status{ID: id, State: Starting})
 		kernel.Runnables = item.runnables
-		kernel.Events = Events{bus: r.bus, account: r.account, ctx: runCtx, publishes: item.registration.Manifest.Publishes, subscribes: item.registration.Manifest.Subscribes}
+		kernel.Events = Events{bus: r.bus, account: r.account, ctx: runCtx, publishes: item.registration.Manifest.Publishes, subscribes: item.registration.Manifest.Subscribes, report: func(topic string, err error) { r.diagnostics.Report(id, "event:"+topic, err) }}
 		// Required ports are a private immutable snapshot; resolving them from
 		// component goroutines never touches the runtime's mutable binding map.
 		required := make(map[string]any)
@@ -298,18 +349,20 @@ func (r *Runtime) Start(ctx context.Context) []Status {
 		bindMu.Unlock()
 		if err != nil {
 			cancel()
-			err = errors.Join(err, r.bus.WaitScope(ctx, runCtx.Done()))
-			err = errors.Join(err, item.runnables.Stop(ctx))
-			if item.initialized {
-				err = errors.Join(err, invoke(func() error { return item.component.Stop(ctx) }))
-				item.initialized = false
+			drainErr := errors.Join(r.bus.WaitScope(ctx, runCtx.Done()), item.runnables.Stop(ctx))
+			err = errors.Join(err, drainErr)
+			if item.initialized && drainErr == nil {
+				stopErr := invoke(func() error { return item.component.Stop(ctx) })
+				err = errors.Join(err, stopErr)
+				item.initialized = stopErr != nil
 			}
 			for _, p := range item.registration.Manifest.Provides {
 				delete(r.ports, p.Name)
 			}
-			item.status = Status{id, Failed, err.Error()}
+			item.setStatus(Status{id, Failed, err.Error()})
+			r.diagnostics.Report(id, "start", err)
 		} else {
-			item.status = Status{id, Running, ""}
+			item.setStatus(Status{id, Running, ""})
 		}
 	}
 	return r.statuses()
@@ -353,44 +406,67 @@ func (r *Runtime) Reconfigure(ctx context.Context, id string, values map[string]
 	return nil
 }
 
+// Stop cancels work, drains it, then releases resources in reverse dependency
+// order. An incomplete drain or cleanup preserves resources for a later retry.
 func (r *Runtime) Stop(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopped {
 		return nil
 	}
-	r.stopped = true
-	var result error
+	r.stopping = true
 	// Stop event handlers before releasing component resources. All component
 	// contexts are canceled first, so a handler waiting on another component can
 	// observe shutdown too.
 	for _, item := range r.instances {
+		if item.initialized {
+			item.setStatus(Status{ID: item.status.ID, State: Stopping})
+		}
 		if item.cancel != nil {
 			item.cancel()
 		}
 	}
-	result = errors.Join(result, r.bus.Close(ctx))
+	if err := r.bus.Close(ctx); err != nil {
+		for _, item := range r.instances {
+			if item.initialized {
+				item.setStatus(Status{item.status.ID, Failed, err.Error()})
+				r.diagnostics.Report(item.status.ID, "stop:events", err)
+			}
+		}
+		return err
+	}
+	// Drain every runnable before releasing any component: even an unrelated
+	// worker can still hold a port to a provider that is earlier in stop order.
+	for _, id := range r.order {
+		item := r.instances[id]
+		if item.runnables != nil {
+			if err := item.runnables.Stop(ctx); err != nil {
+				item.setStatus(Status{id, Failed, err.Error()})
+				r.diagnostics.Report(id, "stop:runnables", err)
+				return fmt.Errorf("%s: %w", id, err)
+			}
+		}
+	}
 	for i := len(r.order) - 1; i >= 0; i-- {
 		item := r.instances[r.order[i]]
-		if item.cancel != nil {
-			item.cancel()
-		}
-		if item.runnables != nil {
-			result = errors.Join(result, item.runnables.Stop(ctx))
-		}
 		if !item.initialized {
 			continue
 		}
 		err := invoke(func() error { return item.component.Stop(ctx) })
-		item.initialized = false
-		item.status = Status{ID: r.order[i], State: Stopped}
 		if err != nil {
-			item.status = Status{r.order[i], Failed, err.Error()}
-			result = errors.Join(result, fmt.Errorf("%s: %w", r.order[i], err))
+			item.setStatus(Status{r.order[i], Failed, err.Error()})
+			r.diagnostics.Report(r.order[i], "stop", err)
+			return fmt.Errorf("%s: %w", r.order[i], err)
+		}
+		item.initialized = false
+		item.setStatus(Status{ID: r.order[i], State: Stopped})
+		for _, p := range item.registration.Manifest.Provides {
+			delete(r.ports, p.Name)
 		}
 	}
 	clear(r.ports)
-	return result
+	r.stopped = true
+	return nil
 }
 
 func (r *Runtime) Statuses() []Status { r.mu.Lock(); defer r.mu.Unlock(); return r.statuses() }

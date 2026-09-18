@@ -4,20 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"reflect"
-	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
 
 	"github.com/snakexgc/tdl/app/updater"
+	panel "github.com/snakexgc/tdl/application/panel.webui"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"config": publicConfig(config.Get())})
+		value, err := s.configuration.Read(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"config": value})
 	case http.MethodPatch:
 		var req struct {
 			Values map[string]json.RawMessage `json:"values"`
@@ -26,52 +30,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 			return
 		}
-		next, err := config.Clone(config.Get())
+		next, err := s.configuration.Patch(r.Context(), req.Values)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		for path, raw := range req.Values {
-			if s.opts.ComponentManager != nil {
-				_, editable := s.opts.ComponentManager.ComponentConfigurations()
-				if editable && componentPolicyPath(path) {
-					writeError(w, http.StatusBadRequest, errors.New("edit filtering and naming in the component configuration page"))
-					return
-				}
-			}
-			if strings.EqualFold(strings.TrimSpace(path), "namespace") {
-				writeError(w, http.StatusBadRequest, errors.New("namespace must be changed from user management"))
-				return
-			}
-			if isBlankWebUIUsernamePatch(path, raw) {
-				writeError(w, http.StatusBadRequest, errors.New("webui.username cannot be blank"))
-				return
-			}
-			if isBlankSensitivePatch(path, raw) {
-				continue
-			}
-			if err := setConfigJSONValue(next, path, raw); err != nil {
-				writeError(w, http.StatusBadRequest, errors.Wrapf(err, "set %s", path))
-				return
-			}
-		}
-		if err := config.Validate(next); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
-		}
-		if s.opts.ComponentManager != nil {
-			_, editable := s.opts.ComponentManager.ComponentConfigurations()
-			if editable && !reflect.DeepEqual(next.Bot.AllowedUsers, config.Get().Bot.AllowedUsers) {
-				writeError(w, http.StatusBadRequest, errors.New("edit bot permissions in the component configuration page"))
-				return
-			}
-		}
-		if err := config.Set(next); err != nil {
-			writeError(w, http.StatusInternalServerError, errors.Wrap(err, "save config"))
-			return
-		}
-		if s.opts.AfterConfigSave != nil {
-			s.opts.AfterConfigSave(next)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":         true,
@@ -121,7 +83,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	info, err := updater.CheckLatest(r.Context(), config.EffectiveProxy(config.Get()))
+	info, err := s.checkUpdate(r)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -142,7 +104,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
 		return
 	}
-	plan, info, err := updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.Get()))
+	plan, info, err := s.downloadUpdate(r)
 	if err != nil {
 		s.shutdownRequested.Store(false)
 		writeError(w, http.StatusBadGateway, err)
@@ -157,6 +119,20 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		s.opts.RequestUpdate(plan)
 	}()
+}
+
+func (s *Server) checkUpdate(r *http.Request) (updater.Info, error) {
+	if s.opts.Updater != nil {
+		return s.opts.Updater.Check(r.Context())
+	}
+	return updater.CheckLatest(r.Context(), config.EffectiveProxy(config.Get()))
+}
+
+func (s *Server) downloadUpdate(r *http.Request) (updater.Plan, updater.Info, error) {
+	if s.opts.Updater != nil {
+		return s.opts.Updater.Download(r.Context())
+	}
+	return updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.Get()))
 }
 
 func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
@@ -179,140 +155,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-func publicConfig(cfg *config.Config) *config.Config {
-	next, err := config.Clone(cfg)
-	if err != nil {
-		next = config.DefaultConfig()
-	}
-	next.Bot.Token = ""
-	next.Aria2.Secret = ""
-	next.WebUI.Password = ""
-	next.ProxyPassword = ""
-	next.Telegram.APIHash = ""
-	return next
-}
-
-func isBlankWebUIUsernamePatch(path string, raw json.RawMessage) bool {
-	if !strings.EqualFold(strings.TrimSpace(path), "webui.username") {
-		return false
-	}
-	var value string
-	return json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) == ""
-}
-
+func publicConfig(cfg *config.Config) *config.Config { return panel.PublicConfig(cfg) }
 func isBlankSensitivePatch(path string, raw json.RawMessage) bool {
-	switch strings.ToLower(strings.TrimSpace(path)) {
-	case "bot.token", "aria2.secret", "webui.password", "proxy_password", "telegram.api_hash":
-	default:
-		return false
-	}
-	var value string
-	return json.Unmarshal(raw, &value) == nil && value == ""
-}
-
-func setConfigJSONValue(cfg *config.Config, path string, raw json.RawMessage) error {
-	return setPathJSONValue(reflect.ValueOf(cfg).Elem(), splitConfigPath(path), raw)
-}
-
-func splitConfigPath(path string) []string {
-	parts := strings.Split(strings.TrimSpace(path), ".")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-func setPathJSONValue(value reflect.Value, path []string, raw json.RawMessage) error {
-	value = indirectValue(value)
-	if len(path) == 0 {
-		return errors.New("empty config path")
-	}
-
-	switch value.Kind() {
-	case reflect.Struct:
-		field, ok := fieldByJSONName(value, path[0])
-		if !ok {
-			return fmt.Errorf("unknown config key %q", path[0])
-		}
-		if len(path) == 1 {
-			return setReflectJSONValue(field, raw)
-		}
-		return setPathJSONValue(field, path[1:], raw)
-	case reflect.Map:
-		if len(path) != 1 {
-			return fmt.Errorf("config key %q is not an object", path[0])
-		}
-		key, err := mapKeyValue(value.Type().Key(), path[0])
-		if err != nil {
-			return err
-		}
-		item := reflect.New(value.Type().Elem())
-		if err := json.Unmarshal(raw, item.Interface()); err != nil {
-			return err
-		}
-		if value.IsNil() {
-			value.Set(reflect.MakeMap(value.Type()))
-		}
-		value.SetMapIndex(key, item.Elem())
-		return nil
-	default:
-		return fmt.Errorf("config key %q cannot be expanded", path[0])
-	}
-}
-
-func setReflectJSONValue(value reflect.Value, raw json.RawMessage) error {
-	if !value.CanSet() {
-		return errors.New("config value cannot be set")
-	}
-	target := reflect.New(value.Type())
-	if err := json.Unmarshal(raw, target.Interface()); err != nil {
-		return err
-	}
-	value.Set(target.Elem())
-	return nil
-}
-
-func fieldByJSONName(value reflect.Value, name string) (reflect.Value, bool) {
-	value = indirectValue(value)
-	typ := value.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		jsonName := strings.Split(field.Tag.Get("json"), ",")[0]
-		if jsonName == "" {
-			jsonName = field.Name
-		}
-		if strings.EqualFold(jsonName, name) || strings.EqualFold(field.Name, name) {
-			return value.Field(i), true
-		}
-	}
-	return reflect.Value{}, false
-}
-
-func indirectValue(value reflect.Value) reflect.Value {
-	for value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	return value
-}
-
-func mapKeyValue(typ reflect.Type, raw string) (reflect.Value, error) {
-	switch typ.Kind() {
-	case reflect.String:
-		return reflect.ValueOf(raw).Convert(typ), nil
-	default:
-		return reflect.Value{}, fmt.Errorf("unsupported map key type %s", typ)
-	}
-}
-
-func componentPolicyPath(path string) bool {
-	switch strings.ToLower(strings.Join(splitConfigPath(path), ".")) {
-	case "include", "exclude", "file_size_min_mb", "file_size_max_mb", "filename", "download_dir", "filename_max_length", "filenamemax":
-		return true
-	default:
-		return false
-	}
+	return panel.IsBlankSensitivePatch(path, raw)
 }

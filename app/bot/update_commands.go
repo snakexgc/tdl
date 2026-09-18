@@ -10,10 +10,12 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 
 	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type tdlUpdateController struct {
+	updater       ports.Updater
 	requestUpdate func(updater.Plan)
 }
 
@@ -28,7 +30,7 @@ func handleUpdateCommand(ctx *th.Context, msg *telego.Message, text string, cont
 	confirm := updateCommandConfirmed(text)
 	if !confirm {
 		checkCtx := context.WithoutCancel(ctx)
-		info, err := updater.CheckLatest(checkCtx, config.EffectiveProxy(config.Get()))
+		info, err := controller.check(checkCtx)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, "检查更新失败："+err.Error())
 		}
@@ -44,7 +46,7 @@ func handleUpdateCommand(ctx *th.Context, msg *telego.Message, text string, cont
 	}
 	_ = sendMessage(ctx, msg.Chat.ID, "正在下载更新，请稍候...")
 	downloadCtx := context.WithoutCancel(ctx)
-	plan, info, err := updater.DownloadLatest(downloadCtx, config.EffectiveProxy(config.Get()))
+	plan, info, err := controller.download(downloadCtx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return true, sendMessage(ctx, msg.Chat.ID, "更新已取消。")
@@ -59,6 +61,20 @@ func handleUpdateCommand(ctx *th.Context, msg *telego.Message, text string, cont
 	}
 	controller.requestUpdate(plan)
 	return true, nil
+}
+
+func (c *tdlUpdateController) check(ctx context.Context) (updater.Info, error) {
+	if c != nil && c.updater != nil {
+		return c.updater.Check(ctx)
+	}
+	return updater.CheckLatest(ctx, config.EffectiveProxy(config.Get()))
+}
+
+func (c *tdlUpdateController) download(ctx context.Context) (updater.Plan, updater.Info, error) {
+	if c != nil && c.updater != nil {
+		return c.updater.Download(ctx)
+	}
+	return updater.DownloadLatest(ctx, config.EffectiveProxy(config.Get()))
 }
 
 func updateCommandConfirmed(text string) bool {

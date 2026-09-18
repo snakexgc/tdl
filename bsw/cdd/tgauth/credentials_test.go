@@ -13,7 +13,7 @@ import (
 
 func TestCredentialChangePreservesSessionAndCanBeReverted(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "db")})
+	engine, err := kv.New(kv.DriverBolt, map[string]any{storagePathOption: filepath.Join(t.TempDir(), "db")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open("account")

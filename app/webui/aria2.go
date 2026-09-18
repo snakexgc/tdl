@@ -19,8 +19,11 @@ import (
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/bsw/ecual/aria2rpc"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
 )
+
+const aria2AddURIMethod = "aria2.addUri"
 
 type aria2GlobalStat struct {
 	DownloadSpeed string `json:"downloadSpeed"`
@@ -117,18 +120,7 @@ func checkAria2(ctx context.Context, cfg config.Aria2Config) aria2CheckResult {
 	return result
 }
 
-type aria2TaskRecord struct {
-	GID         string    `json:"gid"`
-	TaskID      string    `json:"task_id"`
-	DownloadURL string    `json:"download_url"`
-	Dir         string    `json:"dir"`
-	Out         string    `json:"out"`
-	CreatedAt   time.Time `json:"created_at"`
-	Status      string    `json:"status"`
-	Total       int64     `json:"total"`
-	Completed   int64     `json:"completed"`
-	Error       string    `json:"error,omitempty"`
-}
+type aria2TaskRecord = types.Aria2TaskRecord
 
 type aria2Status struct {
 	GID             string      `json:"gid"`
@@ -149,28 +141,6 @@ type aria2File struct {
 
 type aria2URI struct {
 	URI string `json:"uri"`
-}
-
-func (s *Server) startAria2SyncLoop(ctx context.Context) {
-	if s.opts.NamespaceKV == nil || s.opts.KVEngine == nil {
-		return
-	}
-	if config.EffectiveDownloaderMode(config.Get()) != config.DownloaderModeAria2 {
-		return
-	}
-	go func() {
-		_ = s.syncAria2Statuses(ctx)
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = s.syncAria2Statuses(ctx)
-			}
-		}
-	}()
 }
 
 func (s *Server) syncAria2Statuses(ctx context.Context) error {
@@ -211,35 +181,10 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 				updated.Error = strings.TrimSpace(st.ErrorCode + " " + st.ErrorMessage)
 			}
 
-			data, err := json.Marshal(updated)
-			if err != nil {
+			applied, err := taskhub.NewAria2Repository(s.opts.NamespaceKV).Report(ctx, updated, record.Revision)
+			if err != nil || !applied {
 				continue
 			}
-			_ = taskhub.Aria2(s.opts.NamespaceKV).Mutate(ctx, record.GID, func(current []byte, stamp time.Time) ([]byte, time.Time, error) {
-				var raw map[string]json.RawMessage
-				if err := json.Unmarshal(current, &raw); err != nil {
-					return nil, stamp, err
-				}
-				if raw == nil {
-					raw = make(map[string]json.RawMessage)
-				}
-				var update map[string]json.RawMessage
-				if err := json.Unmarshal(data, &update); err != nil {
-					return nil, stamp, err
-				}
-				for _, field := range []string{"status", "total", "completed", fieldError} {
-					if value, ok := update[field]; ok {
-						raw[field] = value
-					} else {
-						delete(raw, field)
-					}
-				}
-				if updated.Status != aria2StatusComplete {
-					stamp = time.Now()
-				}
-				next, err := json.Marshal(raw)
-				return next, stamp, err
-			})
 
 			if updated.Status == aria2StatusComplete && (updated.Total == 0 || updated.Completed >= updated.Total) {
 				taskCompleted[taskID] = true
@@ -258,17 +203,6 @@ func (s *Server) syncAria2Statuses(ctx context.Context) error {
 		s.markDownloadTaskDownloaded(ctx, taskID)
 	}
 	return taskhub.CleanupLinksAndAria2(ctx, s.opts.NamespaceKV, now, ttl)
-}
-
-func (s *Server) loadAria2Records() (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {
-	if s.opts.KVEngine == nil {
-		return nil, nil, errors.New("kv engine is not configured")
-	}
-	meta, err := s.opts.KVEngine.MigrateTo()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "list kv keys")
-	}
-	return s.parseAria2Records(meta[s.namespace()])
 }
 
 func (s *Server) parseAria2Records(pairs map[string][]byte) (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {
@@ -485,7 +419,7 @@ func addAria2URI(ctx context.Context, cfg config.Aria2Config, uri, out string, c
 		options["out"] = out
 	}
 	var gid string
-	if err := callAria2(ctx, cfg, "aria2.addUri", []any{[]string{uri}, options}, &gid); err != nil {
+	if err := callAria2(ctx, cfg, aria2AddURIMethod, []any{[]string{uri}, options}, &gid); err != nil {
 		return "", err
 	}
 	if gid == "" {
@@ -686,7 +620,7 @@ func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string, c
 		}
 		return
 	}
-	if method != "aria2.addUri" {
+	if method != aria2AddURIMethod {
 		return
 	}
 	normalizeAria2AddURIParams(request, publicBaseURL, connections)
@@ -694,7 +628,7 @@ func normalizeAria2AddURIRequest(request map[string]any, publicBaseURL string, c
 
 func normalizeAria2MulticallAddURIRequest(request map[string]any, publicBaseURL string, connections int) {
 	method, _ := request["methodName"].(string)
-	if method != "aria2.addUri" {
+	if method != aria2AddURIMethod {
 		return
 	}
 	normalizeAria2AddURIParams(request, publicBaseURL, connections)

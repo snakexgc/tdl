@@ -17,6 +17,7 @@ type Events struct {
 	ctx        context.Context
 	publishes  []string
 	subscribes []string
+	report     eventbus.Reporter
 }
 
 func (e Events) Publish(ctx context.Context, topic string, payload any) error {
@@ -33,5 +34,12 @@ func (e Events) Subscribe(topic string, capacity int, handler eventbus.Handler, 
 	if !slices.Contains(e.subscribes, topic) {
 		return nil, fmt.Errorf("undeclared subscribed topic %s", topic)
 	}
-	return e.bus.Subscribe(e.ctx, e.account, topic, capacity, handler, report)
+	return e.bus.Subscribe(e.ctx, e.account, topic, capacity, handler, func(topic string, err error) {
+		if e.report != nil {
+			e.report(topic, err)
+		}
+		if report != nil {
+			report(topic, err)
+		}
+	})
 }

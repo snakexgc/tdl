@@ -3,10 +3,12 @@ package bot
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -24,7 +26,7 @@ func TestHandleAria2EventIgnoresEventsWhenConfigNil(t *testing.T) {
 		aria2EventDownloadPause,
 		aria2EventDownloadError,
 	} {
-		handleAria2Event(context.Background(), notifier, func() *aria2.Controller {
+		handleAria2Event(context.Background(), notifier, func() ports.Aria2Tasks {
 			panic("factory should not be called when config is nil")
 		}, tracker, method, "gid-1")
 	}
@@ -47,6 +49,9 @@ func TestNotifyAria2DownloadCompleteWithoutFiles(t *testing.T) {
 
 	notifyAria2DownloadComplete(context.Background(), notifier, aria2.DownloadStatus{GID: "gid-1"})
 
+	require.Eventually(t, func() bool {
+		return len(notifierBot.messagesText()) == 1
+	}, time.Second, time.Millisecond)
 	require.Equal(t, []string{"下载完成===> gid-1"}, notifierBot.messagesText())
 }
 

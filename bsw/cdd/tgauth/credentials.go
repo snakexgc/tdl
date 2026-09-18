@@ -25,7 +25,7 @@ func Fingerprint(app types.TelegramApp) string {
 // rewrites an existing session. Legacy sessions derive identity from their app
 // marker until their next successful login commits explicit metadata.
 func ValidateCredentials(ctx context.Context, store storage.Storage, selected, legacy types.TelegramApp) error {
-	if _, err := store.Get(ctx, "session"); errors.Is(err, storage.ErrNotFound) {
+	if _, err := store.Get(ctx, SessionKey); errors.Is(err, storage.ErrNotFound) {
 		return nil
 	} else if err != nil {
 		return err
@@ -46,11 +46,15 @@ func CommitSession(ctx context.Context, store storage.Storage, session []byte, p
 	if len(session) == 0 || preset == "" || fingerprint == "" {
 		return errors.New("incomplete authenticated session")
 	}
-	return storage.Update(ctx, store, func(tx storage.Storage) error {
-		if err := tx.Set(ctx, "session", session); err != nil {
+	scoped, err := SessionStore(store)
+	if err != nil {
+		return err
+	}
+	return storage.Update(ctx, scoped, func(tx storage.Storage) error {
+		if err := tx.Set(ctx, SessionKey, session); err != nil {
 			return err
 		}
-		if err := tx.Set(ctx, "app", []byte(preset)); err != nil {
+		if err := tx.Set(ctx, AppKey, []byte(preset)); err != nil {
 			return err
 		}
 		return tx.Set(ctx, FingerprintKey, []byte(fingerprint))

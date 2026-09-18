@@ -26,6 +26,8 @@ import (
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
@@ -44,6 +46,11 @@ var (
 )
 
 type Options struct {
+	SessionChecker        ports.AccountSession
+	Connections           *tgauth.Connections
+	DownloadControl       ports.DownloadControl
+	Credentials           ports.TelegramCredentials
+	Updater               ports.Updater
 	ComponentStore        *rteconfig.Store
 	SetComponentHost      func(*rte.Runtime)
 	ForwardQueue          *appforward.Queue
@@ -145,6 +152,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	sessionOptionsForKV := func(kvd storage.Storage) login.SessionOptions {
 		return login.SessionOptions{
+			Connections: opts.Connections, Credentials: opts.Credentials, Account: account,
 			KV:               kvd,
 			Proxy:            opts.Proxy,
 			NTP:              opts.NTP,
@@ -157,6 +165,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	opts.Watch.ForwardQueue = opts.ForwardQueue
 	sessionOpts := sessionOptionsForKV(kvd)
+	sessionOpts.Checker = opts.SessionChecker
 	watchCtrl := opts.WatchControl
 	ownsWatch := false
 	if watchCtrl == nil {
@@ -172,13 +181,26 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "open namespace storage")
 		}
-		return gotdLoginRunner{opts: sessionOptionsForKV(targetKV)}, nil
+		targetOptions := sessionOptionsForKV(targetKV)
+		targetOptions.Account = types.AccountID(namespace)
+		return gotdLoginRunner{opts: targetOptions}, nil
 	})
-	aria2Factory := func() *aria2.Controller {
+	aria2Factory := func() ports.Aria2Tasks {
 		return aria2.NewController(config.Get(), kvd, nil)
 	}
-	internalFactory := func() *watch.InternalDownloadController {
-		return watch.NewInternalDownloadController(kvd)
+	downloadControl := opts.DownloadControl
+	if downloadControl == nil {
+		downloadHost, control, err := application.DownloadControlHost(ctx, account, map[string]ports.DownloadBackend{
+			config.DownloaderModeLocal: watch.NewInternalDownloadController(kvd),
+		})
+		if err != nil {
+			return errors.Wrap(err, "start bot download control")
+		}
+		defer downloadHost.Stop(context.Background())
+		downloadControl = control
+	}
+	internalFactory := func() *localDownloadControl {
+		return &localDownloadControl{port: downloadControl, account: account}
 	}
 	go runAria2EventListener(ctx, notifier, aria2Factory)
 	var requestReboot func()
@@ -205,7 +227,19 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
 		}
 	}
-	loginMgr.SetOnSuccess(onLoginSuccess)
+	loginMgr.SetOnSuccess(func(user *ports.LoginUser, namespace string) {
+		onLoginSuccess(&tg.User{ID: user.ID, Username: user.Username, FirstName: user.FirstName, LastName: user.LastName}, namespace)
+	})
+	loginHost, loginPort, err := application.BotLoginHost(ctx, account, loginMgr)
+	if err != nil {
+		return err
+	}
+	defer loginHost.Stop(context.Background())
+	maintenanceHost, maintenancePort, err := application.MaintenanceHost(ctx, account, taskhub.CleanupRepository{Engine: kvEngine, Namespace: string(account), Store: kvd})
+	if err != nil {
+		return err
+	}
+	defer maintenanceHost.Stop(context.Background())
 
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts, !opts.DisableAutoStartWatch)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
@@ -267,6 +301,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		go shutdown()
 	}
 	updateController := newTDLUpdateController(requestUpdate)
+	updateController.updater = opts.Updater
 	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
 		if !console.Allowed(account, query.From.ID) {
 			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
@@ -285,7 +320,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if console.Allowed(account, fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd, opts.ForwardQueue, console)
+			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, maintenancePort, account, opts.ForwardQueue, console)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -448,16 +483,15 @@ func saveBotNamespaceIfChanged(namespace string) (bool, error) {
 func handleAllowedMessage(
 	ctx *th.Context,
 	msg *telego.Message,
-	loginMgr *loginManager,
+	loginMgr ports.BotLogin,
 	requestReboot func(),
 	updateController *tdlUpdateController,
 	watchCtrl watchControl,
 	aria2Factory aria2ControllerFactory,
 	internalFactory internalDownloadControllerFactory,
-	kvEngine kv.Storage,
-	namespace string,
-	namespaceKV storage.Storage,
-	forwardQueue *appforward.Queue,
+	maintenance ports.KVMaintenance,
+	account types.AccountID,
+	forwardQueue ports.ForwardTasks,
 	console ports.Console,
 ) error {
 	fromID := msg.From.ID
@@ -477,7 +511,7 @@ func handleAllowedMessage(
 	if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
 		return err
 	}
-	if handled, err := handleKVCommand(ctx, msg, text, kvEngine, namespace, namespaceKV); handled || err != nil {
+	if handled, err := handleKVCommand(ctx, msg, text, maintenance, account); handled || err != nil {
 		return err
 	}
 	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
@@ -530,7 +564,7 @@ func handleAllowedMessage(
 		return nil
 	}
 
-	if loginMgr.HandleInput(fromID, chatID, text, msg.MessageID) {
+	if loginMgr.HandleInput(fromID, chatID, msg.Text, msg.MessageID) {
 		return nil
 	}
 

@@ -6,16 +6,27 @@ import (
 
 	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 type Options struct {
+	Connections             *tgauth.Connections
+	ComponentStore          *rteconfig.Store
+	SetIntentHost           func(*rte.Runtime)
+	SetDownloadHost         func(*rte.Runtime)
 	ForwardQueue            *appforward.Queue
 	Account                 types.AccountID
 	Filter                  ports.FilterRules
 	Naming                  ports.NamingRules
+	Reaction                ports.ReactionTrigger
+	MessageLinks            ports.MessageLinks
+	Credentials             ports.TelegramCredentials
+	DownloadRouting         ports.DownloadRouting
 	Dir                     string
 	Template                string
 	FilenameMaxLength       int

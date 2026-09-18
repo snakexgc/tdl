@@ -17,7 +17,7 @@ type localExecutor struct {
 
 var _ ports.DownloadExecutor = (*localExecutor)(nil)
 
-func (*localExecutor) Name() string { return "local" }
+func (*localExecutor) Name() string { return localExecutorName }
 
 func (e *localExecutor) Submit(ctx context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
 	if err := ctx.Err(); err != nil {

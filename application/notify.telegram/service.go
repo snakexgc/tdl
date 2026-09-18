@@ -2,8 +2,10 @@ package notifytelegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/eventbus"
 )
 
 const (
@@ -26,8 +29,10 @@ func Register(registry *rte.Registry) error {
 	minimum, maximum := int64(1), int64(300)
 	return registry.Register(manifest.Manifest{
 		ID: ID, Title: "Telegram 通知",
-		Provides: []manifest.Port{manifest.PortOf[ports.Notifications](ports.NotificationsName, 1, 0)},
-		Requires: []manifest.Require{{Port: manifest.PortOf[ports.NotificationTransport](ports.NotificationTransportName, 1, 0), Optional: true}},
+		Provides:   []manifest.Port{manifest.PortOf[ports.Notifications](ports.NotificationsName, 1, 1)},
+		Publishes:  []string{types.NotificationRequested},
+		Subscribes: []string{types.NotificationRequested},
+		Requires:   []manifest.Require{{Port: manifest.PortOf[ports.NotificationTransport](ports.NotificationTransportName, 1, 0), Optional: true}},
 		Config: []manifest.ConfigField{
 			{Name: recipientsField, Title: "接收者 ID", Type: manifest.Strings, Default: []string{}},
 			{Name: "timeout_seconds", Title: "发送超时（秒）", Type: manifest.Int, Default: 15, Min: &minimum, Max: &maximum},
@@ -49,10 +54,12 @@ type Service struct {
 	mu        sync.Mutex
 	closed    bool
 	active    sync.WaitGroup
+	events    rte.Events
 }
 
 func (s *Service) Init(ctx context.Context, k rte.Kernel) error {
 	s.account = k.Account
+	s.events = k.Events
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	if transport, err := k.Resolve(ports.NotificationTransportName); err == nil {
 		s.transport = transport.(ports.NotificationTransport)
@@ -60,7 +67,42 @@ func (s *Service) Init(ctx context.Context, k rte.Kernel) error {
 	if err := s.Reconfigure(ctx, k.Config); err != nil {
 		return err
 	}
+	if _, err := k.Events.Subscribe(types.NotificationRequested, 64, s.deliverEvent, func(topic string, err error) {
+		slog.Error("notification event failed", "component", ID, "account", s.account, "topic", topic, "error", err)
+	}); err != nil {
+		return err
+	}
 	return k.Provide(ports.NotificationsName, s)
+}
+
+func (s *Service) deliverEvent(ctx context.Context, event eventbus.Event) error {
+	var request types.NotificationRequest
+	if err := json.Unmarshal(event.Payload, &request); err != nil {
+		return err
+	}
+	_, err := s.Send(ctx, event.Account, request.Text)
+	return err
+}
+
+func (s *Service) Enqueue(ctx context.Context, account types.AccountID, text string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if account != s.account {
+		return errors.New("notification account mismatch")
+	}
+	if s.closed || s.ctx == nil || s.ctx.Err() != nil {
+		return errors.New("notification component is stopped")
+	}
+	if s.transport == nil {
+		return errors.New("notification transport is unavailable")
+	}
+	if text == "" {
+		return nil
+	}
+	return s.events.Publish(ctx, types.NotificationRequested, types.NotificationRequest{Text: text})
 }
 func (*Service) Start(context.Context) error { return nil }
 func (s *Service) Stop(ctx context.Context) error {
@@ -132,7 +174,9 @@ func (s *Service) begin(ctx context.Context, account types.AccountID) (context.C
 		return nil, nil, nil, errors.New("notification transport is unavailable")
 	}
 	settings := s.settings.Load()
-	callCtx, cancel := context.WithTimeout(ctx, settings.timeout)
+	// The batch follows caller and component cancellation. Each transport
+	// request gets its own timeout so one recipient cannot exhaust the others'.
+	callCtx, cancel := context.WithCancel(ctx)
 	unlink := context.AfterFunc(s.ctx, cancel)
 	s.active.Add(1)
 	return callCtx, func() { unlink(); cancel(); s.active.Done() }, settings, nil
@@ -153,7 +197,9 @@ func (s *Service) Send(ctx context.Context, account types.AccountID, text string
 		if err := callCtx.Err(); err != nil {
 			return result, errors.Join(combined, err)
 		}
-		id, err := s.transport.Send(callCtx, chatID, text)
+		requestCtx, cancel := context.WithTimeout(callCtx, settings.timeout)
+		id, err := s.transport.Send(requestCtx, chatID, text)
+		cancel()
 		if err != nil {
 			combined = errors.Join(combined, fmt.Errorf("notify %d: %w", chatID, err))
 			continue
@@ -189,7 +235,10 @@ func (s *Service) Edit(ctx context.Context, account types.AccountID, refs []type
 		if err := callCtx.Err(); err != nil {
 			return errors.Join(combined, err)
 		}
-		if err := s.transport.Edit(callCtx, ref.ChatID, ref.MessageID, text); err != nil {
+		requestCtx, cancel := context.WithTimeout(callCtx, settings.timeout)
+		err := s.transport.Edit(requestCtx, ref.ChatID, ref.MessageID, text)
+		cancel()
+		if err != nil {
 			combined = errors.Join(combined, fmt.Errorf("edit notification %d/%d: %w", ref.ChatID, ref.MessageID, err))
 		}
 	}

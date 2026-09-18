@@ -15,6 +15,23 @@ import (
 
 const passwordField = "password"
 
+func TestRegisteredSchemaOwnsBoundsAndDefaults(t *testing.T) {
+	registry := rte.NewRegistry()
+	minimum := int64(1)
+	defaults := []string{"original"}
+	require.NoError(t, registry.Register(manifest.Manifest{ID: providerID, Config: []manifest.ConfigField{
+		{Name: limitField, Type: manifest.Int, Default: 2, Min: &minimum},
+		{Name: "items", Type: manifest.Strings, Default: defaults},
+	}}, func() rte.Component { return &component{} }))
+	minimum = 100
+	defaults[0] = "mutated"
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
+	require.NoError(t, err)
+	entries := host.Configurations()
+	require.Equal(t, int64(1), *entries[0].Fields[0].Min)
+	require.Equal(t, []any{"original"}, entries[0].Values["items"])
+}
+
 func TestConfigurationInspectionAndSecretPatch(t *testing.T) {
 	ctx := context.Background()
 	registry := rte.NewRegistry()

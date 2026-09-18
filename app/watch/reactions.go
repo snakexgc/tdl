@@ -28,11 +28,11 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 	peerType := "unknown"
 	switch update.Peer.(type) {
 	case *tg.PeerUser:
-		peerType = "user"
+		peerType = peerKindUser
 	case *tg.PeerChat:
-		peerType = "chat"
+		peerType = peerKindChat
 	case *tg.PeerChannel:
-		peerType = "channel"
+		peerType = peerKindChannel
 	}
 
 	reactionsJSON, _ := json.Marshal(update.Reactions)
@@ -83,9 +83,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 						zap.Error(err))
 					policy.Forget(key)
 				} else {
-					select {
-					case w.jobCh <- downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
-					default:
+					if err := w.enqueueDownload(ctx, downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}); err != nil {
 						logctx.From(ctx).Warn("Submission queue full, dropping job",
 							zap.Int64("peer_id", peerID),
 							zap.Int("msg_id", update.MsgID))
@@ -100,7 +98,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 	// Reaction triggers forward any message the user reacts to, independent of
 	// the auto-forward listen set (which only governs new-message forwarding).
 	if w.shouldTriggerForwardReaction(&update.Reactions) {
-		go w.triggerForwardOnReaction(ctx, e, update.Peer, peerID, update.MsgID)
+		return w.publishForwardIntent(ctx, e, update.Peer, peerID, update.MsgID)
 	}
 
 	return nil
@@ -181,9 +179,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 						zap.Error(err))
 					policy.Forget(key)
 				} else {
-					select {
-					case w.jobCh <- downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}:
-					default:
+					if err := w.enqueueDownload(ctx, downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}); err != nil {
 						logctx.From(ctx).Warn("Submission queue full, dropping job",
 							zap.Int64("peer_id", peerID),
 							zap.Int("msg_id", msg.ID))
@@ -198,7 +194,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 	// Reaction triggers forward any message the user reacts to, independent of
 	// the auto-forward listen set (which only governs new-message forwarding).
 	if w.shouldTriggerForwardReaction(&msg.Reactions) {
-		go w.triggerForwardOnReaction(ctx, e, msg.PeerID, peerID, msg.ID)
+		return w.publishForwardIntent(ctx, e, msg.PeerID, peerID, msg.ID)
 	}
 
 	return nil

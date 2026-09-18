@@ -9,14 +9,7 @@ import (
 
 // MessageLinkSubmissionResult describes a Telegram message link submitted through
 // the same pipeline used by reaction-triggered watch downloads.
-type MessageLinkSubmissionResult struct {
-	Link      string
-	PeerID    int64
-	MessageID int
-	Total     int
-	Queued    int
-	Skipped   int
-}
+type MessageLinkSubmissionResult = types.DownloadSubmissionSummary
 
 type messageLinkSubmission struct {
 	link  string
@@ -30,4 +23,15 @@ type messageLinkSubmissionResponse struct {
 
 func ValidateTelegramMessageHTTPLink(raw string) (string, error) {
 	return application.ValidateMessageLink(context.Background(), types.DefaultAccount, raw)
+}
+
+func validateMessageLink(ctx context.Context, opts Options, raw string) (string, error) {
+	account := opts.Account
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	if opts.MessageLinks != nil {
+		return opts.MessageLinks.Validate(ctx, account, raw)
+	}
+	return application.ValidateMessageLink(ctx, account, raw)
 }

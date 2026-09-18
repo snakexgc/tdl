@@ -199,6 +199,22 @@ func TestRoutesServeAppShellForViewPaths(t *testing.T) {
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/css")
 }
 
+func TestComponentOwnedAssetsRemainAvailableAtLegacyURLs(t *testing.T) {
+	initWebUITestConfig(t)
+	handler := NewServer(Options{}).routes()
+	for _, path := range []string{"/static/js/user.js", "/static/js/update.js", "/static/js/forwards.js", "/static/js/downloads.js", "/static/css/update.css"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, recorder.Code, path)
+		require.NotEmpty(t, recorder.Body.String(), path)
+	}
+	for _, path := range []string{"/aria2ng.html", "/views/update.html", "/api/update/check", "/api/forwards"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		require.NotEqual(t, http.StatusOK, recorder.Code, path)
+	}
+}
+
 func TestConfigAPIExposesSplitListenFields(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()

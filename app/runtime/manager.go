@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/app/webui"
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/logctx"
@@ -86,14 +88,26 @@ func watchAutoDownloadEnabled(cfg *config.Config) bool {
 }
 
 type Manager struct {
-	botComponents  *rte.Runtime
-	componentStore *rteconfig.Store
-	policyErr      error
-	policies       *rte.Runtime
-	filter         ports.FilterRules
-	naming         ports.NamingRules
-	parent         context.Context
-	forwardQueue   *appforward.Queue
+	accountHost     *rte.Runtime
+	sessionPort     ports.AccountSession
+	connections     *tgauth.Connections
+	intentHost      *rte.Runtime
+	botProcess      *rte.Process
+	aria2Process    *rte.Process
+	panelProcess    *rte.Process
+	panelHost       *rte.Runtime
+	localHost       *rte.Runtime
+	botComponents   *rte.Runtime
+	componentStore  *rteconfig.Store
+	policyErr       error
+	policies        *rte.Runtime
+	filter          ports.FilterRules
+	naming          ports.NamingRules
+	parent          context.Context
+	forwardQueue    *appforward.Queue
+	downloadAccount types.AccountID
+	downloadHost    *rte.Runtime
+	downloadPort    ports.DownloadControl
 
 	kvEngine    kv.Storage
 	namespaceKV storage.Storage
@@ -101,8 +115,6 @@ type Manager struct {
 	httpService *httpdl.Service
 	httpCtrl    *httpdl.Controller
 	aria2Mgr    *aria2.Manager
-	aria2Cancel context.CancelFunc
-	aria2Done   chan struct{}
 	aria2Err    error
 	aria2Config aria2ManagerConfig
 
@@ -114,8 +126,6 @@ type Manager struct {
 	applyVersion   atomic.Uint64
 	mu             sync.Mutex
 	notify         watch.NotifyFunc
-	botCancel      context.CancelFunc
-	botDone        chan struct{}
 	botStatus      string
 	botErr         error
 	watchMode      string
@@ -181,8 +191,10 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	}
 	host, filter, naming, policyErr := newPolicyHostStored(ctx, cfg, componentStore)
 	manager := &Manager{
-		componentStore: componentStore,
-		policies:       host, filter: filter, naming: naming, policyErr: policyErr,
+		connections:     tgauth.NewConnections(ctx),
+		downloadAccount: types.AccountID(cfg.Namespace),
+		componentStore:  componentStore,
+		policies:        host, filter: filter, naming: naming, policyErr: policyErr,
 		parent:         ctx,
 		forwardQueue:   appforward.NewQueue(namespaceKV),
 		kvEngine:       engine,
@@ -191,16 +203,35 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		requestUpdate:  opts.RequestUpdate,
 		botStatus:      moduleStatusNotStarted,
 		watchMode:      config.EffectiveDownloaderMode(cfg),
-		watchEnabled:   cfg != nil && cfg.Modules.Watch,
-		forwardEnabled: cfg != nil && cfg.Modules.Forward,
-		aria2Enabled:   cfg != nil && cfg.Modules.Aria2,
+		watchEnabled:   cfg.Modules.Watch,
+		forwardEnabled: cfg.Modules.Forward,
+		aria2Enabled:   cfg.Modules.Aria2,
 		aria2Auto:      watchAutoDownloadEnabled(cfg),
 		aria2Config:    effectiveAria2ManagerConfig(cfg),
 	}
+	if manager.downloadAccount == "" {
+		manager.downloadAccount = types.DefaultAccount
+	}
+	accountHost, resourceErr := application.AccountResourceHost(ctx, manager.downloadAccount, manager.connections, login.SessionProbe{Options: manager.sessionOptions})
+	manager.accountHost = accountHost
+	if resourceErr == nil {
+		var value any
+		value, resourceErr = accountHost.Resolve(ports.AccountSessionName)
+		if resourceErr == nil {
+			manager.sessionPort = value.(ports.AccountSession)
+		}
+	}
+	manager.policyErr = errors.Join(manager.policyErr, resourceErr)
+	manager.botProcess = rte.NewProcess(ctx, manager.downloadAccount, "host.bot")
+	manager.aria2Process = rte.NewProcess(ctx, manager.downloadAccount, "host.aria2")
+	manager.panelProcess = rte.NewProcess(ctx, manager.downloadAccount, "host.panel")
 	manager.forwardQueue.SetNotifier(manager.Notify)
+	manager.initDownloadControl(ctx)
 	manager.httpService = httpdl.NewService(cfg, namespaceKV, logctx.From(ctx))
+	manager.httpService.Proxy().SetComponentStore(manager.componentStore)
 	manager.httpCtrl = httpdl.NewController(ctx, manager.httpService)
 	manager.aria2Mgr = aria2.NewManager(cfg, namespaceKV, logctx.From(ctx))
+	manager.aria2Mgr.SetComponentStore(manager.componentStore)
 	manager.watchCtrl = watch.NewController(ctx, manager.watchOptions(cfg), manager.Notify)
 	return manager
 }
@@ -217,8 +248,13 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 	}
 
 	errCh := make(chan error, 1)
-	go func() {
+	_, startErr := m.panelProcess.Start(func(ctx context.Context) error {
 		err := webui.Run(ctx, webui.Options{
+			SetComponentHost: func(host *rte.Runtime) { m.mu.Lock(); m.panelHost = host; m.mu.Unlock() },
+			Connections:      m.connections,
+			SessionChecker:   m.sessionPort,
+			Credentials:      m, Updater: m,
+			DownloadControl:  m,
 			KVEngine:         m.kvEngine,
 			ForwardQueue:     m.forwardQueue,
 			Namespace:        cfg.Namespace,
@@ -235,7 +271,11 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 			color.Yellow("WebUI stopped: %v", err)
 		}
 		errCh <- err
-	}()
+		return err
+	}, rte.Recovery{})
+	if startErr != nil {
+		return false
+	}
 
 	select {
 	case err := <-errCh:
@@ -284,7 +324,7 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 		m.policies, m.filter, m.naming, m.policyErr = next, filter, naming, err
 		m.mu.Unlock()
 	} else if m.componentStore == nil {
-		if err := host.ReconfigureBatch(watchCtx, watch.PolicyValues(watch.DefaultOptions(cfg))); err != nil {
+		if err := host.ReconfigureBatch(watchCtx, daemonComponentValues(cfg)); err != nil {
 			return fmt.Errorf("reconfigure policy host: %w", err)
 		}
 	}
@@ -306,14 +346,23 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 	m.mu.Unlock()
 
 	if aria2ConfigChanged {
+		var stopErr error
 		m.transition(version, func() {
-			m.StopAria2Manager()
+			stopCtx, cancel := context.WithTimeout(context.Background(), moduleStopTimeout)
+			defer cancel()
+			if stopErr = m.stopAria2(stopCtx); stopErr != nil {
+				return
+			}
 			manager := aria2.NewManager(cfg, m.namespaceKV, logctx.From(m.parent))
+			manager.SetComponentStore(m.componentStore)
 			m.mu.Lock()
 			m.aria2Mgr = manager
 			m.aria2Config = nextAria2Config
 			m.mu.Unlock()
 		})
+		if stopErr != nil {
+			return stopErr
+		}
 	}
 	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
 	restartWatch := m.watchCtrl.Running() &&
@@ -324,12 +373,20 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 			(aria2ConfigChanged && nextAria2Auto))
 
 	if cfg.Modules.HTTP {
+		var stopErr error
 		m.transition(version, func() {
 			if restartHTTP && m.httpCtrl.Running() {
-				m.StopHTTP()
+				stopCtx, cancel := context.WithTimeout(watchCtx, moduleStopTimeout)
+				defer cancel()
+				if stopErr = m.httpCtrl.StopContext(stopCtx); stopErr != nil {
+					return
+				}
 			}
 			m.StartHTTP()
 		})
+		if stopErr != nil {
+			return stopErr
+		}
 	} else {
 		m.stopForConfig(version, async, m.StopHTTP)
 	}
@@ -348,14 +405,14 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 		if restartWatch {
 			if async {
 				m.runTransition(version, func() {
-					m.StopWatch()
-					_ = m.StartWatch(watchCtx)
+					if err := m.restartWatch(m.parent); err != nil {
+						logctx.From(m.parent).Error("restart watch", zap.Error(err))
+					}
 				})
 			} else {
 				var err error
 				m.transition(version, func() {
-					m.StopWatch()
-					err = m.StartWatch(watchCtx)
+					err = m.restartWatch(watchCtx)
 				})
 				if err != nil {
 					return err
@@ -485,21 +542,12 @@ func (m *Manager) StartBot() {
 		return
 	}
 
-	m.mu.Lock()
-	if m.botCancel != nil {
-		m.mu.Unlock()
-		return
-	}
-	ctx, cancel := context.WithCancel(m.parent)
-	done := make(chan struct{})
-	m.botCancel = cancel
-	m.botDone = done
-	m.botStatus = "启动中"
-	m.botErr = nil
-	m.mu.Unlock()
-
-	go func() {
+	started, startErr := m.botProcess.Start(func(ctx context.Context) error {
 		err := bot.Run(ctx, bot.Options{
+			DownloadControl: m,
+			Connections:     m.connections,
+			SessionChecker:  m.sessionPort,
+			Credentials:     m, Updater: m,
 			ComponentStore:        m.componentStore,
 			SetComponentHost:      func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
 			Token:                 cfg.Bot.Token,
@@ -519,48 +567,35 @@ func (m *Manager) StartBot() {
 			RequestUpdate:         m.requestUpdate,
 		})
 
+		return err
+	}, rte.Recovery{MaxRestarts: 3, Delay: time.Second, Retryable: transientTransportError})
+	if startErr != nil {
+		m.setBotStopped(startErr.Error(), startErr)
+	} else if started {
 		m.mu.Lock()
-		if m.botDone == done {
-			m.botCancel = nil
-			m.botDone = nil
-			if err != nil && !errors.Is(err, context.Canceled) {
-				m.botErr = err
-				m.botStatus = "已停止：" + err.Error()
-			} else {
-				m.botErr = nil
-				m.botStatus = "已停止"
-			}
-		}
+		m.botStatus = moduleStatusRunning
+		m.botErr = nil
 		m.mu.Unlock()
-		close(done)
-	}()
+	}
+}
+
+func transientTransportError(err error) bool {
+	var networkError net.Error
+	return errors.As(err, &networkError)
 }
 
 func (m *Manager) StopBot() {
-	m.mu.Lock()
-	cancel := m.botCancel
-	done := m.botDone
-	m.botStatus = "正在停止"
-	m.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		timer := time.NewTimer(moduleStopTimeout)
-		select {
-		case <-done:
-		case <-timer.C:
-			m.mu.Lock()
-			m.botStatus = "停止超时"
-			m.mu.Unlock()
-		}
-		timer.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), moduleStopTimeout)
+	defer cancel()
+	if err := m.botProcess.Stop(ctx); err != nil {
+		m.mu.Lock()
+		m.botStatus = err.Error()
+		m.botErr = err
+		m.mu.Unlock()
+		return
 	}
 	m.setNotifier(nil)
-	if cancel == nil {
-		m.setBotStopped("已停止", nil)
-	}
+	m.setBotStopped("stopped", nil)
 }
 
 func (m *Manager) StartWatch(ctx context.Context) error {
@@ -591,6 +626,13 @@ func (m *Manager) StopWatch() {
 	m.watchCtrl.Stop()
 }
 
+func (m *Manager) restartWatch(ctx context.Context) error {
+	if err := m.watchCtrl.StopContext(ctx); err != nil {
+		return err
+	}
+	return m.StartWatch(ctx)
+}
+
 func (m *Manager) StartHTTP() {
 	cfg := config.Get()
 	if cfg == nil || !cfg.Modules.HTTP {
@@ -608,63 +650,57 @@ func (m *Manager) StartAria2Manager() {
 		return
 	}
 	m.mu.Lock()
-	manager := m.aria2Mgr
-	if !m.aria2Enabled || manager == nil || m.aria2Cancel != nil {
-		m.mu.Unlock()
+	manager, enabled := m.aria2Mgr, m.aria2Enabled
+	m.mu.Unlock()
+	if !enabled || manager == nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(m.parent)
-	done := make(chan struct{})
-	m.aria2Cancel = cancel
-	m.aria2Done = done
-	m.aria2Err = nil
-	m.mu.Unlock()
-
-	if m.httpService != nil && m.httpService.Proxy() != nil {
-		m.httpService.Proxy().SetTelegramFileErrorReporter(manager)
-	}
-	go func() {
-		err := manager.Run(ctx)
-		m.mu.Lock()
-		if m.aria2Done == done {
-			m.aria2Cancel = nil
-			m.aria2Done = nil
-			m.aria2Err = err
+	_, err := m.aria2Process.Start(func(ctx context.Context) error {
+		if m.httpService != nil {
+			m.httpService.Proxy().SetTelegramFileErrorReporter(manager)
 		}
-		m.mu.Unlock()
-		close(done)
-	}()
+		defer func() {
+			if m.httpService != nil {
+				m.httpService.Proxy().SetTelegramFileErrorReporter(nil)
+			}
+		}()
+		return manager.Run(ctx)
+	}, rte.Recovery{})
+	m.mu.Lock()
+	m.aria2Err = err
+	m.mu.Unlock()
 }
 
+func (m *Manager) stopAria2(ctx context.Context) error { return m.aria2Process.Stop(ctx) }
+
 func (m *Manager) StopAria2Manager() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	cancel := m.aria2Cancel
-	done := m.aria2Done
-	m.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		timer := time.NewTimer(moduleStopTimeout)
-		select {
-		case <-done:
-		case <-timer.C:
-		}
-		timer.Stop()
-	}
-	if m.httpService != nil && m.httpService.Proxy() != nil {
-		m.httpService.Proxy().SetTelegramFileErrorReporter(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), moduleStopTimeout)
+	defer cancel()
+	if err := m.stopAria2(ctx); err != nil {
+		logctx.From(m.parent).Error("stop aria2", zap.Error(err))
 	}
 }
 
 func (m *Manager) Shutdown() {
+	defer func() {
+		if m.accountHost != nil {
+			_ = m.accountHost.Stop(context.Background())
+		} else {
+			_ = m.connections.Stop(context.Background())
+		}
+	}()
+	_ = m.panelProcess.Stop(context.Background())
+	_ = m.botProcess.Stop(context.Background())
+	_ = m.aria2Process.Stop(context.Background())
 	m.StopBot()
 	m.StopAria2Manager()
-	m.StopHTTP()
-	m.StopWatch()
+	_ = m.httpCtrl.StopContext(context.Background())
+	_ = m.watchCtrl.StopContext(context.Background())
+	if m.downloadHost != nil {
+		if err := m.downloadHost.Stop(context.Background()); err != nil {
+			logctx.From(m.parent).Error("stop download control", zap.Error(err))
+		}
+	}
 	m.mu.Lock()
 	host := m.policies
 	m.mu.Unlock()
@@ -696,7 +732,7 @@ func (m *Manager) onLoginSuccess(_ *tg.User) {
 	cfg := config.Get()
 	if cfg.Modules.Watch || cfg.Modules.Forward {
 		go func() {
-			if err := m.StartWatch(context.Background()); err != nil {
+			if err := m.restartWatch(m.parent); err != nil {
 				m.Notify(context.Background(), "登录成功，但监听服务未启动："+err.Error())
 			}
 		}()
@@ -705,10 +741,16 @@ func (m *Manager) onLoginSuccess(_ *tg.User) {
 
 func (m *Manager) botState(cfg *config.Config) webui.ModuleState {
 	m.mu.Lock()
-	running := m.botCancel != nil
+	running := m.botProcess.Running()
 	status := m.botStatus
 	err := m.botErr
 	m.mu.Unlock()
+	if processErr := m.botProcess.LastError(); processErr != nil {
+		err = processErr
+	}
+	if !running && err == nil && status == moduleStatusRunning {
+		status = "stopped"
+	}
 	if cfg == nil {
 		cfg = config.Get()
 	}
@@ -794,9 +836,12 @@ func (m *Manager) aria2State(cfg *config.Config) webui.ModuleState {
 		cfg = config.Get()
 	}
 	m.mu.Lock()
-	running := m.aria2Cancel != nil
+	running := m.aria2Process.Running()
 	err := m.aria2Err
 	m.mu.Unlock()
+	if processErr := m.aria2Process.LastError(); processErr != nil {
+		err = processErr
+	}
 	enabled := cfg != nil && cfg.Modules.Aria2
 	var status string
 	switch {
@@ -855,16 +900,26 @@ func (m *Manager) checkSession(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cfg := config.Get()
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, err := login.CheckSession(checkCtx, login.SessionOptions{
+	opts := m.sessionOptions()
+	opts.Checker = m.sessionPort
+	_, err := login.CheckSession(checkCtx, opts)
+	return err
+}
+
+func (m *Manager) sessionOptions() login.SessionOptions {
+	cfg := config.Get()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	return login.SessionOptions{
+		Connections: m.connections, Credentials: m, Account: m.downloadAccount,
 		KV:               m.namespaceKV,
 		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
-	})
-	return err
+	}
 }
 
 func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
@@ -876,12 +931,27 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 
 func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts := watch.DefaultOptions(cfg)
+	opts.Connections = m.connections
+	opts.ComponentStore = m.componentStore
+	opts.SetIntentHost = func(host *rte.Runtime) { m.mu.Lock(); m.intentHost = host; m.mu.Unlock() }
+	opts.SetDownloadHost = func(host *rte.Runtime) { m.mu.Lock(); m.localHost = host; m.mu.Unlock() }
 	m.mu.Lock()
 	opts.Filter, opts.Naming = m.filter, m.naming
+	host := m.policies
 	m.mu.Unlock()
+	opts.Credentials = m
+	if host != nil {
+		if value, err := host.Resolve(ports.ReactionTriggerName); err == nil {
+			opts.Reaction = value.(ports.ReactionTrigger)
+		}
+		if value, err := host.Resolve(ports.MessageLinksName); err == nil {
+			opts.MessageLinks = value.(ports.MessageLinks)
+		}
+	}
 	opts.HTTPService = m.httpService
+	opts.DownloadRouting = m
 	opts.ForwardQueue = m.forwardQueue
-	if watchAutoDownloadEnabled(cfg) {
+	if cfg.Modules.Aria2 && cfg.Aria2.AutoDownload {
 		m.mu.Lock()
 		opts.DownloadSubmitter = m.aria2Mgr
 		m.mu.Unlock()
@@ -892,8 +962,6 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 func (m *Manager) setBotStopped(status string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.botCancel = nil
-	m.botDone = nil
 	m.botStatus = status
 	m.botErr = err
 }
@@ -912,7 +980,7 @@ func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconf
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	values := watch.PolicyValues(watch.DefaultOptions(cfg))
+	values := daemonComponentValues(cfg)
 	enabled := make(map[string]bool, len(values))
 	for id := range values {
 		enabled[id] = true
@@ -920,6 +988,9 @@ func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconf
 			doc, err := store.Load(ctx, id)
 			if err != nil {
 				return nil, nil, nil, err
+			}
+			if !doc.Enabled {
+				return nil, nil, nil, fmt.Errorf("required production component %s is disabled", id)
 			}
 			values[id], enabled[id] = doc.Values, doc.Enabled
 		}
@@ -950,10 +1021,10 @@ func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconf
 
 func (m *Manager) ComponentConfigurations() ([]rte.Configuration, bool) {
 	m.mu.Lock()
-	policies, botHost := m.policies, m.botComponents
+	policies, botHost, localHost, aria2Manager, panelHost, intentHost := m.policies, m.botComponents, m.localHost, m.aria2Mgr, m.panelHost, m.intentHost
 	m.mu.Unlock()
 	configurations := []rte.Configuration{}
-	for _, host := range []*rte.Runtime{policies, botHost} {
+	for _, host := range []*rte.Runtime{m.accountHost, policies, botHost, localHost, panelHost, intentHost, aria2Manager.Host(), m.httpService.Proxy().Host(), m.forwardQueue.Host(), m.downloadHost} {
 		if host == nil {
 			continue
 		}
@@ -967,6 +1038,30 @@ func (m *Manager) ComponentConfigurations() ([]rte.Configuration, bool) {
 	return configurations, m.componentStore != nil
 }
 
+func (m *Manager) ComponentHealth() []rte.Health {
+	m.mu.Lock()
+	policies, botHost, localHost, aria2Manager, panelHost, intentHost := m.policies, m.botComponents, m.localHost, m.aria2Mgr, m.panelHost, m.intentHost
+	m.mu.Unlock()
+	result := []rte.Health{}
+	for _, host := range []*rte.Runtime{m.accountHost, policies, botHost, localHost, panelHost, intentHost, aria2Manager.Host(), m.httpService.Proxy().Host(), m.forwardQueue.Host(), m.downloadHost} {
+		if host != nil {
+			result = append(result, host.Health())
+		}
+	}
+	for _, process := range []*rte.Process{m.botProcess, m.aria2Process, m.panelProcess} {
+		if process != nil {
+			result = append(result, process.Health())
+		}
+	}
+	if m.httpCtrl != nil {
+		result = append(result, m.httpCtrl.Health())
+	}
+	if m.watchCtrl != nil {
+		result = append(result, m.watchCtrl.Health())
+	}
+	return result
+}
+
 func (m *Manager) SaveComponentConfiguration(ctx context.Context, id string, values map[string]any) error {
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
@@ -977,6 +1072,21 @@ func (m *Manager) SaveComponentConfiguration(ctx context.Context, id string, val
 	host := m.policies
 	if id == "console.bot" || id == "notify.telegram" {
 		host = m.botComponents
+	}
+	if id == "downloader.local" {
+		host = m.localHost
+	}
+	if id == "downloader.aria2" {
+		host = m.aria2Mgr.Host()
+	}
+	if id == "forwarder" {
+		host = m.forwardQueue.Host()
+	}
+	if id == "proxy.range" {
+		host = m.httpService.Proxy().Host()
+	}
+	if id == "download.control" {
+		host = m.downloadHost
 	}
 	m.mu.Unlock()
 	if host == nil {

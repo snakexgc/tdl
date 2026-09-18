@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/forwarder"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/internal/core/util/tutil"
@@ -68,6 +69,12 @@ func (d *timedDedupe) pruneLocked(now time.Time) {
 			delete(d.values, key)
 		}
 	}
+}
+
+func (d *timedDedupe) Forget(key string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.values, key)
 }
 
 func (w *Watcher) configureForward(ctx context.Context) {
@@ -201,17 +208,16 @@ func (w *Watcher) forwardUpdateMessage(ctx context.Context, e tg.Entities, msg *
 	if _, ok := w.forward.listen[peerID]; !ok {
 		return nil
 	}
-	w.enqueueForwardMessage(ctx, e, msg)
-	return nil
+	return w.publishForwardIntent(ctx, e, msg.PeerID, peerID, msg.ID)
 }
 
 // enqueueForwardMessage dedupes and enqueues a single message for forwarding to
 // the configured target. It deliberately does NOT apply the listen-peer filter,
 // so it serves both auto-forwarding (after a listen check) and reaction triggers
 // (which forward any message the user reacts to, on any peer).
-func (w *Watcher) enqueueForwardMessage(ctx context.Context, e tg.Entities, msg *tg.Message) {
+func (w *Watcher) enqueueForwardMessage(ctx context.Context, e tg.Entities, msg *tg.Message) error {
 	if w.forward == nil || !w.forward.enabled || msg == nil || msg.Out {
-		return
+		return nil
 	}
 	peerID := tutil.GetPeerID(msg.PeerID)
 
@@ -221,15 +227,21 @@ func (w *Watcher) enqueueForwardMessage(ctx context.Context, e tg.Entities, msg 
 			zap.String("key", key),
 			zap.Int64("peer_id", peerID),
 			zap.Int("msg_id", msg.ID))
-		return
+		return nil
 	}
+	accepted := false
+	defer func() {
+		if !accepted {
+			w.forward.dedupe.Forget(key)
+		}
+	}()
 
 	// Resolve the source peer so the manager caches its access hash; the queue
 	// worker re-resolves it by id when it later runs the job.
 	from, err := w.resolveForwardPeer(ctx, e, msg.PeerID, peerID)
 	if err != nil {
 		w.notify(ctx, "监听转发失败：无法解析来源。\n来源：%d\n消息：%d\n错误：%v", peerID, msg.ID, err)
-		return
+		return err
 	}
 	originName := from.VisibleName()
 
@@ -247,7 +259,10 @@ func (w *Watcher) enqueueForwardMessage(ctx context.Context, e tg.Entities, msg 
 			zap.Int("msg_id", msg.ID),
 			zap.Error(err))
 		w.notify(notifyCtx, "监听转发入队失败。\n来源：%d\n消息：%d\n错误：%v", peerID, msg.ID, err)
+		return err
 	}
+	accepted = true
+	return nil
 }
 
 func forwardDedupeKey(peerID int64, msg *tg.Message) string {
@@ -257,23 +272,44 @@ func forwardDedupeKey(peerID int64, msg *tg.Message) string {
 	return fmt.Sprintf("forward:%d:m:%d", peerID, msg.ID)
 }
 
-func (w *Watcher) triggerForwardOnReaction(ctx context.Context, e tg.Entities, peer tg.PeerClass, peerID int64, msgID int) {
-	inputPeer := w.peerToInputPeer(peer, e)
+func (w *Watcher) processForwardIntent(ctx context.Context, request types.ForwardIntent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	peerID, msgID := request.PeerID, request.MessageID
+	inputPeer := protocolPeer(request.Peer)
 	if inputPeer == nil {
 		var err error
 		inputPeer, err = w.resolvePeer(ctx, peerID)
 		if err != nil {
 			w.notify(ctx, "监听转发（回应触发）失败：无法解析来源。\n来源：%d\n消息：%d\n错误：%v", peerID, msgID, err)
-			return
+			return err
 		}
 	}
 	msg, err := tutil.GetSingleMessage(ctx, w.pool.Default(ctx), inputPeer, msgID)
 	if err != nil {
 		w.notify(ctx, "监听转发（回应触发）失败：无法获取消息。\n来源：%d\n消息：%d\n错误：%v", peerID, msgID, err)
-		return
+		return err
+	}
+	// Cache the event's access hash before enqueue resolves the fetched message.
+	if _, err := w.manager.FromInputPeer(ctx, inputPeer); err != nil {
+		return err
 	}
 	// Reaction triggers forward the reacted message regardless of the listen set.
-	w.enqueueForwardMessage(ctx, e, msg)
+	return w.enqueueForwardMessage(ctx, tg.Entities{}, msg)
+}
+
+func (w *Watcher) publishForwardIntent(ctx context.Context, entities tg.Entities, peer tg.PeerClass, peerID int64, messageID int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.intentMu.RLock()
+	port := w.forwardIntents
+	w.intentMu.RUnlock()
+	if port == nil {
+		return fmt.Errorf("forward intent consumer is unavailable")
+	}
+	return port.Publish(ctx, types.ForwardIntent{Account: w.reactionAccount(), Peer: plainPeer(w.peerToInputPeer(peer, entities)), PeerID: peerID, MessageID: messageID})
 }
 
 func (w *Watcher) resolveForwardPeer(ctx context.Context, e tg.Entities, peer tg.PeerClass, peerID int64) (peers.Peer, error) {

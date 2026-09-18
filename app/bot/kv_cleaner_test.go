@@ -15,16 +15,17 @@ func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {
 	engine := &fakeKVEngine{
 		meta: kv.Meta{
 			"default": {
-				"session":                []byte("session"),
-				"app":                    []byte("desktop"),
-				"peers:key:user:1":       []byte("peer"),
-				"state:42":               []byte("state"),
-				"chan:42":                []byte("chan"),
-				"watch.download.index":   []byte("{}"),
-				"watch.download.task-id": []byte("{}"),
-				"watch.aria2.index":      []byte("{}"),
-				"watch.aria2.task.gid":   []byte("{}"),
-				"resume:file":            []byte("{}"),
+				"session":                  []byte("session"),
+				"app":                      []byte("desktop"),
+				"peers:key:user:1":         []byte("peer"),
+				"state:42":                 []byte("state"),
+				"chan:42":                  []byte("chan"),
+				"access_hash:channel:42:1": []byte("123"),
+				"watch.download.index":     []byte("{}"),
+				"watch.download.task-id":   []byte("{}"),
+				"watch.aria2.index":        []byte("{}"),
+				"watch.aria2.task.gid":     []byte("{}"),
+				"resume:file":              []byte("{}"),
 			},
 			"other": {
 				"watch.download.index": []byte("{}"),
@@ -35,7 +36,7 @@ func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {
 
 	result, err := cleanCurrentNamespaceKV(ctx, engine, "default", namespaceKV)
 	require.NoError(t, err)
-	require.Equal(t, 7, result.Kept)
+	require.Equal(t, 8, result.Kept)
 	require.Equal(t, 3, result.Deleted)
 
 	require.Contains(t, engine.meta["default"], "session")
@@ -43,6 +44,7 @@ func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {
 	require.Contains(t, engine.meta["default"], "peers:key:user:1")
 	require.Contains(t, engine.meta["default"], "state:42")
 	require.Contains(t, engine.meta["default"], "chan:42")
+	require.Contains(t, engine.meta["default"], "access_hash:channel:42:1")
 	require.JSONEq(t, "{}", string(engine.meta["default"]["watch.download.index"]))
 	require.JSONEq(t, "{}", string(engine.meta["default"]["watch.aria2.index"]))
 	require.NotContains(t, engine.meta["default"], "resume:file")

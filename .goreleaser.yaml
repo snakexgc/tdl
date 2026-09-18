@@ -12,11 +12,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
-      - -X github.com/snakexgc/tdl/pkg/consts.Version={{ .Env.RELEASE_VERSION }}
-      - -X github.com/snakexgc/tdl/pkg/consts.Commit={{ .ShortCommit }}
-      - -X github.com/snakexgc/tdl/pkg/consts.CommitDate={{ .CommitDate }}
-      - -X github.com/snakexgc/tdl/pkg/consts.GOARM={{ .Arm }}
+      - '{{ printf (mustReadFile "internal/buildflags/ldflags.txt") (or .Env.RELEASE_VERSION .Version) .ShortCommit .CommitDate .Arm }}'
     mod_timestamp: '{{ .CommitTimestamp }}'
     goos:
       - linux

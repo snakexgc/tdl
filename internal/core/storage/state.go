@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
-	"sync"
 
 	"github.com/gotd/td/telegram/updates"
 
@@ -14,7 +13,6 @@ import (
 
 type State struct {
 	kv Storage
-	mu sync.Mutex
 }
 
 func NewState(kv Storage) updates.StateStorage {
@@ -53,79 +51,49 @@ func (s *State) GetState(ctx context.Context, userID int64) (updates.State, bool
 }
 
 func (s *State) SetState(ctx context.Context, userID int64, state updates.State) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.Set(ctx, s.stateKey(userID), state); err != nil {
-		return err
-	}
-
-	// Refreshing global state must not erase previously saved channel offsets.
-	if _, err := s.kv.Get(ctx, s.channelKey(userID)); errors.Is(err, ErrNotFound) {
-		return s.Set(ctx, s.channelKey(userID), map[int64]int{})
-	} else {
-		return err
-	}
+	return Update(ctx, s.kv, func(tx Storage) error {
+		scoped := &State{kv: tx}
+		if err := scoped.Set(ctx, s.stateKey(userID), state); err != nil {
+			return err
+		}
+		if _, err := tx.Get(ctx, s.channelKey(userID)); errors.Is(err, ErrNotFound) {
+			return scoped.Set(ctx, s.channelKey(userID), map[int64]int{})
+		} else {
+			return err
+		}
+	})
 }
 
-func (s *State) SetPts(ctx context.Context, userID int64, pts int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, k := updates.State{}, s.stateKey(userID)
-
-	if err := s.Get(ctx, k, &state); err != nil {
-		return err
-	}
-	state.Pts = pts
-	return s.Set(ctx, k, state)
+func (s *State) mutate(ctx context.Context, userID int64, fn func(*updates.State)) error {
+	return Update(ctx, s.kv, func(tx Storage) error {
+		scoped := &State{kv: tx}
+		var state updates.State
+		if err := scoped.Get(ctx, s.stateKey(userID), &state); err != nil {
+			return err
+		}
+		fn(&state)
+		return scoped.Set(ctx, s.stateKey(userID), state)
+	})
 }
 
-func (s *State) SetQts(ctx context.Context, userID int64, qts int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, k := updates.State{}, s.stateKey(userID)
-
-	if err := s.Get(ctx, k, &state); err != nil {
-		return err
-	}
-	state.Qts = qts
-	return s.Set(ctx, k, state)
+func (s *State) SetPts(ctx context.Context, id int64, v int) error {
+	return s.mutate(ctx, id, func(state *updates.State) { state.Pts = v })
 }
 
-func (s *State) SetDate(ctx context.Context, userID int64, date int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, k := updates.State{}, s.stateKey(userID)
-
-	if err := s.Get(ctx, k, &state); err != nil {
-		return err
-	}
-	state.Date = date
-	return s.Set(ctx, k, state)
+func (s *State) SetQts(ctx context.Context, id int64, v int) error {
+	return s.mutate(ctx, id, func(state *updates.State) { state.Qts = v })
 }
 
-func (s *State) SetSeq(ctx context.Context, userID int64, seq int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, k := updates.State{}, s.stateKey(userID)
-
-	if err := s.Get(ctx, k, &state); err != nil {
-		return err
-	}
-	state.Seq = seq
-	return s.Set(ctx, k, state)
+func (s *State) SetDate(ctx context.Context, id int64, v int) error {
+	return s.mutate(ctx, id, func(state *updates.State) { state.Date = v })
 }
 
-func (s *State) SetDateSeq(ctx context.Context, userID int64, date, seq int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, k := updates.State{}, s.stateKey(userID)
+func (s *State) SetSeq(ctx context.Context, id int64, v int) error {
+	return s.mutate(ctx, id, func(state *updates.State) { state.Seq = v })
+}
 
-	if err := s.Get(ctx, k, &state); err != nil {
-		return err
-	}
-	state.Date = date
-	state.Seq = seq
-	return s.Set(ctx, k, state)
+func (s *State) SetDateSeq(ctx context.Context, id int64, date, seq int) error {
+	return s.mutate(ctx, id, func(state *updates.State) { state.Date = date; state.Seq = seq })
 }
 
 func (s *State) GetChannelPts(ctx context.Context, userID, channelID int64) (int, bool, error) {
@@ -147,21 +115,28 @@ func (s *State) GetChannelPts(ctx context.Context, userID, channelID int64) (int
 }
 
 func (s *State) SetChannelPts(ctx context.Context, userID, channelID int64, pts int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, k := make(map[int64]int), s.channelKey(userID)
-
-	if err := s.Get(ctx, k, &c); err != nil {
-		return err
-	}
-	c[channelID] = pts
-	return s.Set(ctx, k, c)
+	return Update(ctx, s.kv, func(tx Storage) error {
+		scoped := &State{kv: tx}
+		c := make(map[int64]int)
+		key := s.channelKey(userID)
+		if err := scoped.Get(ctx, key, &c); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if c == nil {
+			c = make(map[int64]int)
+		}
+		c[channelID] = pts
+		return scoped.Set(ctx, key, c)
+	})
 }
 
 func (s *State) ForEachChannels(ctx context.Context, userID int64, f func(ctx context.Context, channelID int64, pts int) error) error {
 	c := make(map[int64]int)
 
 	if err := s.Get(ctx, s.channelKey(userID), &c); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
 		return err
 	}
 

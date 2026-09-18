@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -14,8 +13,8 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/app/login"
-	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
-	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/tclient"
 )
@@ -46,6 +45,8 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	checkCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	user, err := login.CheckSession(checkCtx, login.SessionOptions{
+		Checker:     s.opts.SessionChecker,
+		Connections: s.opts.Connections, Credentials: s.opts.Credentials, Account: types.AccountID(s.opts.Namespace),
 		KV:               s.opts.NamespaceKV,
 		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
@@ -129,54 +130,10 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-type userSessionOption struct {
-	Namespace string `json:"namespace"`
-	Current   bool   `json:"current"`
-}
+type userSessionOption = ports.SessionOption
 
 func (s *Server) listUserSessions(ctx context.Context) ([]userSessionOption, error) {
-	if s.opts.KVEngine == nil {
-		return nil, errors.New("kv engine is not configured")
-	}
-	namespaces, err := s.opts.KVEngine.Namespaces()
-	if err != nil {
-		return nil, errors.Wrap(err, "list user session files")
-	}
-	sort.Strings(namespaces)
-
-	current := s.namespace()
-	sessions := make([]userSessionOption, 0, len(namespaces))
-	seen := map[string]struct{}{}
-	for _, namespace := range namespaces {
-		normalized, err := config.NormalizeNamespace(namespace)
-		if err != nil || normalized != namespace {
-			continue
-		}
-		if _, ok := seen[namespace]; ok {
-			continue
-		}
-		kvd, err := s.opts.KVEngine.Open(namespace)
-		if err != nil {
-			continue
-		}
-		session, err := kvd.Get(ctx, userSessionKey)
-		if err != nil || len(session) == 0 {
-			continue
-		}
-		seen[namespace] = struct{}{}
-		sessions = append(sessions, userSessionOption{
-			Namespace: namespace,
-			Current:   namespace == current,
-		})
-	}
-
-	sort.SliceStable(sessions, func(i, j int) bool {
-		if sessions[i].Current != sessions[j].Current {
-			return sessions[i].Current
-		}
-		return sessions[i].Namespace < sessions[j].Namespace
-	})
-	return sessions, nil
+	return s.sessionCatalog.List(ctx)
 }
 
 func (s *Server) userSessionExists(ctx context.Context, namespace string) (bool, error) {
@@ -228,46 +185,7 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteUserSession(ctx context.Context, namespace string) (int, error) {
-	if s.opts.KVEngine == nil {
-		return 0, errors.New("kv engine is not configured")
-	}
-	exists, err := s.userSessionExists(ctx, namespace)
-	if err != nil {
-		return 0, err
-	}
-	if !exists {
-		return 0, errors.New("请选择已有登录用户。")
-	}
-
-	kvd, err := s.opts.KVEngine.Open(namespace)
-	if err != nil {
-		return 0, errors.Wrap(err, "open user storage")
-	}
-
-	deleted := 0
-	for _, key := range []string{userSessionKey, userAppKey, tgauth.FingerprintKey} {
-		ok, err := deleteUserKey(ctx, kvd, key)
-		if err != nil {
-			return deleted, err
-		}
-		if ok {
-			deleted++
-		}
-	}
-	return deleted, nil
-}
-
-func deleteUserKey(ctx context.Context, kvd storage.Storage, key string) (bool, error) {
-	if _, err := kvd.Get(ctx, key); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return false, nil
-		}
-		return false, errors.Wrapf(err, "check user key %s", key)
-	}
-	if err := kvd.Delete(ctx, key); err != nil {
-		return false, errors.Wrapf(err, "delete user key %s", key)
-	}
-	return true, nil
+	return s.sessionCatalog.Delete(ctx, namespace)
 }
 
 func (s *Server) handleSpamCheck(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +201,7 @@ func (s *Server) handleSpamCheck(w http.ResponseWriter, r *http.Request) {
 	checkCtx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
 	defer cancel()
 	clean, err := checkSpamStatus(checkCtx, login.SessionOptions{
+		Connections: s.opts.Connections, Credentials: s.opts.Credentials, Account: types.AccountID(s.opts.Namespace),
 		KV:               s.opts.NamespaceKV,
 		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
@@ -313,6 +232,7 @@ func checkSpamStatus(ctx context.Context, opts login.SessionOptions) (bool, erro
 	})
 
 	c, err := tclient.New(ctx, tclient.Options{
+		Connections: opts.Connections, Credentials: opts.Credentials, Account: opts.Account,
 		KV:               opts.KV,
 		Proxy:            opts.Proxy,
 		NTP:              opts.NTP,
@@ -431,7 +351,7 @@ func (s *Server) handleLoginStatus(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.login.status())
+	writeJSON(w, http.StatusOK, s.login.Status())
 }
 
 func (s *Server) handleLoginPhoneStart(w http.ResponseWriter, r *http.Request) {
@@ -447,11 +367,11 @@ func (s *Server) handleLoginPhoneStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	if err := s.login.startPhone(r.Context(), req.Phone, req.Namespace); err != nil {
+	if err := s.login.StartPhone(r.Context(), req.Phone, req.Namespace); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.login.status())
+	writeJSON(w, http.StatusOK, s.login.Status())
 }
 
 func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
@@ -466,11 +386,11 @@ func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	if err := s.login.submitCode(req.Code); err != nil {
+	if err := s.login.SubmitCode(req.Code); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.login.status())
+	writeJSON(w, http.StatusOK, s.login.Status())
 }
 
 func (s *Server) handleLoginPassword(w http.ResponseWriter, r *http.Request) {
@@ -485,11 +405,11 @@ func (s *Server) handleLoginPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	if err := s.login.submitPassword(req.Password); err != nil {
+	if err := s.login.SubmitPassword(req.Password); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.login.status())
+	writeJSON(w, http.StatusOK, s.login.Status())
 }
 
 func (s *Server) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
@@ -497,6 +417,6 @@ func (s *Server) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "POST")
 		return
 	}
-	s.login.cancel()
+	s.login.Cancel()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

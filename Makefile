@@ -1,9 +1,11 @@
+export RELEASE_VERSION ?= dev
+
 .PHONY: build
 build:
-	goreleaser build --rm-dist --single-target --snapshot
+	goreleaser build --clean --single-target --snapshot
 	@echo "go to '.tdl/dist' directory to see the package!"
 
 .PHONY: packaging
 packaging:
-	goreleaser release --skip-publish --auto-snapshot --rm-dist
+	goreleaser release --skip=publish --snapshot --clean
 	@echo "go to '.tdl/dist' directory to see the packages!"

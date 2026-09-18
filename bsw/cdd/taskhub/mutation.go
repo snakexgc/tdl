@@ -117,6 +117,11 @@ func (c *Collection) Merge(ctx context.Context, id string, data []byte, stamp ti
 		if err := json.Unmarshal(data, &updates); err != nil {
 			return err
 		}
+		if c.prefix == Aria2Prefix {
+			if err := mergeAria2State(merged, updates); err != nil {
+				return err
+			}
+		}
 		// A metadata refresh may have been prepared before a concurrent download
 		// touched the link. Never overwrite that newer activity clock.
 		if c.prefix == LinkPrefix {

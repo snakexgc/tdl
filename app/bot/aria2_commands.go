@@ -14,6 +14,7 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/pkg/utils"
 )
 
@@ -41,34 +42,34 @@ const (
 	actionPause = "pause"
 )
 
-type aria2ControllerFactory func() *aria2.Controller
+type aria2ControllerFactory func() ports.Aria2Tasks
 
 func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, factory aria2ControllerFactory) (bool, error) {
 	switch text {
 	case aria2MenuActive:
-		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.ActiveTasks(ctx)
 		})
 	case aria2MenuWaiting:
-		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在等待/暂停的 aria2 任务：", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在等待/暂停的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.WaitingTasks(ctx)
 		})
 	case aria2MenuStopped:
-		return true, sendAria2TaskList(ctx, msg.Chat.ID, "已完成/停止的 aria2 任务：", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskList(ctx, msg.Chat.ID, "已完成/停止的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.StoppedTasks(ctx)
 		})
 	case aria2MenuPauseTask:
-		return true, sendAria2TaskButtons(ctx, msg.Chat.ID, "请选择要暂停的任务：", "pause", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskButtons(ctx, msg.Chat.ID, "请选择要暂停的任务：", "pause", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.ActiveTasks(ctx)
 		})
 	case aria2MenuUnpauseTask:
-		return true, sendAria2TaskButtons(ctx, msg.Chat.ID, "请选择要恢复的任务：", "unpause", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskButtons(ctx, msg.Chat.ID, "请选择要恢复的任务：", "unpause", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.WaitingTasks(ctx)
 		})
 	case aria2MenuRemoveTask:
 		return true, sendAria2TaskButtons(ctx, msg.Chat.ID, "请选择要删除的任务：", "remove", factory, listActiveAndWaitingAria2Tasks)
 	case aria2MenuClearStopped:
-		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *aria2.Controller) (aria2.ActionResult, error) {
+		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller ports.Aria2Tasks) (aria2.ActionResult, error) {
 			return controller.ClearStopped(ctx)
 		})
 		if err != nil {
@@ -93,15 +94,15 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2GlobalOptions(options))
 	case botCmdAria2Active, botCmdDownloadsActive:
-		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.ActiveTasks(ctx)
 		})
 	case botCmdAria2Waiting, botCmdDownloadsWaiting:
-		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在等待/暂停的 aria2 任务：", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在等待/暂停的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.WaitingTasks(ctx)
 		})
 	case botCmdAria2Stopped, botCmdDownloadsStopped:
-		return true, sendAria2TaskList(ctx, msg.Chat.ID, "已完成/停止的 aria2 任务：", factory, func(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+		return true, sendAria2TaskList(ctx, msg.Chat.ID, "已完成/停止的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.StoppedTasks(ctx)
 		})
 	case botCmdAria2, botCmdAria2Help, botCmdDownloads, botCmdDownloadsHelp:
@@ -113,7 +114,7 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2Overview(overview))
 	case botCmdAria2PauseAll, botCmdDownloadsPauseAll:
-		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *aria2.Controller) (aria2.ActionResult, error) {
+		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller ports.Aria2Tasks) (aria2.ActionResult, error) {
 			return controller.PauseAll(ctx)
 		})
 		if err != nil {
@@ -121,7 +122,7 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2ActionResult("暂停全部", result))
 	case botCmdAria2StartAll, botCmdDownloadsStartAll:
-		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *aria2.Controller) (aria2.ActionResult, error) {
+		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller ports.Aria2Tasks) (aria2.ActionResult, error) {
 			return controller.StartAll(ctx)
 		})
 		if err != nil {
@@ -129,7 +130,7 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2ActionResult("开始全部", result))
 	case botCmdAria2Retry:
-		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller *aria2.Controller) (aria2.ActionResult, error) {
+		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller ports.Aria2Tasks) (aria2.ActionResult, error) {
 			return controller.RetryStopped(ctx)
 		})
 		if err != nil {
@@ -165,7 +166,7 @@ func runAria2Overview(ctx context.Context, factory aria2ControllerFactory) (aria
 	if factory == nil {
 		return aria2.Overview{}, fmt.Errorf("aria2 controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 	return factory().Overview(cmdCtx)
 }
@@ -173,12 +174,12 @@ func runAria2Overview(ctx context.Context, factory aria2ControllerFactory) (aria
 func runAria2Action(
 	ctx context.Context,
 	factory aria2ControllerFactory,
-	action func(context.Context, *aria2.Controller) (aria2.ActionResult, error),
+	action func(context.Context, ports.Aria2Tasks) (aria2.ActionResult, error),
 ) (aria2.ActionResult, error) {
 	if factory == nil {
 		return aria2.ActionResult{}, fmt.Errorf("aria2 controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 	return action(cmdCtx, factory())
 }
@@ -187,7 +188,7 @@ func runAria2GlobalOptions(ctx context.Context, factory aria2ControllerFactory) 
 	if factory == nil {
 		return nil, fmt.Errorf("aria2 controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 	return factory().GlobalOptions(cmdCtx)
 }
@@ -216,7 +217,7 @@ func sendAria2TaskList(
 	chatID int64,
 	title string,
 	factory aria2ControllerFactory,
-	list func(context.Context, *aria2.Controller) ([]aria2.DownloadStatus, error),
+	list func(context.Context, ports.Aria2Tasks) ([]aria2.DownloadStatus, error),
 ) error {
 	tasks, err := runAria2TaskList(ctx, factory, list)
 	if err != nil {
@@ -231,12 +232,12 @@ func sendAria2TaskList(
 func runAria2TaskList(
 	ctx context.Context,
 	factory aria2ControllerFactory,
-	list func(context.Context, *aria2.Controller) ([]aria2.DownloadStatus, error),
+	list func(context.Context, ports.Aria2Tasks) ([]aria2.DownloadStatus, error),
 ) ([]aria2.DownloadStatus, error) {
 	if factory == nil {
 		return nil, fmt.Errorf("aria2 controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 	return list(cmdCtx, factory())
 }
@@ -247,7 +248,7 @@ func sendAria2TaskButtons(
 	title string,
 	action string,
 	factory aria2ControllerFactory,
-	list func(context.Context, *aria2.Controller) ([]aria2.DownloadStatus, error),
+	list func(context.Context, ports.Aria2Tasks) ([]aria2.DownloadStatus, error),
 ) error {
 	tasks, err := runAria2TaskList(ctx, factory, list)
 	if err != nil {
@@ -275,7 +276,7 @@ func sendAria2TaskButtons(
 	return err
 }
 
-func listActiveAndWaitingAria2Tasks(ctx context.Context, c *aria2.Controller) ([]aria2.DownloadStatus, error) {
+func listActiveAndWaitingAria2Tasks(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 	active, err := c.ActiveTasks(ctx)
 	if err != nil {
 		return nil, err
@@ -424,7 +425,7 @@ func handleAria2Callback(ctx *th.Context, query telego.CallbackQuery, factory ar
 	}
 
 	action, gid := parts[1], parts[2]
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 	controller := factory()
 

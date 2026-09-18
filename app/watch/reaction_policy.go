@@ -18,6 +18,9 @@ func (w *Watcher) reactionAccount() types.AccountID {
 }
 
 func (w *Watcher) reactionPolicy(ctx context.Context) (ports.ReactionTrigger, error) {
+	if w.opts.Reaction != nil {
+		return w.opts.Reaction, nil
+	}
 	w.triggerOnce.Do(func() {
 		download := make([]string, 0, len(w.triggerReactions))
 		for value := range w.triggerReactions {

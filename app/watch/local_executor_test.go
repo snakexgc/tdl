@@ -37,7 +37,7 @@ func TestLocalExecutorUsesAccountTaskRepository(t *testing.T) {
 	in.Dir, in.Out = filepath.Dir(in.FullPath), testVideoFile
 	result, err := runtime.local.Submit(ctx, in)
 	require.NoError(t, err)
-	require.Equal(t, types.DownloadResult{Account: opts.Account, Target: "local", ID: task.ID}, result)
+	require.Equal(t, types.DownloadResult{Account: opts.Account, Target: localExecutorName, ID: task.ID}, result)
 	record, ok, err := runtime.internal.store.Get(ctx, task.ID)
 	require.NoError(t, err)
 	require.True(t, ok)

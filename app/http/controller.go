@@ -4,13 +4,14 @@ import (
 	"context"
 	stderrors "errors"
 	"net/http"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/rte"
 )
 
 const controllerStopTimeout = 10 * time.Second
@@ -33,6 +34,7 @@ func NewService(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Se
 	}
 	pools := &PoolHolder{}
 	proxy := NewProxy(cfg.HTTP, config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg), pools, kvd, logger)
+	proxy.account = types.AccountID(cfg.Namespace)
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 		proxy.SetTaskTTL(0)
 	}
@@ -61,6 +63,7 @@ func (s *Service) UpdateConfig(cfg *config.Config) bool {
 		return false
 	}
 	restart := s.proxy.updateConfig(cfg.HTTP)
+	s.proxy.Scheduler().Reconfigure(config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg))
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 		s.proxy.SetTaskTTL(0)
 	} else {
@@ -72,99 +75,49 @@ func (s *Service) UpdateConfig(cfg *config.Config) bool {
 // Controller owns only the HTTP listening lifecycle. Telegram connectivity,
 // aria2 RPC automation and task submission are deliberately managed elsewhere.
 type Controller struct {
-	parent  context.Context
 	service *Service
-
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	running bool
-	lastErr error
+	process *rte.Process
 }
 
 func NewController(parent context.Context, service *Service) *Controller {
-	if parent == nil {
-		parent = context.Background()
+	account := types.DefaultAccount
+	if service != nil && service.proxy != nil {
+		account = service.proxy.account
 	}
-	return &Controller{parent: parent, service: service}
+	return &Controller{service: service, process: rte.NewProcess(parent, account, "host.http")}
 }
 
 func (c *Controller) Start() bool {
 	if c == nil || c.service == nil || c.service.Proxy() == nil {
 		return false
 	}
-
-	c.mu.Lock()
-	if c.running {
-		c.mu.Unlock()
-		return false
-	}
-	ctx, cancel := context.WithCancel(c.parent)
-	done := make(chan struct{})
-	c.cancel = cancel
-	c.done = done
-	c.running = true
-	c.lastErr = nil
-	c.mu.Unlock()
-
-	go func() {
+	started, _ := c.process.Start(func(ctx context.Context) error {
 		err := c.service.Proxy().Start(ctx)
-		cancel()
-
-		c.mu.Lock()
-		if c.done == done {
-			c.cancel = nil
-			c.done = nil
-			c.running = false
-			if err != nil && !stderrors.Is(err, http.ErrServerClosed) && !stderrors.Is(err, context.Canceled) {
-				c.lastErr = err
-			}
+		if stderrors.Is(err, http.ErrServerClosed) || stderrors.Is(err, context.Canceled) {
+			return nil
 		}
-		c.mu.Unlock()
-		close(done)
-	}()
-
-	return true
+		return err
+	}, rte.Recovery{})
+	return started
 }
 
 func (c *Controller) Stop() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	cancel := c.cancel
-	done := c.done
-	c.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if done == nil {
-		return
-	}
-
-	timer := time.NewTimer(controllerStopTimeout)
-	defer timer.Stop()
-	select {
-	case <-done:
-	case <-timer.C:
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), controllerStopTimeout)
+	defer cancel()
+	_ = c.StopContext(ctx)
 }
 
-func (c *Controller) Running() bool {
+func (c *Controller) StopContext(ctx context.Context) error {
 	if c == nil {
-		return false
+		return nil
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.running
+	return c.process.Stop(ctx)
 }
-
+func (c *Controller) Running() bool { return c != nil && c.process.Running() }
 func (c *Controller) LastError() error {
 	if c == nil {
 		return nil
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lastErr
+	return c.process.LastError()
 }
+func (c *Controller) Health() rte.Health { return c.process.Health() }

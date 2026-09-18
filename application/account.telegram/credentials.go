@@ -24,6 +24,7 @@ func Register(registry *rte.Registry) error {
 	zero := int64(0)
 	return registry.Register(manifest.Manifest{
 		ID: ID, Title: "Telegram 账号",
+		Pages:    []manifest.Page{{Path: "/user", Title: "用户管理"}},
 		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0)},
 		Config: []manifest.ConfigField{
 			{Name: fieldAPIID, Title: "API ID", Type: manifest.Int, Default: 0, Min: &zero},

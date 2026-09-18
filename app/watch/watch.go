@@ -22,6 +22,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/dcpool"
@@ -31,13 +33,17 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 	pkgtclient "github.com/snakexgc/tdl/pkg/tclient"
+	"github.com/snakexgc/tdl/rte"
 )
 
 type Watcher struct {
-	opts    Options
-	pool    dcpool.Pool
-	manager *peers.Manager
-	runtime *watchRuntime
+	intentMu       sync.RWMutex
+	intents        ports.DownloadIntents
+	forwardIntents ports.ForwardIntents
+	opts           Options
+	pool           dcpool.Pool
+	manager        *peers.Manager
+	runtime        *watchRuntime
 
 	triggerOnce      sync.Once
 	trigger          ports.ReactionTrigger
@@ -51,7 +57,19 @@ type Watcher struct {
 
 func Run(ctx context.Context, opts Options) error {
 	cfg := config.Get()
-	if opts.Download {
+	account := types.AccountID(cfg.Namespace)
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	var route ports.DownloadRoute
+	if opts.DownloadRouting != nil {
+		var err error
+		route, err = opts.DownloadRouting.Route(ctx, account)
+		if err != nil {
+			return err
+		}
+	}
+	if opts.Download && len(route.Executors) == 0 {
 		if err := validateWatchConfig(cfg); err != nil {
 			return err
 		}
@@ -104,7 +122,7 @@ func Run(ctx context.Context, opts Options) error {
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
 			color.Yellow("⏹ Stopping watcher...")
-			if downloaderMode == config.DownloaderModeInternal {
+			if opts.Download && runtime.internal != nil {
 				paused, err := runtime.internal.PauseForShutdown(runCtx)
 				if err != nil {
 					color.Yellow("⚠️ Failed to pause internal download tasks before shutdown: %v", err)
@@ -129,7 +147,7 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
-	if opts.Download {
+	if opts.Download && len(route.Executors) == 0 {
 		switch downloaderMode {
 		case config.DownloaderModeAria2:
 			// The target path is metadata for an optional external submitter. Never
@@ -229,9 +247,10 @@ func Run(ctx context.Context, opts Options) error {
 func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDelay time.Duration, runtime *watchRuntime) (rerr error) {
 	cfg := config.Get()
 	poolSize := effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
-	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	o := pkgtclient.Options{
+		Connections: opts.Connections,
+		Credentials: opts.Credentials, Account: opts.Account,
 		KV:               kvd,
 		Proxy:            config.EffectiveProxy(cfg),
 		NTP:              cfg.NTP,
@@ -250,7 +269,9 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 	if _, err := w.reactionPolicy(ctx); err != nil {
 		return err
 	}
-	defer w.triggerStop()
+	if w.triggerStop != nil {
+		defer w.triggerStop()
+	}
 
 	// Register reaction handlers whenever download or forward is enabled. Forward
 	// reacts on its trigger emoji (or any emoji when its trigger set is empty),
@@ -272,7 +293,22 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		return nil
 	})
 
+	updateStore, err := tgauth.UpdateStore(kvd)
+	if err != nil {
+		return errors.Wrap(err, "open update-state dataset")
+	}
+	accessHashes, err := tgauth.NewAccessHashes(kvd)
+	if err != nil {
+		return errors.Wrap(err, "open access-hash dataset")
+	}
+	peerStore, err := tgauth.PeersStore(kvd)
+	if err != nil {
+		return errors.Wrap(err, "open peer dataset")
+	}
 	updatesMgr := updates.New(updates.Config{
+		Storage:          updateStore,
+		AccessHasher:     accessHashes,
+		UserAccessHasher: accessHashes,
 		Handler: &loggingUpdateHandler{
 			inner: d,
 		},
@@ -286,7 +322,7 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 	}
 
 	err = tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
-		pool := dcpool.NewPool(client,
+		pool := dcpool.NewPool(client.Client,
 			int64(poolSize),
 			tclient.NewDefaultMiddlewares(ctx, reconnectDelay)...)
 		defer multierr.AppendInvoke(&rerr, multierr.Close(pool))
@@ -295,18 +331,57 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		runtime.pools.Set(pool)
 
 		w.pool = pool
-		w.manager = peers.Options{Storage: storage.NewPeers(kvd)}.Build(pool.Default(ctx))
+		w.manager = peers.Options{Storage: peerStore}.Build(pool.Default(ctx))
 		w.configureForward(ctx)
 
 		self, err := client.Self(ctx)
 		if err != nil {
 			return errors.Wrap(err, "get self user")
 		}
-		if downloaderMode == config.DownloaderModeInternal && runtime.internal != nil {
-			if err := runtime.internal.Start(ctx); err != nil {
-				return errors.Wrap(err, "start internal downloader")
+		if opts.Download && runtime.internal != nil {
+			host, executor, err := application.LocalDownloadHost(ctx, opts.Account, runtime.internal.component(), opts.ComponentStore)
+			if err != nil {
+				return errors.Wrap(err, "start local downloader component")
 			}
-			defer runtime.internal.Stop()
+			runtime.local = executor
+			if opts.SetDownloadHost != nil {
+				opts.SetDownloadHost(host)
+				defer opts.SetDownloadHost(nil)
+			}
+			defer func() { _ = host.Stop(context.Background()) }()
+		}
+		eg, egCtx := errgroup.WithContext(ctx)
+		eg.SetLimit(effectiveWatchOptionLimit(opts.Limit, cfg))
+		var intentHost *rte.Runtime
+		if opts.Download || opts.Forward {
+			var download ports.DownloadIntentHandler
+			if opts.Download {
+				download = func(intentCtx context.Context, request types.DownloadIntent) error {
+					_, err := w.processDownloadJob(intentCtx, eg, downloadJob{peer: protocolPeer(request.Peer), peerID: request.PeerID, msgID: request.MessageID, link: request.Link, source: request.Source})
+					return err
+				}
+			}
+			var forward ports.ForwardIntentHandler
+			if opts.Forward {
+				forward = w.processForwardIntent
+			}
+			var port ports.DownloadIntents
+			var forwardPort ports.ForwardIntents
+			intentHost, port, forwardPort, err = application.IntentHost(ctx, opts.Account, download, forward, func(intentCtx context.Context, request types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+				return w.processDownloadJob(intentCtx, eg, downloadJob{peer: protocolPeer(request.Peer), peerID: request.PeerID, msgID: request.MessageID, link: request.Link, source: request.Source})
+			})
+			if err != nil {
+				return err
+			}
+			w.intentMu.Lock()
+			w.intents = port
+			w.forwardIntents = forwardPort
+			w.intentMu.Unlock()
+			defer func() { _ = intentHost.Stop(context.Background()) }()
+			if opts.SetIntentHost != nil {
+				opts.SetIntentHost(intentHost)
+				defer opts.SetIntentHost(nil)
+			}
 		}
 		updatesDone := make(chan struct{})
 		go func() {
@@ -318,10 +393,14 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 			}
 		}()
 
-		eg, egCtx := errgroup.WithContext(ctx)
-		eg.SetLimit(effectiveWatchOptionLimit(opts.Limit, cfg))
+		dispatchDone := make(chan struct{})
 		if opts.Download {
-			go w.dispatcher(egCtx, eg)
+			go func() {
+				defer close(dispatchDone)
+				w.dispatcher(egCtx, eg)
+			}()
+		} else {
+			close(dispatchDone)
 		}
 
 		// Drain the persistent forward queue one job at a time using this
@@ -331,9 +410,11 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		go func() {
 			defer close(forwardDone)
 			if err := opts.ForwardQueue.Serve(egCtx, appforward.Runtime{
-				Pool:     pool,
-				Manager:  w.manager,
-				PoolSize: opts.PoolSize,
+				Pool:           pool,
+				Manager:        w.manager,
+				PoolSize:       opts.PoolSize,
+				Account:        opts.Account,
+				ComponentStore: opts.ComponentStore,
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				logctx.From(ctx).Error("Forward queue worker stopped", zap.Error(err))
 			}
@@ -341,19 +422,17 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 
 		<-ctx.Done()
 
+		// No new submissions may enter the group once Wait begins.
+		<-dispatchDone
+		if intentHost != nil {
+			_ = intentHost.Stop(context.Background())
+		}
 		if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 			logctx.From(ctx).Error("Submission goroutine error", zap.Error(err))
 		}
-		select {
-		case <-updatesDone:
-		case <-time.After(5 * time.Second):
-			logctx.From(ctx).Warn("Updates manager did not stop before timeout")
-		}
-		select {
-		case <-forwardDone:
-		case <-time.After(5 * time.Second):
-			logctx.From(ctx).Warn("Forward queue worker did not stop before timeout")
-		}
+		<-updatesDone
+		// The pool remains owned until all forward transport calls have returned.
+		<-forwardDone
 
 		return nil
 	})

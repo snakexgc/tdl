@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
@@ -11,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	downloadcontrol "github.com/snakexgc/tdl/application/download.control"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/logctx"
@@ -53,6 +55,8 @@ type preparedFileTask struct {
 	out          string
 	fullPath     string
 	maxNameBytes int
+	route        *ports.DownloadRoute
+	localTarget  bool
 }
 
 func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
@@ -73,7 +77,13 @@ func (w *Watcher) dispatcher(ctx context.Context, eg *errgroup.Group) {
 }
 
 func (w *Watcher) submitMessageLink(ctx context.Context, eg *errgroup.Group, link string) (MessageLinkSubmissionResult, error) {
-	link, err := ValidateTelegramMessageHTTPLink(link)
+	w.intentMu.RLock()
+	intents := w.intents
+	w.intentMu.RUnlock()
+	if requests, ok := intents.(ports.DownloadRequests); ok && w.opts.MessageLinks != nil {
+		return w.opts.MessageLinks.Submit(ctx, w.reactionAccount(), link, watchMessageSource{watcher: w}, requests)
+	}
+	link, err := validateMessageLink(ctx, w.opts, link)
 	if err != nil {
 		return MessageLinkSubmissionResult{Link: link}, err
 	}
@@ -90,7 +100,23 @@ func (w *Watcher) submitMessageLink(ctx context.Context, eg *errgroup.Group, lin
 		link:   link,
 		source: downloadJobSourceMessageLink,
 	}
+	if requests, ok := intents.(ports.DownloadRequests); ok {
+		return requests.Submit(ctx, types.DownloadIntent{Account: w.reactionAccount(), Peer: plainPeer(job.peer), PeerID: job.peerID, MessageID: job.msgID, Link: job.link, Source: job.source})
+	}
 	return w.processDownloadJob(ctx, eg, job)
+}
+
+type watchMessageSource struct{ watcher *Watcher }
+
+func (s watchMessageSource) Resolve(ctx context.Context, account types.AccountID, link string) (types.DownloadIntent, error) {
+	if account != s.watcher.reactionAccount() {
+		return types.DownloadIntent{}, fmt.Errorf("message source account mismatch")
+	}
+	peer, messageID, err := tutil.ParseMessageLink(ctx, s.watcher.manager, link)
+	if err != nil {
+		return types.DownloadIntent{}, err
+	}
+	return types.DownloadIntent{Account: account, Peer: plainPeer(peer.InputPeer()), PeerID: peer.ID(), MessageID: messageID}, nil
 }
 
 func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, job downloadJob) (MessageLinkSubmissionResult, error) {
@@ -152,7 +178,7 @@ func (w *Watcher) processDownloadJob(ctx context.Context, eg *errgroup.Group, jo
 		prepared = append(prepared, task)
 	}
 	result.Skipped = collection.skipped
-	if w.runtime.ensureOutputDirs {
+	if len(prepared) > 0 && prepared[0].localTarget {
 		var err error
 		prepared, err = w.uniquifyInternalTargets(ctx, prepared)
 		if err != nil {
@@ -282,20 +308,46 @@ func (w *Watcher) resolvePeer(ctx context.Context, peerID int64) (tg.InputPeerCl
 func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFileTask, bool, error) {
 	dialogID := tutil.GetInputPeerID(file.peer)
 	data := w.downloadDirData(ctx, file)
-	target, err := w.renderTarget(ctx, w.runtime.outputRoot, data.ID, dialogID, data.Name, data.Time, file.msg, file.triggerMsg, file.media)
+	root, localPaths := w.runtime.outputRoot, w.runtime.ensureOutputDirs
+	var route *ports.DownloadRoute
+	if w.opts.DownloadRouting != nil {
+		current, err := w.opts.DownloadRouting.Route(ctx, w.reactionAccount())
+		if err != nil {
+			return preparedFileTask{}, false, err
+		}
+		route = &current
+		if len(current.Executors) > 0 {
+			route, localPaths = &current, false
+			root = w.routedRemoteRoot()
+			if slices.Contains(current.Executors, localExecutorName) {
+				root = current.LocalRoot
+			}
+		} else if cfg := config.Get(); cfg != nil {
+			localPaths = config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal
+			root = cleanTargetRoot(cfg.Aria2.Dir)
+			if localPaths {
+				var err error
+				root, _, err = prepareInternalOutputRoot(cfg)
+				if err != nil {
+					return preparedFileTask{}, false, err
+				}
+			}
+		}
+	}
+	target, err := w.renderTarget(ctx, root, data.ID, dialogID, data.Name, data.Time, file.msg, file.triggerMsg, file.media)
 	if err != nil {
 		return preparedFileTask{}, false, err
 	}
 
 	fileName, dir, out, fullPath := target.FileName, target.Dir, target.Out, target.FullPath
-	if w.runtime.ensureOutputDirs && dir != "" {
+	if localPaths && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return preparedFileTask{}, false, errors.Wrap(err, "create target directory")
 		}
 	}
 	// Only inspect paths owned by tdl. In aria2 mode dir is on the aria2 host
 	// and may coincidentally refer to an unrelated local path on this machine.
-	if w.runtime.ensureOutputDirs && w.opts.SkipSame && dir != "" {
+	if localPaths && w.opts.SkipSame && dir != "" {
 		if stat, statErr := os.Stat(fullPath); statErr == nil && stat.Size() == file.media.Size {
 			color.Yellow("⏭ Skipping existing: %s", fullPath)
 			return preparedFileTask{}, true, nil
@@ -303,6 +355,8 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 	}
 
 	return preparedFileTask{
+		localTarget:  localPaths || (route != nil && slices.Contains(route.Executors, localExecutorName)),
+		route:        route,
 		file:         file,
 		fileName:     fileName,
 		dir:          dir,
@@ -314,14 +368,27 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 
 func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) error {
 	cfg := config.Get()
+	var route ports.DownloadRoute
+	if prepared.route != nil {
+		route = *prepared.route
+	} else if w.opts.DownloadRouting != nil {
+		var err error
+		route, err = w.opts.DownloadRouting.Route(ctx, w.reactionAccount())
+		if err != nil {
+			return err
+		}
+	}
 	file := prepared.file
 	task, err := w.runtime.proxy.NewTask(ctx, file.peerID, file.msg.ID, file.peer, prepared.fileName, file.media.Size, file.media)
 	if err != nil {
 		return errors.Wrap(err, "register download task")
 	}
+	if len(route.Executors) > 0 {
+		return w.submitRouted(ctx, prepared, task.ID, route)
+	}
 
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
-		if _, err := w.runtime.local.Submit(ctx, types.DownloadSubmission{Account: w.reactionAccount(), TaskID: task.ID, Dir: prepared.dir, Out: prepared.out, FullPath: prepared.fullPath}); err != nil {
+		if _, err := downloadcontrol.NewRouter(w.reactionAccount(), w.runtime.local).Submit(ctx, types.DownloadSubmission{Account: w.reactionAccount(), TaskID: task.ID, Dir: prepared.dir, Out: prepared.out, FullPath: prepared.fullPath}); err != nil {
 			return errors.Wrap(err, "queue internal download")
 		}
 		logctx.From(ctx).Info("Queued internal download task",
@@ -341,7 +408,15 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return errors.Wrap(err, "build download url")
 	}
 
-	if w.opts.DownloadSubmitter == nil {
+	router := downloadcontrol.NewRouter(w.reactionAccount(), w.opts.DownloadSubmitter, downloadcontrol.LinkExecutor{})
+	result, err := router.Submit(ctx, types.DownloadSubmission{
+		Account: w.reactionAccount(), TaskID: task.ID, DownloadURL: downloadURL,
+		Dir: prepared.dir, Out: prepared.out, FullPath: prepared.fullPath,
+	})
+	if err != nil {
+		return errors.Wrapf(err, "submit temporary link to %s (link remains available at %s)", router.Name(), downloadURL)
+	}
+	if result.Target == httpExecutorName {
 		logctx.From(ctx).Info("Generated temporary HTTP download link",
 			zap.Int64("peer_id", file.peerID),
 			zap.Int("msg_id", file.msg.ID),
@@ -351,18 +426,6 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		color.Green("Generated HTTP download link: %s", downloadURL)
 		w.notify(ctx, "已生成临时 HTTP 下载链接。\n文件：%s\n链接：%s", prepared.fileName, downloadURL)
 		return nil
-	}
-
-	result, err := w.opts.DownloadSubmitter.Submit(ctx, types.DownloadSubmission{
-		Account:     w.reactionAccount(),
-		TaskID:      task.ID,
-		DownloadURL: downloadURL,
-		Dir:         prepared.dir,
-		Out:         prepared.out,
-		FullPath:    prepared.fullPath,
-	})
-	if err != nil {
-		return errors.Wrapf(err, "submit temporary link to %s (link remains available at %s)", w.opts.DownloadSubmitter.Name(), downloadURL)
 	}
 
 	logctx.From(ctx).Info("Submitted temporary HTTP download link",
@@ -389,5 +452,5 @@ func (w *Watcher) notify(ctx context.Context, format string, args ...interface{}
 	}
 
 	text := fmt.Sprintf(format, args...)
-	go w.opts.Notify(context.WithoutCancel(ctx), text)
+	w.opts.Notify(ctx, text)
 }

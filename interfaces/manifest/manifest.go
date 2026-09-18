@@ -48,4 +48,11 @@ type Manifest struct {
 	Config     []ConfigField
 	Publishes  []string
 	Subscribes []string
+	Pages      []Page
+}
+
+// Page declares a same-origin feature entry owned by a component.
+type Page struct {
+	Path  string `json:"path"`
+	Title string `json:"title"`
 }

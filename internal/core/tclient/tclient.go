@@ -13,6 +13,7 @@ import (
 	tdclock "github.com/gotd/td/clock"
 	"github.com/gotd/td/exchange"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/dcs"
 	"golang.org/x/net/proxy"
 
@@ -90,7 +91,7 @@ func New(ctx context.Context, o Options) (*telegram.Client, error) {
 
 func NewDefaultMiddlewares(ctx context.Context, timeout time.Duration) []telegram.Middleware {
 	return []telegram.Middleware{
-		recovery.New(ctx, newBackoff(timeout)),
+		recovery.New(ctx, func() backoff.BackOff { return newBackoff(timeout) }),
 		retry.New(5),
 		floodwait.NewSimpleWaiter(),
 	}
@@ -105,7 +106,11 @@ func newBackoff(timeout time.Duration) backoff.BackOff {
 	return b
 }
 
-func RunWithAuth(ctx context.Context, client *telegram.Client, f func(ctx context.Context) error) error {
+func RunWithAuth(ctx context.Context, client interface {
+	Run(context.Context, func(context.Context) error) error
+	Auth() *auth.Client
+}, f func(ctx context.Context) error,
+) error {
 	return client.Run(ctx, func(ctx context.Context) error {
 		status, err := client.Auth().Status(ctx)
 		if err != nil {

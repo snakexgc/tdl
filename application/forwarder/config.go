@@ -1,0 +1,93 @@
+package forwarder
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/snakexgc/tdl/interfaces/manifest"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/rte/config"
+)
+
+const retryBaseField = "retry_base_seconds"
+
+type policy struct {
+	poll, base, maximum, retention time.Duration
+	attempts, history              int
+}
+
+func defaultPolicy() policy {
+	return policy{pollInterval, backoffBase, backoffMax, terminalTTL, maxAttempts, maxTerminal}
+}
+
+func (q *Queue) policy() policy {
+	if current := q.configuration.Load(); current != nil {
+		return *current
+	}
+	return defaultPolicy()
+}
+
+func Manifest() manifest.Manifest {
+	field := func(name, title string, value, low, high int64) manifest.ConfigField {
+		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
+	}
+	return manifest.Manifest{
+		ID: ID, Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控"}},
+		Provides: []manifest.Port{manifest.PortOf[ports.ForwardTasks](ports.ForwardTasksName, 1, 0)},
+		Config: []manifest.ConfigField{
+			field("poll_interval_ms", "队列扫描间隔（毫秒）", 2000, 100, 3600000),
+			field(retryBaseField, "首次重试间隔（秒）", 5, 1, 86400),
+			field("retry_max_seconds", "最大重试间隔（秒）", 300, 1, 86400),
+			field("max_attempts", "失败次数上限", 10, 1, 100),
+			field("history_hours", "已结束任务保留时间（小时）", 24, 1, 8760),
+			field("history_limit", "已结束任务保留数量", 200, 1, 100000),
+		},
+	}
+}
+
+func (s *service) PrepareConfig(ctx context.Context, view config.View) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var poll, base, maximum, attempts, retention, history int64
+	for name, target := range map[string]*int64{
+		"poll_interval_ms": &poll, retryBaseField: &base,
+		"retry_max_seconds": &maximum, "max_attempts": &attempts, "history_hours": &retention, "history_limit": &history,
+	} {
+		if err := view.Get(name, target); err != nil {
+			return nil, err
+		}
+	}
+	if base > maximum {
+		return nil, fmt.Errorf("retry_base_seconds must not exceed retry_max_seconds")
+	}
+	p := policy{
+		time.Duration(poll) * time.Millisecond, time.Duration(base) * time.Second, time.Duration(maximum) * time.Second,
+		time.Duration(retention) * time.Hour, int(attempts), int(history),
+	}
+	return func() { s.queue.configuration.Store(&p); s.queue.signal() }, nil
+}
+
+func (s *service) Reconfigure(ctx context.Context, view config.View) error {
+	commit, err := s.PrepareConfig(ctx, view)
+	if err != nil {
+		return err
+	}
+	commit()
+	return nil
+}
+
+func (p policy) backoff(attempts int) time.Duration {
+	delay := p.base
+	for attempt := 1; attempt < attempts; attempt++ {
+		if delay >= p.maximum/2 {
+			return p.maximum
+		}
+		delay *= 2
+	}
+	if delay > p.maximum {
+		return p.maximum
+	}
+	return delay
+}

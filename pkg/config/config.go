@@ -1,12 +1,14 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -42,98 +45,17 @@ const (
 	ForwardModeClone   = "clone"
 )
 
-// BotNotifyConfig controls which aria2 events trigger Telegram notifications.
-type BotNotifyConfig struct {
-	OnDownloadStart         bool `json:"on_download_start"`
-	OnDownloadComplete      bool `json:"on_download_complete"`
-	OnDownloadPause         bool `json:"on_download_pause"`
-	OnDownloadError         bool `json:"on_download_error"`
-	LiveProgress            bool `json:"live_progress"`
-	LiveProgressIntervalSec int  `json:"live_progress_interval_seconds"`
-}
-
-// BotConfig Bot 配置
-type BotConfig struct {
-	Token        string          `json:"token"`
-	AllowedUsers []int64         `json:"allowed_users"`
-	Notify       BotNotifyConfig `json:"notify"`
-}
-
-type HTTPConfig struct {
-	Listen               string `json:"listen,omitempty"`
-	Address              string `json:"address"`
-	Port                 int    `json:"port"`
-	PublicBaseURL        string `json:"public_base_url"`
-	DownloadLinkTTLHours int    `json:"download_link_ttl_hours"`
-}
-
-type WebUIConfig struct {
-	Listen   string `json:"listen,omitempty"`
-	Address  string `json:"address"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type ModulesConfig struct {
-	Bot     bool `json:"bot"`
-	Watch   bool `json:"watch"`
-	HTTP    bool `json:"http"`
-	Aria2   bool `json:"aria2"`
-	Forward bool `json:"forward"`
-}
-
-type DownloaderConfig struct {
-	Mode string `json:"mode"`
-}
-
-type Aria2Config struct {
-	RPCURL         string `json:"rpc_url"`
-	Secret         string `json:"secret"`
-	Dir            string `json:"dir"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	AutoDownload   bool   `json:"auto_download"`
-}
-
-type ForwardConfig struct {
-	Mode             string   `json:"mode"`
-	Target           string   `json:"target"`
-	Listen           []string `json:"listen"`
-	ListenComments   bool     `json:"listen_comments"`
-	Silent           bool     `json:"silent"`
-	DedupeTTLSeconds int      `json:"dedupe_ttl_seconds"`
-	TriggerReactions []string `json:"trigger_reactions"`
-}
-
-// Config 全局配置结构
-type Config struct {
-	Telegram         types.TelegramCredentialsConfig `json:"telegram"`
-	Proxy            string                          `json:"proxy"`
-	ProxyUsername    string                          `json:"proxy_username"`
-	ProxyPassword    string                          `json:"proxy_password"`
-	Namespace        string                          `json:"namespace"`
-	Debug            bool                            `json:"debug"`
-	Limit            int                             `json:"limit"`
-	PoolSize         int                             `json:"pool_size"`
-	Delay            int                             `json:"delay"`
-	NTP              string                          `json:"ntp"`
-	ReconnectTimeout int                             `json:"reconnect_timeout"`
-	DownloadDir      string                          `json:"download_dir"`
-	Filename         string                          `json:"filename"`
-	FilenameMax      int                             `json:"filename_max_length"`
-	TriggerReactions []string                        `json:"trigger_reactions"`
-	Include          []string                        `json:"include"`
-	Exclude          []string                        `json:"exclude"`
-	FileSizeMinMB    int64                           `json:"file_size_min_mb"`
-	FileSizeMaxMB    int64                           `json:"file_size_max_mb"`
-	HTTP             HTTPConfig                      `json:"http"`
-	WebUI            WebUIConfig                     `json:"webui"`
-	Modules          ModulesConfig                   `json:"modules"`
-	Downloader       DownloaderConfig                `json:"downloader"`
-	Aria2            Aria2Config                     `json:"aria2"`
-	Bot              BotConfig                       `json:"bot"`
-	Forward          ForwardConfig                   `json:"forward"`
-}
+type (
+	BotNotifyConfig  = types.BotNotifyConfig
+	BotConfig        = types.BotConfig
+	HTTPConfig       = types.HTTPConfig
+	WebUIConfig      = types.WebUIConfig
+	ModulesConfig    = types.ModulesConfig
+	DownloaderConfig = types.DownloaderConfig
+	Aria2Config      = types.Aria2Config
+	ForwardConfig    = types.ForwardConfig
+	Config           = types.RuntimeConfig
+)
 
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
@@ -208,27 +130,6 @@ func DefaultConfig() *Config {
 // UnmarshalJSON keeps configurations written before the file-size range was
 // introduced compatible. The former file_size_mb value becomes the lower
 // bound unless the new lower-bound field is present explicitly.
-func (cfg *Config) UnmarshalJSON(data []byte) error {
-	type configJSON Config
-	decoded := configJSON(*cfg)
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*cfg = Config(decoded)
-
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	if _, hasNewMinimum := fields["file_size_min_mb"]; hasNewMinimum {
-		return nil
-	}
-	legacy, hasLegacyMinimum := fields["file_size_mb"]
-	if !hasLegacyMinimum {
-		return nil
-	}
-	return json.Unmarshal(legacy, &cfg.FileSizeMinMB)
-}
 
 func NormalizeNamespace(namespace string) (string, error) {
 	namespace = strings.TrimSpace(namespace)
@@ -679,5 +580,23 @@ func Set(cfg *Config) error {
 	}
 
 	instance = cfg
+	return nil
+}
+
+// CompareAndSet prevents a stale control-plane snapshot from overwriting a
+// concurrent configuration update made by another entry point.
+func CompareAndSet(ctx context.Context, expected, next *Config) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(instance, expected) {
+		return ports.ErrConfigurationConflict
+	}
+	if err := Save(configPath, next); err != nil {
+		return err
+	}
+	instance = next
 	return nil
 }

@@ -1,31 +1,8 @@
 package watch
 
 import (
-	"context"
-	"strings"
 	"time"
-
-	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
-	"github.com/snakexgc/tdl/internal/core/storage"
 )
-
-func shouldRunInternalDownload(status string) bool {
-	switch status {
-	case "", InternalDownloadStatusQueued, InternalDownloadStatusError:
-		return true
-	default:
-		return false
-	}
-}
-
-func shouldPauseInternalDownloadForShutdown(status string) bool {
-	switch status {
-	case InternalDownloadStatusComplete, InternalDownloadStatusRemoved, InternalDownloadStatusPaused:
-		return false
-	default:
-		return true
-	}
-}
 
 func internalDownloadInfo(record internalDownloadRecord) InternalDownloadInfo {
 	info := InternalDownloadInfo{
@@ -58,28 +35,4 @@ func internalDownloadInfo(record internalDownloadRecord) InternalDownloadInfo {
 		}
 	}
 	return info
-}
-
-func uniqueInternalDownloadIDs(ids []string) []string {
-	out := make([]string, 0, len(ids))
-	seen := map[string]struct{}{}
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
-	}
-	return out
-}
-
-func markPersistentDownloadTaskDownloaded(ctx context.Context, kvd storage.Storage, taskID string) {
-	if kvd == nil || taskID == "" {
-		return
-	}
-	_ = taskhub.Links(kvd).MarkDownloaded(ctx, taskID)
 }

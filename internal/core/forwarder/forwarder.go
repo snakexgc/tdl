@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"context"
+	stderrors "errors"
 	"math/rand"
 	"time"
 
@@ -51,6 +52,7 @@ func New(opts Options) *Forwarder {
 }
 
 func (f *Forwarder) Forward(ctx context.Context) error {
+	var failures []error
 	for f.opts.Iter.Next(ctx) {
 		elem := f.opts.Iter.Value()
 		if _, ok := f.sent[f.tuple(elem.From(), elem.Msg())]; ok {
@@ -61,10 +63,12 @@ func (f *Forwarder) Forward(ctx context.Context) error {
 		if _, ok := elem.Msg().GetGroupedID(); ok && elem.AsGrouped() {
 			grouped, err := tutil.GetGroupedMessages(ctx, f.opts.Pool.Default(ctx), elem.From().InputPeer(), elem.Msg())
 			if err != nil {
+				failures = append(failures, err)
 				continue
 			}
 
 			if err = f.forwardMessage(ctx, elem, grouped...); err != nil {
+				failures = append(failures, err)
 				continue
 			}
 
@@ -72,6 +76,7 @@ func (f *Forwarder) Forward(ctx context.Context) error {
 		}
 
 		if err := f.forwardMessage(ctx, elem); err != nil {
+			failures = append(failures, err)
 			// canceled by user, so we directly return error to stop all
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -80,7 +85,7 @@ func (f *Forwarder) Forward(ctx context.Context) error {
 		}
 	}
 
-	return f.opts.Iter.Err()
+	return stderrors.Join(append(failures, f.opts.Iter.Err())...)
 }
 
 func (f *Forwarder) forwardMessage(ctx context.Context, elem Elem, grouped ...*tg.Message) (rerr error) {

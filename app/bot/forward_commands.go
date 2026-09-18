@@ -9,12 +9,12 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	appforward "github.com/snakexgc/tdl/app/forward"
 	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
-func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, queue *appforward.Queue) (bool, error) {
+func handleForwardCommand(ctx *th.Context, msg *telego.Message, text string, queue ports.ForwardTasks) (bool, error) {
 	cmd, _, payload := tu.ParseCommandPayload(text)
 	if "/"+cmd != botCmdForward {
 		return false, nil
