@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "enabled": true,
-  "values": {
-    "allowed_users": []
-  },
-  "secrets": "swc-console.bot-3188050121.json"
-}
