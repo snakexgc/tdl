@@ -16,6 +16,10 @@ import (
 
 type Aria2Observations struct{ Links LinkRepository }
 
+// LinkVersion identifies immutable source metadata independently of download
+// progress. It must be computed from the same bytes used to restore the source.
+func LinkVersion(data []byte) string { return linkVersion(data) }
+
 func linkVersion(data []byte) string {
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) == nil {
@@ -106,7 +110,7 @@ func (r Aria2Observations) Apply(ctx context.Context, source ports.ObservedLink,
 			if err := json.Unmarshal(data, &current); err != nil {
 				return err
 			}
-			if current.Revision != observed.Revision || current.TaskID != observed.TaskID || !types.DownloadTransition(types.NormalizeDownloadState(current.Status), types.NormalizeDownloadState(observed.Status)) {
+			if current.Deleted || current.Revision != observed.Revision || current.ControlUntil.After(now) || current.TaskID != observed.TaskID || !types.DownloadTransition(types.NormalizeDownloadState(current.Status), types.NormalizeDownloadState(observed.Status)) {
 				return nil
 			}
 			if err := json.Unmarshal(data, &raw); err != nil {

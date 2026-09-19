@@ -24,6 +24,9 @@ func (s *Service) Init(ctx context.Context, k rte.Kernel) error {
 	if err := k.Provide(ports.DownloadRoutingName, s); err != nil {
 		return err
 	}
+	if err := k.Provide(ports.DownloadPipelineName, s); err != nil {
+		return err
+	}
 	return k.Provide(ports.DownloadControlName, s)
 }
 func (*Service) Start(context.Context) error { return nil }

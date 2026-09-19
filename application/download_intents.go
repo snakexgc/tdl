@@ -42,16 +42,19 @@ func IntentHostStored(ctx context.Context, account types.AccountID, download por
 		account = types.DefaultAccount
 	}
 	values := map[string]map[string]any{}
+	enabled := map[string]bool{}
 	for _, definition := range registry.Definitions(rte.ConnectionScope) {
-		next, err := componentValues(ctx, definition.Manifest.ID, store)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		for id, value := range next {
-			values[id] = value
+		id := definition.Manifest.ID
+		enabled[id] = true
+		if store != nil {
+			document, err := store.Load(ctx, id)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			values[id], enabled[id] = document.Values, document.Enabled
 		}
 	}
-	host, err := registry.Build(account, nil, values)
+	host, err := registry.Build(account, enabled, values)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -64,20 +67,46 @@ func IntentHostStored(ctx context.Context, account types.AccountID, download por
 	var downloads ports.DownloadIntents
 	var forwards ports.ForwardIntents
 	if download != nil {
-		value, err := host.Resolve(ports.DownloadIntentsName)
-		if err != nil {
-			_ = host.Stop(context.Background())
-			return nil, nil, nil, err
-		}
-		downloads = value.(ports.DownloadIntents)
+		downloads = downloadIntentPort{host}
 	}
 	if forward != nil {
-		value, err := host.Resolve(ports.ForwardIntentsName)
-		if err != nil {
-			_ = host.Stop(context.Background())
-			return nil, nil, nil, err
-		}
-		forwards = value.(ports.ForwardIntents)
+		forwards = forwardIntentPort{host}
 	}
 	return host, downloads, forwards, nil
+}
+
+type downloadIntentPort struct{ host *rte.Runtime }
+
+func (p downloadIntentPort) Publish(ctx context.Context, in types.DownloadIntent) error {
+	value, err := p.host.Resolve(ports.DownloadIntentsName)
+	if err != nil {
+		return err
+	}
+	return value.(ports.DownloadIntents).Publish(ctx, in)
+}
+
+func (p downloadIntentPort) Submit(ctx context.Context, in types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+	value, err := p.host.Resolve(ports.DownloadRequestsName)
+	if err != nil {
+		return types.DownloadSubmissionSummary{}, err
+	}
+	return value.(ports.DownloadRequests).Submit(ctx, in)
+}
+
+type forwardIntentPort struct{ host *rte.Runtime }
+
+func (p forwardIntentPort) Listening(ctx context.Context, account types.AccountID) (types.ForwardListening, error) {
+	value, err := p.host.Resolve(ports.ForwardListeningName)
+	if err != nil {
+		return types.ForwardListening{}, err
+	}
+	return value.(ports.ForwardListening).Listening(ctx, account)
+}
+
+func (p forwardIntentPort) Publish(ctx context.Context, in types.ForwardIntent) error {
+	value, err := p.host.Resolve(ports.ForwardIntentsName)
+	if err != nil {
+		return err
+	}
+	return value.(ports.ForwardIntents).Publish(ctx, in)
 }

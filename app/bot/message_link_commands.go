@@ -40,11 +40,14 @@ func handleMessageLinkSubmission(ctx *th.Context, msg *telego.Message, text stri
 			continue
 		}
 
-		submitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), messageLinkSubmissionTimeout)
+		submitCtx, cancel := context.WithTimeout(ctx, messageLinkSubmissionTimeout)
 		result, err := watchCtrl.SubmitMessageLink(submitCtx, normalized)
 		cancel()
 		if err != nil {
-			rejected = append(rejected, fmt.Sprintf("%s：提交失败：%v", normalized, err))
+			if result.Total > 0 {
+				accepted = append(accepted, result)
+			}
+			rejected = append(rejected, fmt.Sprintf("%s：提交未全部完成：%v", normalized, err))
 			continue
 		}
 		accepted = append(accepted, result)
@@ -88,7 +91,7 @@ func formatMessageLinkSubmissionResult(accepted []watch.MessageLinkSubmissionRes
 			parts = append(parts, fmt.Sprintf("%s：是 Telegram 消息链接，但消息中没有可下载媒体。", result.Link))
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s：已按 watch 流程提交。文件总数：%d，需要下载：%d，跳过：%d。", result.Link, result.Total, result.Queued, result.Skipped))
+		parts = append(parts, fmt.Sprintf("%s：文件总数：%d，已接受：%d，跳过：%d，未提交：%d，结果待确认：%d。", result.Link, result.Total, result.Queued, result.Skipped, result.Failed, result.Uncertain))
 	}
 	parts = append(parts, rejected...)
 	if len(parts) == 0 {

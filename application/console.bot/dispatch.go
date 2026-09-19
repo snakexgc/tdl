@@ -13,13 +13,14 @@ import (
 var commandPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 
 type Dispatcher struct {
-	policy   ports.Console
-	commands []types.ConsoleCommand
-	handlers map[string]ports.ConsoleCommandHandler
+	policy    ports.Console
+	commands  []types.ConsoleCommand
+	handlers  map[string]ports.ConsoleCommandHandler
+	canonical map[string]string
 }
 
 func NewDispatcher(policy ports.Console, contributions []ports.ConsoleContribution) (*Dispatcher, error) {
-	d := &Dispatcher{policy: policy, handlers: map[string]ports.ConsoleCommandHandler{}}
+	d := &Dispatcher{policy: policy, handlers: map[string]ports.ConsoleCommandHandler{}, canonical: map[string]string{}}
 	for _, contribution := range contributions {
 		if contribution.Handler == nil {
 			return nil, fmt.Errorf("command handler is required")
@@ -33,6 +34,7 @@ func NewDispatcher(policy ports.Console, contributions []ports.ConsoleContributi
 					return nil, fmt.Errorf("duplicate command %s", name)
 				}
 				d.handlers[name] = contribution.Handler
+				d.canonical[name] = command.Name
 			}
 			d.commands = append(d.commands, command)
 		}
@@ -64,6 +66,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, request types.ConsoleRequest)
 	if err := ctx.Err(); err != nil {
 		return true, types.ConsoleResponse{}, err
 	}
+	request.Name = d.canonical[request.Name]
 	response, err := handler.Execute(ctx, request)
 	return true, response, err
 }

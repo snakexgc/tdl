@@ -44,7 +44,7 @@ func TestLinkPolicyUpdatesOwnershipAndRetentionWithoutTransferActions(t *testing
 	manager.UpdateLinkPolicy("https://new.example", 3*time.Hour)
 	after, err := manager.controller.Overview(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, after.TotalTasks)
+	require.Zero(t, after.TotalTasks, "a URL match must be accepted by the account repository before it grants control")
 	require.NoError(t, manager.syncStates(ctx))
 	require.Len(t, observations.applied, 1)
 	require.Equal(t, testDocument1, observations.applied[0].TaskID)

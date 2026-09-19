@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "enabled": true,
+  "values": {
+    "executors": [],
+    "local_root": "",
+    "mode": "aria2"
+  }
+}

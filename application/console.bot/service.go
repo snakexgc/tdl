@@ -29,11 +29,15 @@ func Manifest() manifest.Manifest {
 
 func Register(registry *rte.Registry) error { return RegisterCommands(registry, Commands()) }
 func RegisterCommands(registry *rte.Registry, commands []types.ConsoleCommand) error {
-	return registry.Register(Manifest(), func() rte.Component { return &Service{commands: cloneCommands(commands)} })
+	return registry.Register(Manifest(), func() rte.Component {
+		s := &Service{}
+		s.SetCommands(commands)
+		return s
+	})
 }
 
 type Service struct {
-	commands []types.ConsoleCommand
+	commands atomic.Pointer[[]types.ConsoleCommand]
 	account  types.AccountID
 	users    atomic.Pointer[map[int64]bool]
 	running  atomic.Bool
@@ -85,10 +89,18 @@ func (s *Service) Allowed(account types.AccountID, user int64) bool {
 }
 
 func (s *Service) Commands() []types.ConsoleCommand {
-	if s.commands == nil {
+	commands := s.commands.Load()
+	if commands == nil {
 		return cloneCommands(Commands())
 	}
-	return cloneCommands(s.commands)
+	return cloneCommands(*commands)
+}
+
+// SetCommands publishes the composition root's complete enabled command set.
+// Readers never observe a partially updated menu or retain an old owner list.
+func (s *Service) SetCommands(commands []types.ConsoleCommand) {
+	copy := cloneCommands(commands)
+	s.commands.Store(&copy)
 }
 
 func (s *Service) PrivateCommand(name string) bool {

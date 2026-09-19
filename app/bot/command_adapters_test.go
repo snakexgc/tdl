@@ -37,3 +37,65 @@ func TestDeclaredCommandsResolveCurrentInstanceForEveryRequest(t *testing.T) {
 	_, err = contributions[0].Handler.Execute(context.Background(), types.ConsoleRequest{})
 	require.ErrorContains(t, err, "disabled")
 }
+
+func TestLegacyCommandTextUsesCanonicalNameAndPreservesPayload(t *testing.T) {
+	for _, input := range []string{"/aria2_active", "/internal_active@mybot", " /downloads_active  two words\nnext "} {
+		request := types.ConsoleRequest{Name: "downloads_active", Text: input}
+		expected := "/downloads_active"
+		if input[0] == ' ' {
+			expected += "  two words\nnext"
+		}
+		require.Equal(t, expected, canonicalCommandText(request))
+	}
+}
+
+type factoryConsole struct {
+	ports.Console
+	enabled bool
+}
+
+func (p *factoryConsole) PrivateCommand(string) bool { return p.enabled }
+
+type factoryTasks struct {
+	ports.Aria2Tasks
+	calls int
+}
+
+func (p *factoryTasks) PauseTask(context.Context, string) error { p.calls++; return nil }
+
+func TestLegacyAria2FactoryHonorsStoppedComponentsAndReenable(t *testing.T) {
+	ctx := context.Background()
+	console := &factoryConsole{enabled: true}
+	first, second := &factoryTasks{}, &factoryTasks{}
+	current := first
+	controlEnabled, executorEnabled := true, true
+	fallbackCalls := 0
+	factory := componentAria2Factory(console, func(owner, port string) (any, error) {
+		switch port {
+		case ports.DownloadControlName:
+			if !controlEnabled {
+				return nil, fmt.Errorf("control disabled")
+			}
+			return &downloadControlSpy{}, nil
+		case ports.Aria2TasksName:
+			if !executorEnabled {
+				return nil, fmt.Errorf("executor disabled")
+			}
+			return current, nil
+		default:
+			return nil, fmt.Errorf("unknown port %s/%s", owner, port)
+		}
+	}, func() ports.Aria2Tasks { fallbackCalls++; return first })
+	require.NoError(t, factory().PauseTask(ctx, downloadTestTask))
+	console.enabled = false
+	require.Error(t, factory().PauseTask(ctx, downloadTestTask))
+	console.enabled, controlEnabled = true, false
+	require.Error(t, factory().PauseTask(ctx, downloadTestTask))
+	controlEnabled, executorEnabled = true, false
+	require.Error(t, factory().PauseTask(ctx, downloadTestTask))
+	executorEnabled, current = true, second
+	require.NoError(t, factory().PauseTask(ctx, downloadTestTask))
+	require.Equal(t, 1, first.calls)
+	require.Equal(t, 1, second.calls)
+	require.Zero(t, fallbackCalls)
+}

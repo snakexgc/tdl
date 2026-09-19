@@ -33,7 +33,7 @@ func Register(registry *rte.Registry, handler ports.DownloadIntentHandler, capac
 	m := Manifest()
 	m.Provides = provides
 	return registry.Register(m, func() rte.Component {
-		return &service{handler: handler, resultHandler: resultHandler, capacity: capacity, pending: map[string]chan intentResponse{}}
+		return &service{handler: handler, resultHandler: resultHandler, capacity: capacity, pending: map[string]intentCall{}}
 	})
 }
 
@@ -49,7 +49,7 @@ type service struct {
 	ctx           context.Context
 	mu            sync.Mutex
 	sequence      uint64
-	pending       map[string]chan intentResponse
+	pending       map[string]intentCall
 	resultHandler ports.DownloadIntentResultHandler
 	account       types.AccountID
 	events        rte.Events
@@ -60,6 +60,11 @@ type service struct {
 type intentResponse struct {
 	result types.DownloadSubmissionSummary
 	err    error
+}
+
+type intentCall struct {
+	ctx   context.Context
+	reply chan intentResponse
 }
 
 func (s *service) Init(ctx context.Context, k rte.Kernel) error {
@@ -76,18 +81,25 @@ func (s *service) Init(ctx context.Context, k rte.Kernel) error {
 		if s.resultHandler == nil {
 			return s.handler(ctx, request)
 		}
-		var reply chan intentResponse
+		var call intentCall
 		if request.RequestID != "" {
 			s.mu.Lock()
-			reply = s.pending[request.RequestID]
+			call = s.pending[request.RequestID]
 			s.mu.Unlock()
-			if reply == nil {
+			if call.reply == nil || call.ctx.Err() != nil {
 				return nil
 			}
+			linked, cancel := context.WithCancel(ctx)
+			unlink := context.AfterFunc(call.ctx, cancel)
+			defer func() { unlink(); cancel() }()
+			if call.ctx.Err() != nil {
+				cancel()
+			}
+			ctx = linked
 		}
 		result, err := invokeResult(s.resultHandler, ctx, request)
-		if reply != nil {
-			reply <- intentResponse{result: result, err: err}
+		if call.reply != nil {
+			call.reply <- intentResponse{result: result, err: err}
 		}
 		return err
 	}, nil); err != nil {
@@ -126,6 +138,9 @@ func (s *service) publish(ctx context.Context, request types.DownloadIntent) err
 }
 
 func (s *service) Submit(ctx context.Context, request types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return types.DownloadSubmissionSummary{}, err
+	}
 	if s.resultHandler == nil {
 		return types.DownloadSubmissionSummary{}, errors.New("download results are unavailable")
 	}
@@ -137,7 +152,7 @@ func (s *service) Submit(ctx context.Context, request types.DownloadIntent) (typ
 	s.sequence++
 	request.RequestID = strconv.FormatUint(s.sequence, 10)
 	reply := make(chan intentResponse, 1)
-	s.pending[request.RequestID] = reply
+	s.pending[request.RequestID] = intentCall{ctx: ctx, reply: reply}
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.pending, request.RequestID); s.mu.Unlock() }()
 	if err := s.publish(ctx, request); err != nil {

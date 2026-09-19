@@ -21,6 +21,16 @@ type LocalDownloadRepository interface {
 
 type DownloadLease interface{ Release() }
 
+// SavedDownloadLinks restores protocol metadata at the transport boundary.
+// Components only receive the ordinary values needed to queue a saved source.
+type SavedDownloadLinks interface {
+	GetLink(context.Context, string) (ObservedLink, bool, error)
+}
+
+type LocalLinkRepository interface {
+	CreateLinked(context.Context, ObservedLink, types.LocalDownloadRecord) (types.LocalDownloadRecord, error)
+}
+
 // LocalDownloadSource keeps protocol objects and shared channel leases outside
 // the component. File bytes travel directly to the supplied writer.
 type LocalDownloadSource interface {

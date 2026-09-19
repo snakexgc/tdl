@@ -37,6 +37,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
 	rteconfig "github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/schedule"
 )
 
 var processRebootRequested atomic.Bool
@@ -55,6 +56,7 @@ type Options struct {
 	Updater               ports.Updater
 	ComponentStore        *rteconfig.Store
 	SetComponentHost      func(*rte.Runtime)
+	SetComponentRefresh   func(func(context.Context) error)
 	ForwardQueue          *appforward.Queue
 	Token                 string
 	AllowedUsers          []int64
@@ -128,13 +130,13 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	host, console, notifications, err := application.BotHost(ctx, account, &botNotificationTransport{sender: bot, editor: bot}, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...)
+	transport := &botNotificationTransport{sender: bot, editor: bot}
+	host, console, notifications, err := application.BotHost(ctx, account, transport, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...)
 	if err != nil {
 		return errors.Wrap(err, "start bot components")
 	}
 	notifier := &botNotifier{host: host, service: notifications, account: account}
 	defer notifier.Close()
-	opts.CommandContributions = append(opts.CommandContributions, declaredCommandHandlers(console.Commands(), opts.CommandResolver)...)
 	if opts.SetComponentHost != nil {
 		opts.SetComponentHost(host)
 		defer opts.SetComponentHost(nil)
@@ -146,6 +148,58 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 	if err := configureBotMenu(ctx, bot, console); err != nil {
 		return errors.Wrap(err, "create bot menu")
+	}
+	menuChanged := make(chan struct{}, 1)
+	background := schedule.New(ctx)
+	defer func() { _ = background.Stop(context.Background()) }()
+	if err := background.Run("console.menu", 0, 0, func(ctx context.Context) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-menuChanged:
+				bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+				err := configureBotMenu(bounded, bot, console)
+				cancel()
+				if err != nil && ctx.Err() == nil {
+					color.Yellow("Failed to refresh bot menu: %v", err)
+					timer := time.NewTimer(5 * time.Second)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return nil
+					case <-timer.C:
+					}
+					select {
+					case menuChanged <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}
+	}, nil); err != nil {
+		return err
+	}
+	if opts.SetComponentRefresh != nil {
+		var refreshMu sync.Mutex
+		refresh := func(refreshCtx context.Context) error {
+			refreshMu.Lock()
+			defer refreshMu.Unlock()
+			if err := application.ReconcileBotHost(refreshCtx, host, account, transport, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...); err != nil {
+				return err
+			}
+			select {
+			case menuChanged <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+		opts.SetComponentRefresh(refresh)
+		defer opts.SetComponentRefresh(nil)
+		// Catch saves that completed between host creation and callback binding.
+		if err := refresh(ctx); err != nil {
+			return err
+		}
 	}
 
 	kvEngine := kv.From(ctx)
@@ -188,9 +242,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		targetOptions.Account = types.AccountID(namespace)
 		return gotdLoginRunner{opts: targetOptions}, nil
 	})
-	aria2Factory := func() ports.Aria2Tasks {
+	aria2Factory := componentAria2Factory(console, opts.CommandResolver, func() ports.Aria2Tasks {
 		return aria2.NewController(config.From(ctx), kvd, nil)
-	}
+	})
 	downloadControl := opts.DownloadControl
 	if downloadControl == nil {
 		downloadHost, control, err := application.DownloadControlHost(ctx, account, map[string]ports.DownloadBackend{
@@ -205,10 +259,34 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	internalFactory := func() *localDownloadControl {
 		return &localDownloadControl{port: downloadControl, account: account}
 	}
-	go runAria2EventListener(ctx, notifier, aria2Factory)
+	if err := background.Run("aria2.events", 0, 0, func(ctx context.Context) error {
+		runAria2EventListener(ctx, notifier, aria2Factory)
+		return nil
+	}, nil); err != nil {
+		return err
+	}
+	retryCandidates := make(chan struct{}, 1)
+	if err := background.Run("aria2.retry-candidates", 0, 0, func(ctx context.Context) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-retryCandidates:
+				notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+			}
+		}
+	}, nil); err != nil {
+		return err
+	}
+	requestRetryCandidates := func() {
+		select {
+		case retryCandidates <- struct{}{}:
+		default:
+		}
+	}
 	var requestReboot func()
-	onLoginSuccess := func(user *tg.User, namespace string) {
-		restart, err := saveBotNamespaceIfChanged(namespace)
+	onLoginSuccess := func(flowCtx context.Context, user *tg.User, namespace string) {
+		restart, err := config.SelectNamespace(flowCtx, string(account), namespace)
 		if err != nil {
 			notifier.Notify(ctx, fmt.Sprintf("登录成功，但保存用户配置失败：%v", err))
 			return
@@ -227,11 +305,11 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			notifyWatchAfterLogin(ctx, notifier, watchCtrl)
 		}
 		if aria2DownloaderEnabled(ctx) {
-			go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+			requestRetryCandidates()
 		}
 	}
-	loginMgr.SetOnSuccess(func(user *ports.LoginUser, namespace string) {
-		onLoginSuccess(&tg.User{ID: user.ID, Username: user.Username, FirstName: user.FirstName, LastName: user.LastName}, namespace)
+	loginMgr.SetOnSuccess(func(flowCtx context.Context, user *ports.LoginUser, namespace string) {
+		onLoginSuccess(flowCtx, &tg.User{ID: user.ID, Username: user.Username, FirstName: user.FirstName, LastName: user.LastName}, namespace)
 	})
 	loginHost, loginPort, err := application.BotLoginHost(ctx, account, loginMgr)
 	if err != nil {
@@ -247,7 +325,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts, !opts.DisableAutoStartWatch)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
 	if startup.WatchStarted && aria2DownloaderEnabled(ctx) {
-		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+		requestRetryCandidates()
 	}
 
 	// start long polling
@@ -285,6 +363,23 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			cancelPolling()
 		})
 	}
+	shutdownRequests := make(chan struct{}, 1)
+	if err := background.Run("console.shutdown", 0, 0, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+		case <-shutdownRequests:
+		}
+		shutdown()
+		return nil
+	}, nil); err != nil {
+		return err
+	}
+	requestShutdown := func() {
+		select {
+		case shutdownRequests <- struct{}{}:
+		default:
+		}
+	}
 	requestReboot = func() {
 		rebootRequested.Store(true)
 		if opts.RequestReboot != nil {
@@ -292,7 +387,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		} else {
 			RequestReboot()
 		}
-		go shutdown()
+		requestShutdown()
 	}
 	requestUpdate := func(plan updater.Plan) {
 		rebootRequested.Store(false)
@@ -301,7 +396,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		} else {
 			RequestUpdate(plan)
 		}
-		go shutdown()
+		requestShutdown()
 	}
 	updateController := newTDLUpdateController(requestUpdate)
 	updateController.updater = opts.Updater
@@ -326,7 +421,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// check if user is allowed
 		if console.Allowed(account, fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, maintenancePort, account, opts.ForwardQueue, console, opts.CommandContributions...)
+			contributions := append(append([]ports.ConsoleContribution{}, opts.CommandContributions...), declaredCommandHandlers(console.Commands(), opts.CommandResolver)...)
+			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, maintenancePort, account, opts.ForwardQueue, console, contributions...)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -344,11 +440,6 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}, th.AnyMessage())
 
 	color.Green("🔄 Bot is running... Press Ctrl+C to stop")
-
-	go func() {
-		<-ctx.Done()
-		shutdown()
-	}()
 
 	err = bh.Start()
 	botLogger.SetShuttingDown()
@@ -459,31 +550,6 @@ func notifyWatchAfterLogin(ctx context.Context, notifier *botNotifier, watchCtrl
 		return
 	}
 	notifier.Notify(ctx, "登录完成，watch 已在运行。")
-}
-
-func saveBotNamespaceIfChanged(namespace string) (bool, error) {
-	namespace, err := config.NormalizeNamespace(namespace)
-	if err != nil {
-		return false, err
-	}
-
-	cfg := config.Get()
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	if cfg.Namespace == namespace {
-		return false, nil
-	}
-
-	next, err := config.Clone(cfg)
-	if err != nil {
-		return false, err
-	}
-	next.Namespace = namespace
-	if err := config.Set(next); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func handleAllowedMessage(

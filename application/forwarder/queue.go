@@ -110,6 +110,11 @@ func (q *Queue) EnqueueLinks(ctx context.Context, links []string, target, target
 		return nil, err
 	}
 	ids := make([]string, 0, len(links))
+	defer func() {
+		if len(ids) > 0 {
+			q.signal()
+		}
+	}()
 	for _, link := range links {
 		link = strings.TrimSpace(link)
 		if link == "" {
@@ -132,13 +137,16 @@ func (q *Queue) EnqueueLinks(ctx context.Context, links []string, target, target
 		}
 		ids = append(ids, job.ID)
 	}
-	q.signal()
 	return ids, nil
 }
 
 // EnqueueMessage adds a single job from an already-known source peer/message
 // (used by the watcher auto-forward).
 func (q *Queue) EnqueueMessage(ctx context.Context, peerID int64, messageID int, originName, target, targetName, mode string, silent bool) (string, error) {
+	return q.enqueueMessage(ctx, types.MessagePeer{ID: peerID}, messageID, originName, target, targetName, mode, silent)
+}
+
+func (q *Queue) enqueueMessage(ctx context.Context, peer types.MessagePeer, messageID int, originName, target, targetName, mode string, silent bool) (string, error) {
 	store, err := q.jobStore()
 	if err != nil {
 		return "", err
@@ -146,7 +154,8 @@ func (q *Queue) EnqueueMessage(ctx context.Context, peerID int64, messageID int,
 	job := Job{
 		ID:              q.nextID(),
 		Source:          SourceWatch,
-		SourcePeerID:    peerID,
+		SourcePeerID:    peer.ID,
+		SourcePeerKind:  peer.Kind,
 		SourceMessageID: messageID,
 		OriginName:      originName,
 		Destination:     target,

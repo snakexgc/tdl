@@ -2,6 +2,7 @@ package rte
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,8 +84,14 @@ func (r *Runtime) ReconcileComponents(ctx context.Context, desired *Runtime) err
 	}
 	r.instances, r.providers, r.order = desired.instances, desired.providers, desired.order
 	r.registry = desired.registry
-	r.startLocked(ctx)
-	return nil
+	r.publishInstances()
+	var result error
+	for _, status := range r.startLocked(ctx) {
+		if status.State == Failed || status.State == Blocked {
+			result = errors.Join(result, fmt.Errorf("%s: %s: %s", status.ID, status.State, status.Detail))
+		}
+	}
+	return result
 }
 
 // ReconcileSaved changes enablement inside a resource owner's original

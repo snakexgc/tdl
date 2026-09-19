@@ -41,7 +41,7 @@ type BotLogin struct {
 	active *botLoginFlow
 	closed bool
 
-	onSuccess func(user *ports.LoginUser, namespace string)
+	onSuccess func(context.Context, *ports.LoginUser, string)
 }
 
 type botLoginFlow struct {
@@ -132,7 +132,7 @@ func (m *BotLogin) Busy() bool {
 	return m.active != nil
 }
 
-func (m *BotLogin) SetOnSuccess(fn func(user *ports.LoginUser, namespace string)) {
+func (m *BotLogin) SetOnSuccess(fn func(context.Context, *ports.LoginUser, string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onSuccess = fn
@@ -209,9 +209,13 @@ func (m *BotLogin) start(
 			return
 		}
 
-		_ = m.sendText(chatID, "登录成功！\n"+loginUserSummary(user))
+		_ = m.bot.SendText(ctx, chatID, "登录成功！\n"+loginUserSummary(user))
+		if err := ctx.Err(); err != nil {
+			m.notifyFailure(flow, err)
+			return
+		}
 		if onSuccess := m.successHandler(); onSuccess != nil {
-			onSuccess(user, flow.namespace)
+			onSuccess(ctx, user, flow.namespace)
 		}
 	}()
 
@@ -236,7 +240,7 @@ func (m *BotLogin) setStage(flow *botLoginFlow, stage string) {
 	}
 }
 
-func (m *BotLogin) successHandler() func(user *ports.LoginUser, namespace string) {
+func (m *BotLogin) successHandler() func(context.Context, *ports.LoginUser, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.onSuccess

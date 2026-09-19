@@ -15,10 +15,12 @@ const retryBaseField = "retry_base_seconds"
 type policy struct {
 	poll, base, maximum, retention time.Duration
 	attempts, history              int
+	command                        CommandSettings
+	dedupe                         time.Duration
 }
 
 func defaultPolicy() policy {
-	return policy{pollInterval, backoffBase, backoffMax, terminalTTL, maxAttempts, maxTerminal}
+	return policy{pollInterval, backoffBase, backoffMax, terminalTTL, maxAttempts, maxTerminal, CommandSettings{Mode: forwardModeDefault}, 10 * time.Minute}
 }
 
 func (q *Queue) policy() policy {
@@ -34,12 +36,12 @@ func Manifest() manifest.Manifest {
 	}
 	return manifest.Manifest{
 		ID: ID, Commands: Commands(), Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控", View: "forwards", Module: "/static/js/forwards.js", Style: "/static/css/forwards.css", Order: 50, Settings: []string{"forward.rules", "trigger.forward", "forwarder"}}},
-		Provides: []manifest.Port{manifest.PortOf[ports.ForwardTasks](ports.ForwardTasksName, 1, 0)},
+		Provides: []manifest.Port{manifest.PortOf[ports.ForwardTasks](ports.ForwardTasksName, 1, 0), manifest.PortOf[ports.ConsoleCommandHandler](commandPort, 1, 0), manifest.PortOf[ports.ForwardRouting](ports.ForwardRoutingName, 1, 0)},
 		Config: []manifest.ConfigField{
-			manifest.Choice("mode", "Forward mode", "default", []string{"default", "clone"}, true),
-			manifest.Text("target", "Destination", "", false, true),
-			manifest.Flag("silent", "Send silently", false, true),
-			manifest.Number("dedupe_ttl_seconds", "Deduplication lifetime (seconds)", 600, 0, 8640000, true),
+			manifest.Choice("mode", "Forward mode", forwardModeDefault, []string{forwardModeDefault, forwardModeClone}, false),
+			manifest.Text("target", "Destination", "", false, false),
+			manifest.Flag("silent", "Send silently", false, false),
+			manifest.Number("dedupe_ttl_seconds", "Deduplication lifetime (seconds)", 600, 0, 8640000, false),
 
 			field("poll_interval_ms", "队列扫描间隔（毫秒）", 2000, 100, 3600000),
 			field(retryBaseField, "首次重试间隔（秒）", 5, 1, 86400),
@@ -67,9 +69,26 @@ func (s *service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 	if base > maximum {
 		return nil, fmt.Errorf("retry_base_seconds must not exceed retry_max_seconds")
 	}
+	var command CommandSettings
+	if err := view.Get("target", &command.Target); err != nil {
+		return nil, err
+	}
+	if err := view.Get("mode", &command.Mode); err != nil {
+		return nil, err
+	}
+	if err := view.Get("silent", &command.Silent); err != nil {
+		return nil, err
+	}
+	var dedupe int64
+	if err := view.Get("dedupe_ttl_seconds", &dedupe); err != nil {
+		return nil, err
+	}
+	if dedupe <= 0 {
+		dedupe = 600 // Preserve the legacy zero-value default.
+	}
 	p := policy{
 		time.Duration(poll) * time.Millisecond, time.Duration(base) * time.Second, time.Duration(maximum) * time.Second,
-		time.Duration(retention) * time.Hour, int(attempts), int(history),
+		time.Duration(retention) * time.Hour, int(attempts), int(history), command, time.Duration(dedupe) * time.Second,
 	}
 	return func() { s.queue.configuration.Store(&p); s.queue.signal() }, nil
 }

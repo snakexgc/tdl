@@ -149,6 +149,7 @@ type Runtime struct {
 	context     context.Context
 	order       []string
 	instances   map[string]*instance
+	observed    atomic.Pointer[[]*instance]
 	providers   map[string]string
 	ports       map[string]any
 	account     types.AccountID
@@ -257,7 +258,18 @@ func (r *Registry) Build(account types.AccountID, enabled map[string]bool, value
 	for _, item := range run.instances {
 		item.setStatus(item.status)
 	}
+	run.publishInstances()
 	return run, nil
+}
+
+// Publish membership separately from per-component status. Health must not
+// traverse maps being replaced by reconciliation or wait for lifecycle hooks.
+func (r *Runtime) publishInstances() {
+	items := make([]*instance, 0, len(r.order))
+	for _, id := range r.order {
+		items = append(items, r.instances[id])
+	}
+	r.observed.Store(&items)
 }
 
 func validatePort(p manifest.Port) error {

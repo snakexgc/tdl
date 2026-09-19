@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "enabled": true,
+  "values": {
+    "exclude": [],
+    "include": [],
+    "max_mb": 3,
+    "min_mb": 1
+  }
+}

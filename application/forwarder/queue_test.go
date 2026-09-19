@@ -64,7 +64,7 @@ func newTestQueue() *Queue {
 func TestQueueInstancesAreIsolated(t *testing.T) {
 	first, second := newTestQueue(), newTestQueue()
 	ctx := context.Background()
-	ids, err := first.EnqueueLinks(ctx, []string{"https://t.me/c/1/2"}, "", "", "default", false)
+	ids, err := first.EnqueueLinks(ctx, []string{"https://t.me/c/1/2"}, "", "", forwardModeDefault, false)
 	if err != nil || len(ids) != 1 {
 		t.Fatalf("enqueue: %v, %v", ids, err)
 	}
@@ -90,7 +90,7 @@ func TestQueueEnqueueAndList(t *testing.T) {
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 link jobs, got %d", len(ids))
 	}
-	if _, err := q.EnqueueMessage(ctx, 123, 9, "Origin", "@dest", "Dest", "default", true); err != nil {
+	if _, err := q.EnqueueMessage(ctx, 123, 9, "Origin", "@dest", "Dest", forwardModeDefault, true); err != nil {
 		t.Fatalf("EnqueueMessage: %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestQueueEnqueueAndList(t *testing.T) {
 func TestQueuePauseResumeDelete(t *testing.T) {
 	q := newTestQueue()
 	ctx := context.Background()
-	id, _ := q.EnqueueMessage(ctx, 1, 2, "O", "@d", "D", "default", false)
+	id, _ := q.EnqueueMessage(ctx, 1, 2, "O", "@d", "D", forwardModeDefault, false)
 
 	if res, _ := q.Pause(ctx, []string{id}); res.Changed != 1 {
 		t.Fatalf("expected pause to change 1, got %+v", res)
@@ -237,8 +237,8 @@ func TestQueuePruneTerminalTTL(t *testing.T) {
 func TestQueueRunningCount(t *testing.T) {
 	q := newTestQueue()
 	ctx := context.Background()
-	_, _ = q.EnqueueMessage(ctx, 1, 1, "", "", "", "default", false)
-	_, _ = q.EnqueueMessage(ctx, 2, 2, "", "", "", "default", false)
+	_, _ = q.EnqueueMessage(ctx, 1, 1, "", "", "", forwardModeDefault, false)
+	_, _ = q.EnqueueMessage(ctx, 2, 2, "", "", "", forwardModeDefault, false)
 	_ = q.store.Save(ctx, Job{ID: "paused", Status: StatusPaused, Total: 1})
 	_ = q.store.Save(ctx, Job{ID: "done", Status: StatusDone, Total: 1})
 

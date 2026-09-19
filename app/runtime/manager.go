@@ -97,6 +97,7 @@ type Manager struct {
 	panelHost        *rte.Runtime
 	localHost        *rte.Runtime
 	botComponents    *rte.Runtime
+	botRefresh       func(context.Context) error
 	componentStore   *rteconfig.Store
 	policyErr        error
 	policies         *rte.Runtime
@@ -261,6 +262,7 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 			SessionChecker:   m.sessionPort,
 			Credentials:      m, Updater: m,
 			DownloadControl:  m,
+			LocalLinks:       savedLocalLinks{manager: m},
 			KVEngine:         m.kvEngine,
 			ForwardQueue:     m.forwardQueue,
 			Namespace:        cfg.Namespace,
@@ -338,16 +340,20 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 	m.httpService.UpdateConfig(cfg)
 	units := m.managedUnits(cfg)
 	apply := func() error {
-		if err := m.reconciler.Reconcile(m.parent, units); err != nil {
-			return err
-		}
+		result := m.reconciler.Reconcile(m.parent, units)
 		m.mu.Lock()
-		localHost := m.localHost
+		hosts := []*rte.Runtime{m.localHost, m.intentHost}
 		m.mu.Unlock()
-		if localHost != nil {
-			if err := localHost.ReconcileSaved(m.parent, m.componentStore); err != nil {
-				return err
+		if m.forwardQueue != nil {
+			hosts = append(hosts, m.forwardQueue.Host())
+		}
+		for _, host := range hosts {
+			if host != nil {
+				result = errors.Join(result, host.ReconcileSaved(m.parent, m.componentStore))
 			}
+		}
+		if result != nil {
+			return result
 		}
 		if m.directory != nil {
 			return m.directory.ApplyPending(m.parent)
@@ -409,6 +415,7 @@ func (m *Manager) StartBot() {
 			Credentials:     m, Updater: m,
 			ComponentStore:        m.componentStore,
 			SetComponentHost:      func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
+			SetComponentRefresh:   func(refresh func(context.Context) error) { m.mu.Lock(); m.botRefresh = refresh; m.mu.Unlock() },
 			Token:                 cfg.Bot.Token,
 			ForwardQueue:          m.forwardQueue,
 			AllowedUsers:          cfg.Bot.AllowedUsers,
@@ -458,14 +465,11 @@ func (m *Manager) StopBot() {
 }
 
 func (m *Manager) StartWatch(ctx context.Context) error {
-	m.mu.Lock()
-	policyErr := m.policyErr
-	m.mu.Unlock()
-	if policyErr != nil {
-		return policyErr
+	if m.configurationErr != nil {
+		return m.configurationErr
 	}
 	cfg := config.From(m.parent)
-	if cfg == nil || (!cfg.Modules.Watch && !cfg.Modules.Forward) {
+	if !m.connectionNeeded(cfg) {
 		return nil
 	}
 	if m.watchCtrl.Running() {
@@ -574,7 +578,7 @@ func (m *Manager) setNotifier(notify watch.NotifyFunc) {
 
 func (m *Manager) onLoginSuccess(_ *tg.User) {
 	cfg := config.From(m.parent)
-	if cfg.Modules.Watch || cfg.Modules.Forward {
+	if m.connectionNeeded(cfg) {
 		m.runTransition(m.applyVersion.Load(), func() {
 			if err := m.restartWatch(m.parent); err != nil {
 				m.Notify(context.Background(), "登录成功，但监听服务未启动："+err.Error())
@@ -770,7 +774,7 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 	if cfg == nil {
 		return false
 	}
-	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.Watch || cfg.Modules.HTTP || cfg.Modules.Aria2 || cfg.Modules.Forward
+	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.HTTP || cfg.Modules.Aria2 || m.connectionNeeded(cfg)
 }
 
 func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
@@ -779,14 +783,20 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts.ComponentStore = m.componentStore
 	opts.SetIntentHost = func(host *rte.Runtime) { m.mu.Lock(); m.intentHost = host; m.mu.Unlock() }
 	opts.SetDownloadHost = func(host *rte.Runtime) { m.mu.Lock(); m.localHost = host; m.mu.Unlock() }
-	m.mu.Lock()
-	opts.Filter, opts.Naming = m.filter, m.naming
-	m.mu.Unlock()
+	opts.Filter, opts.Naming = filterPort{m}, namingPort{m}
+	opts.FeatureFlags = func() (bool, bool) {
+		current := config.From(m.parent)
+		return current.Modules.Watch, current.Modules.Forward
+	}
+	opts.ForwardConfig = func() watch.ForwardSettings {
+		return watch.DefaultOptions(config.From(m.parent)).ForwardSettings()
+	}
 	opts.Credentials = m
 	opts.Reaction = reactionPort{m}
 	opts.MessageLinks = messageLinksPort{m}
 	opts.HTTPService = m.httpService
 	opts.DownloadRouting = m
+	opts.DownloadPipeline = m
 	opts.ForwardQueue = m.forwardQueue
 	opts.ForwardRules = m
 	opts.DownloadSubmitter = aria2Submission{manager: m}
@@ -888,7 +898,7 @@ func (m *Manager) SaveComponentConfigurationVersion(ctx context.Context, id stri
 	if m.configSource == nil {
 		return nil
 	}
-	cfg, enabled, err := componentconfig.Load(ctx, m.componentStore, config.Get())
+	cfg, enabled, err := componentconfig.Load(ctx, m.componentStore, config.From(m.parent))
 	if err != nil {
 		return err
 	}

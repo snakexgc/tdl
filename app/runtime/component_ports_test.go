@@ -44,7 +44,7 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 	require.False(t, opts.Reaction.Matches(ctx, in), "existing watcher sees the same port's new configuration")
 	in.Reactions[0].Value = "👍"
 	require.True(t, opts.Reaction.Matches(ctx, in))
-	require.NoError(t, m.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{"api_id": 54321, "api_hash": ""}))
+	require.NoError(t, m.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 54321, apiHashField: ""}))
 	require.NoError(t, m.SaveComponentConfiguration(ctx, "update.self", map[string]any{"proxy": "http://user:password@127.0.0.1:8080"}))
 	entries, editable := m.ComponentConfigurations()
 	require.True(t, editable)

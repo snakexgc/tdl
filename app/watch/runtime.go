@@ -11,12 +11,10 @@ import (
 )
 
 type watchRuntime struct {
-	local            ports.DownloadExecutor
-	proxy            *httpdl.Proxy
-	internal         *internalDownloader
-	pools            *httpdl.PoolHolder
-	outputRoot       string
-	ensureOutputDirs bool
+	local    ports.DownloadExecutor
+	proxy    *httpdl.Proxy
+	internal *internalDownloader
+	pools    *httpdl.PoolHolder
 }
 
 func newWatchRuntime(cfg *config.Config, opts Options, kvd storage.Storage, logger *zap.Logger) *watchRuntime {

@@ -22,7 +22,7 @@ func TestSelectedJobIsRevalidatedBeforeSending(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			q := newTestQueue()
 			ctx := context.Background()
-			id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", "default", false)
+			id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", forwardModeDefault, false)
 			selected, ok := q.pickNext(ctx, q.store)
 			if !ok {
 				t.Fatal("job not selected")
@@ -50,7 +50,7 @@ func TestSelectedJobIsRevalidatedBeforeSending(t *testing.T) {
 func TestProgressCannotResurrectDeletedJob(t *testing.T) {
 	q := newTestQueue()
 	ctx := context.Background()
-	id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", "default", false)
+	id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", forwardModeDefault, false)
 	job, _, _ := q.store.Get(ctx, id)
 	q.runJob(ctx, transportFunc(func(_ context.Context, job *types.ForwardJob, report func(types.ForwardJob)) error {
 		_, _ = q.Delete(ctx, []string{id})
@@ -65,7 +65,7 @@ func TestProgressCannotResurrectDeletedJob(t *testing.T) {
 func TestTransportFailureRetriesAndManualRetryResetsBudget(t *testing.T) {
 	q := newTestQueue()
 	ctx := context.Background()
-	id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", "default", false)
+	id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", forwardModeDefault, false)
 	job, _, _ := q.store.Get(ctx, id)
 	fail := transportFunc(func(context.Context, *types.ForwardJob, func(types.ForwardJob)) error {
 		return errors.New("send failed")
@@ -92,7 +92,7 @@ func TestTransportFailureRetriesAndManualRetryResetsBudget(t *testing.T) {
 func TestComponentStopWaitsForTransportAndAllowsNewHost(t *testing.T) {
 	q := newTestQueue()
 	ctx := context.Background()
-	id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", "default", false)
+	id, _ := q.EnqueueMessage(ctx, 1, 2, "", "", "", forwardModeDefault, false)
 	entered, release := make(chan struct{}), make(chan struct{})
 	registry := rte.NewRegistry()
 	err := Register(registry, q, transportFunc(func(ctx context.Context, _ *types.ForwardJob, _ func(types.ForwardJob)) error {

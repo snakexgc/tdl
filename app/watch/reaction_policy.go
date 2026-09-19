@@ -27,12 +27,6 @@ func (w *Watcher) reactionPolicy(ctx context.Context) (ports.ReactionTrigger, er
 			download = append(download, value)
 		}
 		forward := w.opts.ForwardTriggerReactions
-		if w.forward != nil {
-			forward = make([]string, 0, len(w.forward.triggerReactions))
-			for value := range w.forward.triggerReactions {
-				forward = append(forward, value)
-			}
-		}
 		w.trigger, w.triggerStop, w.triggerErr = application.ReactionPolicy(ctx, w.reactionAccount(), download, forward)
 	})
 	return w.trigger, w.triggerErr

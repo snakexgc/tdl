@@ -18,6 +18,24 @@ type managerClient struct {
 	ready chan struct{}
 }
 
+type canceledStartupClient struct {
+	managerClient
+	cancel context.CancelFunc
+}
+
+func (c *canceledStartupClient) TellWaiting(ctx context.Context, _, _ int) ([]DownloadStatus, error) {
+	c.cancel()
+	return nil, ctx.Err()
+}
+
+func TestManagerCancellationDuringStartupRecoveryIsNormalShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &canceledStartupClient{managerClient: managerClient{ready: make(chan struct{})}, cancel: cancel}
+	manager := NewManager(Options{Client: client, Store: newTestRepository(), PublicBaseURL: testGovernanceBaseURL, Limit: 1}, nil)
+	require.NoError(t, manager.Run(ctx))
+}
+
 type blockingMonitorClient struct {
 	managerClient
 	once                       sync.Once

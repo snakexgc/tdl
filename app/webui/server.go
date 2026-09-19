@@ -87,6 +87,7 @@ type Options struct {
 	Connections      *tgauth.Connections
 	SetComponentHost func(*rte.Runtime)
 	DownloadControl  ports.DownloadControl
+	LocalLinks       ports.DownloadExecutor
 	Credentials      ports.TelegramCredentials
 	Updater          ports.Updater
 	ComponentManager ComponentManager

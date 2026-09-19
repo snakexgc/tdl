@@ -106,12 +106,12 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 	live := map[string]Configuration{}
 	views := map[string]config.View{}
 	for _, host := range d.runtimes() {
-		for _, entry := range host.Configurations() {
+		host.mu.Lock()
+		for _, entry := range host.configurationsLocked() {
 			live[entry.ID] = entry
-			host.mu.Lock()
 			views[entry.ID] = host.instances[entry.ID].config
-			host.mu.Unlock()
 		}
+		host.mu.Unlock()
 	}
 	result := []Configuration{}
 	for _, definition := range d.catalog.Definitions() {
@@ -257,8 +257,15 @@ func (d *Directory) PatchWithRevision(ctx context.Context, id string, patch map[
 	}
 	if owner != nil && document.Enabled {
 		owner.mu.Lock()
-		current := owner.instances[id].config
+		item := owner.instances[id]
+		var current config.View
+		if item != nil {
+			current = item.config
+		}
 		owner.mu.Unlock()
+		if item == nil {
+			return fmt.Errorf("component %s changed during configuration; retry saving", id)
+		}
 		restart := false
 		for _, field := range definition.Manifest.Config {
 			if field.RestartRequired && !current.EqualFields(view, field.Name) {

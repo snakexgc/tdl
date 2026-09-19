@@ -6,70 +6,178 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/services/localfs"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/internal/core/tmedia"
-	"github.com/snakexgc/tdl/pkg/config"
 )
+
+const testAria2Executor = "aria2"
 
 type fixedDownloadRoute struct{ route ports.DownloadRoute }
 
-func (f fixedDownloadRoute) Route(context.Context, types.AccountID) (ports.DownloadRoute, error) {
+func (f *fixedDownloadRoute) Route(context.Context, types.AccountID) (ports.DownloadRoute, error) {
 	return f.route, nil
 }
 
-func TestModeSwitchDoesNotReroutePreparedLocalTask(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeLocal
-	cfg.Downloader.LocalRoot = t.TempDir()
-	cfg.Aria2.Dir = filepath.Join(t.TempDir(), "remote-only")
-	source := config.NewSource(cfg)
-	ctx := config.WithSource(context.Background(), source)
+type preparedExecutor struct {
+	name   string
+	submit func(context.Context, types.DownloadSubmission) (types.DownloadResult, error)
+}
+
+func (e preparedExecutor) Name() string { return e.name }
+func (e preparedExecutor) Submit(ctx context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+	return e.submit(ctx, in)
+}
+
+type batchSourceFixture struct {
+	media    []ports.DownloadMedia
+	register func()
+}
+
+func (s *batchSourceFixture) Collect(context.Context, types.DownloadIntent) ([]ports.DownloadMedia, ports.DownloadRegistration, error) {
+	return s.media, s, nil
+}
+
+func (s *batchSourceFixture) Register(_ context.Context, token, _ string) (string, error) {
+	if s.register != nil {
+		s.register()
+	}
+	return token, nil
+}
+
+func (*batchSourceFixture) URL(context.Context, string) (string, error) {
+	return "http://localhost:8090/file", nil
+}
+
+type (
+	changingNaming     struct{ ports.NamingRules }
+	rejectRemoteNaming struct {
+		ports.NamingRules
+		root string
+	}
+)
+
+func (n rejectRemoteNaming) Render(ctx context.Context, in ports.NamingInput) (ports.NamingResult, error) {
+	if in.BaseDir == n.root {
+		return ports.NamingResult{}, errors.New("remote naming unavailable")
+	}
+	return n.NamingRules.Render(ctx, in)
+}
+
+func pipelineFixture(t *testing.T) (ports.DownloadPipeline, ports.DownloadResources, types.DownloadIntent) {
+	t.Helper()
+	host, control, err := application.DownloadControlHost(context.Background(), types.DefaultAccount, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
 	w := namingWatcher(t, "F", 255)
-	w.opts.Account = types.DefaultAccount
-	w.opts.DownloadRouting = fixedDownloadRoute{ports.DownloadRoute{Mode: config.DownloaderModeLocal, LocalRoot: cfg.Downloader.LocalRoot}}
-	w.runtime = newWatchRuntime(cfg, w.opts, newMemoryTaskStorage(), nil)
+	source := &batchSourceFixture{media: []ports.DownloadMedia{{Token: "task", Data: ports.NamingData{MessageID: 2, FileName: testVideoFile, FileSize: 4}}}}
+	r := ports.DownloadResources{
+		Source: source, Filter: w.opts.Filter, Naming: w.opts.Naming, Files: localfs.Downloads{},
+		Executors: map[string]ports.DownloadExecutor{}, Defaults: ports.DownloadDefaults{Limit: 1, RemoteRoot: filepath.Join(t.TempDir(), "remote-only"), FallbackLocalRoot: filepath.Join(t.TempDir(), "fallback")},
+	}
+	return control.(ports.DownloadPipeline), r, types.DownloadIntent{Account: types.DefaultAccount, MessageID: 2}
+}
+
+func TestModeSwitchDoesNotReroutePreparedLocalTask(t *testing.T) {
+	pipeline, resources, request := pipelineFixture(t)
+	root := t.TempDir()
+	route := &fixedDownloadRoute{ports.DownloadRoute{Mode: localExecutorName, LocalRoot: root}}
+	resources.Routing = route
+	resources.Source.(*batchSourceFixture).register = func() { route.route.Mode = testAria2Executor }
 	called := false
-	w.runtime.local = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, request types.DownloadSubmission) (types.DownloadResult, error) {
+	resources.Executors[localExecutorName] = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
 		called = true
-		require.Equal(t, cfg.Downloader.LocalRoot, request.Dir)
-		return types.DownloadResult{Target: localExecutorName}, nil
+		require.Equal(t, root, in.Dir)
+		return types.DownloadResult{Account: in.Account, Target: localExecutorName, ID: in.TaskID}, nil
 	}}
-	w.opts.DownloadSubmitter = preparedExecutor{name: config.DownloaderModeAria2, submit: func(context.Context, types.DownloadSubmission) (types.DownloadResult, error) {
-		t.Error("prepared local task was sent remotely")
+	result, err := pipeline.SubmitBatch(context.Background(), request, resources)
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, 1, result.Queued)
+	require.NoDirExists(t, resources.Defaults.RemoteRoot)
+}
+
+func TestPreparedRemoteTaskKeepsDirectoryAndNamingSnapshot(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "remote", true: "remote_then_local"}[fallback], func(t *testing.T) {
+			pipeline, resources, request := pipelineFixture(t)
+			root, remote := filepath.Join(t.TempDir(), localExecutorName), resources.Defaults.RemoteRoot
+			executors := []string{testAria2Executor}
+			if fallback {
+				executors = append(executors, localExecutorName)
+			}
+			route := &fixedDownloadRoute{ports.DownloadRoute{Executors: executors, LocalRoot: root}}
+			resources.Routing = route
+			naming := &changingNaming{resources.Naming}
+			resources.Naming = naming
+			newNaming := namingWatcher(t, "new-F", 255).opts.Naming
+			resources.Source.(*batchSourceFixture).register = func() {
+				require.NoDirExists(t, root)
+				naming.NamingRules = newNaming
+				route.route.LocalRoot = filepath.Join(t.TempDir(), "new-local")
+				route.route.Executors[0] = "http"
+				resources.Defaults.RemoteRoot = filepath.Join(t.TempDir(), "new-remote")
+			}
+			remoteCalls, localCalls := 0, 0
+			resources.Executors[testAria2Executor] = preparedExecutor{name: testAria2Executor, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+				remoteCalls++
+				require.Equal(t, remote, in.Dir)
+				require.Equal(t, testVideoFile, in.Out)
+				if fallback {
+					return types.DownloadResult{}, ports.ErrDownloadNotAccepted
+				}
+				return types.DownloadResult{Target: testAria2Executor, ID: in.TaskID}, nil
+			}}
+			resources.Executors[localExecutorName] = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+				localCalls++
+				require.Equal(t, root, in.Dir)
+				require.Equal(t, testVideoFile, in.Out)
+				return types.DownloadResult{Target: localExecutorName, ID: in.TaskID}, nil
+			}}
+			result, err := pipeline.SubmitBatch(context.Background(), request, resources)
+			require.NoError(t, err)
+			require.Equal(t, 1, result.Queued)
+			require.Equal(t, 1, remoteCalls)
+			require.Equal(t, map[bool]int{true: 1, false: 0}[fallback], localCalls)
+			require.NoDirExists(t, remote)
+			require.NoDirExists(t, resources.Defaults.RemoteRoot)
+		})
+	}
+}
+
+func TestPreparedRemoteNamingFailureStillAllowsLocalFallback(t *testing.T) {
+	pipeline, resources, request := pipelineFixture(t)
+	root := filepath.Join(t.TempDir(), localExecutorName)
+	resources.Routing = &fixedDownloadRoute{ports.DownloadRoute{Executors: []string{testAria2Executor, localExecutorName}, LocalRoot: root}}
+	resources.Naming = rejectRemoteNaming{NamingRules: resources.Naming, root: resources.Defaults.RemoteRoot}
+	resources.Executors[testAria2Executor] = preparedExecutor{name: testAria2Executor, submit: func(context.Context, types.DownloadSubmission) (types.DownloadResult, error) {
+		t.Error("invalid remote target reached RPC")
 		return types.DownloadResult{}, nil
 	}}
-	file := fileTask{peerID: 1, peer: &tg.InputPeerUser{UserID: 1}, msg: &tg.Message{ID: 2}, media: &tmedia.Media{Name: testVideoFile, Size: 4, InputFileLoc: &tg.InputDocumentFileLocation{ID: 99}}}
-	prepared, skip, err := w.prepareSingle(ctx, file)
+	localCalls := 0
+	resources.Executors[localExecutorName] = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+		localCalls++
+		require.Equal(t, root, in.Dir)
+		return types.DownloadResult{Target: localExecutorName, ID: in.TaskID}, nil
+	}}
+	result, err := pipeline.SubmitBatch(context.Background(), request, resources)
 	require.NoError(t, err)
-	require.False(t, skip)
-	next, err := config.Clone(cfg)
-	require.NoError(t, err)
-	next.Downloader.Mode = config.DownloaderModeAria2
-	source.Replace(next)
-	require.NoError(t, w.submitSingle(ctx, prepared))
-	require.True(t, called)
-	require.NoDirExists(t, cfg.Aria2.Dir)
+	require.Equal(t, 1, result.Queued)
+	require.Equal(t, 1, localCalls)
+	require.NoDirExists(t, resources.Defaults.RemoteRoot)
 }
 
 func TestRoutedFallbackUsesIndependentLocalPathOnlyAfterDefiniteRejection(t *testing.T) {
 	for _, ambiguous := range []bool{false, true} {
 		t.Run(map[bool]string{false: "rejected", true: "ambiguous"}[ambiguous], func(t *testing.T) {
-			ctx := context.Background()
-			w := namingWatcher(t, "F", 255)
-			w.opts.Account = types.DefaultAccount
+			pipeline, resources, request := pipelineFixture(t)
 			root := filepath.Join(t.TempDir(), localExecutorName)
-			route := ports.DownloadRoute{Executors: []string{config.DownloaderModeAria2, localExecutorName}, LocalRoot: root}
-			w.opts.DownloadRouting = fixedDownloadRoute{route}
-			cfg := config.DefaultConfig()
-			cfg.HTTP.PublicBaseURL = "http://localhost:8090"
-			w.runtime = newWatchRuntime(cfg, w.opts, newMemoryTaskStorage(), nil)
-			w.runtime.outputRoot = filepath.Join(t.TempDir(), "remote-only")
+			resources.Routing = &fixedDownloadRoute{ports.DownloadRoute{Executors: []string{testAria2Executor, localExecutorName}, LocalRoot: root}}
 			remoteCalls, localCalls := 0, 0
-			w.opts.DownloadSubmitter = preparedExecutor{name: config.DownloaderModeAria2, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+			resources.Executors[testAria2Executor] = preparedExecutor{name: testAria2Executor, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
 				remoteCalls++
 				require.NotEqual(t, root, in.Dir)
 				if ambiguous {
@@ -77,29 +185,26 @@ func TestRoutedFallbackUsesIndependentLocalPathOnlyAfterDefiniteRejection(t *tes
 				}
 				return types.DownloadResult{}, ports.ErrDownloadNotAccepted
 			}}
-			w.runtime.local = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+			resources.Executors[localExecutorName] = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
 				localCalls++
-				require.Equal(t, root, in.Dir)
 				require.Equal(t, filepath.Join(root, testVideoFile), in.FullPath)
 				return types.DownloadResult{Target: localExecutorName, ID: in.TaskID}, nil
 			}}
-			file := fileTask{peer: &tg.InputPeerUser{UserID: 1}, msg: &tg.Message{ID: 2}, media: &tmedia.Media{Name: testVideoFile, Size: 4}}
-			prepared, skip, err := w.prepareSingle(ctx, file)
-			require.NoError(t, err)
-			require.False(t, skip)
-			require.NoDirExists(t, root)
-			err = w.submitRouted(ctx, prepared, "task", route)
+			result, err := pipeline.SubmitBatch(context.Background(), request, resources)
 			require.Equal(t, 1, remoteCalls)
 			if ambiguous {
 				require.Error(t, err)
 				require.Zero(t, localCalls)
+				require.Equal(t, 1, result.Uncertain)
+				require.Zero(t, result.Queued)
 				require.NoDirExists(t, root)
 			} else {
 				require.NoError(t, err)
+				require.Equal(t, 1, result.Queued)
 				require.Equal(t, 1, localCalls)
 				require.DirExists(t, root)
 			}
-			require.NoDirExists(t, w.runtime.outputRoot)
+			require.NoDirExists(t, resources.Defaults.RemoteRoot)
 		})
 	}
 }

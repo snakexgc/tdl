@@ -7,9 +7,71 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/migration"
+	legacyconfig "github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
 )
+
+func TestBotFeatureTogglesPreserveTransportAndConsole(t *testing.T) {
+	ctx := context.Background()
+	cfg := legacyconfig.DefaultConfig()
+	cfg.Modules = legacyconfig.ModulesConfig{Bot: true}
+	cfg.Bot.Token = "test-token"
+	cfg.Bot.AllowedUsers = []int64{7}
+	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
+	require.NoError(t, err)
+	m := NewManager(legacyconfig.WithSource(ctx, legacyconfig.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: directory})
+	t.Cleanup(m.Shutdown)
+	transport := &notificationRecorder{}
+	host, console, _, err := application.BotHost(m.parent, m.downloadAccount, transport, cfg.Bot.AllowedUsers, m.componentStore)
+	require.NoError(t, err)
+	m.botComponents = host
+	m.botRefresh = func(ctx context.Context) error {
+		return application.ReconcileBotHost(ctx, host, m.downloadAccount, transport, cfg.Bot.AllowedUsers, m.componentStore)
+	}
+	started := make(chan struct{})
+	exited := make(chan struct{})
+	_, err = m.botProcess.Start(func(ctx context.Context) error {
+		close(started)
+		defer close(exited)
+		<-ctx.Done()
+		return host.Stop(context.Background())
+	}, rte.Recovery{})
+	require.NoError(t, err)
+	<-started
+	m.ApplyConfig(cfg)
+	m.transitionWG.Wait()
+	accountOwner := m.accountHost
+	require.True(t, console.PrivateCommand("update_tdl"))
+	for _, id := range []string{"notify.telegram", "update.self"} {
+		require.NoError(t, m.SetComponentEnabled(ctx, id, false, ""))
+		m.transitionWG.Wait()
+		select {
+		case <-exited:
+			t.Fatal("feature toggle stopped the Bot transport")
+		default:
+		}
+		require.Same(t, accountOwner, m.accountHost)
+		current, err := host.Resolve(ports.ConsoleName)
+		require.NoError(t, err)
+		require.Same(t, console, current)
+		require.True(t, console.Allowed(m.downloadAccount, 7))
+		if id == "notify.telegram" {
+			_, err = host.Resolve(ports.NotificationsName)
+			require.Error(t, err)
+		} else {
+			require.False(t, console.PrivateCommand("update_tdl"))
+		}
+		require.NoError(t, m.SetComponentEnabled(ctx, id, true, ""))
+		m.transitionWG.Wait()
+	}
+	require.True(t, console.PrivateCommand("update_tdl"))
+	_, err = host.Resolve(ports.NotificationsName)
+	require.NoError(t, err)
+}
 
 type notificationRecorder struct{ recipients []int64 }
 

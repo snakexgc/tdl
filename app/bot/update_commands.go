@@ -67,14 +67,14 @@ func (c *tdlUpdateController) check(ctx context.Context) (updater.Info, error) {
 	if c != nil && c.updater != nil {
 		return c.updater.Check(ctx)
 	}
-	return updater.CheckLatest(ctx, config.EffectiveProxy(config.Get()))
+	return updater.CheckLatest(ctx, config.EffectiveProxy(config.From(ctx)))
 }
 
 func (c *tdlUpdateController) download(ctx context.Context) (updater.Plan, updater.Info, error) {
 	if c != nil && c.updater != nil {
 		return c.updater.Download(ctx)
 	}
-	return updater.DownloadLatest(ctx, config.EffectiveProxy(config.Get()))
+	return updater.DownloadLatest(ctx, config.EffectiveProxy(config.From(ctx)))
 }
 
 func updateCommandConfirmed(text string) bool {

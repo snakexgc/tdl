@@ -16,6 +16,7 @@ const (
 	testGIDRegisteredError = "registered-error"
 	testDocument1          = "document_1"
 	testDownloadURL1       = "http://127.0.0.1:8080/download/document_1"
+	testControlBaseURL     = "http://127.0.0.1:8080"
 	testGIDURLActive       = "url-active"
 	testGIDURLPaused       = "url-paused"
 	testGIDURLWaiting      = "url-waiting"
@@ -28,6 +29,9 @@ func TestControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing.T) {
 
 	ctx := context.Background()
 	store := newTestRepository()
+	for _, gid := range []string{testGIDURLActive, testGIDURLPaused, "url-complete"} {
+		require.NoError(t, store.Add(ctx, TaskRecord{GID: gid, TaskID: testDocument1}))
+	}
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:         testGIDRegisteredError,
 		TaskID:      testDocument1,
@@ -79,7 +83,7 @@ func TestControllerOverviewCountsOwnedRemainingAndRetryableTasks(t *testing.T) {
 			},
 		},
 		store:         store,
-		publicBaseURL: "http://127.0.0.1:8080",
+		publicBaseURL: testControlBaseURL,
 		logger:        zap.NewNop(),
 	}
 
@@ -102,6 +106,9 @@ func TestControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 
 	ctx := context.Background()
 	store := newTestRepository()
+	for _, gid := range []string{testGIDURLActive, testGIDURLWaiting, testGIDURLPaused} {
+		require.NoError(t, store.Add(ctx, TaskRecord{GID: gid, TaskID: testDocument1}))
+	}
 	require.NoError(t, store.Add(ctx, aria2TaskRecord{
 		GID:         testGIDRegisteredError,
 		TaskID:      testDocument1,
@@ -133,7 +140,7 @@ func TestControllerPauseStartAndRetryOnlyOwnedTasks(t *testing.T) {
 	controller := &Controller{
 		client:        client,
 		store:         store,
-		publicBaseURL: "http://127.0.0.1:8080",
+		publicBaseURL: testControlBaseURL,
 		connections:   6,
 		logger:        zap.NewNop(),
 	}

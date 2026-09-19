@@ -10,6 +10,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/stretchr/testify/require"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/pkg/config"
 )
@@ -123,18 +124,18 @@ func TestResolveTargetPathDoesNotTraverseParent(t *testing.T) {
 }
 
 func TestUniquifyInternalTargetsAddsConflictSuffix(t *testing.T) {
-	tasks := []preparedFileTask{
-		{fileName: "album/video.mp4", dir: `/downloads/album`, out: testVideoFile, fullPath: `/downloads/album/video.mp4`},
-		{fileName: "album/video.mp4", dir: `/downloads/album`, out: testVideoFile, fullPath: `/downloads/album/video.mp4`},
+	tasks := []ports.NamingResult{
+		{FileName: "album/video.mp4", Dir: `/downloads/album`, Out: testVideoFile, FullPath: `/downloads/album/video.mp4`},
+		{FileName: "album/video.mp4", Dir: `/downloads/album`, Out: testVideoFile, FullPath: `/downloads/album/video.mp4`},
 	}
 
 	w := namingWatcher(t, "F", 255)
-	got, err := w.uniquifyInternalTargets(context.Background(), tasks)
+	got, err := w.opts.Naming.Unique(context.Background(), tasks)
 	require.NoError(t, err)
-	require.Equal(t, testVideoFile, got[0].out)
-	require.Equal(t, "video (2).mp4", got[1].out)
-	require.Equal(t, `/downloads/album/video (2).mp4`, got[1].fullPath)
-	require.Equal(t, "album/video (2).mp4", got[1].fileName)
+	require.Equal(t, testVideoFile, got[0].Out)
+	require.Equal(t, "video (2).mp4", got[1].Out)
+	require.Equal(t, `/downloads/album/video (2).mp4`, got[1].FullPath)
+	require.Equal(t, "album/video (2).mp4", got[1].FileName)
 }
 
 func TestPrepareAria2OutputRootUsesConfiguredRemoteDirWithoutLocalAccess(t *testing.T) {

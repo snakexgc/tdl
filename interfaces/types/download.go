@@ -14,4 +14,5 @@ type DownloadResult struct {
 	Account AccountID
 	Target  string
 	ID      string
+	Skipped bool
 }

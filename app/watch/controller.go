@@ -181,6 +181,12 @@ func (c *Controller) SubmitMessageLink(ctx context.Context, link string) (Messag
 	c.mu.Lock()
 	opts := c.opts
 	c.mu.Unlock()
+	if opts.FeatureFlags != nil {
+		download, _ := opts.FeatureFlags()
+		if !download {
+			return MessageLinkSubmissionResult{}, stderrors.New("监听下载已停用")
+		}
+	}
 	link, err := validateMessageLink(ctx, opts, link)
 	if err != nil {
 		return MessageLinkSubmissionResult{}, err
@@ -199,6 +205,7 @@ func (c *Controller) SubmitMessageLink(ctx context.Context, link string) (Messag
 	}
 
 	req := messageLinkSubmission{
+		ctx:   ctx,
 		link:  link,
 		reply: make(chan messageLinkSubmissionResponse, 1),
 	}

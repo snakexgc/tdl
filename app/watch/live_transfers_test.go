@@ -24,6 +24,7 @@ import (
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/internal/core/util/tutil"
@@ -165,11 +166,33 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	host, executor, err := application.LocalDownloadHost(ctx, types.AccountID(cfg.Namespace), worker.component())
 	require.NoError(t, err)
 	defer host.Stop(context.Background())
-	localPath := filepath.Join(t.TempDir(), "local.bin")
-	_, err = executor.Submit(ctx, types.DownloadSubmission{Account: types.AccountID(cfg.Namespace), TaskID: task.ID, Dir: filepath.Dir(localPath), Out: filepath.Base(localPath), FullPath: localPath})
+	opts := Options{Account: types.AccountID(cfg.Namespace), Download: true, Template: "F", FilenameMaxLength: 255, Limit: 1, PoolSize: 1}
+	policies, filter, naming, err := startPolicies(ctx, cfg.Namespace, opts)
 	require.NoError(t, err)
+	defer policies.Stop(context.Background())
+	pipelineHost, control, err := application.DownloadControlHost(ctx, opts.Account, nil)
+	require.NoError(t, err)
+	defer pipelineHost.Stop(context.Background())
+	opts.Filter, opts.Naming, opts.DownloadPipeline = filter, naming, control.(ports.DownloadPipeline)
+	localProbe := &liveSubmissionProbe{executor: executor}
+	route := &fixedDownloadRoute{route: ports.DownloadRoute{Executors: []string{localExecutorName}, LocalRoot: t.TempDir()}}
+	opts.DownloadRouting = route
+	w := &Watcher{opts: opts, manager: manager, pool: pool, runtime: &watchRuntime{proxy: service.Proxy(), internal: worker, local: localProbe, pools: service.Pools()}}
+	pipelineSource := config.NewSource(cfg)
+	pipelineCtx := config.WithSource(ctx, pipelineSource)
+	intentHost, intents, _, err := application.IntentHost(pipelineCtx, opts.Account, func(context.Context, types.DownloadIntent) error { return nil }, nil, w.processDownloadIntent)
+	require.NoError(t, err)
+	defer intentHost.Stop(context.Background())
+	request := types.DownloadIntent{Account: opts.Account, Peer: plainPeer(groups[0].InputPeer()), PeerID: groups[0].ID(), MessageID: message.ID, Source: downloadJobSourceMessageLink}
+	summary, err := intents.(ports.DownloadRequests).Submit(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.Queued)
+	require.Zero(t, summary.Uncertain)
+	require.NotEmpty(t, localProbe.request.TaskID)
+	localPath := localProbe.request.FullPath
+	require.Equal(t, filepath.Join(route.route.LocalRoot, liveFixtureName), localPath)
 	require.NoError(t, liveWait(ctx, func() (bool, error) {
-		record, found, err := worker.store.Get(ctx, task.ID)
+		record, found, err := worker.store.Get(ctx, localProbe.request.TaskID)
 		if err != nil {
 			return false, err
 		}
@@ -181,16 +204,28 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	localData, err := os.ReadFile(localPath)
 	require.NoError(t, err)
 	require.Equal(t, sha256.Sum256(payload), sha256.Sum256(localData))
-	t.Log("RTE local downloader: 4 MiB SHA-256 matched")
+	t.Log("production download intent -> pipeline -> RTE local downloader: 4 MiB SHA-256 matched")
 	ariaCfg := config.Aria2Config{RPCURL: "http://127.0.0.1:23969/jsonrpc", Secret: "tdl-live-validation", TimeoutSeconds: 30}
 	rpc := apparia2.NewClient(ariaCfg)
 	require.NoError(t, rpc.SetMaxConcurrentDownloads(ctx, 1))
 	ariaController := apparia2.NewController(&config.Config{Namespace: cfg.Namespace, Aria2: ariaCfg, HTTP: cfg.HTTP, Limit: 1, PoolSize: 1}, store, zap.NewNop())
-	ariaPath := filepath.Join(t.TempDir(), "aria2.bin")
-	result, err := ariaController.Submit(ctx, types.DownloadSubmission{Account: types.AccountID(cfg.Namespace), TaskID: task.ID, DownloadURL: downloadURL, Dir: filepath.Dir(ariaPath), Out: filepath.Base(ariaPath), FullPath: ariaPath})
+	ariaProbe := &liveSubmissionProbe{executor: ariaController}
+	w.opts.DownloadSubmitter = ariaProbe
+	route.route = ports.DownloadRoute{Executors: []string{config.DownloaderModeAria2}}
+	ariaRoot := t.TempDir()
+	pipelineConfig, err := config.Clone(cfg)
 	require.NoError(t, err)
+	pipelineConfig.Aria2.Dir = ariaRoot
+	pipelineSource.Replace(pipelineConfig)
+	summary, err = intents.(ports.DownloadRequests).Submit(pipelineCtx, request)
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.Queued)
+	require.Zero(t, summary.Uncertain)
+	require.NotEmpty(t, ariaProbe.result.ID)
+	ariaPath := ariaProbe.request.FullPath
+	require.Equal(t, filepath.Join(ariaRoot, liveFixtureName), ariaPath)
 	require.NoError(t, liveWait(ctx, func() (bool, error) {
-		status, err := rpc.TellStatus(ctx, result.ID)
+		status, err := rpc.TellStatus(ctx, ariaProbe.result.ID)
 		if err != nil {
 			return false, err
 		}
@@ -202,8 +237,24 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	ariaData, err := os.ReadFile(ariaPath)
 	require.NoError(t, err)
 	require.Equal(t, sha256.Sum256(payload), sha256.Sum256(ariaData))
-	t.Log("real aria2 -> production HTTP -> Telegram: 4 MiB SHA-256 matched")
+	t.Log("production download intent -> pipeline -> real aria2 -> HTTP -> Telegram: 4 MiB SHA-256 matched")
 	return nil
+}
+
+// The test remains serial; captures are read only after the component's
+// synchronous admission result, before the next executor is bound.
+type liveSubmissionProbe struct {
+	executor ports.DownloadExecutor
+	request  types.DownloadSubmission
+	result   types.DownloadResult
+}
+
+func (p *liveSubmissionProbe) Name() string { return p.executor.Name() }
+func (p *liveSubmissionProbe) Submit(ctx context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+	p.request = in
+	var err error
+	p.result, err = p.executor.Submit(ctx, in)
+	return p.result, err
 }
 
 // The uploaded fixture is on the account's current DC; reuse its one existing

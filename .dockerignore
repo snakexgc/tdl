@@ -6,6 +6,7 @@
 tdl/
 tdl.exe
 config.json
+components/
 downloads/
 dist/
 *.log

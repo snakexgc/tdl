@@ -27,26 +27,26 @@ func (observationClient) TellWaiting(context.Context, int, int) ([]types.Aria2Do
 
 func (observationClient) TellStopped(context.Context, int, int) ([]types.Aria2DownloadStatus, error) {
 	return []types.Aria2DownloadStatus{
-		{GID: "retried", Status: "complete", TotalLength: "42", CompletedLength: "42", Files: []types.Aria2File{{Path: "/downloads/movie.mp4", URIs: []types.Aria2URI{{URI: "https://downloads.test/prefix/download/source"}}}}},
-		{GID: "unrelated", Status: "complete", Files: []types.Aria2File{{URIs: []types.Aria2URI{{URI: "https://foreign.test/prefix/download/source"}}}}},
+		{GID: "retried", Status: string(types.DownloadComplete), TotalLength: "42", CompletedLength: "42", Files: []types.Aria2File{{Path: "/downloads/movie.mp4", URIs: []types.Aria2URI{{URI: "https://downloads.test/prefix/download/source"}}}}},
+		{GID: "unrelated", Status: string(types.DownloadComplete), Files: []types.Aria2File{{URIs: []types.Aria2URI{{URI: "https://foreign.test/prefix/download/source"}}}}},
 	}, nil
 }
 
 func TestAria2ObservationMaintainsLegacyLinkWithoutPanel(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "store")})
+	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "store")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	store, err := engine.Open("isolated")
+	store, err := engine.Open(testIsolatedAccount)
 	require.NoError(t, err)
 	// Deliberately unindexed legacy link; no panel or watcher is instantiated.
-	require.NoError(t, store.Set(ctx, taskhub.LinkPrefix+"source", []byte(`{"id":"source","file_name":"movie.mp4"}`)))
-	repo := taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: store, Engine: engine, Namespace: "isolated"}}
+	require.NoError(t, store.Set(ctx, taskhub.LinkPrefix+testLinkSource, []byte(`{"id":"source","file_name":"movie.mp4"}`)))
+	repo := taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: store, Engine: engine, Namespace: testIsolatedAccount}}
 	observer := aria2.Observer{Client: observationClient{}, Repository: repo, PublicBaseURL: "https://downloads.test/prefix", TTL: time.Hour}
 	require.NoError(t, observer.Sync(ctx))
 	snapshot, err := repo.Snapshot(ctx)
 	require.NoError(t, err)
-	require.True(t, snapshot.Links["source"].Task.Downloaded)
+	require.True(t, snapshot.Links[testLinkSource].Task.Downloaded)
 	require.Len(t, snapshot.Records, 1)
 	require.Equal(t, "/downloads", snapshot.Records["retried"].Dir)
 	require.NoError(t, observer.Sync(ctx))

@@ -19,6 +19,10 @@ func (w *Watcher) renderTarget(ctx context.Context, root, directoryID string, di
 	if msg == nil || media == nil {
 		return ports.NamingResult{}, fmt.Errorf("naming requires message and media metadata")
 	}
+	return w.opts.Naming.Render(ctx, ports.NamingInput{Account: w.opts.Account, BaseDir: root, Data: namingMetadata(directoryID, dialogID, peerName, downloadedAt, msg, triggerMsg, media)})
+}
+
+func namingMetadata(directoryID string, dialogID int64, peerName string, downloadedAt time.Time, msg, triggerMsg *tg.Message, media *tmedia.Media) ports.NamingData {
 	if triggerMsg == nil {
 		triggerMsg = msg
 	}
@@ -26,10 +30,10 @@ func (w *Watcher) renderTarget(ctx context.Context, root, directoryID string, di
 	if groupedID, ok := msg.GetGroupedID(); ok {
 		albumID = fmt.Sprint(groupedID)
 	}
-	return w.opts.Naming.Render(ctx, ports.NamingInput{Account: w.opts.Account, BaseDir: root, Data: ports.NamingData{
+	return ports.NamingData{
 		DialogID: dialogID, DirectoryID: directoryID, PeerName: peerName, DownloadedAt: downloadedAt,
 		MessageID: msg.ID, MessageDate: int64(msg.Date), Caption: msg.Message,
 		TriggerMessageID: triggerMsg.ID, MessageTitle: strings.TrimSpace(triggerMsg.Message),
 		AlbumID: albumID, FileName: media.Name, FileSize: media.Size,
-	}})
+	}
 }

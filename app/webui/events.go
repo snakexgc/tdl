@@ -36,7 +36,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(4096)
 	var subscribed atomic.Pointer[[]string]
 	wake := make(chan struct{}, 1)
+	readerDone := make(chan struct{})
+	defer func() {
+		cancel()
+		conn.CloseNow()
+		<-readerDone
+	}()
 	go func() {
+		defer close(readerDone)
 		defer cancel()
 		for {
 			var request struct {

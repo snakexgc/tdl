@@ -84,3 +84,47 @@ func TestRequestRepliesAndPanicDoNotStrandCallers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Queued)
 }
+
+func TestRequestCancellationStopsActiveHandlerAndSkipsQueuedRequest(t *testing.T) {
+	registry := rte.NewRegistry()
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	require.NoError(t, Register(registry, func(context.Context, types.DownloadIntent) error { return nil }, 4,
+		func(ctx context.Context, _ types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+			calls.Add(1)
+			close(entered)
+			<-ctx.Done()
+			close(canceled)
+			<-release
+			return types.DownloadSubmissionSummary{}, ctx.Err()
+		}))
+	host, err := registry.Build(testIntentAccount, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, rte.Running, host.Start(context.Background())[0].State)
+	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
+	value, err := host.Resolve(ports.DownloadRequestsName)
+	require.NoError(t, err)
+	port := value.(ports.DownloadRequests)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := port.Submit(ctx, types.DownloadIntent{Account: testIntentAccount, MessageID: 1})
+		done <- err
+	}()
+	<-entered
+	queuedCtx, queuedCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer queuedCancel()
+	_, err = port.Submit(queuedCtx, types.DownloadIntent{Account: testIntentAccount, MessageID: 2})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("request cancellation did not reach handler")
+	}
+	close(release)
+	require.NoError(t, host.Stop(context.Background()))
+	require.EqualValues(t, 1, calls.Load())
+}

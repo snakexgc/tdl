@@ -39,7 +39,7 @@ func (e *localExecutor) Submit(ctx context.Context, in types.DownloadSubmission)
 	if !ok {
 		return types.DownloadResult{}, fmt.Errorf("source task is unavailable")
 	}
-	info, err := e.worker.Add(ctx, task, preparedFileTask{dir: in.Dir, out: in.Out, fullPath: in.FullPath})
+	info, err := e.worker.Add(ctx, task, in)
 	if err != nil {
 		return types.DownloadResult{}, err
 	}

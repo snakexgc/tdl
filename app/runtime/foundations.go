@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/application"
@@ -14,10 +13,9 @@ import (
 )
 
 const (
-	policyResource      = "host.policies"
-	accountResource     = "host.account"
-	downloadResource    = "host.downloads"
-	watchPolicyResource = "host.watch.policies"
+	policyResource   = "host.policies"
+	accountResource  = "host.account"
+	downloadResource = "host.downloads"
 )
 
 // The long-lived owners use the same stop graph as their transport consumers.
@@ -87,7 +85,9 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 		},
 		{
 			ID: accountResource, Enabled: true, Requires: []string{policyResource},
-			Revision: revision(cfg.Telegram, config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout),
+			// Credential policy is hot-applied for future client creation. It
+			// must not close an authenticated connection that is still in use.
+			Revision: revision(config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout),
 			Running:  func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.accountHost != nil },
 			Start: func(context.Context) error {
 				connections := tgauth.NewConnections(m.parent)
@@ -147,18 +147,6 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 				m.mu.Unlock()
 				return nil
 			}),
-		},
-		{
-			ID: watchPolicyResource, Enabled: m.componentEnabled("filter.rules") && m.componentEnabled("naming.rules"), Requires: []string{policyResource},
-			Revision: revision(m.componentEnabled("filter.rules"), m.componentEnabled("naming.rules")),
-			Start: func(context.Context) error {
-				m.mu.Lock()
-				defer m.mu.Unlock()
-				if m.policyErr != nil {
-					return fmt.Errorf("watch policies unavailable: %w", m.policyErr)
-				}
-				return nil
-			}, Stop: func(context.Context) error { return nil },
 		},
 	}
 }

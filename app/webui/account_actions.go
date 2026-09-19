@@ -2,8 +2,8 @@ package webui
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -13,21 +13,14 @@ func (accountSelection) Current(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return config.Get().Namespace, nil
+	cfg := config.Get()
+	if cfg == nil {
+		return "", fmt.Errorf("configuration is not initialized")
+	}
+	return cfg.Namespace, nil
 }
 
 func (accountSelection) Select(ctx context.Context, expected, target string) error {
-	before, err := config.Clone(config.Get())
-	if err != nil {
-		return err
-	}
-	if before.Namespace != expected {
-		return ports.ErrConfigurationConflict
-	}
-	next, err := config.Clone(before)
-	if err != nil {
-		return err
-	}
-	next.Namespace = target
-	return config.CompareAndSet(ctx, before, next)
+	_, err := config.SelectNamespace(ctx, expected, target)
+	return err
 }

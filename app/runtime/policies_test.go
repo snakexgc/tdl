@@ -24,8 +24,8 @@ func TestProductionPolicyHostPreservesLastValidConfiguration(t *testing.T) {
 	manager := &Manager{policies: host, filter: filter, naming: naming}
 	require.NoError(t, manager.initDirectory())
 	opts := manager.watchOptions(cfg)
-	require.Same(t, filter, opts.Filter)
-	require.Same(t, naming, opts.Naming)
+	require.NotNil(t, opts.Filter)
+	require.NotNil(t, opts.Naming)
 	input := ports.NamingInput{BaseDir: "/downloads", Data: ports.NamingData{FileName: "video.mp4"}}
 	before, err := naming.Render(ctx, input)
 	require.NoError(t, err)

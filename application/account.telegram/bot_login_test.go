@@ -61,6 +61,36 @@ func TestBotLoginStopRetainsActiveFlowUntilProtocolReturns(t *testing.T) {
 	require.Error(t, manager.StartCode(2, 2))
 }
 
+type blockedSuccessMessenger struct {
+	fakeBotAPI
+	entered, release chan struct{}
+}
+
+func (m *blockedSuccessMessenger) SendText(ctx context.Context, chatID int64, text string) error {
+	if strings.HasPrefix(text, "登录成功！") {
+		close(m.entered)
+		<-m.release
+	}
+	return m.fakeBotAPI.SendText(ctx, chatID, text)
+}
+
+func TestBotLoginCanceledWhileSendingSuccessCannotActivateAccount(t *testing.T) {
+	bot := &blockedSuccessMessenger{entered: make(chan struct{}), release: make(chan struct{})}
+	manager := NewBotLogin(context.Background(), bot, func(string) (ports.LoginRunner, error) {
+		return &fakeLoginRunner{code: func(context.Context, ports.BotLoginChallenge) (*ports.LoginUser, error) {
+			return &ports.LoginUser{ID: 42}, nil
+		}}, nil
+	})
+	activated := make(chan struct{}, 1)
+	manager.SetOnSuccess(func(context.Context, *ports.LoginUser, string) { activated <- struct{}{} })
+	require.NoError(t, manager.StartCode(1, 1, "Alice"))
+	<-bot.entered
+	require.True(t, manager.Cancel(1, 1))
+	close(bot.release)
+	require.NoError(t, manager.Stop(context.Background()))
+	require.Empty(t, activated, "canceled login activated an account after the success message returned")
+}
+
 func TestBotLoginPreservesPasswordWhitespace(t *testing.T) {
 	password := make(chan string, 1)
 	manager := newTestLoginManager(&fakeBotAPI{}, &fakeLoginRunner{code: func(ctx context.Context, input ports.BotLoginChallenge) (*ports.LoginUser, error) {
@@ -167,7 +197,8 @@ func TestLoginManagerUsesNamespaceRunnerFactory(t *testing.T) {
 	manager.inputTimeout = time.Second
 	manager.flowTimeout = 2 * time.Second
 	success := make(chan string, 1)
-	manager.SetOnSuccess(func(_ *ports.LoginUser, namespace string) {
+	manager.SetOnSuccess(func(ctx context.Context, _ *ports.LoginUser, namespace string) {
+		require.NoError(t, ctx.Err())
 		success <- namespace
 	})
 

@@ -14,6 +14,8 @@ import (
 	"github.com/snakexgc/tdl/rte/eventbus"
 )
 
+const listeningSource = "channel:7"
+
 func TestIntentBackpressureAccountAndShutdown(t *testing.T) {
 	registry := rte.NewRegistry()
 	entered, canceled, release := make(chan types.ForwardIntent, 1), make(chan struct{}), make(chan struct{})
@@ -32,6 +34,20 @@ func TestIntentBackpressureAccountAndShutdown(t *testing.T) {
 	value, err := host.Resolve(ports.ForwardIntentsName)
 	require.NoError(t, err)
 	port := value.(ports.ForwardIntents)
+	listeningPort, err := host.Resolve(ports.ForwardListeningName)
+	require.NoError(t, err)
+	listening := listeningPort.(ports.ForwardListening)
+	require.NoError(t, host.Reconfigure(context.Background(), ID, map[string]any{"listen": []string{listeningSource}, "listen_comments": false}))
+	settings, err := listening.Listening(context.Background(), "alice")
+	require.NoError(t, err)
+	require.Equal(t, []string{listeningSource}, settings.Sources)
+	require.False(t, settings.Comments)
+	settings.Sources[0] = "mutated"
+	settings, err = listening.Listening(context.Background(), "alice")
+	require.NoError(t, err)
+	require.Equal(t, []string{listeningSource}, settings.Sources)
+	_, err = listening.Listening(context.Background(), "bob")
+	require.ErrorContains(t, err, "account mismatch")
 	request := types.ForwardIntent{Account: "bob", MessageID: 10, Peer: types.MessagePeer{Kind: "channel", ID: 123, AccessHash: 456}}
 	require.ErrorContains(t, port.Publish(context.Background(), request), "account mismatch")
 	request.Account = "alice"
@@ -51,5 +67,7 @@ func TestIntentBackpressureAccountAndShutdown(t *testing.T) {
 	close(release)
 	require.NoError(t, host.Stop(context.Background()))
 	require.Error(t, port.Publish(context.Background(), request))
+	_, err = listening.Listening(context.Background(), "alice")
+	require.Error(t, err)
 	require.EqualValues(t, 1, calls.Load(), "queued work must not start during shutdown")
 }

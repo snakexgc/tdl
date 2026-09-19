@@ -82,19 +82,21 @@ func notificationContext(ctx context.Context) context.Context {
 }
 
 func (n *botNotifier) Notify(ctx context.Context, text string) {
-	if n == nil || n.service == nil || text == "" {
+	service := n.current()
+	if service == nil || text == "" {
 		return
 	}
-	if err := n.service.Enqueue(notificationContext(ctx), n.account, text); err != nil {
+	if err := service.Enqueue(notificationContext(ctx), n.account, text); err != nil {
 		color.Yellow("Failed to queue notification: %v", err)
 	}
 }
 
 func (n *botNotifier) SendAndTrack(ctx context.Context, text string) []trackedMessage {
-	if n == nil || n.service == nil || text == "" {
+	service := n.current()
+	if service == nil || text == "" {
 		return nil
 	}
-	refs, err := n.service.Send(notificationContext(ctx), n.account, text)
+	refs, err := service.Send(notificationContext(ctx), n.account, text)
 	if err != nil {
 		color.Yellow("Failed to send notification: %v", err)
 	}
@@ -102,10 +104,25 @@ func (n *botNotifier) SendAndTrack(ctx context.Context, text string) []trackedMe
 }
 
 func (n *botNotifier) EditTracked(ctx context.Context, refs []trackedMessage, text string) {
-	if n == nil || n.service == nil || text == "" || len(refs) == 0 {
+	service := n.current()
+	if service == nil || text == "" || len(refs) == 0 {
 		return
 	}
-	if err := n.service.Edit(notificationContext(ctx), n.account, refs, text); err != nil {
+	if err := service.Edit(notificationContext(ctx), n.account, refs, text); err != nil {
 		color.Yellow("Failed to edit notification: %v", err)
 	}
+}
+
+func (n *botNotifier) current() ports.Notifications {
+	if n == nil {
+		return nil
+	}
+	if n.host == nil {
+		return n.service
+	}
+	value, err := n.host.Resolve(ports.NotificationsName)
+	if err != nil {
+		return nil
+	}
+	return value.(ports.Notifications)
 }

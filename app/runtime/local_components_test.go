@@ -14,9 +14,54 @@ import (
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/migration"
+	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
+
+const testStoragePath = "path"
+
+func TestSavedLocalLinksHonorLiveComponentState(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.DefaultConfig()
+	cfg.Modules = config.ModulesConfig{}
+	cfg.Downloader.LocalRoot = t.TempDir()
+	cfg.DownloadDir = "P"
+	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "tasks")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	storage, err := engine.Open(cfg.Namespace)
+	require.NoError(t, err)
+	const source = `{"id":"document_42","peer_id":12345,"file_name":"video.mp4","file_size":100,"media":{"name":"video.mp4","size":100,"dc":2,"location":{"kind":"document","id":42,"access_hash":99}}}`
+	require.NoError(t, storage.Set(ctx, taskhub.LinkPrefix+"document_42", []byte(source)))
+	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
+	require.NoError(t, err)
+	m := NewManager(config.WithSource(ctx, config.NewSource(cfg)), engine, storage, Options{ComponentConfigDir: directory})
+	t.Cleanup(m.Shutdown)
+	require.NoError(t, m.configurationErr)
+	executor := savedLocalLinks{manager: m}
+	request := types.DownloadSubmission{Account: m.downloadAccount, TaskID: "document_42"}
+	for _, id := range []string{ports.NamingRulesName, local.ID} {
+		require.NoError(t, m.SetComponentEnabled(ctx, id, false, ""))
+		m.transitionWG.Wait()
+		_, err := executor.Submit(ctx, request)
+		require.Error(t, err, "disabled %s must not be recreated from legacy config", id)
+		records, err := taskhub.NewLocalRepository(storage).Records(ctx)
+		require.NoError(t, err)
+		require.Empty(t, records)
+		require.NoError(t, m.SetComponentEnabled(ctx, id, true, ""))
+		m.transitionWG.Wait()
+	}
+	require.NoError(t, m.SaveComponentConfiguration(ctx, ports.NamingRulesName, map[string]any{"directory": "saved/P"}))
+	m.transitionWG.Wait()
+	_, err = executor.Submit(ctx, request)
+	require.NoError(t, err)
+	record, exists, err := taskhub.NewLocalRepository(storage).Get(ctx, request.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, filepath.Join(cfg.Downloader.LocalRoot, "saved", "12345", "video.mp4"), filepath.FromSlash(record.Path))
+}
 
 type unavailableLocalSource struct{}
 
@@ -34,7 +79,7 @@ func (unavailableLocalSource) Stream(context.Context, string, ports.DownloadLeas
 
 func TestLocalComponentProductionConfigurationSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverFile, map[string]any{"path": filepath.Join(t.TempDir(), "tasks")})
+	engine, err := kv.New(kv.DriverFile, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "tasks")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	storage, err := engine.Open("default")

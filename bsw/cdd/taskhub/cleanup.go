@@ -55,14 +55,19 @@ func CleanupLinksAndAria2(ctx context.Context, s storage.Storage, now time.Time,
 				return err
 			}
 			remove := errors.Is(err, storage.ErrNotFound) || expired(stamp, now, ttl)
-			if !remove {
+			if !errors.Is(err, storage.ErrNotFound) {
 				var record struct {
-					TaskID string `json:"task_id"`
+					TaskID       string    `json:"task_id"`
+					Deleted      bool      `json:"deleted"`
+					ControlUntil time.Time `json:"control_until"`
 				}
 				if err := json.Unmarshal(data, &record); err != nil {
 					return err
 				}
-				if record.TaskID != "" {
+				if record.ControlUntil.After(now) {
+					continue
+				}
+				if !remove && record.TaskID != "" && !record.Deleted {
 					_, err := tx.Get(ctx, LinkPrefix+record.TaskID)
 					if err != nil && !errors.Is(err, storage.ErrNotFound) {
 						return err

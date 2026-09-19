@@ -25,12 +25,19 @@ type Configuration struct {
 func (r *Runtime) Configurations() []Configuration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.configurationsLocked()
+}
+
+func (r *Runtime) configurationsLocked() []Configuration {
 	result := make([]Configuration, 0, len(r.order))
 	for _, id := range r.order {
 		item := r.instances[id]
 		m := item.registration.Manifest
 		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Enabled: true, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
 		entry.Pages = append([]manifest.Page{}, m.Pages...)
+		for i := range entry.Pages {
+			entry.Pages[i].Settings = append([]string(nil), entry.Pages[i].Settings...)
+		}
 		for _, field := range m.Config {
 			if field.Secret {
 				field.Default = ""

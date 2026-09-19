@@ -14,7 +14,9 @@ import (
 	"go.uber.org/zap"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
+	local "github.com/snakexgc/tdl/application/downloader.local"
 	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
@@ -392,8 +394,15 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 	cfg.Aria2.Dir = ""
 	cfg.DownloadDir = "P/Y&M"
 
-	info, err := NewInternalDownloadController(kvd).AddLink(ctx, cfg, task.ID)
+	policies, _, naming, err := startPolicies(ctx, cfg.Namespace, DefaultOptions(cfg))
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, policies.Stop(ctx)) })
+	_, err = (local.SavedLinks{Account: types.AccountID(cfg.Namespace), Root: cfg.Downloader.LocalRoot, FallbackRoot: filepath.Join(consts.HomeDir, internalDownloadFallbackDirName), Naming: naming, Source: httpdl.NewTaskStore(kvd, 0), Repository: newInternalTaskStore(kvd)}).Submit(ctx, types.DownloadSubmission{Account: types.AccountID(cfg.Namespace), TaskID: task.ID})
+	require.NoError(t, err)
+	items, err := NewInternalDownloadController(kvd).List(ctx)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	info := items[0]
 	require.Equal(t, task.ID, info.ID)
 	require.Equal(t, InternalDownloadStatusQueued, info.Status)
 	require.Equal(t, testVideoFile, filepath.Base(info.Path))

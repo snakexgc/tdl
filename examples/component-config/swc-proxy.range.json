@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "enabled": true,
+  "values": {
+    "address": "0.0.0.0",
+    "client_wait_seconds": 30,
+    "link_ttl_hours": 24,
+    "persist_timeout_seconds": 5,
+    "port": 22334,
+    "public_base_url": "",
+    "source_cleanup_seconds": 60,
+    "task_cleanup_seconds": 3600
+  }
+}

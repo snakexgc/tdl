@@ -22,8 +22,8 @@ type Health struct {
 // available while a lifecycle hook is blocked under the runtime's mutation lock.
 func (r *Runtime) Health() Health {
 	result := Health{Account: r.account, Events: r.diagnostics.Events(), Components: []ComponentHealth{}}
-	for _, id := range r.order {
-		item := r.instances[id].observation.Load()
+	for _, component := range *r.observed.Load() {
+		item := component.observation.Load()
 		health := ComponentHealth{Status: item.status, Runnables: []schedule.Status{}}
 		if item.runnables != nil {
 			health.Runnables = item.runnables.Statuses()

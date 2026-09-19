@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "enabled": true,
+  "values": {
+    "api_id": 0,
+    "builtin_preset": "",
+    "dc_pool_size": 8,
+    "delay_seconds": 0,
+    "file_limit": 1,
+    "ntp": "ntp.tencent.com",
+    "reconnect_timeout_seconds": 3,
+    "use_builtin": false
+  },
+  "secrets": "swc-account.telegram-4011403935.json"
+}

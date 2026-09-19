@@ -32,7 +32,7 @@ func (c *Controller) ListTasks(ctx context.Context) ([]types.DownloadTask, error
 
 func (c *Controller) ChangeTasks(ctx context.Context, action string, ids []string) (types.DownloadActionResult, error) {
 	var result types.DownloadActionResult
-	if action != "pause" && action != "resume" && action != "delete" {
+	if action != "pause" && action != controlResume && action != "delete" {
 		return result, fmt.Errorf("unsupported aria2 action %q", action)
 	}
 	if c == nil || c.store == nil || c.client == nil {
@@ -43,7 +43,8 @@ func (c *Controller) ChangeTasks(ctx context.Context, action string, ids []strin
 		return result, err
 	}
 	for _, id := range ids {
-		if _, ok := records[id]; !ok {
+		record, ok := records[id]
+		if !ok {
 			result.Skipped++
 			continue
 		}
@@ -51,39 +52,16 @@ func (c *Controller) ChangeTasks(ctx context.Context, action string, ids []strin
 			return result, err
 		}
 		result.Matched++
-		status, err := c.client.TellStatus(ctx, id)
+		changed, err := c.performControl(ctx, record, action, false)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
 			continue
 		}
-		switch action {
-		case "pause":
-			if status.Status == aria2StatusPaused || status.Status == aria2StatusComplete || status.Status == aria2StatusError {
-				result.Skipped++
-				continue
-			}
-			err = c.client.Pause(ctx, id)
-		case "resume":
-			if status.Status != aria2StatusPaused {
-				result.Skipped++
-				continue
-			}
-			err = c.client.Unpause(ctx, id)
-		case "delete":
-			if status.Status == aria2StatusComplete || status.Status == aria2StatusError || status.Status == "removed" {
-				err = c.client.RemoveDownloadResult(ctx, id)
-			} else {
-				err = c.client.Remove(ctx, id)
-			}
-			if err == nil {
-				err = c.store.Remove(ctx, id)
-			}
+		if changed {
+			result.Changed++
+		} else {
+			result.Skipped++
 		}
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
-			continue
-		}
-		result.Changed++
 	}
 	return result, nil
 }

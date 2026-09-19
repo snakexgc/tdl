@@ -180,7 +180,10 @@ func GetSingleMessage(ctx context.Context, c *tg.Client, peer tg.InputPeerClass,
 		BatchSize(1).Iter()
 
 	if !it.Next(ctx) {
-		return nil, errors.Wrap(it.Err(), "get single message")
+		if err := it.Err(); err != nil {
+			return nil, errors.Wrap(err, "get single message")
+		}
+		return nil, fmt.Errorf("the message %d/%d: %w", GetInputPeerID(peer), msg, ErrMessageDeleted)
 	}
 
 	m, ok := it.Value().Msg.(*tg.Message)
@@ -246,6 +249,9 @@ func GetGroupedMessages(ctx context.Context, c *tg.Client, peer tg.InputPeerClas
 		}
 	}
 
+	if err := it.Err(); err != nil {
+		return nil, errors.Wrap(err, "get album history")
+	}
 	// reverse messages from oldest to latest, so we can forward them in order
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]

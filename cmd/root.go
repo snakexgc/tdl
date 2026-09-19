@@ -48,7 +48,7 @@ func New() *cobra.Command {
 			return runBot(cmd)
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Name() == migrateConfigCommand {
+			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand {
 				return nil
 			}
 			if err := consts.InitPaths(); err != nil {
@@ -89,7 +89,7 @@ func New() *cobra.Command {
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Name() == migrateConfigCommand {
+			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand {
 				return nil
 			}
 			return multierr.Combine(

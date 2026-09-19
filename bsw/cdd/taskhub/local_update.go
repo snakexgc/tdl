@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
@@ -14,6 +15,19 @@ import (
 // Create is idempotent across independent handles. Duplicate submissions keep
 // the existing task's path, progress and user-selected state.
 func (s *LocalRepository) Create(ctx context.Context, record types.LocalDownloadRecord) (types.LocalDownloadRecord, error) {
+	return s.create(ctx, record, nil)
+}
+
+// CreateLinked checks source identity in the transaction that inserts the task.
+// Deletion or replacement during target preparation cannot create an orphan.
+func (s *LocalRepository) CreateLinked(ctx context.Context, source ports.ObservedLink, record types.LocalDownloadRecord) (types.LocalDownloadRecord, error) {
+	if source.Task.ID == "" || source.Task.ID != record.TaskID || source.Version == "" {
+		return types.LocalDownloadRecord{}, errors.New("local source identity is required")
+	}
+	return s.create(ctx, record, &source)
+}
+
+func (s *LocalRepository) create(ctx context.Context, record types.LocalDownloadRecord, source *ports.ObservedLink) (types.LocalDownloadRecord, error) {
 	if s == nil || s.kv == nil || record.ID == "" {
 		return types.LocalDownloadRecord{}, errors.New("local task storage and id are required")
 	}
@@ -21,7 +35,21 @@ func (s *LocalRepository) Create(ctx context.Context, record types.LocalDownload
 	if c.initErr != nil {
 		return types.LocalDownloadRecord{}, c.initErr
 	}
-	err := storage.Update(ctx, c.store, func(tx storage.Storage) error {
+	err := storage.Update(ctx, s.kv, func(tx storage.Storage) error {
+		if source != nil {
+			data, err := tx.Get(ctx, LinkPrefix+source.Task.ID)
+			if errors.Is(err, storage.ErrNotFound) {
+				return errors.New("download source was deleted before submission")
+			}
+			if err != nil {
+				return err
+			}
+			if linkVersion(data) != source.Version {
+				return errors.New("download source changed before submission")
+			}
+		}
+		// Keep local writes within their NvM dataset inside the shared transaction.
+		tx = Local(tx).store
 		data, err := tx.Get(ctx, c.prefix+record.ID)
 		if err == nil {
 			record, err = decodeInternalRecord(record.ID, data)

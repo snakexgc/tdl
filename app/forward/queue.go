@@ -12,6 +12,7 @@ import (
 	"github.com/gotd/td/telegram/peers"
 
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/dcpool"
 	"github.com/snakexgc/tdl/internal/core/forwarder"
@@ -30,6 +31,10 @@ type Runtime struct {
 	PoolSize       int
 	Account        types.AccountID
 	ComponentStore *rteconfig.Store
+	Defaults       func() types.ForwardDefaults
+	Rules          ports.ForwardRules
+	Listening      ports.ForwardListening
+	OnReady        func()
 }
 type Queue struct {
 	*application.ForwardQueue
@@ -53,7 +58,39 @@ func (q *Queue) Serve(ctx context.Context, rt Runtime) error {
 		return errors.New("forward queue is already being served")
 	}
 	defer q.serveMu.Unlock()
-	return application.ServeForwardQueue(ctx, rt.Account, q.ForwardQueue, rt, q.host.Store, rt.ComponentStore)
+	return application.ServeForwardQueue(ctx, rt.Account, q.ForwardQueue, rt, func(host *rte.Runtime) {
+		q.host.Store(host)
+		if host != nil && rt.OnReady != nil {
+			rt.OnReady()
+		}
+	}, application.ForwardOptions{Store: rt.ComponentStore, Defaults: rt.Defaults, Peers: rt, Rules: rt.Rules, Listening: rt.Listening})
+}
+
+func (q *Queue) router() (ports.ForwardRouting, error) {
+	if host := q.Host(); host != nil {
+		value, err := host.Resolve(ports.ForwardRoutingName)
+		if err != nil {
+			return nil, err
+		}
+		return value.(ports.ForwardRouting), nil
+	}
+	return nil, errors.New("forward connection is unavailable")
+}
+
+func (q *Queue) Interested(ctx context.Context, account types.AccountID, peer types.MessagePeer) (bool, error) {
+	router, err := q.router()
+	if err != nil {
+		return false, err
+	}
+	return router.Interested(ctx, account, peer)
+}
+
+func (q *Queue) SubmitMessage(ctx context.Context, message types.ForwardMessage) error {
+	router, err := q.router()
+	if err != nil {
+		return err
+	}
+	return router.SubmitMessage(ctx, message)
 }
 
 func (rt Runtime) Forward(ctx context.Context, job *Job, report func(Job)) error {

@@ -15,7 +15,10 @@ import (
 )
 
 type Options struct {
+	ForwardConfig           func() ForwardSettings
+	FeatureFlags            func() (download, forward bool)
 	ForwardRules            ports.ForwardRules
+	ForwardRouting          ports.ForwardRouting
 	Connections             *tgauth.Connections
 	ComponentStore          *rteconfig.Store
 	SetIntentHost           func(*rte.Runtime)
@@ -28,6 +31,7 @@ type Options struct {
 	MessageLinks            ports.MessageLinks
 	Credentials             ports.TelegramCredentials
 	DownloadRouting         ports.DownloadRouting
+	DownloadPipeline        ports.DownloadPipeline
 	Dir                     string
 	Template                string
 	FilenameMaxLength       int
@@ -52,6 +56,35 @@ type Options struct {
 	HTTPService             *httpdl.Service
 	DownloadSubmitter       ports.DownloadExecutor
 	messageLinks            <-chan messageLinkSubmission
+}
+
+// ForwardSettings maps legacy configuration into component-owned defaults and
+// listening ports. Routing decisions belong to the forwarding component.
+type ForwardSettings struct {
+	Mode, Target           string
+	Listen                 []string
+	ListenComments, Silent bool
+	DedupeTTL              time.Duration
+}
+
+func (o Options) ForwardSettings() ForwardSettings {
+	return ForwardSettings{Mode: o.ForwardMode, Target: o.ForwardTarget, Listen: append([]string(nil), o.ForwardListen...), ListenComments: o.ForwardListenComments, Silent: o.ForwardSilent, DedupeTTL: o.ForwardDedupeTTL}
+}
+
+func (w *Watcher) downloadEnabled() bool {
+	if w.opts.FeatureFlags != nil {
+		download, _ := w.opts.FeatureFlags()
+		return download
+	}
+	return w.opts.Download
+}
+
+func (w *Watcher) forwardEnabled() bool {
+	if w.opts.FeatureFlags != nil {
+		_, forward := w.opts.FeatureFlags()
+		return forward
+	}
+	return w.opts.Forward
 }
 
 type NotifyFunc func(ctx context.Context, text string)

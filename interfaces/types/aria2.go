@@ -41,18 +41,21 @@ type Aria2URI struct {
 }
 
 type Aria2TaskRecord struct {
-	State       DownloadState `json:"state"`
-	Revision    uint64        `json:"revision"`
-	GID         string        `json:"gid"`
-	TaskID      string        `json:"task_id"`
-	DownloadURL string        `json:"download_url"`
-	Dir         string        `json:"dir"`
-	Out         string        `json:"out"`
-	CreatedAt   time.Time     `json:"created_at"`
-	Status      string        `json:"status"`
-	Total       int64         `json:"total"`
-	Completed   int64         `json:"completed"`
-	Error       string        `json:"error,omitempty"`
+	PauseOwner   string        `json:"pause_owner,omitempty"`
+	Deleted      bool          `json:"deleted,omitempty"`
+	ControlUntil time.Time     `json:"control_until,omitzero"`
+	State        DownloadState `json:"state"`
+	Revision     uint64        `json:"revision"`
+	GID          string        `json:"gid"`
+	TaskID       string        `json:"task_id"`
+	DownloadURL  string        `json:"download_url"`
+	Dir          string        `json:"dir"`
+	Out          string        `json:"out"`
+	CreatedAt    time.Time     `json:"created_at"`
+	Status       string        `json:"status"`
+	Total        int64         `json:"total"`
+	Completed    int64         `json:"completed"`
+	Error        string        `json:"error,omitempty"`
 }
 
 type Aria2TaskInfo struct {

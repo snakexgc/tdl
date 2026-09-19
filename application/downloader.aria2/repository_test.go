@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 )
 
 const testDownloadDir = "downloads"
@@ -35,11 +36,48 @@ func (r *testRepository) Report(_ context.Context, record TaskRecord, revision u
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	current, exists := r.records[record.GID]
-	if !exists || current.Revision != revision {
+	if !exists || current.Revision != revision || current.ControlUntil.After(time.Now()) {
 		return false, nil
 	}
 	record.Revision++
 	r.records[record.GID] = record
+	return true, nil
+}
+
+func (r *testRepository) ReserveControl(_ context.Context, expected TaskRecord, until time.Time) (TaskRecord, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, exists := r.records[expected.GID]
+	if !exists || current.Revision != expected.Revision || current.ControlUntil.After(time.Now()) {
+		return current, false, nil
+	}
+	current.Revision++
+	current.ControlUntil = until
+	r.records[current.GID] = current
+	return current, true, nil
+}
+
+func (r *testRepository) FinishControl(_ context.Context, lease TaskRecord, status string, remove bool) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, exists := r.records[lease.GID]
+	if !exists || current.Revision != lease.Revision {
+		return false, nil
+	}
+	if remove {
+		delete(r.records, lease.GID)
+		return true, nil
+	}
+	current.Revision++
+	current.ControlUntil = time.Time{}
+	if status != "" {
+		current.Status = status
+		current.PauseOwner = ""
+		if status == aria2StatusPaused {
+			current.PauseOwner = lease.PauseOwner
+		}
+	}
+	r.records[current.GID] = current
 	return true, nil
 }
 

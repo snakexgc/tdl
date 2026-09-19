@@ -12,18 +12,18 @@ import (
 func TestRoutedAlbumReplayAndPeerKinds(t *testing.T) {
 	ctx := context.Background()
 	q := newTestQueue()
-	source := types.MessagePeer{Kind: "channel", ID: 1}
-	destination := types.ForwardDestination{RuleID: "one", Target: "chat:2", Mode: "default"}
+	source := types.MessagePeer{Kind: forwardPeerChannel, ID: 1}
+	destination := types.ForwardDestination{RuleID: "one", Target: routingTargetFirst, Mode: forwardModeDefault}
 	id, err := q.EnqueueRouted(ctx, source, 10, 42, "source", destination)
 	require.NoError(t, err)
 	destination.RuleID = "overlapping-rule"
 	replayed, err := q.EnqueueRouted(ctx, source, 11, 42, "source", destination)
 	require.NoError(t, err)
 	require.Equal(t, id, replayed, "album and overlapping rules must not duplicate a target")
-	destination.Target = "chat:3"
+	destination.Target = routingTargetSecond
 	_, err = q.EnqueueRouted(ctx, source, 11, 42, "source", destination)
 	require.NoError(t, err)
-	source.Kind = "user"
+	source.Kind = forwardPeerUser
 	_, err = q.EnqueueRouted(ctx, source, 11, 42, "source", destination)
 	require.NoError(t, err)
 	items, err := q.List(ctx)

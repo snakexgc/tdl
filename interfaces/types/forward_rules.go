@@ -18,6 +18,7 @@ type ForwardDestination struct {
 	Target ChatRef
 	Mode   string
 	Silent bool
+	Name   string
 }
 
 type Dialog struct {

@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/snakexgc/tdl/interfaces/types"
 )
@@ -46,6 +47,8 @@ type Aria2Client interface {
 	SetMaxConcurrentDownloads(context.Context, int) error
 }
 type Aria2Repository interface {
+	ReserveControl(context.Context, types.Aria2TaskRecord, time.Time) (types.Aria2TaskRecord, bool, error)
+	FinishControl(context.Context, types.Aria2TaskRecord, string, bool) (bool, error)
 	Report(context.Context, types.Aria2TaskRecord, uint64) (bool, error)
 	Add(context.Context, types.Aria2TaskRecord) error
 	Records(context.Context) (map[string]types.Aria2TaskRecord, error)

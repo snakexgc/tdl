@@ -87,6 +87,9 @@ func (s *Aria2Repository) Records(ctx context.Context) (map[string]Aria2Record, 
 		if err := json.Unmarshal(data, &record); err != nil {
 			return nil, err
 		}
+		if record.Deleted {
+			continue
+		}
 		if record.GID == "" {
 			record.GID = gid
 		}
@@ -109,7 +112,14 @@ func (s *Aria2Repository) cleanup(ctx context.Context) error {
 		return nil
 	}
 	now := time.Now()
-	return Aria2(s.kv).Sweep(ctx, func(_ []byte, stamp time.Time) (bool, error) {
+	return Aria2(s.kv).Sweep(ctx, func(data []byte, stamp time.Time) (bool, error) {
+		var record Aria2Record
+		if err := json.Unmarshal(data, &record); err != nil {
+			return false, err
+		}
+		if record.ControlUntil.After(now) {
+			return false, nil
+		}
 		return isAria2TaskExpired(stamp, now, ttl), nil
 	})
 }

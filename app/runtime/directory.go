@@ -29,7 +29,7 @@ func (m *Manager) initDirectory() error {
 		{"account", func() *rte.Runtime { return m.accountHost }},
 		{"policies", func() *rte.Runtime { return m.policies }},
 		{"bot", func() *rte.Runtime { return m.botComponents }},
-		{"local", func() *rte.Runtime { return m.localHost }},
+		{localExecutorID, func() *rte.Runtime { return m.localHost }},
 		{"panel", func() *rte.Runtime { return m.panelHost }},
 		{"intents", func() *rte.Runtime { return m.intentHost }},
 		{moduleIDAria2, func() *rte.Runtime {

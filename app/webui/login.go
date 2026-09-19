@@ -22,6 +22,11 @@ type webLoginManager struct {
 }
 
 func newWebLoginManager(opts Options) *webLoginManager {
+	if opts.Namespace == "" {
+		if cfg := config.From(opts.Context); cfg != nil {
+			opts.Namespace = cfg.Namespace
+		}
+	}
 	m := &webLoginManager{opts: opts}
 	// The account service serializes flows and calls Complete on the same
 	// goroutine after Authenticate. SDK state stays within this adapter.
@@ -48,7 +53,7 @@ func newWebLoginManager(opts Options) *webLoginManager {
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
-			restart, err := m.saveNamespaceIfChanged(namespace)
+			restart, err := config.SelectNamespace(ctx, m.currentNamespace(), namespace)
 			if err == nil && !restart && opts.OnLoginSuccess != nil {
 				opts.OnLoginSuccess(authenticatedUser)
 			}
@@ -77,30 +82,11 @@ func (m *webLoginManager) openNamespaceKV(raw string) (string, storage.Storage, 
 	return "", nil, errors.New("namespace storage is not configured")
 }
 
-func (m *webLoginManager) saveNamespaceIfChanged(namespace string) (bool, error) {
-	cfg := config.Get()
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	if cfg.Namespace == namespace {
-		return false, nil
-	}
-	next, err := config.Clone(cfg)
-	if err != nil {
-		return false, err
-	}
-	next.Namespace = namespace
-	if err := config.Set(next); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (m *webLoginManager) currentNamespace() string {
 	if m.opts.Namespace != "" {
 		return m.opts.Namespace
 	}
-	cfg := config.Get()
+	cfg := config.From(m.opts.Context)
 	if cfg != nil {
 		return cfg.Namespace
 	}

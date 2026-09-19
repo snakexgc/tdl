@@ -36,4 +36,12 @@ type DownloadSubmissionSummary struct {
 	Total     int
 	Queued    int
 	Skipped   int
+	Failed    int
+	Uncertain int
+	Links     []GeneratedDownloadLink
+}
+
+type GeneratedDownloadLink struct {
+	FileName string
+	URL      string
 }

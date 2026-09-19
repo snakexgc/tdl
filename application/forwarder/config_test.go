@@ -37,7 +37,7 @@ func TestQueueConfigurationChangesRetryBudgetAndSurvivesRestart(t *testing.T) {
 	restarted := build(document.Values)
 	require.Equal(t, before, q.policy())
 	require.NoError(t, restarted.Stop(ctx))
-	id, err := q.EnqueueMessage(ctx, 1, 2, "", "", "", "default", false)
+	id, err := q.EnqueueMessage(ctx, 1, 2, "", "", "", forwardModeDefault, false)
 	require.NoError(t, err)
 	job, _, err := q.store.Get(ctx, id)
 	require.NoError(t, err)

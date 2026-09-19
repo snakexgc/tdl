@@ -48,7 +48,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 		zap.Int("entities_chats", len(e.Chats)),
 		zap.Int("entities_channels", len(e.Channels)))
 
-	if w.opts.Download {
+	if w.downloadEnabled() {
 		isMine := w.isMyMessageReactions(ctx, &update.Reactions, peerID, update.MsgID)
 		if !isMine {
 			// A removal or a change to a non-trigger reaction ends this dedupe
@@ -97,7 +97,7 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 
 	// Reaction triggers forward any message the user reacts to, independent of
 	// the auto-forward listen set (which only governs new-message forwarding).
-	if w.shouldTriggerForwardReaction(&update.Reactions) {
+	if w.shouldTriggerForwardReaction(ctx, &update.Reactions) {
 		return w.publishForwardIntent(ctx, e, update.Peer, peerID, update.MsgID)
 	}
 
@@ -147,7 +147,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 		zap.Int("results_count", len(msg.Reactions.Results)),
 		zap.String("reactions_json", string(reactionsJSON)))
 
-	if w.opts.Download {
+	if w.downloadEnabled() {
 		if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
 			if !msg.Reactions.Min {
 				policy.Forget(key)
@@ -193,7 +193,7 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 
 	// Reaction triggers forward any message the user reacts to, independent of
 	// the auto-forward listen set (which only governs new-message forwarding).
-	if w.shouldTriggerForwardReaction(&msg.Reactions) {
+	if w.shouldTriggerForwardReaction(ctx, &msg.Reactions) {
 		return w.publishForwardIntent(ctx, e, msg.PeerID, peerID, msg.ID)
 	}
 
@@ -205,15 +205,10 @@ func (w *Watcher) isMyMessageReactions(ctx context.Context, reactions *tg.Messag
 	return err == nil && policy.Matches(ctx, w.reactionInput(reactions, false))
 }
 
-func (w *Watcher) shouldTriggerForwardReaction(reactions *tg.MessageReactions) bool {
-	return w.forward != nil && w.forward.enabled && w.hasMyForwardReactionTrigger(reactions)
-}
-
-func (w *Watcher) hasMyForwardReactionTrigger(reactions *tg.MessageReactions) bool {
-	if w.forward == nil {
+func (w *Watcher) shouldTriggerForwardReaction(ctx context.Context, reactions *tg.MessageReactions) bool {
+	if !w.forwardEnabled() {
 		return false
 	}
-	ctx := context.Background()
 	policy, err := w.reactionPolicy(ctx)
 	return err == nil && policy.Matches(ctx, w.reactionInput(reactions, true))
 }

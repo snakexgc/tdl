@@ -19,7 +19,6 @@ import (
 	"github.com/gotd/td/tg"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
 	"github.com/snakexgc/tdl/application"
@@ -52,7 +51,6 @@ type Watcher struct {
 	jobCh            chan downloadJob
 	messageLinks     <-chan messageLinkSubmission
 	triggerReactions map[string]struct{}
-	forward          *forwardRuntime
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -62,19 +60,19 @@ func Run(ctx context.Context, opts Options) error {
 		account = types.DefaultAccount
 	}
 	var route ports.DownloadRoute
-	if opts.DownloadRouting != nil {
+	if opts.DownloadRouting != nil && opts.FeatureFlags == nil {
 		var err error
 		route, err = opts.DownloadRouting.Route(ctx, account)
 		if err != nil {
 			return err
 		}
 	}
-	if opts.Download && len(route.Executors) == 0 {
+	if opts.FeatureFlags == nil && opts.Download && len(route.Executors) == 0 {
 		if err := validateWatchConfig(cfg); err != nil {
 			return err
 		}
 	}
-	if !opts.Download && !opts.Forward {
+	if opts.FeatureFlags == nil && !opts.Download && !opts.Forward {
 		return errors.New("watch has no enabled work: enable modules.watch or modules.forward")
 	}
 	if opts.Forward && strings.TrimSpace(opts.ForwardTarget) == "" {
@@ -99,6 +97,14 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	opts.Limit = effectiveWatchOptionLimit(opts.Limit, cfg)
 	opts.PoolSize = effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
+	if opts.DownloadPipeline == nil && (opts.Download || opts.FeatureFlags != nil) {
+		host, control, err := application.DownloadControlHost(ctx, opts.Account, nil)
+		if err != nil {
+			return errors.Wrap(err, "start download pipeline component")
+		}
+		defer func() { _ = host.Stop(context.Background()) }()
+		opts.DownloadPipeline = control.(ports.DownloadPipeline)
+	}
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	kvd, err := kv.From(ctx).Open(cfg.Namespace)
@@ -122,7 +128,7 @@ func Run(ctx context.Context, opts Options) error {
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
 			color.Yellow("⏹ Stopping watcher...")
-			if opts.Download && runtime.internal != nil {
+			if (opts.Download || opts.FeatureFlags != nil) && runtime.internal != nil {
 				paused, err := runtime.internal.PauseForShutdown(runCtx)
 				if err != nil {
 					color.Yellow("⚠️ Failed to pause internal download tasks before shutdown: %v", err)
@@ -147,32 +153,6 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
-	if opts.Download && len(route.Executors) == 0 {
-		switch downloaderMode {
-		case config.DownloaderModeAria2:
-			// The target path is metadata for an optional external submitter. Never
-			// query that backend while starting the Telegram watcher.
-			runtime.outputRoot = cleanTargetRoot(cfg.Aria2.Dir)
-			if runtime.outputRoot == "" {
-				runtime.outputRoot = "."
-			}
-			runtime.ensureOutputDirs = false
-		case config.DownloaderModeInternal:
-			outputRoot, fallback, err := prepareInternalOutputRoot(cfg)
-			if err != nil {
-				if opts.Notify != nil {
-					opts.Notify(runCtx, fmt.Sprintf("内部下载目录异常：%v", err))
-				}
-				return errors.Wrap(err, "prepare internal output root")
-			}
-			if fallback {
-				color.Yellow("⚠️ 本地下载根目录不可用，将使用备用目录：%s", outputRoot)
-			}
-			runtime.outputRoot = outputRoot
-			runtime.ensureOutputDirs = true
-		}
-	}
-
 	if opts.Download && opts.Forward {
 		color.Green("👀 Watching for reactions and forward sources... Press Ctrl+C to stop")
 	} else if opts.Forward {
@@ -190,7 +170,6 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.Download {
 		color.Green("   Downloader mode: %s", downloaderMode)
-		color.Green("   Output root: %s", runtime.outputRoot)
 		color.Green("   Download dir template: %s", opts.Dir)
 	}
 	color.Green("   Telegram DC pool size: %d", opts.PoolSize)
@@ -276,12 +255,12 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 	// Register reaction handlers whenever download or forward is enabled. Forward
 	// reacts on its trigger emoji (or any emoji when its trigger set is empty),
 	// so it needs these handlers regardless of how many triggers are configured.
-	if opts.Download || opts.Forward {
+	if opts.Download || opts.Forward || opts.FeatureFlags != nil {
 		d.OnMessageReactions(w.onReaction)
 		d.OnEditMessage(w.onEditMessage)
 		d.OnEditChannelMessage(w.onEditChannelMessage)
 	}
-	if opts.Forward {
+	if opts.Forward || opts.FeatureFlags != nil {
 		d.OnNewMessage(w.onNewMessageForward)
 		d.OnNewChannelMessage(w.onNewChannelMessageForward)
 	}
@@ -332,13 +311,12 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 
 		w.pool = pool
 		w.manager = peers.Options{Storage: peerStore}.Build(pool.Default(ctx))
-		w.configureForward(ctx)
 
 		self, err := client.Self(ctx)
 		if err != nil {
 			return errors.Wrap(err, "get self user")
 		}
-		if opts.Download && runtime.internal != nil {
+		if (opts.Download || opts.FeatureFlags != nil) && runtime.internal != nil {
 			host, executor, err := application.LocalDownloadHost(ctx, opts.Account, runtime.internal.component(), opts.ComponentStore)
 			if err != nil {
 				return errors.Wrap(err, "start local downloader component")
@@ -350,26 +328,22 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 			}
 			defer func() { _ = host.Stop(context.Background()) }()
 		}
-		eg, egCtx := errgroup.WithContext(ctx)
-		eg.SetLimit(effectiveWatchOptionLimit(opts.Limit, cfg))
 		var intentHost *rte.Runtime
-		if opts.Download || opts.Forward {
+		if opts.Download || opts.Forward || opts.FeatureFlags != nil {
 			var download ports.DownloadIntentHandler
-			if opts.Download {
+			if opts.Download || opts.FeatureFlags != nil {
 				download = func(intentCtx context.Context, request types.DownloadIntent) error {
-					_, err := w.processDownloadJob(intentCtx, eg, downloadJob{peer: protocolPeer(request.Peer), peerID: request.PeerID, msgID: request.MessageID, link: request.Link, source: request.Source})
+					_, err := w.processDownloadIntent(intentCtx, request)
 					return err
 				}
 			}
 			var forward ports.ForwardIntentHandler
-			if opts.Forward {
+			if opts.Forward || opts.FeatureFlags != nil {
 				forward = w.processForwardIntent
 			}
 			var port ports.DownloadIntents
 			var forwardPort ports.ForwardIntents
-			intentHost, port, forwardPort, err = application.IntentHostStored(ctx, opts.Account, download, forward, opts.ComponentStore, func(intentCtx context.Context, request types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
-				return w.processDownloadJob(intentCtx, eg, downloadJob{peer: protocolPeer(request.Peer), peerID: request.PeerID, msgID: request.MessageID, link: request.Link, source: request.Source})
-			})
+			intentHost, port, forwardPort, err = application.IntentHostStored(ctx, opts.Account, download, forward, opts.ComponentStore, w.processDownloadIntent)
 			if err != nil {
 				return err
 			}
@@ -383,6 +357,40 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 				defer opts.SetIntentHost(nil)
 			}
 		}
+		// Bind the forwarding component before accepting Telegram updates. Its
+		// router and worker share this connection and are drained before the pool.
+		forwardCtx, forwardCancel := context.WithCancel(ctx)
+		forwardReady, forwardDone := make(chan struct{}), make(chan struct{})
+		var forwardErr error
+		go func() {
+			defer close(forwardDone)
+			forwardErr = opts.ForwardQueue.Serve(forwardCtx, appforward.Runtime{
+				Pool: pool, Manager: w.manager, PoolSize: opts.PoolSize, Account: opts.Account,
+				ComponentStore: opts.ComponentStore, Rules: opts.ForwardRules, Listening: watchForwardListening{w},
+				Defaults: func() types.ForwardDefaults {
+					settings := opts.ForwardSettings()
+					if opts.ForwardConfig != nil {
+						settings = opts.ForwardConfig()
+					}
+					return types.ForwardDefaults{Target: settings.Target, Mode: settings.Mode, Silent: settings.Silent, DedupeTTL: settings.DedupeTTL}
+				},
+				OnReady: func() { close(forwardReady) },
+			})
+			if forwardErr != nil && !errors.Is(forwardErr, context.Canceled) {
+				logctx.From(ctx).Error("Forward queue worker stopped", zap.Error(forwardErr))
+			}
+		}()
+		defer func() { forwardCancel(); <-forwardDone }()
+		select {
+		case <-forwardReady:
+		case <-forwardDone:
+			if forwardErr != nil {
+				return forwardErr
+			}
+			return errors.New("forward connection stopped before binding")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		updatesDone := make(chan struct{})
 		go func() {
 			defer close(updatesDone)
@@ -394,41 +402,22 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		}()
 
 		dispatchDone := make(chan struct{})
-		if opts.Download {
+		if opts.Download || opts.FeatureFlags != nil {
 			go func() {
 				defer close(dispatchDone)
-				w.dispatcher(egCtx, eg)
+				w.dispatcher(ctx)
 			}()
 		} else {
 			close(dispatchDone)
 		}
 
-		// Drain the persistent forward queue one job at a time using this
-		// connection's pool. Runs whenever the watcher is connected so /forward
-		// jobs are processed even if the auto-forward listener is disabled.
-		forwardDone := make(chan struct{})
-		go func() {
-			defer close(forwardDone)
-			if err := opts.ForwardQueue.Serve(egCtx, appforward.Runtime{
-				Pool:           pool,
-				Manager:        w.manager,
-				PoolSize:       opts.PoolSize,
-				Account:        opts.Account,
-				ComponentStore: opts.ComponentStore,
-			}); err != nil && !errors.Is(err, context.Canceled) {
-				logctx.From(ctx).Error("Forward queue worker stopped", zap.Error(err))
-			}
-		}()
-
 		<-ctx.Done()
 
-		// No new submissions may enter the group once Wait begins.
+		// Both request adapters and the component consumer drain submissions
+		// before this connection's pool is released.
 		<-dispatchDone
 		if intentHost != nil {
 			_ = intentHost.Stop(context.Background())
-		}
-		if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-			logctx.From(ctx).Error("Submission goroutine error", zap.Error(err))
 		}
 		<-updatesDone
 		// The pool remains owned until all forward transport calls have returned.

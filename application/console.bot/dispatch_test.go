@@ -20,6 +20,7 @@ func TestContributedCommandSharesMenuPermissionAliasAndDispatch(t *testing.T) {
 	calls := 0
 	contribution := ports.ConsoleContribution{Commands: []types.ConsoleCommand{{Owner: "example", Name: "example", Description: "Example component", Aliases: []string{"example_alias"}}}, Handler: ports.ConsoleCommandFunc(func(_ context.Context, request types.ConsoleRequest) (types.ConsoleResponse, error) {
 		calls++
+		require.Equal(t, "example", request.Name)
 		return types.ConsoleResponse{Text: request.Text}, nil
 	})}
 	dispatcher, err := NewDispatcher(examplePolicy{}, []ports.ConsoleContribution{contribution})

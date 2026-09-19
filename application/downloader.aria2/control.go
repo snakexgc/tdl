@@ -73,7 +73,7 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 	if err := ctx.Err(); err != nil {
 		return types.DownloadResult{}, err
 	}
-	if c == nil || c.client == nil {
+	if c == nil || c.client == nil || c.store == nil {
 		return types.DownloadResult{}, fmt.Errorf("aria2 controller is not initialized: %w", ports.ErrDownloadNotAccepted)
 	}
 	account := c.account
@@ -95,6 +95,9 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 	if err != nil {
 		return types.DownloadResult{}, errors.Wrap(err, "add aria2 uri")
 	}
+	if gid == "" {
+		return types.DownloadResult{}, errors.New("aria2 returned empty gid")
+	}
 	if err := c.store.Add(ctx, TaskRecord{
 		GID:         gid,
 		TaskID:      submission.TaskID,
@@ -103,11 +106,9 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 		Out:         submission.Out,
 		CreatedAt:   time.Now(),
 	}); err != nil {
-		c.logger.Warn("Failed to register aria2 task",
-			zap.String("gid", gid),
-			zap.String("task_id", submission.TaskID),
-			zap.String("download_url", submission.DownloadURL),
-			zap.Error(err))
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		return types.DownloadResult{Account: account, Target: c.Name(), ID: gid}, errors.Join(fmt.Errorf("register aria2 task %s: %w", gid, err), c.client.Remove(cleanup, gid))
 	}
 
 	c.logger.Info("Submitted aria2 task",
@@ -155,8 +156,15 @@ func (c *Controller) GlobalOptions(ctx context.Context) (map[string]string, erro
 }
 
 func (c *Controller) TellStatus(ctx context.Context, gid string) (DownloadStatus, error) {
-	if c == nil || c.client == nil {
+	if c == nil || c.client == nil || c.store == nil {
 		return DownloadStatus{}, errors.New("aria2 controller is not initialized")
+	}
+	records, err := c.store.Records(ctx)
+	if err != nil {
+		return DownloadStatus{}, err
+	}
+	if _, owned := records[gid]; !owned {
+		return DownloadStatus{}, errors.New("aria2 task is not registered to this account")
 	}
 	return c.client.TellStatus(ctx, gid)
 }
@@ -170,7 +178,7 @@ func (c *Controller) ActiveTasks(ctx context.Context) ([]DownloadStatus, error) 
 		return nil, err
 	}
 	sortDownloadStatuses(tasks)
-	return tasks, nil
+	return c.registeredTasks(ctx, tasks)
 }
 
 func (c *Controller) WaitingTasks(ctx context.Context) ([]DownloadStatus, error) {
@@ -182,7 +190,7 @@ func (c *Controller) WaitingTasks(ctx context.Context) ([]DownloadStatus, error)
 		return nil, err
 	}
 	sortDownloadStatuses(tasks)
-	return tasks, nil
+	return c.registeredTasks(ctx, tasks)
 }
 
 func (c *Controller) StoppedTasks(ctx context.Context) ([]DownloadStatus, error) {
@@ -194,44 +202,52 @@ func (c *Controller) StoppedTasks(ctx context.Context) ([]DownloadStatus, error)
 		return nil, err
 	}
 	sortDownloadStatuses(tasks)
-	return tasks, nil
+	return c.registeredTasks(ctx, tasks)
+}
+
+func (c *Controller) registeredTasks(ctx context.Context, tasks []DownloadStatus) ([]DownloadStatus, error) {
+	if c.store == nil {
+		return nil, errors.New("aria2 task storage is unavailable")
+	}
+	records, err := c.store.Records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]DownloadStatus, 0, len(tasks))
+	for _, task := range tasks {
+		if _, ok := records[task.GID]; ok {
+			owned = append(owned, task)
+		}
+	}
+	return owned, nil
 }
 
 func (c *Controller) PauseTask(ctx context.Context, gid string) error {
-	if c == nil || c.client == nil {
-		return errors.New("aria2 controller is not initialized")
-	}
-	return c.client.Pause(ctx, gid)
+	return c.controlOne(ctx, gid, "pause")
 }
 
 func (c *Controller) UnpauseTask(ctx context.Context, gid string) error {
-	if c == nil || c.client == nil {
-		return errors.New("aria2 controller is not initialized")
-	}
-	return c.client.Unpause(ctx, gid)
+	return c.controlOne(ctx, gid, controlResume)
 }
 
 func (c *Controller) RemoveTask(ctx context.Context, gid string) error {
-	if c == nil || c.client == nil {
-		return errors.New("aria2 controller is not initialized")
-	}
-	return c.client.Remove(ctx, gid)
+	return c.controlOne(ctx, gid, "delete")
 }
 
 func (c *Controller) ClearStopped(ctx context.Context) (ActionResult, error) {
-	tasks, err := c.StoppedTasks(ctx)
+	tasks, records, err := c.listOwnedTasks(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
 
 	var result ActionResult
 	for _, task := range tasks {
-		if task.GID == "" {
+		if task.Status != aria2StatusComplete && task.Status != aria2StatusError && task.Status != string(types.DownloadRemoved) {
 			result.Skipped++
 			continue
 		}
 		result.Matched++
-		if err := c.client.RemoveDownloadResult(ctx, task.GID); err != nil {
+		if _, err := c.performControl(ctx, records[task.GID], "delete", false); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
 			continue
 		}
@@ -241,7 +257,7 @@ func (c *Controller) ClearStopped(ctx context.Context) (ActionResult, error) {
 }
 
 func (c *Controller) PauseAll(ctx context.Context) (ActionResult, error) {
-	tasks, _, err := c.listOwnedTasks(ctx)
+	tasks, records, err := c.listOwnedTasks(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -252,11 +268,16 @@ func (c *Controller) PauseAll(ctx context.Context) (ActionResult, error) {
 		switch status {
 		case aria2StatusActive, aria2StatusWaiting:
 			result.Matched++
-			if err := c.client.ForcePause(ctx, task.GID); err != nil {
+			changed, err := c.performControl(ctx, records[task.GID], "pause", true)
+			if err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
 				continue
 			}
-			result.Changed++
+			if changed {
+				result.Changed++
+			} else {
+				result.Skipped++
+			}
 		default:
 			result.Skipped++
 		}
@@ -265,7 +286,7 @@ func (c *Controller) PauseAll(ctx context.Context) (ActionResult, error) {
 }
 
 func (c *Controller) StartAll(ctx context.Context) (ActionResult, error) {
-	tasks, _, err := c.listOwnedTasks(ctx)
+	tasks, records, err := c.listOwnedTasks(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -278,11 +299,16 @@ func (c *Controller) StartAll(ctx context.Context) (ActionResult, error) {
 			continue
 		}
 		result.Matched++
-		if err := c.client.Unpause(ctx, task.GID); err != nil {
+		changed, err := c.performControl(ctx, records[task.GID], controlResume, false)
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
 			continue
 		}
-		result.Changed++
+		if changed {
+			result.Changed++
+		} else {
+			result.Skipped++
+		}
 	}
 	return result, nil
 }
@@ -313,48 +339,21 @@ func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 			continue
 		}
 
-		next := record
-		next.GID = ""
-		next.DownloadURL = downloadURL
-		if next.Dir == "" && next.Out == "" {
-			next.Dir, next.Out = maybeAria2PathOptions(task)
-		}
-		gid, err := c.client.AddURI(ctx, downloadURL, AddURIOptions{
-			Dir:         next.Dir,
-			Out:         next.Out,
-			Connections: c.transferConnections(),
-		})
+		changed, err := c.retryTask(ctx, record, task, downloadURL)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
-			continue
 		}
-
-		next.GID = gid
-		next.CreatedAt = time.Now()
-		if err := c.store.Add(ctx, next); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: persist new gid %s: %v", task.GID, gid, err))
-			continue
+		if changed {
+			result.Changed++
+		} else if err == nil {
+			result.Skipped++
 		}
-		if err := c.client.RemoveDownloadResult(ctx, task.GID); err != nil {
-			c.logger.Warn("Failed to remove old aria2 result after retry",
-				zap.String("old_gid", task.GID),
-				zap.String("new_gid", gid),
-				zap.Error(err))
-		}
-		if err := c.store.Remove(ctx, task.GID); err != nil {
-			c.logger.Warn("Failed to remove old aria2 task record after retry",
-				zap.String("old_gid", task.GID),
-				zap.String("new_gid", gid),
-				zap.Error(err))
-		}
-
-		result.Changed++
 	}
 	return result, nil
 }
 
 func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[string]TaskRecord, error) {
-	if c == nil || c.client == nil {
+	if c == nil || c.client == nil || c.store == nil {
 		return nil, nil, errors.New("aria2 controller is not initialized")
 	}
 
@@ -366,8 +365,6 @@ func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[
 	for gid := range records {
 		registeredGIDs[gid] = struct{}{}
 	}
-	downloadPrefix, _ := c.downloadPrefix()
-
 	var all []DownloadStatus
 	active, err := c.client.TellActive(ctx)
 	if err != nil {
@@ -396,7 +393,7 @@ func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[
 		if _, ok := seen[task.GID]; ok {
 			continue
 		}
-		if !isTDLAria2Task(task, registeredGIDs, downloadPrefix) {
+		if _, registered := registeredGIDs[task.GID]; !registered {
 			continue
 		}
 		seen[task.GID] = struct{}{}
@@ -409,26 +406,30 @@ func (c *Controller) listOwnedTasks(ctx context.Context) ([]DownloadStatus, map[
 }
 
 func (c *Controller) listWaiting(ctx context.Context) ([]DownloadStatus, error) {
-	var all []DownloadStatus
-	for offset := 0; ; {
-		batch, err := c.client.TellWaiting(ctx, offset, aria2ControlBatchSize)
-		if err != nil {
-			return nil, errors.Wrap(err, "query aria2 waiting tasks")
-		}
-		all = append(all, batch...)
-		if len(batch) < aria2ControlBatchSize {
-			return all, nil
-		}
-		offset += len(batch)
+	all, err := listTaskPages(ctx, c.client.TellWaiting)
+	if err != nil {
+		return nil, errors.Wrap(err, "query aria2 waiting tasks")
 	}
+	return all, nil
 }
 
 func (c *Controller) listStopped(ctx context.Context) ([]DownloadStatus, error) {
+	all, err := listTaskPages(ctx, c.client.TellStopped)
+	if err != nil {
+		return nil, errors.Wrap(err, "query aria2 stopped tasks")
+	}
+	return all, nil
+}
+
+func listTaskPages(ctx context.Context, query func(context.Context, int, int) ([]DownloadStatus, error)) ([]DownloadStatus, error) {
 	var all []DownloadStatus
 	for offset := 0; ; {
-		batch, err := c.client.TellStopped(ctx, offset, aria2ControlBatchSize)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch, err := query(ctx, offset, aria2ControlBatchSize)
 		if err != nil {
-			return nil, errors.Wrap(err, "query aria2 stopped tasks")
+			return nil, err
 		}
 		all = append(all, batch...)
 		if len(batch) < aria2ControlBatchSize {
@@ -531,7 +532,7 @@ func normalizedAria2Status(status string) string {
 
 func isRetryableStoppedAria2Task(info TaskInfo) bool {
 	switch info.Status {
-	case aria2StatusError, "removed":
+	case aria2StatusError, string(types.DownloadRemoved):
 		return true
 	case aria2StatusComplete:
 		return info.RemainingLength > 0

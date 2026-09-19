@@ -85,7 +85,8 @@ func (s *Server) handleUserSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldNamespace: strings.TrimSpace(req.Namespace), "restarting": changed})
 	if changed {
-		go func() { time.Sleep(200 * time.Millisecond); s.opts.RequestReboot() }()
+		_ = http.NewResponseController(w).Flush()
+		s.opts.RequestReboot()
 	}
 }
 

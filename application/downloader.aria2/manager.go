@@ -23,6 +23,7 @@ type Manager struct {
 	retryChanged  chan struct{}
 	controller    *Controller
 	client        ports.Aria2Client
+	automatic     automaticClient
 	store         ports.Aria2Repository
 	regulator     *TelegramErrorRegulator
 	monitor       *ZeroSpeedMonitor
@@ -42,10 +43,11 @@ func NewManager(opts Options, logger *zap.Logger) *Manager {
 		statusChanged: make(chan struct{}, 1), retryChanged: make(chan struct{}, 1),
 		limitChanged: make(chan struct{}, 1),
 		controller:   NewController(opts, logger), client: opts.Client, store: opts.Store,
-		regulator: NewTelegramErrorRegulator(opts.Client, opts.Store, opts.PublicBaseURL, logger),
-		monitor:   NewZeroSpeedMonitor(opts.Client, opts.Store, opts.PublicBaseURL, logger),
-		limit:     opts.Limit, baseURL: opts.PublicBaseURL, logger: logger,
+		limit: opts.Limit, baseURL: opts.PublicBaseURL, logger: logger,
 	}
+	m.automatic = automaticClient{Aria2Client: opts.Client, controller: m.controller, owner: "lifecycle", resumeAny: true}
+	m.regulator = NewTelegramErrorRegulator(automaticClient{Aria2Client: opts.Client, controller: m.controller, owner: "telegram-errors"}, opts.Store, opts.PublicBaseURL, logger)
+	m.monitor = NewZeroSpeedMonitor(automaticClient{Aria2Client: opts.Client, controller: m.controller, owner: "zero-speed"}, opts.Store, opts.PublicBaseURL, logger)
 	if opts.Observations != nil {
 		m.observer = &Observer{Client: opts.Client, Repository: opts.Observations, PublicBaseURL: opts.PublicBaseURL, TTL: opts.LinkTTL, links: &m.links}
 	}
@@ -96,7 +98,7 @@ func (m *Manager) ReportTelegramFileError(ctx context.Context, err error) {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	if m == nil || m.client == nil {
+	if m == nil || m.client == nil || m.store == nil {
 		return errors.New("aria2 manager is not initialized")
 	}
 	if err := m.waitUntilReady(ctx, 0); err != nil {
@@ -113,6 +115,14 @@ func (m *Manager) Run(ctx context.Context) error {
 		// Runnable alive until its children actually release their resources.
 		_ = governors.Stop(context.Background())
 	}()
+	if count, err := ResumeStartupPausedTasks(ctx, m.automatic, m.store, currentBaseURL(&m.links, m.baseURL), m.logger); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			m.logger.Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
+		}
+	} else if count > 0 {
+		m.logger.Info("Resumed paused aria2 tasks at startup", zap.Int("count", count))
+	}
+
 	for name, run := range map[string]func(context.Context){"telegram-errors": m.regulator.Run, "zero-speed": m.monitor.Run} {
 		if err := governors.Run(name, 0, 0, func(ctx context.Context) error { run(ctx); return nil }, func(err error) { m.logger.Error("Aria2 governor failed", zap.String("governor", name), zap.Error(err)) }); err != nil {
 			if ctx.Err() != nil {
@@ -121,22 +131,19 @@ func (m *Manager) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	if count, err := ResumeStartupPausedTasks(ctx, m.client, m.store, currentBaseURL(&m.links, m.baseURL), m.logger); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			m.logger.Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
-		}
-	} else if count > 0 {
-		m.logger.Info("Resumed paused aria2 tasks at startup", zap.Int("count", count))
-	}
 
 	if err := governors.Run("transfer-limits", 0, 0, m.applyTransferLimits, nil); err != nil {
-		return err
+		if ctx.Err() == nil {
+			return err
+		}
+		// Cancellation may arrive during startup recovery. Continue through
+		// the normal drain/pause path instead of reporting a scheduling failure.
 	}
 	<-ctx.Done()
 	if err := governors.Stop(context.Background()); err != nil {
 		return errors.Wrap(err, "stop aria2 governors")
 	}
-	if paused, err := PauseTDLTasksForShutdown(ctx, m.client, m.store, currentBaseURL(&m.links, m.baseURL), m.logger); err != nil {
+	if paused, err := PauseTDLTasksForShutdown(ctx, m.automatic, m.store, currentBaseURL(&m.links, m.baseURL), m.logger); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			m.logger.Warn("Failed to pause aria2 tasks during manager shutdown", zap.Error(err))
 		}

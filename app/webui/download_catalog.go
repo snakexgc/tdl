@@ -43,11 +43,9 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 
 	cfg := config.From(s.opts.Context)
 	downloaderMode := config.EffectiveDownloaderMode(cfg)
-	statusByGID := map[string]aria2Status{}
 	var statusErrText string
 	if downloaderMode == config.DownloaderModeAria2 && strings.TrimSpace(cfg.Aria2.RPCURL) != "" {
-		var statusErr error
-		statusByGID, statusErr = s.aria2Observer().Observe(ctx)
+		_, statusErr := s.aria2Observer().Observe(ctx)
 		if statusErr != nil {
 			statusErrText = statusErr.Error()
 		} else {
@@ -110,11 +108,8 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 				entry.Completed = record.Completed
 				entry.Error = record.Error
 			}
-			if st, ok := statusByGID[record.GID]; ok {
-				entry.Status = normalizedAria2Status(st.Status)
-				entry.Total, entry.Completed = aria2Lengths(st)
-				entry.Error = strings.TrimSpace(strings.TrimSpace(st.ErrorCode + " " + st.ErrorMessage))
-			}
+			// Only render observations accepted by taskhub. The raw RPC reply
+			// may have lost a race with pause/delete or source replacement.
 			observation.Aria2 = append(observation.Aria2, entry)
 		}
 		for _, internal := range internalByTask[task.ID] {
@@ -154,16 +149,5 @@ func (a catalogAdapter) Submission(ctx context.Context) (ports.LinkSubmissionRes
 	}
 	// Catalog submission must not expire unrelated associations as a side
 	// effect. The existing status maintenance runnable owns their cleanup.
-	return ports.LinkSubmissionResources{Records: records, Mode: config.EffectiveDownloaderMode(&cfg), PublicBaseURL: cfg.HTTP.PublicBaseURL, RemoteDir: cfg.Aria2.Dir, Limit: config.EffectiveLimit(&cfg), Connections: config.EffectivePoolSize(&cfg), Local: catalogLocalExecutor{a.server.internalDownloadController(), &cfg}, Remote: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.NewAria2Repository(a.repository.Store, 0)}, nil
-}
-
-type catalogLocalExecutor struct {
-	controller *watch.InternalDownloadController
-	cfg        *config.Config
-}
-
-func (catalogLocalExecutor) Name() string { return localDownloadExecutor }
-func (e catalogLocalExecutor) Submit(ctx context.Context, request types.DownloadSubmission) (types.DownloadResult, error) {
-	info, err := e.controller.AddLink(ctx, e.cfg, request.TaskID)
-	return types.DownloadResult{Account: request.Account, Target: e.Name(), ID: info.ID}, err
+	return ports.LinkSubmissionResources{Records: records, Mode: config.EffectiveDownloaderMode(&cfg), PublicBaseURL: cfg.HTTP.PublicBaseURL, RemoteDir: cfg.Aria2.Dir, Limit: config.EffectiveLimit(&cfg), Connections: config.EffectivePoolSize(&cfg), Local: a.server.opts.LocalLinks, Remote: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.NewAria2Repository(a.repository.Store, 0)}, nil
 }

@@ -44,7 +44,7 @@ func (s *Aria2Repository) Report(ctx context.Context, observation types.Aria2Tas
 		if err := json.Unmarshal(data, &current); err != nil {
 			return nil, stamp, err
 		}
-		if current.Revision != revision {
+		if current.Deleted || current.TaskID != observation.TaskID || current.Revision != revision || current.ControlUntil.After(time.Now()) {
 			return data, stamp, nil
 		}
 		if !types.DownloadTransition(types.NormalizeDownloadState(current.Status), types.NormalizeDownloadState(observation.Status)) {

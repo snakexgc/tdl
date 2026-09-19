@@ -25,7 +25,7 @@ func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, sto
 	t.Helper()
 	ref := func(group peers.Channel) types.ChatRef { return types.ChatRef(fmt.Sprintf("channel:%d", group.ID())) }
 	rules := []types.ForwardRule{
-		{ID: "live-fanout", Name: "Serial live fanout", Enabled: true, Sources: []types.ChatRef{ref(groups[0])}, Targets: []types.ChatRef{ref(groups[1]), ref(groups[2])}, Mode: "default", Silent: true},
+		{ID: "live-fanout", Name: "Serial live fanout", Enabled: true, Sources: []types.ChatRef{ref(groups[0])}, Targets: []types.ChatRef{ref(groups[1]), ref(groups[2])}, Mode: testForwardMode, Silent: true},
 		{ID: "live-overlap", Name: "Overlapping target", Enabled: true, Sources: []types.ChatRef{ref(groups[0])}, Targets: []types.ChatRef{ref(groups[1])}, Mode: "clone", Silent: true},
 	}
 	registry := rte.NewRegistry()
@@ -47,16 +47,29 @@ func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, sto
 	require.NoError(t, componentStore.Save(ctx, "forwarder", true, view))
 	queue := appforward.NewQueue(store)
 	queueCtx, cancel := context.WithCancel(ctx)
-	finished := make(chan error, 1)
+	ready, finished := make(chan struct{}), make(chan struct{})
+	var serveErr error
 	go func() {
-		finished <- queue.Serve(queueCtx, appforward.Runtime{Account: types.AccountID(cfg.Namespace), Pool: liveSinglePool{client.API()}, Manager: manager, PoolSize: 1, ComponentStore: componentStore})
+		defer close(finished)
+		serveErr = queue.Serve(queueCtx, appforward.Runtime{Account: types.AccountID(cfg.Namespace), Pool: liveSinglePool{client.API()}, Manager: manager, PoolSize: 1, ComponentStore: componentStore, Rules: policy, OnReady: func() { close(ready) }})
 	}()
 	defer func() { cancel(); <-finished }()
+	select {
+	case <-ready:
+	case <-finished:
+		return fmt.Errorf("forward component failed before binding: %w", serveErr)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	text := fmt.Sprintf("TDL serial fanout verification %d", time.Now().Unix())
 	messageID := liveSendText(t, ctx, client.API(), groups[0].InputPeer(), text)
+	message := types.ForwardMessage{Account: types.AccountID(cfg.Namespace), Peer: plainPeer(groups[0].InputPeer()), MessageID: messageID, Origin: "TDL private source", Automatic: true}
+	require.NoError(t, queue.SubmitMessage(ctx, message))
+	accepted, err := queue.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, accepted, 2)
 	for _, destination := range destinations {
-		id, err := queue.EnqueueRouted(ctx, plainPeer(groups[0].InputPeer()), messageID, 0, "TDL private source", destination)
-		require.NoError(t, err)
+		id := liveForwardJobID(t, accepted, messageID, destination.Target)
 		require.NoError(t, liveWait(ctx, func() (bool, error) {
 			jobs, err := queue.List(ctx)
 			if err != nil {
@@ -73,9 +86,13 @@ func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, sto
 			}
 			return false, nil
 		}))
-		duplicate, err := queue.EnqueueRouted(ctx, plainPeer(groups[0].InputPeer()), messageID, 0, "TDL private source", destination)
-		require.NoError(t, err)
-		require.Equal(t, id, duplicate)
+	}
+	require.NoError(t, queue.SubmitMessage(ctx, message))
+	replayed, err := queue.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, replayed, len(accepted))
+	for _, destination := range destinations {
+		require.Equal(t, liveForwardJobID(t, accepted, messageID, destination.Target), liveForwardJobID(t, replayed, messageID, destination.Target))
 	}
 	for _, group := range groups[1:] {
 		count, official := liveCountText(t, ctx, client.API(), group.InputPeer(), text)
@@ -90,8 +107,11 @@ func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, sto
 	require.Equal(t, "clone", destinations[0].Mode)
 	cloneText := fmt.Sprintf("TDL serial hot-rule clone verification %d", time.Now().Unix())
 	cloneID := liveSendText(t, ctx, client.API(), groups[0].InputPeer(), cloneText)
-	id, err := queue.EnqueueRouted(ctx, plainPeer(groups[0].InputPeer()), cloneID, 0, "TDL private source", destinations[0])
+	message.MessageID = cloneID
+	require.NoError(t, queue.SubmitMessage(ctx, message))
+	accepted, err = queue.List(ctx)
 	require.NoError(t, err)
+	id := liveForwardJobID(t, accepted, cloneID, destinations[0].Target)
 	require.NoError(t, liveWait(ctx, func() (bool, error) {
 		jobs, err := queue.List(ctx)
 		if err != nil {
@@ -114,6 +134,17 @@ func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, sto
 	require.Zero(t, count)
 	t.Log("hot rule update: only target A received one clone; disabled fanout sent nothing to target B")
 	return nil
+}
+
+func liveForwardJobID(t *testing.T, jobs []types.ForwardJob, messageID int, target types.ChatRef) string {
+	t.Helper()
+	for _, job := range jobs {
+		if job.SourceMessageID == messageID && job.Destination == string(target) {
+			return job.ID
+		}
+	}
+	t.Fatal("routed forward was not persisted")
+	return ""
 }
 
 func liveSendText(t *testing.T, ctx context.Context, api *tg.Client, peer tg.InputPeerClass, text string) int {

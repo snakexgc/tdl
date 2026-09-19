@@ -3,17 +3,38 @@ package webui
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/watch"
+	"github.com/snakexgc/tdl/application"
+	local "github.com/snakexgc/tdl/application/downloader.local"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 const testQueueDefault = "default"
+
+func savedLinksForTest(t *testing.T, store storage.Storage, cfg *config.Config) ports.DownloadExecutor {
+	t.Helper()
+	registry, err := application.Registry()
+	require.NoError(t, err)
+	host, err := registry.Build(types.DefaultAccount, map[string]bool{"naming.rules": true}, watch.PolicyValues(watch.DefaultOptions(cfg)))
+	require.NoError(t, err)
+	host.Start(context.Background())
+	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
+	value, err := host.Resolve(ports.NamingRulesName)
+	require.NoError(t, err)
+	return local.SavedLinks{Account: types.DefaultAccount, Root: cfg.Downloader.LocalRoot, FallbackRoot: filepath.Join(t.TempDir(), "downloads"), Naming: value.(ports.NamingRules), Source: httpdl.NewTaskStore(store, 0), Repository: taskhub.NewLocalRepository(store)}
+}
 
 func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	initWebUITestConfig(t)
@@ -56,7 +77,7 @@ func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	}}
 	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
-	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
+	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV, LocalLinks: savedLinksForTest(t, namespaceKV, cfg)})
 
 	result := server.downloadLinks(context.Background(), []string{"document_42"})
 	require.True(t, result.OK)
@@ -126,9 +147,12 @@ func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.
 	require.True(t, raw.Downloaded)
 	require.Equal(t, "document", raw.Media.Location.Kind)
 
-	info, err := watch.NewInternalDownloadController(namespaceKV).AddLink(context.Background(), cfg, "document_42")
+	_, err = savedLinksForTest(t, namespaceKV, cfg).Submit(context.Background(), types.DownloadSubmission{Account: types.DefaultAccount, TaskID: "document_42"})
 	require.NoError(t, err)
-	require.Equal(t, watch.InternalDownloadStatusQueued, info.Status)
+	items, err := watch.NewInternalDownloadController(namespaceKV).List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, watch.InternalDownloadStatusQueued, items[0].Status)
 }
 
 func TestDownloadLinksUsesCompletedHTTPDeliveryStatus(t *testing.T) {

@@ -10,11 +10,44 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
+const (
+	apiIDField   = "api_id"
+	apiHashField = "api_hash"
+)
+
+type filterPort struct{ manager *Manager }
+
+func (p filterPort) ShouldHandle(ctx context.Context, in ports.FilterInput) (bool, ports.Reason) {
+	value, err := p.manager.componentPort(ports.FilterRulesName)
+	if err != nil {
+		return false, ports.Reason("filter_unavailable")
+	}
+	return value.(ports.FilterRules).ShouldHandle(ctx, in)
+}
+
+type namingPort struct{ manager *Manager }
+
+func (p namingPort) Render(ctx context.Context, in ports.NamingInput) (ports.NamingResult, error) {
+	value, err := p.manager.componentPort(ports.NamingRulesName)
+	if err != nil {
+		return ports.NamingResult{}, err
+	}
+	return value.(ports.NamingRules).Render(ctx, in)
+}
+
+func (p namingPort) Unique(ctx context.Context, in []ports.NamingResult) ([]ports.NamingResult, error) {
+	value, err := p.manager.componentPort(ports.NamingRulesName)
+	if err != nil {
+		return nil, err
+	}
+	return value.(ports.NamingRules).Unique(ctx, in)
+}
+
 func daemonComponentValues(cfg *config.Config) map[string]map[string]any {
 	values := watch.PolicyValues(watch.DefaultOptions(cfg))
 	values["trigger.reaction"] = map[string]any{"download": append([]string{}, cfg.TriggerReactions...), "forward": append([]string{}, cfg.Forward.TriggerReactions...)}
 	values["trigger.messagelink"] = map[string]any{}
-	values["account.telegram"] = map[string]any{"api_id": cfg.Telegram.APIID, "api_hash": cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, "use_builtin": cfg.Telegram.UseBuiltin}
+	values["account.telegram"] = map[string]any{apiIDField: cfg.Telegram.APIID, apiHashField: cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, "use_builtin": cfg.Telegram.UseBuiltin}
 	values["update.self"] = map[string]any{"proxy": config.EffectiveProxy(cfg)}
 	return values
 }

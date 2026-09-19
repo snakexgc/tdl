@@ -53,6 +53,9 @@ func handleDownloadCommand(
 	aria2Factory aria2ControllerFactory,
 	internalFactory internalDownloadControllerFactory,
 ) (bool, error) {
+	if commandName(text) == botCmdAria2Retry {
+		return handleAria2Command(ctx, msg, text, aria2Factory)
+	}
 	if config.EffectiveDownloaderMode(botConfiguration(ctx)) == config.DownloaderModeInternal {
 		return handleInternalDownloadCommand(ctx, msg, text, internalFactory)
 	}

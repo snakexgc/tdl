@@ -56,21 +56,23 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		if binding.id != id {
 			continue
 		}
+		bootstrap := config.From(m.parent)
 		if m.componentStore != nil {
 			if err := m.directory.SetEnabled(ctx, binding.component, enabled); err != nil {
 				return webui.ModuleState{}, err
 			}
 		} else {
-			next, err := config.Clone(config.Get())
+			next, err := config.Clone(bootstrap)
 			if err != nil {
 				return webui.ModuleState{}, err
 			}
 			binding.set(next, enabled)
-			if err := config.Set(next); err != nil {
+			if err := config.CompareAndSet(ctx, bootstrap, next); err != nil {
 				return webui.ModuleState{}, err
 			}
+			bootstrap = next
 		}
-		cfg, flags, err := componentconfig.Load(ctx, m.componentStore, config.Get())
+		cfg, flags, err := componentconfig.Load(ctx, m.componentStore, bootstrap)
 		if err != nil {
 			return webui.ModuleState{}, err
 		}

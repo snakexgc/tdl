@@ -6,9 +6,99 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/internal/migration"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
 )
+
+func TestCredentialSaveKeepsActiveAccountResources(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.DefaultConfig()
+	cfg.Modules = config.ModulesConfig{}
+	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
+	require.NoError(t, err)
+	manager := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: directory})
+	t.Cleanup(manager.Shutdown)
+	require.NoError(t, manager.configurationErr)
+	owner, connections := manager.accountHost, manager.connections
+	require.NoError(t, manager.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 12345, apiHashField: "0123456789abcdef0123456789abcdef"}))
+	manager.transitionWG.Wait()
+	require.Same(t, owner, manager.accountHost, "credentials apply to future clients without disconnecting current transfers")
+	require.Same(t, connections, manager.connections)
+	credentials, err := manager.Resolve(ctx, manager.downloadAccount, "")
+	require.NoError(t, err)
+	require.Equal(t, 12345, credentials.App.AppID)
+}
+
+func TestComponentEditsKeepAccountBootConfiguration(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.DefaultConfig()
+	cfg.Namespace = "isolated"
+	cfg.Delay = 42
+	cfg.Modules = config.ModulesConfig{}
+	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
+	require.NoError(t, err)
+	m := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: directory})
+	t.Cleanup(m.Shutdown)
+	require.NoError(t, m.configurationErr)
+	owner := m.accountHost
+	require.NoError(t, m.SaveComponentConfiguration(ctx, ports.NamingRulesName, map[string]any{"directory": "saved/P"}))
+	m.transitionWG.Wait()
+	_, err = m.SetModuleEnabled(ctx, moduleIDAria2, false)
+	require.NoError(t, err)
+	m.transitionWG.Wait()
+	current := config.From(m.parent)
+	require.Equal(t, cfg.Namespace, current.Namespace)
+	require.Equal(t, cfg.Delay, current.Delay)
+	require.Same(t, owner, m.accountHost)
+	require.Equal(t, m.downloadAccount, m.policies.Health().Account)
+}
+
+func TestConnectionFeatureTogglesDoNotChangeTransportDependencies(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Modules = config.ModulesConfig{Watch: true, Forward: true}
+	m := NewManager(config.WithSource(context.Background(), config.NewSource(cfg)), nil, nil, Options{})
+	t.Cleanup(m.Shutdown)
+	watchUnit := func(cfg *config.Config) rte.ManagedUnit {
+		for _, unit := range m.managedUnits(cfg) {
+			if unit.ID == moduleIDWatch {
+				return unit
+			}
+		}
+		t.Fatal("missing connection owner")
+		return rte.ManagedUnit{}
+	}
+	original := watchUnit(cfg)
+	nextForward := *cfg
+	nextForward.Forward.Target = "chat:123"
+	nextForward.Forward.Listen = []string{"channel:456"}
+	nextForward.Forward.Silent = true
+	require.Equal(t, original.Revision, watchUnit(&nextForward).Revision)
+	opts := m.watchOptions(cfg)
+	m.configSource.Replace(&nextForward)
+	require.Equal(t, nextForward.Forward.Target, opts.ForwardConfig().Target)
+	require.Equal(t, nextForward.Forward.Listen, opts.ForwardConfig().Listen)
+	for _, mode := range []config.ModulesConfig{{Watch: true}, {Forward: true}} {
+		next := *cfg
+		next.Modules = mode
+		m.configured = map[string]bool{ports.FilterRulesName: false, ports.NamingRulesName: false, forwardComponentID: false, localComponentID: false}
+		current := watchUnit(&next)
+		require.True(t, current.Enabled)
+		require.Equal(t, original.Revision, current.Revision)
+		require.Equal(t, original.Requires, current.Requires)
+	}
+	for _, consumer := range []string{localComponentID, forwardComponentID} {
+		next := *cfg
+		next.Modules = config.ModulesConfig{}
+		m.configured = map[string]bool{consumer: true}
+		current := watchUnit(&next)
+		require.True(t, current.Enabled, "enabled queue consumer must retain the connection")
+		require.Equal(t, original.Revision, current.Revision)
+		m.configured = map[string]bool{}
+		require.False(t, watchUnit(&next).Enabled)
+	}
+}
 
 func TestDownloadMetadataDoesNotRestartTransports(t *testing.T) {
 	cfg := config.DefaultConfig()

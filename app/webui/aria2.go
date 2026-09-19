@@ -121,10 +121,6 @@ func checkAria2(ctx context.Context, cfg config.Aria2Config) aria2CheckResult {
 
 type aria2TaskRecord = types.Aria2TaskRecord
 
-type (
-	aria2Status = types.Aria2DownloadStatus
-)
-
 func (s *Server) aria2Observer() ariacomponent.Observer {
 	cfg := config.From(s.opts.Context)
 	return ariacomponent.Observer{Client: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: s.opts.NamespaceKV, Engine: s.opts.KVEngine, Namespace: s.namespace()}}, PublicBaseURL: cfg.HTTP.PublicBaseURL, TTL: time.Duration(cfg.HTTP.DownloadLinkTTLHours) * time.Hour}
@@ -140,6 +136,9 @@ func (s *Server) parseAria2Records(pairs map[string][]byte) (map[string]aria2Tas
 		var record aria2TaskRecord
 		if err := json.Unmarshal(data, &record); err != nil {
 			return nil, nil, errors.Wrapf(err, "decode %s", key)
+		}
+		if record.Deleted {
+			continue
 		}
 		if record.GID == "" {
 			record.GID = strings.TrimPrefix(key, aria2TaskKeyPrefix)
@@ -455,30 +454,10 @@ func callAria2(ctx context.Context, cfg config.Aria2Config, method string, param
 	return json.Unmarshal(raw, result)
 }
 
-func aria2Lengths(status aria2Status) (total, completed int64) {
-	total = parseAria2Length(status.TotalLength)
-	completed = parseAria2Length(status.CompletedLength)
-	if total == 0 && len(status.Files) > 0 {
-		for _, file := range status.Files {
-			total += parseAria2Length(file.Length)
-			completed += parseAria2Length(file.CompletedLength)
-		}
-	}
-	return total, completed
-}
-
 func parseAria2Length(value string) int64 {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || parsed < 0 {
 		return 0
 	}
 	return parsed
-}
-
-func normalizedAria2Status(status string) string {
-	status = strings.TrimSpace(status)
-	if status == "" {
-		return "active"
-	}
-	return status
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/go-faster/errors"
 
@@ -116,24 +115,22 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		"update":     info,
 		fieldMessage: fmt.Sprintf("更新包已下载，准备更新到 %s 并重启。", info.LatestVersion),
 	})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.opts.RequestUpdate(plan)
-	}()
+	_ = http.NewResponseController(w).Flush()
+	s.opts.RequestUpdate(plan)
 }
 
 func (s *Server) checkUpdate(r *http.Request) (updater.Info, error) {
 	if s.opts.Updater != nil {
 		return s.opts.Updater.Check(r.Context())
 	}
-	return updater.CheckLatest(r.Context(), config.EffectiveProxy(config.Get()))
+	return updater.CheckLatest(r.Context(), config.EffectiveProxy(config.From(s.opts.Context)))
 }
 
 func (s *Server) downloadUpdate(r *http.Request) (updater.Plan, updater.Info, error) {
 	if s.opts.Updater != nil {
 		return s.opts.Updater.Download(r.Context())
 	}
-	return updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.Get()))
+	return updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.From(s.opts.Context)))
 }
 
 func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
@@ -150,10 +147,8 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldMessage: "正在重启 tdl"})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.opts.RequestReboot()
-	}()
+	_ = http.NewResponseController(w).Flush()
+	s.opts.RequestReboot()
 }
 
 func publicConfig(cfg *config.Config) *config.Config { return panel.PublicConfig(cfg) }

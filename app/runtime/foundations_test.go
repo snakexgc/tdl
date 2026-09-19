@@ -17,11 +17,16 @@ import (
 	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
+const (
+	localComponentID   = "downloader.local"
+	forwardComponentID = "forwarder"
+)
+
 func TestProductionStopTimeoutRetainsAccountOwnerUntilConsumerExits(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
 	ctx := config.WithSource(context.Background(), config.NewSource(cfg))
-	engine, err := kv.New(kv.DriverFile, map[string]any{"path": filepath.Join(t.TempDir(), "state")})
+	engine, err := kv.New(kv.DriverFile, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "state")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open(cfg.Namespace)
@@ -67,6 +72,19 @@ func TestProductionFoundationsAreClosedByTheDeclaredGraph(t *testing.T) {
 	require.Nil(t, manager.downloadHost)
 	require.ErrorIs(t, owner.Context().Err(), context.Canceled)
 	manager.Shutdown()
+}
+
+func TestHeadlessStartupRecognizesIndependentConnectionConsumers(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Modules = config.ModulesConfig{}
+	manager := &Manager{configured: map[string]bool{localComponentID: false, forwardComponentID: false}}
+	require.False(t, manager.hasRunnableModule(cfg))
+	for _, component := range []string{localComponentID, forwardComponentID} {
+		manager.configured[component] = true
+		require.True(t, manager.connectionNeeded(cfg))
+		require.True(t, manager.hasRunnableModule(cfg), "headless startup must not stop an enabled %s", component)
+		manager.configured[component] = false
+	}
 }
 
 func TestProductionComponentToggleRetainsIndependentInstances(t *testing.T) {

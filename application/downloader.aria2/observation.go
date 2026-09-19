@@ -31,7 +31,8 @@ func (o Observer) configured() Observer {
 	return o
 }
 
-// Observe also returns the RPC snapshot for read-only control-plane rendering.
+// Observe returns the raw RPC snapshot, including observations rejected by the
+// repository's revision checks. Use a fresh repository snapshot for task state.
 // The repository snapshot always precedes network I/O for optimistic updates.
 func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadStatus, error) {
 	o = o.configured()
@@ -44,11 +45,11 @@ func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadSt
 	if err != nil {
 		return statuses, err
 	}
-	waiting, err := o.Client.TellWaiting(ctx, 0, aria2ControlBatchSize)
+	waiting, err := listTaskPages(ctx, o.Client.TellWaiting)
 	if err != nil {
 		return statuses, err
 	}
-	stopped, err := o.Client.TellStopped(ctx, 0, aria2ControlBatchSize)
+	stopped, err := listTaskPages(ctx, o.Client.TellStopped)
 	if err != nil {
 		return statuses, err
 	}
@@ -62,7 +63,13 @@ func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadSt
 	var result error
 	for gid, status := range statuses {
 		record, exists := snapshot.Records[gid]
+		if record.Deleted {
+			continue
+		}
 		if !exists {
+			if status.Status == string(types.DownloadRemoved) {
+				continue
+			}
 			id, uri := o.match(status, snapshot.Links)
 			if id == "" {
 				continue

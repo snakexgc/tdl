@@ -157,28 +157,24 @@ func TestEditMessageReactionRemovalClearsDedup(t *testing.T) {
 func TestShouldTriggerForwardReactionIgnoresListenSet(t *testing.T) {
 	// Empty listen set with a configured trigger reaction is a valid
 	// "react to forward" setup: reacting must still trigger a forward.
-	w := &Watcher{forward: &forwardRuntime{
-		enabled:          true,
-		listen:           map[int64]forwardListenEntry{},
-		triggerReactions: newTriggerReactionSet([]string{"🔥"}),
-	}}
+	w := &Watcher{opts: Options{Forward: true, ForwardTriggerReactions: []string{"🔥"}}}
 
 	myTrigger := &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
 	}
-	require.True(t, w.shouldTriggerForwardReaction(myTrigger))
+	require.True(t, w.shouldTriggerForwardReaction(context.Background(), myTrigger))
 
 	// A reaction that is not the configured trigger must not forward.
 	myOther := &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("👍", true)},
 	}
-	require.False(t, w.shouldTriggerForwardReaction(myOther))
+	require.False(t, w.shouldTriggerForwardReaction(context.Background(), myOther))
 
 	// Someone else's trigger reaction must not forward.
 	notMine := &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", false)},
 	}
-	require.False(t, w.shouldTriggerForwardReaction(notMine))
+	require.False(t, w.shouldTriggerForwardReaction(context.Background(), notMine))
 }
 
 func TestShouldTriggerForwardReactionRequiresEnabledForward(t *testing.T) {
@@ -187,33 +183,26 @@ func TestShouldTriggerForwardReactionRequiresEnabledForward(t *testing.T) {
 	}
 
 	// No forward runtime configured.
-	require.False(t, (&Watcher{}).shouldTriggerForwardReaction(reactions))
+	require.False(t, (&Watcher{}).shouldTriggerForwardReaction(context.Background(), reactions))
 
 	// Forward configured but not enabled.
-	disabled := &Watcher{forward: &forwardRuntime{
-		enabled:          false,
-		triggerReactions: newTriggerReactionSet([]string{"🔥"}),
-	}}
-	require.False(t, disabled.shouldTriggerForwardReaction(reactions))
+	disabled := &Watcher{opts: Options{ForwardTriggerReactions: []string{"🔥"}}}
+	require.False(t, disabled.shouldTriggerForwardReaction(context.Background(), reactions))
 }
 
 func TestShouldTriggerForwardReactionEmptyTriggerMatchesAnyEmoji(t *testing.T) {
 	// An empty forward trigger set means any of the current user's reactions
 	// forwards, mirroring the download trigger behaviour.
-	w := &Watcher{forward: &forwardRuntime{
-		enabled:          true,
-		listen:           map[int64]forwardListenEntry{},
-		triggerReactions: newTriggerReactionSet(nil),
-	}}
+	w := &Watcher{opts: Options{Forward: true}}
 
-	require.True(t, w.shouldTriggerForwardReaction(&tg.MessageReactions{
+	require.True(t, w.shouldTriggerForwardReaction(context.Background(), &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
 	}))
-	require.True(t, w.shouldTriggerForwardReaction(&tg.MessageReactions{
+	require.True(t, w.shouldTriggerForwardReaction(context.Background(), &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("👍", true)},
 	}))
 	// Still must be the current user's reaction, not someone else's.
-	require.False(t, w.shouldTriggerForwardReaction(&tg.MessageReactions{
+	require.False(t, w.shouldTriggerForwardReaction(context.Background(), &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", false)},
 	}))
 }

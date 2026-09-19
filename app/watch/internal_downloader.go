@@ -57,8 +57,8 @@ func (d *internalDownloader) requeueInterrupted(ctx context.Context) error {
 	return d.component().Recover(ctx)
 }
 func (d *internalDownloader) runTask(ctx context.Context, id string) { d.component().Execute(ctx, id) }
-func (d *internalDownloader) Add(ctx context.Context, task *httpdl.Task, prepared preparedFileTask) (InternalDownloadInfo, error) {
-	return d.component().Add(ctx, localSourceInfo(task), types.DownloadSubmission{Dir: prepared.dir, Out: prepared.out, FullPath: prepared.fullPath})
+func (d *internalDownloader) Add(ctx context.Context, task *httpdl.Task, target types.DownloadSubmission) (InternalDownloadInfo, error) {
+	return d.component().Add(ctx, localSourceInfo(task), target)
 }
 
 type localSource struct {

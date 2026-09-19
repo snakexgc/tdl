@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "enabled": true,
+  "values": {
+    "directory": "G\\Y\u0026M",
+    "filename": "P_S_F",
+    "max_bytes": 255
+  }
+}

@@ -12,6 +12,7 @@ import (
 type MessageLinkSubmissionResult = types.DownloadSubmissionSummary
 
 type messageLinkSubmission struct {
+	ctx   context.Context
 	link  string
 	reply chan messageLinkSubmissionResponse
 }
