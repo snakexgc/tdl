@@ -30,7 +30,7 @@ func TestBotComponentConfigurationPersistence(t *testing.T) {
 	require.NoError(t, manager.initDirectory())
 	configurations, editable := manager.ComponentConfigurations()
 	require.True(t, editable)
-	require.Len(t, configurations, 17)
+	require.Len(t, configurations, 18)
 	// Missing documents use schema defaults, never the legacy permission list.
 	require.False(t, console.Allowed(types.DefaultAccount, 42))
 	const consoleID = "console.bot"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -41,6 +42,7 @@ type TelegramErrorRegulator struct {
 	client        TelegramErrorRegulatorClient
 	store         ports.Aria2Repository
 	publicBaseURL string
+	links         *atomic.Pointer[linkPolicy]
 	logger        *zap.Logger
 	cfg           telegramErrorRegulatorConfig
 
@@ -226,7 +228,7 @@ func (r *TelegramErrorRegulator) activeOwnedTasks(ctx context.Context) ([]Downlo
 	if err != nil {
 		return nil, errors.Wrap(err, "load tdl aria2 task registry")
 	}
-	downloadPrefix, err := aria2DownloadURLPrefix(r.publicBaseURL)
+	downloadPrefix, err := aria2DownloadURLPrefix(currentBaseURL(r.links, r.publicBaseURL))
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/internal/core/util/fsutil"
 	"github.com/snakexgc/tdl/internal/core/util/logutil"
+	"github.com/snakexgc/tdl/internal/migration"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
@@ -113,7 +114,7 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
-	cmd.Flags().String("component-config", "", "directory for component configuration")
+	cmd.Flags().String("component-config", "", "component configuration directory (default: import once under the application components directory)")
 	cmd.AddCommand(NewVersion(), NewMigrateConfig())
 
 	return cmd
@@ -125,10 +126,17 @@ func runBot(cmd *cobra.Command) error {
 		return err
 	}
 	if directory == "" {
-		if err := ensureStartupNTP(cmd.Context()); err != nil {
+		if _, statErr := os.Stat(migration.ComponentDirectory(consts.HomeDir, config.Get().Namespace)); os.IsNotExist(statErr) {
+			if err := ensureStartupNTP(cmd.Context()); err != nil {
+				return err
+			}
+		}
+		directory, err = migration.EnsureComponents(cmd.Context(), consts.HomeDir, config.Get())
+		if err != nil {
 			return err
 		}
 	}
+	logctx.From(cmd.Context()).Info("Component configuration", zap.String("directory", directory))
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
 		ComponentConfigDir: directory,
 		RequestReboot:      bot.RequestReboot,

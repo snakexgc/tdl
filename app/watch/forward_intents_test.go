@@ -12,6 +12,21 @@ import (
 	"github.com/snakexgc/tdl/rte/eventbus"
 )
 
+type fixedForwardRules struct{}
+
+func (fixedForwardRules) Destinations(context.Context, types.ChatRef) []types.ForwardDestination {
+	return []types.ForwardDestination{{Target: "channel:99", Mode: "default"}}
+}
+
+func TestRuleForwardingWorksWithoutLegacyDefaultTarget(t *testing.T) {
+	port := &rejectingForwardIntents{}
+	w := &Watcher{opts: Options{Account: forwardIntentAccount, Forward: true, ForwardRules: fixedForwardRules{}}, forwardIntents: port}
+	err := w.forwardUpdateMessage(context.Background(), tg.Entities{Channels: map[int64]*tg.Channel{12: {ID: 12, AccessHash: 34}}}, &tg.Message{PeerID: &tg.PeerChannel{ChannelID: 12}, ID: 56})
+	require.ErrorIs(t, err, eventbus.ErrFull)
+	require.True(t, port.received.Automatic)
+	require.Equal(t, int64(12), port.received.Peer.ID)
+}
+
 type rejectingForwardIntents struct{ received types.ForwardIntent }
 
 const forwardIntentAccount = "alice"

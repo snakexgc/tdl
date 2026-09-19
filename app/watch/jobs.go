@@ -315,6 +315,9 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 		if err != nil {
 			return preparedFileTask{}, false, err
 		}
+		if current.Mode == "" {
+			current.Mode = config.EffectiveDownloaderMode(config.From(ctx))
+		}
 		route = &current
 		if len(current.Executors) > 0 {
 			route, localPaths = &current, false
@@ -323,11 +326,16 @@ func (w *Watcher) prepareSingle(ctx context.Context, file fileTask) (preparedFil
 				root = current.LocalRoot
 			}
 		} else if cfg := config.From(ctx); cfg != nil {
-			localPaths = config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal
+			localPaths = current.Mode == config.DownloaderModeInternal || current.Mode == "internal"
 			root = cleanTargetRoot(cfg.Aria2.Dir)
 			if localPaths {
 				var err error
-				root, _, err = prepareInternalOutputRoot(cfg)
+				if current.LocalRoot != "" {
+					root = current.LocalRoot
+					err = ensureWritableDir(root)
+				} else {
+					root, _, err = prepareLocalRoot("")
+				}
 				if err != nil {
 					return preparedFileTask{}, false, err
 				}
@@ -387,7 +395,11 @@ func (w *Watcher) submitSingle(ctx context.Context, prepared preparedFileTask) e
 		return w.submitRouted(ctx, prepared, task.ID, route)
 	}
 
-	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
+	mode := route.Mode
+	if mode == "" {
+		mode = config.EffectiveDownloaderMode(cfg)
+	}
+	if mode == config.DownloaderModeInternal || mode == "internal" {
 		if _, err := downloadcontrol.NewRouter(w.reactionAccount(), w.runtime.local).Submit(ctx, types.DownloadSubmission{Account: w.reactionAccount(), TaskID: task.ID, Dir: prepared.dir, Out: prepared.out, FullPath: prepared.fullPath}); err != nil {
 			return errors.Wrap(err, "queue internal download")
 		}

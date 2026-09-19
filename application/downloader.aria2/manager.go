@@ -27,7 +27,10 @@ type Manager struct {
 	regulator     *TelegramErrorRegulator
 	monitor       *ZeroSpeedMonitor
 	limit         int
+	transferLimit atomic.Int64
+	limitChanged  chan struct{}
 	baseURL       string
+	links         atomic.Pointer[linkPolicy]
 	logger        *zap.Logger
 }
 
@@ -37,14 +40,17 @@ func NewManager(opts Options, logger *zap.Logger) *Manager {
 	}
 	m := &Manager{
 		statusChanged: make(chan struct{}, 1), retryChanged: make(chan struct{}, 1),
-		controller: NewController(opts, logger), client: opts.Client, store: opts.Store,
+		limitChanged: make(chan struct{}, 1),
+		controller:   NewController(opts, logger), client: opts.Client, store: opts.Store,
 		regulator: NewTelegramErrorRegulator(opts.Client, opts.Store, opts.PublicBaseURL, logger),
 		monitor:   NewZeroSpeedMonitor(opts.Client, opts.Store, opts.PublicBaseURL, logger),
 		limit:     opts.Limit, baseURL: opts.PublicBaseURL, logger: logger,
 	}
 	if opts.Observations != nil {
-		m.observer = &Observer{Client: opts.Client, Repository: opts.Observations, PublicBaseURL: opts.PublicBaseURL, TTL: opts.LinkTTL}
+		m.observer = &Observer{Client: opts.Client, Repository: opts.Observations, PublicBaseURL: opts.PublicBaseURL, TTL: opts.LinkTTL, links: &m.links}
 	}
+	m.UpdateLinkPolicy(opts.PublicBaseURL, opts.LinkTTL)
+	m.controller.links, m.monitor.links, m.regulator.links = &m.links, &m.links, &m.links
 	m.monitor.configuration = func() zeroSpeedMonitorConfig { return m.policy().monitor }
 	m.regulator.configuration = func() telegramErrorRegulatorConfig { return m.policy().regulator }
 	return m
@@ -52,6 +58,25 @@ func NewManager(opts Options, logger *zap.Logger) *Manager {
 
 func (m *Manager) Name() string {
 	return aria2DownloaderName
+}
+
+// UpdateTransferLimits changes scheduling without pausing existing aria2 jobs.
+// RPC failures are retried by the manager while transfer workers keep running.
+func (m *Manager) UpdateTransferLimits(files, connections int) {
+	m.controller.connectionLimit.Store(int64(max(1, connections)))
+	if m.transferLimit.Swap(int64(max(1, files))) != int64(max(1, files)) {
+		select {
+		case m.limitChanged <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (m *Manager) fileLimit() int {
+	if limit := m.transferLimit.Load(); limit > 0 {
+		return int(limit)
+	}
+	return m.limit
 }
 
 func (m *Manager) Submit(ctx context.Context, submission types.DownloadSubmission) (types.DownloadResult, error) {
@@ -81,7 +106,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		return err
 	}
 
-	m.logger.Info("Aria2 manager connected", zap.Int("max_concurrent_downloads", m.limit))
+	m.logger.Info("Aria2 manager connected", zap.Int("max_concurrent_downloads", m.fileLimit()))
 	governors := schedule.New(ctx)
 	defer func() {
 		// The owning RTE enforces the caller's stop deadline. Keep this
@@ -96,7 +121,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	if count, err := ResumeStartupPausedTasks(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
+	if count, err := ResumeStartupPausedTasks(ctx, m.client, m.store, currentBaseURL(&m.links, m.baseURL), m.logger); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			m.logger.Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
 		}
@@ -104,11 +129,14 @@ func (m *Manager) Run(ctx context.Context) error {
 		m.logger.Info("Resumed paused aria2 tasks at startup", zap.Int("count", count))
 	}
 
+	if err := governors.Run("transfer-limits", 0, 0, m.applyTransferLimits, nil); err != nil {
+		return err
+	}
 	<-ctx.Done()
 	if err := governors.Stop(context.Background()); err != nil {
 		return errors.Wrap(err, "stop aria2 governors")
 	}
-	if paused, err := PauseTDLTasksForShutdown(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
+	if paused, err := PauseTDLTasksForShutdown(ctx, m.client, m.store, currentBaseURL(&m.links, m.baseURL), m.logger); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			m.logger.Warn("Failed to pause aria2 tasks during manager shutdown", zap.Error(err))
 		}
@@ -129,7 +157,7 @@ func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duratio
 	}
 	delay := min(retryInterval, m.policy().maximum)
 	for {
-		err := m.client.SetMaxConcurrentDownloads(ctx, m.limit)
+		err := m.client.SetMaxConcurrentDownloads(ctx, m.fileLimit())
 		if err == nil {
 			return nil
 		}
@@ -158,6 +186,34 @@ func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duratio
 			continue
 		}
 		delay = min(delay*2, m.policy().maximum)
+	}
+}
+
+func (m *Manager) applyTransferLimits(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-m.limitChanged:
+		}
+		for ctx.Err() == nil {
+			bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := m.client.SetMaxConcurrentDownloads(bounded, m.fileLimit())
+			cancel()
+			if err == nil {
+				break
+			}
+			m.logger.Warn("Cannot apply aria2 transfer limit; retrying", zap.Error(err))
+			timer := time.NewTimer(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			case <-m.limitChanged:
+				timer.Stop()
+			}
+		}
 	}
 }
 

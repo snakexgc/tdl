@@ -64,6 +64,7 @@ func (s *Service) UpdateConfig(cfg *config.Config) bool {
 	}
 	restart := s.proxy.updateConfig(cfg.HTTP)
 	s.proxy.Scheduler().Reconfigure(config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg))
+	s.pools.Resize(int64(config.EffectivePoolSize(cfg)))
 	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
 		s.proxy.SetTaskTTL(0)
 	} else {

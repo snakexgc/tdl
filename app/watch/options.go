@@ -15,6 +15,7 @@ import (
 )
 
 type Options struct {
+	ForwardRules            ports.ForwardRules
 	Connections             *tgauth.Connections
 	ComponentStore          *rteconfig.Store
 	SetIntentHost           func(*rte.Runtime)

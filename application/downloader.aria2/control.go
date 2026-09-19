@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -27,12 +28,14 @@ const (
 )
 
 type Controller struct {
-	account       types.AccountID
-	client        ControlClient
-	store         ports.Aria2Repository
-	publicBaseURL string
-	connections   int
-	logger        *zap.Logger
+	account         types.AccountID
+	client          ControlClient
+	store           ports.Aria2Repository
+	publicBaseURL   string
+	links           *atomic.Pointer[linkPolicy]
+	connections     int
+	connectionLimit atomic.Int64
+	logger          *zap.Logger
 }
 
 type Options struct {
@@ -55,6 +58,13 @@ func NewController(opts Options, logger *zap.Logger) *Controller {
 
 func (c *Controller) Name() string {
 	return aria2DownloaderName
+}
+
+func (c *Controller) transferConnections() int {
+	if value := c.connectionLimit.Load(); value > 0 {
+		return int(value)
+	}
+	return c.connections
 }
 
 // Submit implements download.Submitter. Task creation and link generation stay
@@ -80,7 +90,7 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 	gid, err := c.client.AddURI(ctx, submission.DownloadURL, AddURIOptions{
 		Dir:         submission.Dir,
 		Out:         submission.Out,
-		Connections: c.connections,
+		Connections: c.transferConnections(),
 	})
 	if err != nil {
 		return types.DownloadResult{}, errors.Wrap(err, "add aria2 uri")
@@ -312,7 +322,7 @@ func (c *Controller) RetryStopped(ctx context.Context) (ActionResult, error) {
 		gid, err := c.client.AddURI(ctx, downloadURL, AddURIOptions{
 			Dir:         next.Dir,
 			Out:         next.Out,
-			Connections: c.connections,
+			Connections: c.transferConnections(),
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", task.GID, err))
@@ -429,10 +439,14 @@ func (c *Controller) listStopped(ctx context.Context) ([]DownloadStatus, error) 
 }
 
 func (c *Controller) downloadPrefix() (string, error) {
-	if c == nil || c.publicBaseURL == "" {
+	if c == nil {
 		return "", nil
 	}
-	return aria2DownloadURLPrefix(c.publicBaseURL)
+	base := currentBaseURL(c.links, c.publicBaseURL)
+	if base == "" {
+		return "", nil
+	}
+	return aria2DownloadURLPrefix(base)
 }
 
 func aria2TaskInfo(task DownloadStatus) TaskInfo {

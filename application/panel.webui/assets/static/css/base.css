@@ -796,3 +796,17 @@ tr:last-child td {
     padding: 14px;
   }
 }
+.module-tabs { display: flex; gap: 6px; padding: 5px; margin-bottom: 22px; border-radius: 12px; background: var(--bg-strong); width: fit-content; }
+.module-tabs [role="tab"] { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 10px 25px; border-radius: 8px; font: inherit; transition: background 160ms ease, box-shadow 160ms ease; }
+.module-tabs [aria-selected="true"] { background: var(--panel); color: var(--primary-dark); box-shadow: var(--shadow-sm); }
+.module-tab-panel:not([hidden]) { animation: module-tab-enter 160ms ease-out; }
+.module-tab-panel[hidden] { display: none; }
+.component-form { padding: 22px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.component-form .component-field > span { display: block; margin-bottom: 7px; }
+.component-form h2 { font-size: 18px; margin: 0 0 12px; }
+.component-form > .btn { margin: 0 8px 8px 0; }
+.component-form textarea, .component-form input:not([type="checkbox"]), .component-form select { width: 100%; max-width: 680px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 7px; font: inherit; }
+.component-form textarea { min-height: 78px; resize: vertical; }
+.heartbeat[data-state="fallback"] .heartbeat-dot { background: #d99416; }
+@keyframes module-tab-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .module-tab-panel:not([hidden]) { animation: none; } .module-tabs [role="tab"] { transition: none; } }

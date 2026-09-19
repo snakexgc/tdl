@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,21 +19,30 @@ func (s *Server) handleForwards(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
+	data, err := s.forwardsSnapshot(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) forwardsSnapshot(ctx context.Context) (any, error) {
 	queue := s.opts.ForwardQueue
-	items, err := queue.List(r.Context())
+	items, err := queue.List(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+		return nil, err
 	}
-	running, err := queue.RunningCount(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	running := 0
+	for _, job := range items {
+		if !job.Terminal() {
+			running++
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		fieldItems:   items,
 		fieldRunning: running,
-	})
+	}, nil
 }
 
 // handleForwardActions applies bulk pause/resume/delete to forward jobs.

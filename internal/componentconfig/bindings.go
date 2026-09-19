@@ -19,7 +19,7 @@ func Bindings() []Binding {
 		{"trigger.download", "modules.watch", nil},
 		{"trigger.forward", "modules.forward", map[string]string{"listen": "forward.listen", "listen_comments": "forward.listen_comments"}},
 		{"downloader.aria2", "modules.aria2", map[string]string{"rpc_url": "aria2.rpc_url", "secret": "aria2.secret", "directory": "aria2.dir", "timeout_seconds": "aria2.timeout_seconds", "auto_download": "aria2.auto_download"}},
-		{"download.control", "", map[string]string{"mode": "downloader.mode"}},
+		{"download.control", "", map[string]string{"mode": "downloader.mode", "local_root": "downloader.local_root"}},
 		{"proxy.range", "modules.http", map[string]string{"address": "http.address", "port": "http.port", "public_base_url": "http.public_base_url", "link_ttl_hours": "http.download_link_ttl_hours"}},
 		{"panel.webui", "modules.webui", map[string]string{"address": "webui.address", "port": "webui.port", "username": "webui.username", "password": "webui.password"}},
 		{"forwarder", "", map[string]string{"mode": "forward.mode", "target": "forward.target", "silent": "forward.silent", "dedupe_ttl_seconds": "forward.dedupe_ttl_seconds"}},

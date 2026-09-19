@@ -22,10 +22,18 @@ func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request)
 		methodNotAllowed(w, "GET")
 		return
 	}
-	items, err := s.downloadControl().Tasks(r.Context(), s.downloadAccount(), localDownloadExecutor)
+	data, err := s.internalDownloadsSnapshot(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) internalDownloadsSnapshot(ctx context.Context) (any, error) {
+	items, err := s.downloadControl().Tasks(ctx, s.downloadAccount(), localDownloadExecutor)
+	if err != nil {
+		return nil, err
 	}
 	overview := watch.InternalDownloadOverview{Total: len(items)}
 	for _, item := range items {
@@ -43,10 +51,10 @@ func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		fieldItems: items,
 		"overview": overview,
-	})
+	}, nil
 }
 
 func (s *Server) handleInternalDownloadActions(w http.ResponseWriter, r *http.Request) {

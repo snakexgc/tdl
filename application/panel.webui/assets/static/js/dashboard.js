@@ -11,25 +11,22 @@ import {
   clampNumber,
 } from "./utils.js";
 
-const dashboardRefreshMS = 1000;
+import { observe } from "./events.js";
+let unobserve;
 
 export function initDashboard() {
   document.getElementById("refresh-dashboard").addEventListener("click", () => loadDashboard({ force: true }));
 }
 
 export async function loadDashboard(options = {}) {
+  startDashboardPolling();
   if (state.dashboardLoading) return;
   state.dashboardLoading = true;
   const silent = Boolean(options.silent);
   if (!silent) setDashboardStatus("正在刷新...");
   try {
     const data = await api("/api/dashboard");
-    pushDashboardSample(data);
-    renderDashboard();
-    const sampledAt = data.sampled_at ? formatTime(data.sampled_at) : formatTime(new Date().toISOString());
-    const errors = data.errors ? Object.values(data.errors).filter(Boolean) : [];
-    setDashboardStatus(errors.length ? `部分指标读取失败：${errors.join("；")}` : `更新于 ${sampledAt}`, errors.length ? "warn" : "");
-    startDashboardPolling();
+    receiveDashboard(data);
   } catch (error) {
     setDashboardStatus(error.message, "error");
   } finally {
@@ -37,22 +34,20 @@ export async function loadDashboard(options = {}) {
   }
 }
 
-function startDashboardPolling() {
-  if (state.dashboardPoll) return;
-  state.dashboardPoll = window.setInterval(() => {
-    const view = document.getElementById("view-dashboard");
-    if (!view || !view.classList.contains("active")) {
-      stopDashboardPolling();
-      return;
-    }
-    loadDashboard({ silent: true });
-  }, dashboardRefreshMS);
+function receiveDashboard(data, error) {
+  if (error) { setDashboardStatus(error, "error"); return; }
+    pushDashboardSample(data);
+    renderDashboard();
+    const sampledAt = data.sampled_at ? formatTime(data.sampled_at) : formatTime(new Date().toISOString());
+    const errors = data.errors ? Object.values(data.errors).filter(Boolean) : [];
+    setDashboardStatus(errors.length ? `部分指标读取失败：${errors.join("；")}` : `更新于 ${sampledAt}`, errors.length ? "warn" : "");
 }
-
+function startDashboardPolling() {
+  unobserve ||= observe("dashboard", receiveDashboard);
+}
 export function stopDashboardPolling() {
-  if (!state.dashboardPoll) return;
-  window.clearInterval(state.dashboardPoll);
-  state.dashboardPoll = null;
+  unobserve?.();
+  unobserve = null;
 }
 
 function pushDashboardSample(data) {

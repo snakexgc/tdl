@@ -20,13 +20,13 @@ const (
 
 func Manifest() manifest.Manifest {
 	return manifest.Manifest{
-		ID: ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 40}}, Title: "下载任务控制",
+		ID: ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 40, Settings: []string{"download.control", "downloader.aria2", "downloader.local", "proxy.range", "naming.rules", "filter.rules", "trigger.reaction"}}}, Title: "下载任务控制",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 1, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0)},
 		Config: []manifest.ConfigField{
-			manifest.Choice("mode", "Default download mode", "aria2", []string{"aria2", "local", "internal"}, true),
+			manifest.Choice("mode", "Default download mode", "aria2", []string{"aria2", "local", "internal"}, false),
 
 			{Name: executorsField, Title: "执行器优先级（local、aria2、http；空列表沿用旧模式）", Type: manifest.Strings, Default: []string{}},
-			{Name: "local_root", Title: "显式本地执行器的绝对根目录", Type: manifest.String, Default: ""},
+			{Name: "local_root", Title: "本地下载根目录（绝对路径；留空使用应用 downloads 目录）", Type: manifest.String, Default: ""},
 		},
 	}
 }
@@ -36,6 +36,9 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		return nil, err
 	}
 	var route ports.DownloadRoute
+	if err := view.Get("mode", &route.Mode); err != nil {
+		return nil, err
+	}
 	if err := view.Get(executorsField, &route.Executors); err != nil {
 		return nil, err
 	}
@@ -52,7 +55,7 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		}
 		seen[name] = true
 	}
-	if seen[localExecutor] && !filepath.IsAbs(route.LocalRoot) {
+	if (seen[localExecutor] || route.LocalRoot != "") && !filepath.IsAbs(route.LocalRoot) {
 		return nil, fmt.Errorf("local_root must be an absolute local path when local is selected")
 	}
 	return func() { s.route.Store(&route) }, nil
@@ -80,7 +83,7 @@ func (s *Service) Route(ctx context.Context, account types.AccountID) (ports.Dow
 		return ports.DownloadRoute{}, err
 	}
 	if route := s.route.Load(); route != nil {
-		return ports.DownloadRoute{Executors: slices.Clone(route.Executors), LocalRoot: route.LocalRoot}, nil
+		return ports.DownloadRoute{Mode: route.Mode, Executors: slices.Clone(route.Executors), LocalRoot: route.LocalRoot}, nil
 	}
 	return ports.DownloadRoute{}, nil
 }

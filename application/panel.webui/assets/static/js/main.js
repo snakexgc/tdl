@@ -1,8 +1,8 @@
 import { api } from "./api.js";
 import { escapeHTML } from "./utils.js";
 import { initRouter, stopPages } from "./router.js";
-import { loadStatus, openCredentialSettings } from "./status.js";
-import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
+import { loadStatus, renderStatus, openCredentialSettings } from "./status.js";
+import { startRealtime, stopRealtime, observe } from "./events.js";
 
 document.addEventListener("DOMContentLoaded", () => {
   bootstrap().catch(error => {
@@ -15,12 +15,14 @@ async function bootstrap() {
   document.getElementById("logout").addEventListener("click", logout);
   document.getElementById("credential-warning-action")?.addEventListener("click", openCredentialSettings);
   await initRouter();
+  window.addEventListener("configuration-changed", loadStatus);
   loadStatus();
-  startHeartbeat();
+  observe("status", (data, error) => { if (data && !error) renderStatus(data); });
+  startRealtime();
 }
 
 async function logout() {
-  stopHeartbeat();
+  stopRealtime();
   stopPages();
   try {
     await api("/api/auth/logout", { method: "POST", body: "{}" });

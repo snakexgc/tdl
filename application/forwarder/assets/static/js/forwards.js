@@ -5,7 +5,8 @@ import { state } from "./state.js";
 import { api } from "./api.js";
 import { escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
 
-const forwardRefreshMS = 1000;
+import { observe } from "./events.js";
+let unobserve;
 
 export function initForwards() {
   document.getElementById("forward-reload").addEventListener("click", () => loadForwards());
@@ -51,6 +52,7 @@ export function initForwards() {
 }
 
 export async function loadForwards(options = {}) {
+  startForwardPolling();
   if (state.forwardLoading) return;
   state.forwardLoading = true;
   const silent = Boolean(options.silent);
@@ -61,11 +63,7 @@ export async function loadForwards(options = {}) {
   }
   try {
     const data = await api("/api/forwards");
-    state.forwardTasks = Array.isArray(data.items) ? data.items : [];
-    setRunningBadge(Number(data.running || 0));
-    pruneForwardSelection();
-    renderForwards();
-    startForwardPolling();
+    receiveForwards(data);
   } catch (error) {
     if (!silent) {
       state.forwardTasks = [];
@@ -80,22 +78,15 @@ export async function loadForwards(options = {}) {
   }
 }
 
-function startForwardPolling() {
-  if (state.forwardPoll) return;
-  state.forwardPoll = window.setInterval(() => {
-    if (!document.getElementById("view-forwards").classList.contains("active")) {
-      stopForwardPolling();
-      return;
-    }
-    loadForwards({ silent: true });
-  }, forwardRefreshMS);
+function receiveForwards(data, error) {
+  if (error) { setForwardStatus(error, "error"); return; }
+    state.forwardTasks = Array.isArray(data.items) ? data.items : [];
+    setRunningBadge(Number(data.running || 0));
+    pruneForwardSelection();
+    renderForwards();
 }
-
-export function stopForwardPolling() {
-  if (!state.forwardPoll) return;
-  window.clearInterval(state.forwardPoll);
-  state.forwardPoll = null;
-}
+function startForwardPolling() { unobserve ||= observe("forwards", receiveForwards); }
+export function stopForwardPolling() { unobserve?.(); unobserve = null; }
 
 function renderForwards() {
   renderForwardSummary();

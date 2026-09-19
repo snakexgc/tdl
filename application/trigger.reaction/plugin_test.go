@@ -16,7 +16,7 @@ import (
 func TestReactionOwnershipAndDeduplication(t *testing.T) {
 	registry := rte.NewRegistry()
 	require.NoError(t, Register(registry))
-	host, err := registry.Build(types.DefaultAccount, nil, map[string]map[string]any{ID: {"download": []string{" fire "}, "forward": []string{}}})
+	host, err := registry.Build(types.DefaultAccount, nil, map[string]map[string]any{ID: {downloadField: []string{" fire "}, forwardField: []string{}}})
 	require.NoError(t, err)
 	ctx := context.Background()
 	require.Equal(t, rte.Running, host.Start(ctx)[0].State)
@@ -49,6 +49,12 @@ func TestReactionOwnershipAndDeduplication(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, int32(1), claims.Load())
+	require.NoError(t, host.Reconfigure(ctx, ID, map[string]any{
+		downloadField: []string{"fire", "new"}, forwardField: []string{},
+	}))
+	require.False(t, policy.Claim(ctx, key), "hot configuration keeps accepted work deduplicated")
+	input = ports.ReactionInput{Account: types.DefaultAccount, Reactions: []ports.Reaction{{Value: "new", Mine: true}}}
+	require.True(t, policy.Matches(ctx, input), "new reaction settings take effect immediately")
 	policy.Forget(key)
 	require.True(t, policy.Claim(ctx, key))
 	require.NoError(t, host.Stop(ctx))

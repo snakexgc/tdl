@@ -57,8 +57,8 @@ func Register(registry *rte.Registry, opts Options) error {
 
 func Manifest() manifest.Manifest {
 	return manifest.Manifest{ID: ID, Config: []manifest.ConfigField{manifest.Text("address", "Listen address", "0.0.0.0", false, true), manifest.Number("port", "Listen port", 22335, 1, 65535, true), manifest.FormattedText("username", "Login username", "admin", "nonempty", false, true), manifest.Text("password", "Login password", "admin", true, true)}, Title: "Web 管理面板", Pages: []manifest.Page{
-		{Path: "/dashboard", Title: "仪表盘", View: "dashboard", Module: "/static/js/dashboard.js", Style: "/static/css/dashboard.css", Order: 10},
-		{Path: "/config", Title: "配置文件", View: "config", Module: "/static/js/config.js", Style: "/static/css/config.css", Order: 30},
+		{Path: "/dashboard", Title: "仪表盘", View: "dashboard", Module: "/static/js/dashboard.js", Style: "/static/css/dashboard.css", Order: 10, Settings: []string{"download.control", "account.telegram", "proxy.range", "downloader.aria2", "downloader.local"}},
+		{Path: "/config", Title: "系统设置", View: "config", Module: "/static/js/config.js", Style: "/static/css/config.css", Order: 30, Settings: []string{"panel.webui", "console.bot", "notify.telegram", "update.self"}},
 		{Path: "/kv", Title: "KV 管理", View: "kv", Module: "/static/js/kv.js", Style: "/static/css/kv.css", Order: 60},
 		{Path: "/modules", Title: "模块管理", View: "modules", Module: "/static/js/modules.js", Style: "/static/css/modules.css", Order: 70},
 		{Path: "/components.html", Title: "组件配置", Order: 75},

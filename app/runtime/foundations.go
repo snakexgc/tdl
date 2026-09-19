@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/snakexgc/tdl/app/login"
@@ -22,19 +23,9 @@ const (
 // The long-lived owners use the same stop graph as their transport consumers.
 // A failed drain retains both the host pointer and every required provider.
 func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
-	policyStates := map[string]bool{}
-	catalog, err := application.Catalog()
-	if err != nil {
-		panic(err)
-	}
-	for _, definition := range catalog.Definitions() {
-		if definition.Factory != nil && definition.Host == "" {
-			policyStates[definition.Manifest.ID] = m.componentEnabled(definition.Manifest.ID)
-		}
-	}
 	return []rte.ManagedUnit{
 		{
-			ID: policyResource, Enabled: true, Revision: revision(policyStates),
+			ID: policyResource, Enabled: true,
 			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.policies != nil },
 			Start: func(context.Context) error {
 				host, filter, naming, err := newPolicyHostStored(m.parent, cfg, m.componentStore)
@@ -50,9 +41,32 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 				m.mu.Lock()
 				host := m.policies
 				m.mu.Unlock()
-				if host != nil && m.componentStore == nil {
-					return host.ReconfigureBatch(ctx, daemonComponentValues(cfg))
+				if host == nil {
+					return nil
 				}
+				catalog, err := application.Catalog()
+				if err != nil {
+					return err
+				}
+				desired, err := buildCatalogPolicyHost(ctx, cfg, m.componentStore, catalog)
+				if err != nil {
+					return err
+				}
+				if err := host.ReconcileComponents(m.parent, desired); err != nil {
+					return err
+				}
+				if m.componentStore == nil {
+					if err := host.ReconfigureBatch(ctx, daemonComponentValues(cfg)); err != nil {
+						return err
+					}
+				}
+				filter, filterErr := host.Resolve(ports.FilterRulesName)
+				naming, namingErr := host.Resolve(ports.NamingRulesName)
+				m.mu.Lock()
+				m.filter, _ = filter.(ports.FilterRules)
+				m.naming, _ = naming.(ports.NamingRules)
+				m.policyErr = errors.Join(filterErr, namingErr)
+				m.mu.Unlock()
 				return nil
 			},
 			Stop: stopResource(func(ctx context.Context) error {
@@ -115,7 +129,7 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 			}),
 		},
 		{
-			ID: downloadResource, Enabled: m.componentEnabled("download.control"), Revision: revision(cfg.Downloader.Mode),
+			ID: downloadResource, Enabled: m.componentEnabled("download.control"),
 			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.downloadHost != nil },
 			Start:   func(context.Context) error { return m.initDownloadControl(m.parent) },
 			Stop: stopResource(func(ctx context.Context) error {
@@ -135,7 +149,8 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 			}),
 		},
 		{
-			ID: watchPolicyResource, Enabled: true, Requires: []string{policyResource},
+			ID: watchPolicyResource, Enabled: m.componentEnabled("filter.rules") && m.componentEnabled("naming.rules"), Requires: []string{policyResource},
+			Revision: revision(m.componentEnabled("filter.rules"), m.componentEnabled("naming.rules")),
 			Start: func(context.Context) error {
 				m.mu.Lock()
 				defer m.mu.Unlock()

@@ -21,6 +21,7 @@ type poolHolder struct {
 	mu      sync.RWMutex
 	pool    dcpool.Pool
 	changed chan struct{}
+	size    int64
 }
 
 func (h *poolHolder) Set(pool dcpool.Pool) {
@@ -30,10 +31,23 @@ func (h *poolHolder) Set(pool dcpool.Pool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pool = pool
+	if pool != nil && h.size > 0 {
+		dcpool.Resize(pool, h.size)
+	}
 	if h.changed != nil {
 		close(h.changed)
 		h.changed = make(chan struct{})
 	}
+}
+
+func (h *poolHolder) Resize(size int64) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.size = size
+	dcpool.Resize(h.pool, size)
 }
 
 func (h *poolHolder) Get() dcpool.Pool {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -64,6 +65,17 @@ func Export(cfg *legacy.Config, catalog *rte.Catalog) (map[string]config.Documen
 		botProxy = legacy.EffectiveProxy(cfg)
 	}
 	put(root, "bot.proxy", botProxy)
+	// Import the historical shared directory once. Local downloads never read
+	// or create paths belonging to the remote aria2 host after migration.
+	if cfg.Downloader.LocalRoot == "" && legacy.EffectiveDownloaderMode(cfg) == legacy.DownloaderModeInternal {
+		if dir := strings.TrimSpace(cfg.Aria2.Dir); dir != "" {
+			absolute, err := filepath.Abs(dir)
+			if err != nil {
+				return nil, fmt.Errorf("resolve legacy local download directory: %w", err)
+			}
+			put(root, "downloader.local_root", absolute)
+		}
+	}
 	documents := map[string]config.Document{}
 	for _, definition := range catalog.Definitions() {
 		documents[definition.Manifest.ID] = config.Document{Version: config.CurrentVersion, Enabled: true, Values: map[string]any{}}

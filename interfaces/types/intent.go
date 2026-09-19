@@ -5,6 +5,7 @@ const DownloadRequested = "download.requested"
 const ForwardRequested = "forward.requested"
 
 type ForwardIntent struct {
+	Automatic bool
 	Account   AccountID
 	Peer      MessagePeer
 	PeerID    int64

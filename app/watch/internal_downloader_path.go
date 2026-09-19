@@ -22,8 +22,12 @@ func prepareInternalOutputRoot(cfg *config.Config) (root string, fallback bool, 
 	}
 	configured := ""
 	if cfg != nil {
-		configured = strings.TrimSpace(cfg.Aria2.Dir)
+		configured = strings.TrimSpace(cfg.Downloader.LocalRoot)
 	}
+	return prepareLocalRoot(configured)
+}
+
+func prepareLocalRoot(configured string) (root string, fallback bool, err error) {
 	if configured != "" {
 		root = filepath.Clean(configured)
 		if err := ensureWritableDir(root); err == nil {

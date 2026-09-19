@@ -85,6 +85,9 @@ func (r *Registry) Register(m manifest.Manifest, factory Factory) error {
 	m.Publishes = append([]string(nil), m.Publishes...)
 	m.Subscribes = append([]string(nil), m.Subscribes...)
 	m.Pages = append([]manifest.Page(nil), m.Pages...)
+	for i := range m.Pages {
+		m.Pages[i].Settings = append([]string(nil), m.Pages[i].Settings...)
+	}
 	m.Commands = append([]types.ConsoleCommand(nil), m.Commands...)
 	for i := range m.Commands {
 		m.Commands[i].Aliases = append([]string(nil), m.Commands[i].Aliases...)
@@ -124,6 +127,7 @@ type instance struct {
 	status       Status
 	initialized  bool
 	cancel       context.CancelFunc
+	owner        <-chan struct{}
 	runnables    *schedule.Group
 	observation  atomic.Pointer[observation]
 }
@@ -141,6 +145,8 @@ func (i *instance) setStatus(status Status) {
 
 type Runtime struct {
 	mu          sync.Mutex
+	registry    *Registry
+	context     context.Context
 	order       []string
 	instances   map[string]*instance
 	providers   map[string]string
@@ -157,6 +163,10 @@ type Runtime struct {
 // any factories. A nil enabled map enables all registered components.
 func (r *Registry) Build(account types.AccountID, enabled map[string]bool, values map[string]map[string]any) (*Runtime, error) {
 	run := &Runtime{account: account, instances: map[string]*instance{}, providers: map[string]string{}, ports: map[string]any{}, bus: eventbus.New(), diagnostics: dem.New(account, 128)}
+	run.registry = NewRegistry()
+	for id, registration := range r.entries {
+		run.registry.entries[id] = registration
+	}
 	if account == "" {
 		return nil, errors.New("account is required")
 	}
@@ -265,9 +275,20 @@ func (r *Runtime) Start(ctx context.Context) []Status {
 	if r.started || r.stopped || r.stopping {
 		return r.statuses()
 	}
+	return r.startLocked(ctx)
+}
+
+func (r *Runtime) startLocked(ctx context.Context) []Status {
+	if !r.started {
+		r.context = ctx
+	}
+	ctx = r.context
 	r.started = true
 	for _, id := range r.order {
 		item := r.instances[id]
+		if item.status.State == Running {
+			continue
+		}
 		for _, req := range item.registration.Manifest.Requires {
 			provider := r.providers[req.Name]
 			if !req.Optional && r.instances[provider].status.State != Running {
@@ -279,7 +300,7 @@ func (r *Runtime) Start(ctx context.Context) []Status {
 			continue
 		}
 		runCtx, cancel := context.WithCancel(ctx)
-		item.cancel = cancel
+		item.cancel, item.owner = cancel, runCtx.Done()
 		kernel := Kernel{Account: r.account, Config: item.config}
 		item.runnables = schedule.NewObserved(runCtx, func(name string, err error) { r.diagnostics.Report(id, "runnable:"+name, err) })
 		item.setStatus(Status{ID: id, State: Starting})

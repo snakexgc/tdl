@@ -12,6 +12,7 @@ func Routes() []types.WebRoute {
 		{Path: "/views/", Public: false},
 		{Path: "/components.html", Public: false},
 		{Path: "/api/heartbeat", Public: false},
+		{Path: "/api/events", Public: false},
 		{Path: "/api/dashboard", Public: false},
 		{Path: "/api/status", Public: false},
 		{Path: "/api/kv/links", Public: false},

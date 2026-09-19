@@ -92,6 +92,17 @@ func validate(f manifest.ConfigField, raw []byte) error {
 	case manifest.Bool:
 		var value bool
 		return json.Unmarshal(raw, &value)
+	case manifest.Objects:
+		var value []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		for _, item := range value {
+			if item == nil {
+				return fmt.Errorf("object is required")
+			}
+		}
+		return nil
 	case manifest.Strings:
 		var value []string
 		return json.Unmarshal(raw, &value)

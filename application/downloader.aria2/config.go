@@ -28,9 +28,9 @@ func Manifest() manifest.Manifest {
 	}, Config: []manifest.ConfigField{
 		manifest.FormattedText("rpc_url", "RPC URL", "http://127.0.0.1:6800/jsonrpc", "url", true, true),
 		manifest.Text("secret", "RPC secret", "", true, true),
-		manifest.Text("directory", "Remote download directory", "", false, true),
+		manifest.Text("directory", "Remote download directory", "", false, false),
 		manifest.Number("timeout_seconds", "RPC timeout (seconds)", 30, 1, 3600, true),
-		manifest.Flag("auto_download", "Automatically submit downloads", true, true),
+		manifest.Flag("auto_download", "Automatically submit downloads", true, false),
 
 		field("status_interval_ms", "状态同步间隔（毫秒）", 60000, 100, 3600000),
 		field("connect_retry_ms", "连接首次重试间隔（毫秒）", 10000, 100, 3600000),
@@ -60,7 +60,7 @@ func (s *service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 	}
 	values := make(map[string]int64)
 	for _, field := range Manifest().Config {
-		if field.RestartRequired {
+		if field.RestartRequired || field.Type != manifest.Int {
 			continue
 		}
 		var value int64

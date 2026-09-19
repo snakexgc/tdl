@@ -121,6 +121,9 @@ func cloneManifest(m manifest.Manifest) manifest.Manifest {
 		m.Commands[i].Aliases = append([]string(nil), m.Commands[i].Aliases...)
 	}
 	m.Pages = append([]manifest.Page(nil), m.Pages...)
+	for i := range m.Pages {
+		m.Pages[i].Settings = append([]string(nil), m.Pages[i].Settings...)
+	}
 	// Defaults and bounds must not be shared with a caller or an HMI response.
 	data, _ := json.Marshal(m.Config)
 	fields := []manifest.ConfigField{}

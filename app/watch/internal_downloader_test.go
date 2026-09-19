@@ -88,7 +88,7 @@ func TestPrepareInternalOutputRootUsesConfiguredWritableDir(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "downloads")
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.Aria2.Dir = root
+	cfg.Downloader.LocalRoot = root
 
 	got, fallback, err := prepareInternalOutputRoot(cfg)
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestPrepareInternalOutputRootFallsBackWhenDirIsAFile(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.Aria2.Dir = blocked
+	cfg.Downloader.LocalRoot = blocked
 
 	got, fallback, err := prepareInternalOutputRoot(cfg)
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 	aria2 "github.com/snakexgc/tdl/application/downloader.aria2"
 	local "github.com/snakexgc/tdl/application/downloader.local"
 	filter "github.com/snakexgc/tdl/application/filter.rules"
+	forwardrules "github.com/snakexgc/tdl/application/forward.rules"
 	"github.com/snakexgc/tdl/application/forwarder"
 	naming "github.com/snakexgc/tdl/application/naming.rules"
 	notify "github.com/snakexgc/tdl/application/notify.telegram"
@@ -44,6 +45,7 @@ func definitions(commandSets ...[]types.ConsoleCommand) ([]rte.Definition, error
 		{account.Register, ui(rte.AccountScope, account.Assets(), account.Routes())},
 		{consoleRegister, rte.Definition{Scope: rte.AccountScope, Host: "bot"}},
 		{filter.Register, rte.Definition{Scope: rte.AccountScope}},
+		{forwardrules.Register, rte.Definition{Scope: rte.AccountScope, Assets: forwardrules.Assets()}},
 		{naming.Register, rte.Definition{Scope: rte.AccountScope}},
 		{notify.Register, rte.Definition{Scope: rte.AccountScope, Host: "bot"}},
 		{message.Register, rte.Definition{Scope: rte.AccountScope}},

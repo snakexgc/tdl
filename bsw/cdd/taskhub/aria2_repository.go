@@ -3,6 +3,7 @@ package taskhub
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -22,7 +23,7 @@ type Aria2Record = types.Aria2TaskRecord
 
 type Aria2Repository struct {
 	kv  storage.Storage
-	ttl time.Duration
+	ttl atomic.Int64
 }
 
 func NewAria2Repository(kv storage.Storage, ttl ...time.Duration) *Aria2Repository {
@@ -30,8 +31,12 @@ func NewAria2Repository(kv storage.Storage, ttl ...time.Duration) *Aria2Reposito
 	if len(ttl) > 0 {
 		taskTTL = ttl[0]
 	}
-	return &Aria2Repository{kv: kv, ttl: taskTTL}
+	repository := &Aria2Repository{kv: kv}
+	repository.SetTTL(taskTTL)
+	return repository
 }
+
+func (s *Aria2Repository) SetTTL(ttl time.Duration) { s.ttl.Store(int64(ttl)) }
 
 func (s *Aria2Repository) Add(ctx context.Context, record Aria2Record) error {
 	if s == nil || s.kv == nil {
@@ -99,12 +104,13 @@ func (s *Aria2Repository) Remove(ctx context.Context, gid string) error {
 }
 
 func (s *Aria2Repository) cleanup(ctx context.Context) error {
-	if s.ttl <= 0 {
+	ttl := time.Duration(s.ttl.Load())
+	if ttl <= 0 {
 		return nil
 	}
 	now := time.Now()
 	return Aria2(s.kv).Sweep(ctx, func(_ []byte, stamp time.Time) (bool, error) {
-		return isAria2TaskExpired(stamp, now, s.ttl), nil
+		return isAria2TaskExpired(stamp, now, ttl), nil
 	})
 }
 

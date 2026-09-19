@@ -28,7 +28,7 @@ SWC 不导入其他 SWC、app、存储驱动或旧 pkg/config。架构检查也�
 
 ## 配置与生命周期
 
-Manifest 支持字符串、整数、布尔、字符串列表、范围、枚举、格式、秘密和 RestartRequired。缺文件/字段使用默认值，组件模式不从旧业务配置补缺。
+Manifest 支持字符串、整数、布尔、字符串列表、对象列表、范围、枚举、格式、秘密和 RestartRequired。缺文件/字段使用默认值，不从旧业务配置补缺。正常启动默认进行一次性导入；详细规则见迁移说明。
 
 PrepareConfig 只校验并构建快照，不启动资源或写文件；commit 不可失败且不得回调 Runtime。校验失败保留旧配置。目录允许离线编辑；热更新在持久化后发布；重启参数在资源协调成功后发布对应视图。
 
@@ -44,7 +44,9 @@ PrepareConfig 只校验并构建快照，不启动资源或写文件；commit �
 
 ConsoleCommandHandler.Execute 接收 ConsoleRequest，返回 ConsoleResponse，不接触 telego。Dispatcher 验证权限、私聊、重复命令/别名及取消。在 Provides 声明处理端口、命令 Port 指向该端口后，生产 Bot 自动解析当前实例；替换或停用不会留下旧处理器。旧格式化处理器仍在 app/bot/command_adapters.go 绑定。
 
-Assets、Routes、Manifest.Pages 在目录登记，统一资源集合保留既有 URL。SPA Page 声明 Path、Title、View、Module、Style、Order；片段存放在 `views/<View>.html`，脚本导出 `page = { init, load, stop }`，钩子可省略。面板按需加载片段和脚本，离开页面停止轮询；停用页面不显示导航。
+Assets、Routes、Manifest.Pages 在目录登记。SPA Page 声明 Path、Title、View、Module、Style、Order、Settings；Settings 是该页面配置标签的组件 ID 列表。片段位于 `views/<View>.html`，脚本导出 `page = { init, load, stop }`。切换页面或进入配置标签时 stop 释放观察订阅；返回信息标签再 load，配置草稿保留。配置版本推送触发导航刷新。
+
+状态通过一个 `/api/events` WebSocket 按主题复用；组件页面使用 `observe(topic, callback)` 并在 stop 取消订阅。HTTP 保留操作和快照接口，WS 不可用时启用 5 秒 HTTP 备用刷新。统计采样共享缓存，文件字节不经过控制通道。配置字段 Editor 可声明同源编辑器模块，实现 `createEditor(value, {editable})`，返回 `{element, value()}`；分组转发提供完整示例。
 
 JSON API 在 Provides 声明 WebAction 端口，Routes 的 Port 指向它。面板自动执行鉴权、限制 JSON 请求大小、调用 Handle 并返回普通 DTO；无需新增中央 HTTP 分支。配置页由 schema 生成。完整接入示例见 `app/webui/component_actions_test.go`；旧接口适配表仍保留以维持兼容。
 
@@ -65,7 +67,7 @@ golangci-lint run ./...
 go run ./cmd/swc-check
 go run ./cmd/swc-check -empty
 go run ./cmd/swc-docs
-node --experimental-vm-modules --test internal/integration/router.test.mjs
+node --experimental-vm-modules --test internal/integration/*.test.mjs
 git diff --check
 ```
 

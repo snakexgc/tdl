@@ -2,22 +2,16 @@
 import { state } from "./state.js";
 import { api } from "./api.js";
 import { escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
-import { navigate } from "./router.js";
 
-const internalDownloadRefreshMS = 1000;
+import { observe } from "./events.js";
+let unobserve, loadGeneration = 0;
 
 export function initDownloads() {
+  window.addEventListener("downloader-changed", () => { if (document.getElementById("view-downloads")?.classList.contains("active") && !document.getElementById("downloads-information")?.hidden) void loadDownloads(true); });
   document.getElementById("reload-aria2").addEventListener("click", () => loadDownloads(true));
   document.getElementById("aria2-retry-check").addEventListener("click", () => loadDownloads(true));
-  document.getElementById("aria2-open-config").addEventListener("click", async () => {
-    await navigate("config");
-    requestAnimationFrame(() => {
-      const input = document.querySelector('#config-form [data-path="aria2.rpc_url"]');
-      if (input) {
-        input.focus();
-        input.scrollIntoView({ block: "center" });
-      }
-    });
+  document.getElementById("aria2-open-config").addEventListener("click", () => {
+    document.getElementById("view-downloads").dispatchEvent(new CustomEvent("open-settings", { bubbles: true }));
   });
 
   document.getElementById("internal-select-visible").addEventListener("change", (event) => {
@@ -63,12 +57,16 @@ export function initDownloads() {
 }
 
 export async function loadDownloads(force = false) {
+  const generation = ++loadGeneration;
   let status = null;
   try {
     status = await api("/api/status");
+    if (generation !== loadGeneration) return;
     state.downloaderMode = status.downloader && status.downloader.mode ? status.downloader.mode : "aria2";
-  } catch {
-    state.downloaderMode = "aria2";
+  } catch (error) {
+    if (generation !== loadGeneration) return;
+    setInternalDownloadStatus(error.message, "error");
+    return;
   }
 
   if (state.downloaderMode === "local") {
@@ -81,17 +79,17 @@ export async function loadDownloads(force = false) {
     }
     if (guide) guide.hidden = true;
     document.getElementById("internal-downloads").hidden = false;
-    await loadInternalDownloads();
     startInternalDownloadPolling();
+    await loadInternalDownloads();
     return;
   }
 
   stopInternalDownloadPolling();
   document.getElementById("internal-downloads").hidden = true;
-  await loadAria2Frame(force);
+  await loadAria2Frame(force, generation);
 }
 
-async function loadAria2Frame(force = false) {
+async function loadAria2Frame(force = false, generation = loadGeneration) {
   if (state.aria2Loaded && !force) return;
   if (force) {
     state.aria2Loaded = false;
@@ -106,6 +104,7 @@ async function loadAria2Frame(force = false) {
   try {
     check = await api("/api/aria2/check");
   } catch (error) {
+    if (generation !== loadGeneration) return;
     showAria2Guide({
       message: "无法检查 aria2 配置。",
       error: error.message,
@@ -113,6 +112,7 @@ async function loadAria2Frame(force = false) {
     return;
   }
 
+  if (generation !== loadGeneration || state.downloaderMode === "local") return;
   if (!check.ok) {
     showAria2Guide(check);
     return;
@@ -154,20 +154,17 @@ function hideAria2Guide() {
 }
 
 function startInternalDownloadPolling() {
-  if (state.internalDownloadPoll) return;
-  state.internalDownloadPoll = window.setInterval(() => {
-    if (!document.getElementById("view-downloads").classList.contains("active") || state.downloaderMode !== "local") {
-      stopInternalDownloadPolling();
-      return;
-    }
-    loadInternalDownloads({ silent: true });
-  }, internalDownloadRefreshMS);
+  unobserve ||= observe("downloads", (data, error) => {
+    if (state.downloaderMode !== "local") return;
+    if (error) { setInternalDownloadStatus(error, "error"); return; }
+    receiveDownloads(data);
+  });
 }
-
-export function stopInternalDownloadPolling() {
-  if (!state.internalDownloadPoll) return;
-  window.clearInterval(state.internalDownloadPoll);
-  state.internalDownloadPoll = null;
+export function stopInternalDownloadPolling() { unobserve?.(); unobserve = null; }
+function receiveDownloads(data) {
+  state.internalDownloads = updateInternalDownloadSpeeds(data.items || []);
+  pruneInternalDownloadSelection();
+  renderInternalDownloads();
 }
 
 async function loadInternalDownloads(options = {}) {
@@ -181,9 +178,7 @@ async function loadInternalDownloads(options = {}) {
   }
   try {
     const data = await api("/api/internal-downloads");
-    state.internalDownloads = updateInternalDownloadSpeeds(data.items || []);
-    pruneInternalDownloadSelection();
-    renderInternalDownloads();
+    receiveDownloads(data);
   } catch (error) {
     if (!silent) {
       state.internalDownloads = [];
@@ -413,4 +408,11 @@ function updateInternalSelectionState() {
   });
 }
 
-export const page = { init: initDownloads, load: loadDownloads, stop: stopInternalDownloadPolling };
+export const page = { init: initDownloads, load: loadDownloads, stop: stopDownloads };
+
+function stopDownloads() {
+ ++loadGeneration;
+ stopInternalDownloadPolling();
+ state.aria2Loaded = false;
+ document.getElementById("aria2-frame")?.removeAttribute("src");
+}

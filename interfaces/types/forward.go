@@ -27,6 +27,8 @@ type ForwardJob struct {
 	// resolved peer+message id (watcher), so the worker can re-fetch it.
 	SourceLink      string `json:"source_link,omitempty"`
 	SourcePeerID    int64  `json:"source_peer_id,omitempty"`
+	SourcePeerKind  string `json:"source_peer_kind,omitempty"`
+	RuleID          string `json:"rule_id,omitempty"`
 	SourceMessageID int    `json:"source_message_id,omitempty"`
 	OriginName      string `json:"origin_name,omitempty"`
 

@@ -46,7 +46,8 @@ type ModulesConfig struct {
 }
 
 type DownloaderConfig struct {
-	Mode string `json:"mode"`
+	Mode      string `json:"mode"`
+	LocalRoot string `json:"local_root"`
 }
 
 type ForwardConfig struct {

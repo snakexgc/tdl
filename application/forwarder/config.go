@@ -33,7 +33,7 @@ func Manifest() manifest.Manifest {
 		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
 	}
 	return manifest.Manifest{
-		ID: ID, Commands: Commands(), Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控", View: "forwards", Module: "/static/js/forwards.js", Style: "/static/css/forwards.css", Order: 50}},
+		ID: ID, Commands: Commands(), Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控", View: "forwards", Module: "/static/js/forwards.js", Style: "/static/css/forwards.css", Order: 50, Settings: []string{"forward.rules", "trigger.forward", "forwarder"}}},
 		Provides: []manifest.Port{manifest.PortOf[ports.ForwardTasks](ports.ForwardTasksName, 1, 0)},
 		Config: []manifest.ConfigField{
 			manifest.Choice("mode", "Forward mode", "default", []string{"default", "clone"}, true),

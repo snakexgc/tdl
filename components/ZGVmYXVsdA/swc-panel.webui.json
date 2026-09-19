@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "enabled": true,
+  "values": {
+    "address": "0.0.0.0",
+    "port": 22335,
+    "username": "admin"
+  },
+  "secrets": "swc-panel.webui-3187320239.json"
+}

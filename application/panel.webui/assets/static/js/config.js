@@ -148,7 +148,7 @@ function renderConfigForm() {
   if (componentManaged) {
     const link = document.createElement("a");
     link.href = "/components.html";
-    link.textContent = "???????????????????";
+    link.textContent = "高级组件配置与诊断";
     form.prepend(link);
   }
   initTagInputs(form);
@@ -380,8 +380,8 @@ async function saveConfig(event) {
       ? "文件大小范围输入有误，已按 0 ~ 0（不限制）保存。"
       : (data.message || "配置已保存");
     state.aria2Loaded = false;
-    document.getElementById("aria2-frame").removeAttribute("src");
-    if (document.getElementById("view-downloads").classList.contains("active")) {
+    document.getElementById("aria2-frame")?.removeAttribute("src");
+    if (document.getElementById("view-downloads")?.classList.contains("active")) {
       loadDownloads(true);
     }
     loadStatus();

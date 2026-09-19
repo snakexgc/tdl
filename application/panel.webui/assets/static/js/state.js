@@ -27,8 +27,5 @@ export const state = {
   loginMethod: "phone",
   loginPanel: "",
   lastLoginData: null,
-  heartbeatTimer: null,
-  heartbeatLastSeen: 0,
-  heartbeatState: "checking",
   usingDefaultCredentials: false,
 };

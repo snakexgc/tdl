@@ -39,19 +39,15 @@ func (m *Manager) componentEnabled(id string) bool {
 // managedUnits is the production composition boundary. Generic lifecycle code
 // knows neither module names nor legacy fields. Backend factories stay here.
 func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
+	forwardConfig := cfg.Forward
+	forwardConfig.TriggerReactions = nil // owned by the live reaction policy
 	watchDependencies := []string{accountResource, watchPolicyResource}
 	if cfg.Modules.Watch {
 		watchDependencies = append(watchDependencies, downloadResource)
 	}
-	if cfg.Modules.Watch && config.EffectiveDownloaderMode(cfg) != config.DownloaderModeLocal {
-		watchDependencies = append(watchDependencies, "http")
-		if watchAutoDownloadEnabled(cfg) {
-			watchDependencies = append(watchDependencies, moduleIDAria2)
-		}
-	}
 	return append(m.foundationUnits(cfg), []rte.ManagedUnit{
 		{
-			ID: "http", Enabled: cfg.Modules.HTTP, Requires: []string{accountResource}, Revision: revision(cfg.HTTP), Running: m.httpCtrl.Running,
+			ID: "http", Enabled: cfg.Modules.HTTP, Requires: []string{accountResource}, Revision: revision(config.HTTPListenAddr(cfg)), Running: m.httpCtrl.Running,
 			Update: func(context.Context) error { m.httpService.UpdateConfig(cfg); return nil },
 			Start: func(context.Context) error {
 				if !m.httpCtrl.Start() && !m.httpCtrl.Running() {
@@ -72,6 +68,8 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 					m.aria2Mgr = manager
 					m.aria2Config = next
 				}
+				m.aria2Mgr.UpdateTransferLimits(config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg))
+				m.aria2Mgr.UpdateLinks(cfg.HTTP)
 				return nil
 			}, Start: func(context.Context) error {
 				m.StartAria2Manager()
@@ -81,7 +79,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 			}, Stop: stopResource(m.aria2Process.Stop),
 		},
 		{
-			ID: "bot", Enabled: cfg.Modules.Bot, Requires: []string{accountResource}, Revision: revision(cfg.Bot.Token, m.botProxy(cfg), m.commandStates()), Running: m.botProcess.Running,
+			ID: moduleIDBot, Enabled: cfg.Modules.Bot, Requires: []string{accountResource}, Revision: revision(cfg.Bot.Token, m.botProxy(cfg), m.commandStates()), Running: m.botProcess.Running,
 			Start: func(context.Context) error {
 				m.StartBot()
 				if !m.botProcess.Running() {
@@ -109,7 +107,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 		},
 		{
 			ID: "watch", Enabled: cfg.Modules.Watch || cfg.Modules.Forward, Requires: watchDependencies,
-			Revision: revision(cfg.Modules.Watch, cfg.Modules.Forward, cfg.Downloader, cfg.Forward, watchAutoDownloadEnabled(cfg), cfg.Aria2.Dir, config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout, m.connectionStates()), Running: m.watchCtrl.Running,
+			Revision: revision(cfg.Modules.Watch, cfg.Modules.Forward, forwardConfig, config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout, m.connectionStates()), Running: m.watchCtrl.Running,
 			Update: func(context.Context) error { m.watchCtrl.UpdateOptions(m.watchOptions(cfg)); return nil },
 			Start: func(ctx context.Context) error {
 				bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -127,7 +125,7 @@ func (m *Manager) connectionStates() map[string]bool {
 	}
 	states := map[string]bool{}
 	for _, definition := range catalog.Definitions() {
-		if definition.Scope == rte.ConnectionScope {
+		if definition.Scope == rte.ConnectionScope && definition.Manifest.ID != "downloader.local" {
 			states[definition.Manifest.ID] = m.componentEnabled(definition.Manifest.ID)
 		}
 	}
@@ -135,11 +133,15 @@ func (m *Manager) connectionStates() map[string]bool {
 }
 
 func (m *Manager) commandStates() map[string]bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	catalog, err := application.Catalog()
+	if err != nil {
+		panic(err)
+	}
 	states := map[string]bool{}
-	for id, enabled := range m.configured {
-		states[id] = enabled
+	for _, definition := range catalog.Definitions() {
+		if definition.Host == moduleIDBot || len(definition.Manifest.Commands) > 0 {
+			states[definition.Manifest.ID] = m.componentEnabled(definition.Manifest.ID)
+		}
 	}
 	return states
 }

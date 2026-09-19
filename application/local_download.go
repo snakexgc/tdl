@@ -20,17 +20,16 @@ func LocalDownloadHost(ctx context.Context, account types.AccountID, worker *loc
 		account = types.DefaultAccount
 	}
 	values := map[string]map[string]any{}
+	enabled := map[string]bool{local.ID: true}
 	if len(stores) > 0 && stores[0] != nil {
 		document, err := stores[0].Load(ctx, local.ID)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !document.Enabled {
-			return nil, nil, fmt.Errorf("required download component %s is disabled", local.ID)
-		}
+		enabled[local.ID] = document.Enabled
 		values[local.ID] = document.Values
 	}
-	host, err := registry.Build(account, nil, values)
+	host, err := registry.Build(account, enabled, values)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -40,10 +39,16 @@ func LocalDownloadHost(ctx context.Context, account types.AccountID, worker *loc
 			return nil, nil, fmt.Errorf("%s: %s", status.ID, status.Detail)
 		}
 	}
-	value, err := host.Resolve(ports.DownloadExecutorName)
+	return host, localExecutorPort{host}, nil
+}
+
+type localExecutorPort struct{ host *rte.Runtime }
+
+func (localExecutorPort) Name() string { return "local" }
+func (p localExecutorPort) Submit(ctx context.Context, request types.DownloadSubmission) (types.DownloadResult, error) {
+	value, err := p.host.Resolve(ports.DownloadExecutorName)
 	if err != nil {
-		_ = host.Stop(context.Background())
-		return nil, nil, err
+		return types.DownloadResult{}, fmt.Errorf("local component unavailable: %w", ports.ErrDownloadNotAccepted)
 	}
-	return host, value.(ports.DownloadExecutor), nil
+	return value.(ports.DownloadExecutor).Submit(ctx, request)
 }

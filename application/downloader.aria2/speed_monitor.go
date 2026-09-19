@@ -3,6 +3,7 @@ package aria2
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -40,6 +41,7 @@ type ZeroSpeedMonitor struct {
 	client        ZeroSpeedMonitorClient
 	store         ports.Aria2Repository
 	publicBaseURL string
+	links         *atomic.Pointer[linkPolicy]
 	logger        *zap.Logger
 	cfg           zeroSpeedMonitorConfig
 	now           func() time.Time
@@ -124,7 +126,7 @@ func (m *ZeroSpeedMonitor) poll(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "load tdl aria2 task registry")
 	}
-	downloadPrefix, err := aria2DownloadURLPrefix(m.publicBaseURL)
+	downloadPrefix, err := aria2DownloadURLPrefix(currentBaseURL(m.links, m.publicBaseURL))
 	if err != nil {
 		return err
 	}

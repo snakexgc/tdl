@@ -12,6 +12,7 @@ const DownloadExecutorName = "download.executor"
 const DownloadRoutingName = "download.routing"
 
 type DownloadRoute struct {
+	Mode      string
 	Executors []string
 	LocalRoot string
 }

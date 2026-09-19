@@ -34,7 +34,11 @@ func (m *Manager) Route(ctx context.Context, account types.AccountID) (ports.Dow
 	if err != nil {
 		return ports.DownloadRoute{}, err
 	}
-	return value.(ports.DownloadRouting).Route(ctx, account)
+	route, err := value.(ports.DownloadRouting).Route(ctx, account)
+	if m.componentStore == nil {
+		route.Mode = config.EffectiveDownloaderMode(config.From(m.parent))
+	}
+	return route, err
 }
 
 type aria2ControlBackend struct{ manager *Manager }
@@ -65,4 +69,21 @@ func (m *Manager) Control(ctx context.Context, request types.DownloadAction) (ty
 		return types.DownloadActionResult{}, fmt.Errorf("download control is unavailable")
 	}
 	return port.Control(ctx, request)
+}
+
+// Resolve the current executor for each submission. Disabling or reconnecting
+// aria2 does not invalidate the Telegram watcher or the HTTP byte stream.
+type aria2Submission struct{ manager *Manager }
+
+func (aria2Submission) Name() string { return "aria2" }
+func (p aria2Submission) Submit(ctx context.Context, request types.DownloadSubmission) (types.DownloadResult, error) {
+	m := p.manager
+	cfg := config.From(m.parent)
+	m.mu.Lock()
+	manager := m.aria2Mgr
+	m.mu.Unlock()
+	if cfg == nil || !cfg.Modules.Aria2 || !cfg.Aria2.AutoDownload || manager == nil || !m.aria2Process.Running() {
+		return types.DownloadResult{}, ports.ErrDownloadNotAccepted
+	}
+	return manager.Submit(ctx, request)
 }

@@ -166,7 +166,7 @@ func Run(ctx context.Context, opts Options) error {
 				return errors.Wrap(err, "prepare internal output root")
 			}
 			if fallback {
-				color.Yellow("⚠️ aria2.dir 不可用，本地下载器将使用备用目录：%s", outputRoot)
+				color.Yellow("⚠️ 本地下载根目录不可用，将使用备用目录：%s", outputRoot)
 			}
 			runtime.outputRoot = outputRoot
 			runtime.ensureOutputDirs = true
@@ -322,7 +322,7 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 	}
 
 	err = tclient.RunWithAuth(ctx, client, func(ctx context.Context) error {
-		pool := dcpool.NewPool(client.Client,
+		pool := dcpool.NewResizable(client.Client,
 			int64(poolSize),
 			tclient.NewDefaultMiddlewares(ctx, reconnectDelay)...)
 		defer multierr.AppendInvoke(&rerr, multierr.Close(pool))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
@@ -17,11 +18,23 @@ type Observer struct {
 	Repository    ports.Aria2Observations
 	PublicBaseURL string
 	TTL           time.Duration
+	links         *atomic.Pointer[linkPolicy]
+}
+
+func (o Observer) configured() Observer {
+	if o.links != nil {
+		if policy := o.links.Load(); policy != nil {
+			o.PublicBaseURL, o.TTL = policy.baseURL, policy.ttl
+		}
+		o.links = nil // one immutable policy for the entire observation
+	}
+	return o
 }
 
 // Observe also returns the RPC snapshot for read-only control-plane rendering.
 // The repository snapshot always precedes network I/O for optimistic updates.
 func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadStatus, error) {
+	o = o.configured()
 	snapshot, err := o.Repository.Snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -71,6 +84,7 @@ func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadSt
 }
 
 func (o Observer) Sync(ctx context.Context) error {
+	o = o.configured()
 	_, err := o.Observe(ctx)
 	if err != nil {
 		return err

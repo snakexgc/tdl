@@ -14,9 +14,11 @@ const (
 	Int     FieldType = "int"
 	Bool    FieldType = "bool"
 	Strings FieldType = "strings"
+	Objects FieldType = "objects"
 )
 
 type ConfigField struct {
+	Editor          string    `json:"editor,omitempty"`
 	Choices         []string  `json:"choices,omitempty"`
 	Format          string    `json:"format,omitempty"`
 	RestartRequired bool      `json:"restart_required,omitempty"`
@@ -61,10 +63,11 @@ type Manifest struct {
 
 // Page declares a same-origin feature entry owned by a component.
 type Page struct {
-	Path   string `json:"path"`
-	Title  string `json:"title"`
-	View   string `json:"view,omitempty"`
-	Module string `json:"module,omitempty"`
-	Style  string `json:"style,omitempty"`
-	Order  int    `json:"order,omitempty"`
+	Settings []string `json:"settings,omitempty"`
+	Path     string   `json:"path"`
+	Title    string   `json:"title"`
+	View     string   `json:"view,omitempty"`
+	Module   string   `json:"module,omitempty"`
+	Style    string   `json:"style,omitempty"`
+	Order    int      `json:"order,omitempty"`
 }

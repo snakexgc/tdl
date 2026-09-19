@@ -6,11 +6,15 @@ https://snakexgc.github.io/2026/05/13/TDL_Docker_Deployment/
 
 当前教程还在不断完善，遇到问题欢迎在issues中或者电报群反馈！
 
-组件化配置可通过 `--component-config <目录>` 启用，迁移步骤见 [组件开发与迁移说明](docs/components.md)，实际完成范围见 [迁移验收状态](docs/migration-status.md)。当前八个已注册组件支持独立配置；尚未拆分的业务仍需保留原 JSON 配置。
+程序默认使用 AUTOSAR 分层的组件架构，18 个业务组件分别声明配置、端口和生命周期。首次启动自动导入旧配置并保留原文件，也可通过 `--component-config <目录>` 指定组件目录。迁移与回退见 [操作说明](docs/config-migration.md)，设计及热更新范围见 [架构说明](docs/autosar-runtime.md)，验证结果见 [验收状态](docs/migration-status.md)。
+
+WebUI 使用 HTTP 操作接口和 WebSocket 状态推送。仪表盘、下载管理、转发监控均提供“运行信息 / 配置”标签；下载器切换会同步更新管理页面。转发配置可搜索账号已有聊天，设置多来源、多目标规则。
 
 字段说明见 [组件配置参考](docs/configuration.md)，可运行 `go run ./cmd/swc-docs` 重新生成；多账号并行的待办与验收要求见 [多账号清单](docs/TODO-multi-account.md)。
 
-### JSON 配置说明
+### 旧 JSON 配置导入说明
+
+以下字段用于首次导入及旧版本回退。导入后请通过各模块的配置标签保存；编辑旧业务字段不会覆盖组件配置。命名空间和调试等启动设置仍保留在原文件中。
 
 ```jsonc
 {

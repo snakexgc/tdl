@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -91,7 +92,7 @@ func (w *Watcher) configureForward(ctx context.Context) {
 	}
 	target, err := appforward.ResolvePeer(ctx, w.manager, w.opts.ForwardTarget)
 	if err != nil {
-		w.notify(ctx, "监听转发未启用：无法解析转发目标 %q：%v", w.opts.ForwardTarget, err)
+		w.notify(ctx, "旧版默认目标无法解析 %q：%v；分组规则仍可独立转发。", w.opts.ForwardTarget, err)
 		logctx.From(ctx).Error("Cannot resolve forward target",
 			zap.String("target", w.opts.ForwardTarget),
 			zap.Error(err))
@@ -201,14 +202,18 @@ func (w *Watcher) onNewChannelMessageForward(ctx context.Context, e tg.Entities,
 // listened peers. Reaction triggers use enqueueForwardMessage directly and are
 // not restricted to the listen set.
 func (w *Watcher) forwardUpdateMessage(ctx context.Context, e tg.Entities, msg *tg.Message) error {
-	if w.forward == nil || !w.forward.enabled || msg == nil || msg.Out {
+	if !w.opts.Forward || msg == nil || msg.Out {
 		return nil
 	}
 	peerID := tutil.GetPeerID(msg.PeerID)
-	if _, ok := w.forward.listen[peerID]; !ok {
+	legacy := false
+	if w.forward != nil && w.forward.enabled {
+		_, legacy = w.forward.listen[peerID]
+	}
+	if !legacy && len(w.ruleDestinations(ctx, msg.PeerID)) == 0 {
 		return nil
 	}
-	return w.publishForwardIntent(ctx, e, msg.PeerID, peerID, msg.ID)
+	return w.publishAutomaticForwardIntent(ctx, e, msg.PeerID, peerID, msg.ID)
 }
 
 // enqueueForwardMessage dedupes and enqueues a single message for forwarding to
@@ -291,15 +296,43 @@ func (w *Watcher) processForwardIntent(ctx context.Context, request types.Forwar
 		w.notify(ctx, "监听转发（回应触发）失败：无法获取消息。\n来源：%d\n消息：%d\n错误：%v", peerID, msgID, err)
 		return err
 	}
+	if msg == nil || msg.Out || !w.opts.Forward {
+		return nil
+	}
 	// Cache the event's access hash before enqueue resolves the fetched message.
 	if _, err := w.manager.FromInputPeer(ctx, inputPeer); err != nil {
 		return err
+	}
+	if request.Automatic {
+		var result error
+		destinations := w.ruleDestinations(ctx, msg.PeerID)
+		for _, destination := range destinations {
+			source := plainPeer(inputPeer)
+			groupedID, _ := msg.GetGroupedID()
+			_, err := w.opts.ForwardQueue.EnqueueRouted(ctx, source, msg.ID, groupedID, string(chatReference(msg.PeerID)), destination)
+			result = errors.Join(result, err)
+		}
+		// Explicit rules replace the legacy single-target route for this source.
+		if len(destinations) == 0 && w.forward != nil {
+			if _, legacy := w.forward.listen[peerID]; legacy {
+				result = errors.Join(result, w.enqueueForwardMessage(ctx, tg.Entities{}, msg))
+			}
+		}
+		return result
 	}
 	// Reaction triggers forward the reacted message regardless of the listen set.
 	return w.enqueueForwardMessage(ctx, tg.Entities{}, msg)
 }
 
 func (w *Watcher) publishForwardIntent(ctx context.Context, entities tg.Entities, peer tg.PeerClass, peerID int64, messageID int) error {
+	return w.publishForward(ctx, entities, peer, peerID, messageID, false)
+}
+
+func (w *Watcher) publishAutomaticForwardIntent(ctx context.Context, entities tg.Entities, peer tg.PeerClass, peerID int64, messageID int) error {
+	return w.publishForward(ctx, entities, peer, peerID, messageID, true)
+}
+
+func (w *Watcher) publishForward(ctx context.Context, entities tg.Entities, peer tg.PeerClass, peerID int64, messageID int, automatic bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -309,7 +342,7 @@ func (w *Watcher) publishForwardIntent(ctx context.Context, entities tg.Entities
 	if port == nil {
 		return fmt.Errorf("forward intent consumer is unavailable")
 	}
-	return port.Publish(ctx, types.ForwardIntent{Account: w.reactionAccount(), Peer: plainPeer(w.peerToInputPeer(peer, entities)), PeerID: peerID, MessageID: messageID})
+	return port.Publish(ctx, types.ForwardIntent{Automatic: automatic, Account: w.reactionAccount(), Peer: plainPeer(w.peerToInputPeer(peer, entities)), PeerID: peerID, MessageID: messageID})
 }
 
 func (w *Watcher) resolveForwardPeer(ctx context.Context, e tg.Entities, peer tg.PeerClass, peerID int64) (peers.Peer, error) {
@@ -322,4 +355,24 @@ func (w *Watcher) resolveForwardPeer(ctx context.Context, e tg.Entities, peer tg
 		}
 	}
 	return w.manager.FromInputPeer(ctx, input)
+}
+
+func chatReference(peer tg.PeerClass) types.ChatRef {
+	switch p := peer.(type) {
+	case *tg.PeerUser:
+		return types.ChatRef(fmt.Sprintf("user:%d", p.UserID))
+	case *tg.PeerChat:
+		return types.ChatRef(fmt.Sprintf("chat:%d", p.ChatID))
+	case *tg.PeerChannel:
+		return types.ChatRef(fmt.Sprintf("channel:%d", p.ChannelID))
+	default:
+		return ""
+	}
+}
+
+func (w *Watcher) ruleDestinations(ctx context.Context, peer tg.PeerClass) []types.ForwardDestination {
+	if w.opts.ForwardRules == nil {
+		return nil
+	}
+	return w.opts.ForwardRules.Destinations(ctx, chatReference(peer))
 }

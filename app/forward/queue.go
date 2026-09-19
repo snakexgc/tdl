@@ -110,7 +110,11 @@ func resolveSource(ctx context.Context, rt Runtime, job Job) (peers.Peer, int, e
 	if job.SourcePeerID == 0 || job.SourceMessageID == 0 {
 		return nil, 0, errors.New("forward job has no source message")
 	}
-	peer, err := tutil.GetInputPeer(ctx, rt.Manager, strconv.FormatInt(job.SourcePeerID, 10))
+	ref := strconv.FormatInt(job.SourcePeerID, 10)
+	if job.SourcePeerKind != "" {
+		ref = job.SourcePeerKind + ":" + ref
+	}
+	peer, err := ResolvePeer(ctx, rt.Manager, ref)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -23,6 +23,7 @@ type Manager struct {
 	mu      sync.Mutex
 	host    *rte.Runtime
 	store   *rteconfig.Store
+	tasks   *TaskStore
 }
 
 func (m *Manager) SetComponentStore(store *rteconfig.Store) {
@@ -41,7 +42,13 @@ func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger, eng
 	if cfg != nil {
 		opts.LinkTTL = downloadLinkTTL(cfg.HTTP)
 	}
-	return &Manager{Manager: component.NewManager(opts, logger), account: opts.Account}
+	return &Manager{Manager: component.NewManager(opts, logger), account: opts.Account, tasks: opts.Store.(*TaskStore)}
+}
+
+func (m *Manager) UpdateLinks(cfg config.HTTPConfig) {
+	ttl := downloadLinkTTL(cfg)
+	m.tasks.SetTTL(ttl)
+	m.UpdateLinkPolicy(cfg.PublicBaseURL, ttl)
 }
 
 func (m *Manager) Host() *rte.Runtime {

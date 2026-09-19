@@ -24,6 +24,7 @@ import (
 	panel "github.com/snakexgc/tdl/application/panel.webui"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/bsw/services/telemetry"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
@@ -79,6 +80,7 @@ const (
 )
 
 type Options struct {
+	Dialogs          ports.DialogCatalog
 	Catalog          *rte.Catalog
 	ComponentStore   *rteconfig.Store
 	SessionChecker   ports.AccountSession
@@ -126,6 +128,8 @@ type ModuleState struct {
 }
 
 type Server struct {
+	dialogs        ports.DialogCatalog
+	samples        *telemetry.Sampler
 	assets         fs.FS
 	accountActions *accounttelegram.Actions
 	opts           Options
@@ -200,7 +204,8 @@ func NewServer(opts Options) *Server {
 		opts.ForwardQueue = appforward.NewQueue(opts.NamespaceKV)
 	}
 	server := &Server{
-		assets: application.WebAssets(opts.Catalog),
+		samples: telemetry.New(time.Second),
+		assets:  application.WebAssets(opts.Catalog),
 		configuration: panel.NewConfiguration(configurationStore{saved: opts.AfterConfigSave}, func() bool {
 			if opts.ComponentManager == nil {
 				return false
@@ -212,6 +217,10 @@ func NewServer(opts Options) *Server {
 		login:    newWebLoginManager(opts),
 		sessions: map[string]time.Time{},
 		logins:   map[string]loginFailure{},
+	}
+	server.dialogs = opts.Dialogs
+	if server.dialogs == nil {
+		server.dialogs = accounttelegram.NewDialogs(login.DialogTransport{Options: func() login.SessionOptions { return server.login.sessionOptions(server.namespace(), opts.NamespaceKV) }})
 	}
 	server.sessionCatalog = accounttelegram.NewSessions(server.namespace(), tgauth.SessionRepository{Engine: opts.KVEngine, Connections: opts.Connections})
 	server.downloadLinksPort = downloadcontrol.NewLinkControl(types.AccountID(server.namespace()), taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}, server.internalDownloadController())
@@ -235,6 +244,7 @@ func (s *Server) routes() http.Handler {
 		"/aria2ng.html":                   s.handleAsset("aria2ng.html", "text/html; charset=utf-8"),
 		"/aria2/jsonrpc":                  s.handleAria2Proxy,
 		"/api/heartbeat":                  s.handleHeartbeat,
+		"/api/events":                     s.handleEvents,
 		"/api/dashboard":                  s.handleDashboard,
 		"/api/status":                     s.handleStatus,
 		"/api/aria2/check":                s.handleAria2Check,
@@ -248,6 +258,7 @@ func (s *Server) routes() http.Handler {
 		"/api/kv/links/actions":           s.handleKVActions,
 		"/api/kv/links/":                  s.handleKVLink,
 		"/api/user":                       s.handleUser,
+		"/api/dialogs":                    s.handleDialogs,
 		"/api/user/switch":                s.handleUserSwitch,
 		"/api/user/delete":                s.handleUserDelete,
 		"/api/user/spam-check":            s.handleSpamCheck,

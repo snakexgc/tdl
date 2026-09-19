@@ -56,12 +56,7 @@ type Options struct {
 type aria2ManagerConfig struct {
 	RPCURL         string
 	Secret         string
-	Dir            string
 	TimeoutSeconds int
-	PublicBaseURL  string
-	LinkTTLHours   int
-	Limit          int
-	PoolSize       int
 }
 
 func effectiveAria2ManagerConfig(cfg *config.Config) aria2ManagerConfig {
@@ -71,12 +66,7 @@ func effectiveAria2ManagerConfig(cfg *config.Config) aria2ManagerConfig {
 	return aria2ManagerConfig{
 		RPCURL:         cfg.Aria2.RPCURL,
 		Secret:         cfg.Aria2.Secret,
-		Dir:            cfg.Aria2.Dir,
 		TimeoutSeconds: cfg.Aria2.TimeoutSeconds,
-		PublicBaseURL:  cfg.HTTP.PublicBaseURL,
-		LinkTTLHours:   cfg.HTTP.DownloadLinkTTLHours,
-		Limit:          config.EffectiveLimit(cfg),
-		PoolSize:       config.EffectivePoolSize(cfg),
 	}
 }
 
@@ -345,10 +335,19 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 	m.watchEnabled, m.forwardEnabled = cfg.Modules.Watch, cfg.Modules.Forward
 	m.aria2Enabled, m.aria2Auto = cfg.Modules.Aria2, watchAutoDownloadEnabled(cfg)
 	m.mu.Unlock()
+	m.httpService.UpdateConfig(cfg)
 	units := m.managedUnits(cfg)
 	apply := func() error {
 		if err := m.reconciler.Reconcile(m.parent, units); err != nil {
 			return err
+		}
+		m.mu.Lock()
+		localHost := m.localHost
+		m.mu.Unlock()
+		if localHost != nil {
+			if err := localHost.ReconcileSaved(m.parent, m.componentStore); err != nil {
+				return err
+			}
 		}
 		if m.directory != nil {
 			return m.directory.ApplyPending(m.parent)
@@ -782,25 +781,15 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts.SetDownloadHost = func(host *rte.Runtime) { m.mu.Lock(); m.localHost = host; m.mu.Unlock() }
 	m.mu.Lock()
 	opts.Filter, opts.Naming = m.filter, m.naming
-	host := m.policies
 	m.mu.Unlock()
 	opts.Credentials = m
-	if host != nil {
-		if value, err := host.Resolve(ports.ReactionTriggerName); err == nil {
-			opts.Reaction = value.(ports.ReactionTrigger)
-		}
-		if value, err := host.Resolve(ports.MessageLinksName); err == nil {
-			opts.MessageLinks = value.(ports.MessageLinks)
-		}
-	}
+	opts.Reaction = reactionPort{m}
+	opts.MessageLinks = messageLinksPort{m}
 	opts.HTTPService = m.httpService
 	opts.DownloadRouting = m
 	opts.ForwardQueue = m.forwardQueue
-	if cfg.Modules.Aria2 && cfg.Aria2.AutoDownload {
-		m.mu.Lock()
-		opts.DownloadSubmitter = m.aria2Mgr
-		m.mu.Unlock()
-	}
+	opts.ForwardRules = m
+	opts.DownloadSubmitter = aria2Submission{manager: m}
 	return opts
 }
 
@@ -824,7 +813,7 @@ func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconf
 	return newCatalogPolicyHost(ctx, cfg, store, catalog)
 }
 
-func newCatalogPolicyHost(ctx context.Context, cfg *config.Config, store *rteconfig.Store, catalog *rte.Catalog) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
+func buildCatalogPolicyHost(ctx context.Context, cfg *config.Config, store *rteconfig.Store, catalog *rte.Catalog) (*rte.Runtime, error) {
 	registry := rte.NewRegistry()
 	account := types.AccountID(cfg.Namespace)
 	if account == "" {
@@ -837,34 +826,36 @@ func newCatalogPolicyHost(ctx context.Context, cfg *config.Config, store *rtecon
 			continue
 		}
 		if err := registry.Register(definition.Manifest, definition.Factory); err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		id := definition.Manifest.ID
 		enabled[id] = true
 		if store != nil {
 			doc, err := store.Load(ctx, id)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, err
 			}
 			values[id], enabled[id] = doc.Values, doc.Enabled
 		}
 	}
 	host, err := registry.Build(account, enabled, values)
 	if err != nil {
+		return nil, err
+	}
+	return host, nil
+}
+
+func newCatalogPolicyHost(ctx context.Context, cfg *config.Config, store *rteconfig.Store, catalog *rte.Catalog) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
+	host, err := buildCatalogPolicyHost(ctx, cfg, store, catalog)
+	if err != nil {
 		return nil, nil, nil, err
 	}
-	var unavailable error
 	host.Start(ctx)
-	for _, port := range []string{ports.TelegramCredentialsName, ports.ReactionTriggerName, ports.MessageLinksName} {
-		if _, err := host.Resolve(port); err != nil {
-			unavailable = errors.Join(unavailable, err)
-		}
-	}
 	filterValue, filterErr := host.Resolve(ports.FilterRulesName)
 	namingValue, namingErr := host.Resolve(ports.NamingRulesName)
 	filter, _ := filterValue.(ports.FilterRules)
 	naming, _ := namingValue.(ports.NamingRules)
-	return host, filter, naming, errors.Join(unavailable, filterErr, namingErr)
+	return host, filter, naming, errors.Join(filterErr, namingErr)
 }
 
 func (m *Manager) ComponentConfigurations() ([]rte.Configuration, bool) {

@@ -14,13 +14,18 @@ import (
 
 const ID = "trigger.reaction"
 
+const (
+	downloadField = "download"
+	forwardField  = "forward"
+)
+
 func Register(registry *rte.Registry) error {
 	return registry.Register(manifest.Manifest{
 		ID: ID, Title: "表情触发",
 		Provides: []manifest.Port{manifest.PortOf[ports.ReactionTrigger](ports.ReactionTriggerName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: "download", Title: "下载表情", Type: manifest.Strings, Default: []string{}},
-			{Name: "forward", Title: "转发表情", Type: manifest.Strings, Default: []string{}},
+			{Name: downloadField, Title: "下载表情", Type: manifest.Strings, Default: []string{}},
+			{Name: forwardField, Title: "转发表情", Type: manifest.Strings, Default: []string{}},
 		},
 	}, func() rte.Component { return &Trigger{} })
 }
@@ -63,10 +68,10 @@ func (t *Trigger) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		return nil, err
 	}
 	var download, forward []string
-	if err := view.Get("download", &download); err != nil {
+	if err := view.Get(downloadField, &download); err != nil {
 		return nil, err
 	}
-	if err := view.Get("forward", &forward); err != nil {
+	if err := view.Get(forwardField, &forward); err != nil {
 		return nil, err
 	}
 	d, f := reactionSet(download), reactionSet(forward)
@@ -74,7 +79,10 @@ func (t *Trigger) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		t.download, t.forward = d, f
-		t.claims = make(map[ports.ReactionKey]bool)
+		// Configuration changes must not release claims for accepted work.
+		if t.claims == nil {
+			t.claims = make(map[ports.ReactionKey]bool)
+		}
 	}, nil
 }
 

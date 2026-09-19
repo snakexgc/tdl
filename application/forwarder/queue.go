@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -160,6 +161,38 @@ func (q *Queue) EnqueueMessage(ctx context.Context, peerID int64, messageID int,
 	}
 	q.signal()
 	return job.ID, nil
+}
+
+// EnqueueRouted persists a destination independently. Its stable identity keeps
+// a replay or a partial fan-out retry from sending accepted targets twice.
+func (q *Queue) EnqueueRouted(ctx context.Context, source types.MessagePeer, messageID int, groupedID int64, origin string, destination types.ForwardDestination) (string, error) {
+	q.dataMu.Lock()
+	defer q.dataMu.Unlock()
+	store, err := q.jobStore()
+	if err != nil {
+		return "", err
+	}
+	message := fmt.Sprintf("m:%d", messageID)
+	if groupedID != 0 {
+		message = fmt.Sprintf("g:%d", groupedID)
+	}
+	identity := fmt.Sprintf("%s:%d/%s/%s", source.Kind, source.ID, message, destination.Target)
+	id := fmt.Sprintf("route-%x", sha256.Sum256([]byte(identity)))
+	if _, exists, err := store.Get(ctx, id); err != nil {
+		return "", err
+	} else if exists {
+		return id, nil
+	}
+	job := Job{
+		ID: id, Source: SourceWatch, SourcePeerKind: source.Kind, SourcePeerID: source.ID,
+		SourceMessageID: messageID, OriginName: origin, Destination: string(destination.Target),
+		RuleID: destination.RuleID, Mode: destination.Mode, Silent: destination.Silent, Status: StatusQueued, Total: 1,
+	}
+	if err := store.Save(ctx, job); err != nil {
+		return "", err
+	}
+	q.signal()
+	return id, nil
 }
 
 // List returns all jobs, active (pending/running) first, then most recent.

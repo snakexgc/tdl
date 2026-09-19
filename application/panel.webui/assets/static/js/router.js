@@ -1,10 +1,12 @@
 // Components declare their pages and lifecycle hooks; the shell has no feature list.
 import { api } from "./api.js";
+import { mountSettingsTabs } from "./settings-tabs.js";
 import { escapeHTML } from "./utils.js";
 
 const pages = new Map();
 let current;
 let generation = 0;
+let navigationGeneration = 0;
 
 function localPath(value) {
   const url = new URL(value, window.location.origin);
@@ -16,15 +18,38 @@ function localPath(value) {
 
 export async function initRouter() {
   const data = await api("/api/components");
+  pages.clear();
+  document.getElementById("view-host").replaceChildren();
+  reconcileNavigation(data);
+  window.addEventListener("components-changed", () => { void refreshNavigation(); });
+  window.addEventListener("popstate", () => { void show(window.location.pathname); });
+  window.addEventListener("pagehide", stopPages);
+  window.addEventListener("pageshow", event => { if (event.persisted) void show(window.location.pathname); });
+  await show(window.location.pathname);
+}
+
+async function refreshNavigation() {
+  const revision = ++navigationGeneration;
+  try {
+    const data = await api("/api/components");
+    if (revision !== navigationGeneration) return;
+    reconcileNavigation(data);
+    if (current && !current.enabled) await show(window.location.pathname);
+  } catch (error) { console.error(error); }
+}
+
+function reconcileNavigation(data) {
   const declarations = (data.components || []).filter(component => component.enabled !== false)
     .flatMap(component => (component.pages || []).map(page => ({ ...page, owner: component.id })))
     .sort((a, b) => (a.order || 100) - (b.order || 100) || a.path.localeCompare(b.path));
   const host = document.getElementById("view-host");
   const nav = document.querySelector("nav.nav");
-  host.replaceChildren();
   nav.replaceChildren();
+  for (const page of pages.values()) page.enabled = false;
   for (const page of declarations) {
     const path = localPath(page.path);
+    const existing = pages.get(path);
+    if (existing) { existing.enabled = true; nav.append(existing.link); continue; }
     const link = document.createElement("a");
     link.className = "nav-item";
     link.href = path;
@@ -43,7 +68,7 @@ export async function initRouter() {
         document.head.append(style);
       }
       if (page.module) page.module = localPath(page.module);
-      pages.set(path, { ...page, path, section, link });
+      pages.set(path, { ...page, path, section, link, enabled: true });
       link.dataset.view = page.view;
       link.addEventListener("click", event => {
         if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
@@ -53,9 +78,6 @@ export async function initRouter() {
     }
     nav.append(link);
   }
-  window.addEventListener("popstate", () => { void show(window.location.pathname); });
-  window.addEventListener("pagehide", stopPages);
-  await show(window.location.pathname);
 }
 
 export function stopPages() {
@@ -70,7 +92,8 @@ export function navigate(view) {
 }
 
 async function show(path) {
-  const page = pages.get(path) || (path === "/" ? pages.values().next().value : null);
+  const candidate = pages.get(path) || (path === "/" ? [...pages.values()].find(page => page.enabled) : null);
+  const page = candidate?.enabled ? candidate : null;
   if (current !== page) current?.hooks?.stop?.();
   current = page;
   const activeGeneration = ++generation;
@@ -96,7 +119,10 @@ async function show(path) {
   try {
     page.ready ||= mount(page);
     await page.ready;
-    if (activeGeneration === generation) await page.hooks?.load?.();
+    if (activeGeneration === generation) {
+      if (page.tabs?.settingsActive()) await page.tabs.load();
+      else await page.hooks?.load?.();
+    }
     if (current !== page) page.hooks?.stop?.();
   } catch (error) {
     page.section.innerHTML = `<div class="notice error">${escapeHTML(error.message)}</div>`;
@@ -113,4 +139,5 @@ async function mount(page) {
   page.section.querySelectorAll(".view").forEach(view => view.classList.toggle("active", current === page));
   page.hooks = page.module ? (await import(page.module)).page : {};
   await page.hooks?.init?.();
+  if (page.settings?.length) page.tabs = mountSettingsTabs(page, () => current === page);
 }

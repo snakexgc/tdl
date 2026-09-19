@@ -22,8 +22,8 @@ func Manifest() manifest.Manifest {
 	return manifest.Manifest{ID: ID, Title: "HTTP Range 代理", Provides: []manifest.Port{manifest.PortOf[http.Handler](ports.RangeHandlerName, 1, 0)}, Config: []manifest.ConfigField{
 		manifest.Text("address", "Listen address", "0.0.0.0", false, true),
 		manifest.Number("port", "Listen port", 22334, 1, 65535, true),
-		manifest.FormattedText("public_base_url", "Public download URL", "", "url", false, true),
-		manifest.Number("link_ttl_hours", "Download link lifetime (hours)", 24, 0, 876000, true),
+		manifest.FormattedText("public_base_url", "Public download URL", "", "url", false, false),
+		manifest.Number("link_ttl_hours", "Download link lifetime (hours)", 24, 0, 876000, false),
 
 		field(clientWaitField, "等待账号连接超时（秒）", 30, 600),
 		field("persist_timeout_seconds", "传输记录保存超时（秒）", 5, 300),

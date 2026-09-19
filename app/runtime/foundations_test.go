@@ -69,7 +69,7 @@ func TestProductionFoundationsAreClosedByTheDeclaredGraph(t *testing.T) {
 	manager.Shutdown()
 }
 
-func TestProductionComponentToggleRebuildsPoliciesAndRetainsIndependentPorts(t *testing.T) {
+func TestProductionComponentToggleRetainsIndependentInstances(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
@@ -87,6 +87,10 @@ func TestProductionComponentToggleRebuildsPoliciesAndRetainsIndependentPorts(t *
 	manager := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: path})
 	t.Cleanup(manager.Shutdown)
 	require.NoError(t, manager.configurationErr)
+	accountOwner, policyOwner := manager.accountHost, manager.policies
+	credentials, err := manager.componentPort(ports.TelegramCredentialsName)
+	require.NoError(t, err)
+	opts := manager.watchOptions(cfg)
 	version, err := store.Revision(ctx, "filter.rules")
 	require.NoError(t, err)
 	require.NoError(t, manager.SetComponentEnabled(ctx, "filter.rules", false, version))
@@ -100,4 +104,18 @@ func TestProductionComponentToggleRebuildsPoliciesAndRetainsIndependentPorts(t *
 	manager.transitionWG.Wait()
 	_, err = manager.componentPort(ports.FilterRulesName)
 	require.NoError(t, err)
+	require.Same(t, accountOwner, manager.accountHost)
+	require.Same(t, policyOwner, manager.policies)
+	current, err := manager.componentPort(ports.TelegramCredentialsName)
+	require.NoError(t, err)
+	require.Same(t, credentials, current)
+	in := ports.ReactionInput{Account: manager.downloadAccount, Reactions: []ports.Reaction{{Mine: true, Value: "x"}}}
+	require.True(t, opts.Reaction.Matches(ctx, in))
+	require.NoError(t, manager.SetComponentEnabled(ctx, "trigger.reaction", false, ""))
+	manager.transitionWG.Wait()
+	require.False(t, opts.Reaction.Matches(ctx, in))
+	require.NoError(t, manager.SetComponentEnabled(ctx, "trigger.reaction", true, ""))
+	manager.transitionWG.Wait()
+	require.True(t, opts.Reaction.Matches(ctx, in))
+	require.Same(t, accountOwner, manager.accountHost)
 }
