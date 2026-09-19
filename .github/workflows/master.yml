@@ -40,11 +40,18 @@ jobs:
         run: go build
       - name: Unit Test
         run: go test -race ./...
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Component UI tests
+        run: node --experimental-vm-modules --test internal/integration/*.test.mjs
       - name: Component assembly and generated documentation
         run: |
           go run ./cmd/swc-check
           go run ./cmd/swc-check -empty
           go run ./cmd/swc-docs
+          git ls-files --error-unmatch docs/configuration.md
           git diff --exit-code -- docs/configuration.md
   release-build-check:
     runs-on: ubuntu-22.04

@@ -17,6 +17,25 @@ import (
 
 const testUnrelatedComponent = "unrelated"
 
+func TestReconcileComponentsCanceledRequestPreservesRunningComponents(t *testing.T) {
+	registry := rte.NewRegistry()
+	stops := 0
+	require.NoError(t, registry.Register(manifest.Manifest{ID: providerID}, func() rte.Component {
+		return &component{stop: func() error { stops++; return nil }}
+	}))
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
+	require.NoError(t, err)
+	host.Start(context.Background())
+	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
+	desired, err := registry.Build(types.DefaultAccount, map[string]bool{}, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, host.ReconcileComponents(ctx, desired), context.Canceled)
+	require.Zero(t, stops)
+	require.Equal(t, rte.Running, host.Statuses()[0].State)
+}
+
 func TestReconcileComponentsPreservesUnrelatedAndRebindsOptionalPorts(t *testing.T) {
 	ctx := context.Background()
 	registry := rte.NewRegistry()

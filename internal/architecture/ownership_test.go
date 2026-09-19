@@ -18,7 +18,7 @@ func TestTaskKeyOwnershipAndBSWDirection(t *testing.T) {
 		t.Fatal("source location unavailable")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
-	for _, layer := range []string{"app", "application", "bsw", "rte"} {
+	for _, layer := range []string{legacyLayer, applicationLayer, "bsw", runtimeLayer} {
 		err := filepath.WalkDir(filepath.Join(root, layer), func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
@@ -41,10 +41,8 @@ func TestTaskKeyOwnershipAndBSWDirection(t *testing.T) {
 					if err != nil {
 						return err
 					}
-					for _, forbidden := range []string{"app/", "application/"} {
-						if strings.HasPrefix(target, "github.com/snakexgc/tdl/"+forbidden) {
-							t.Errorf("%s imports business implementation %s", rel, target)
-						}
+					if forbiddenBSWImport(target) {
+						t.Errorf("%s imports upper layer %s", rel, target)
 					}
 				}
 			}
@@ -70,6 +68,30 @@ func TestTaskKeyOwnershipAndBSWDirection(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func forbiddenBSWImport(target string) bool {
+	for _, layer := range []string{legacyLayer, applicationLayer, runtimeLayer} {
+		prefix := "github.com/snakexgc/tdl/" + layer
+		if target == prefix || strings.HasPrefix(target, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBSWImportBoundary(t *testing.T) {
+	const module = "github.com/snakexgc/tdl/"
+	for _, target := range []string{legacyLayer, "app/runtime", applicationLayer, "application/filter.rules", runtimeLayer, "rte/config"} {
+		if !forbiddenBSWImport(module + target) {
+			t.Errorf("BSW boundary permits upper layer %s", target)
+		}
+	}
+	for _, target := range []string{"interfaces/ports", "bsw/services/nvm", "pkg/kv"} {
+		if forbiddenBSWImport(module + target) {
+			t.Errorf("BSW boundary rejects lower layer %s", target)
 		}
 	}
 }

@@ -94,6 +94,9 @@ func orderUnits(units map[string]ManagedUnit) ([]string, error) {
 func (r *Reconciler) Reconcile(ctx context.Context, desired []ManagedUnit) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	units := map[string]ManagedUnit{}
 	for _, unit := range desired {
 		if unit.ID == "" || unit.Start == nil || unit.Stop == nil {
@@ -151,8 +154,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, desired []ManagedUnit) error
 			old = &managedInstance{unit: unit, revision: unit.Revision}
 			r.instances[id] = old
 		}
-		if unit.Running != nil && !old.pendingStop {
-			old.active = unit.Running()
+		if !old.pendingStop {
+			observe := unit.Running
+			if old.active {
+				observe = old.unit.Running
+			}
+			if observe != nil {
+				running := observe()
+				if old.active && !running {
+					// An exited process still owns resources and consumers may
+					// retain its ports. Drain the old graph before replacing it.
+					old.pendingStop = true
+				} else {
+					old.active = running
+				}
+			}
 		}
 		restart[id] = !unit.Enabled || old.pendingStop || (old.active && (old.revision != unit.Revision || !slices.Equal(old.unit.Requires, unit.Requires)))
 		for _, dependency := range unit.Requires {

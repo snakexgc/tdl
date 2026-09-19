@@ -119,6 +119,26 @@ const directoryValueField = "value"
 
 const directorySecretField = "secret"
 
+func TestDirectoryChecksLivePortOwnership(t *testing.T) {
+	ctx := context.Background()
+	declared := manifest.Manifest{ID: consumerID, Provides: []manifest.Port{port()}}
+	catalog, err := rte.NewCatalog(rte.Definition{Manifest: declared, Scope: rte.AccountScope})
+	require.NoError(t, err)
+	registry := rte.NewRegistry()
+	require.NoError(t, registry.Register(manifest.Manifest{ID: consumerID}, factory))
+	require.NoError(t, registry.Register(manifest.Manifest{ID: providerID, Provides: []manifest.Port{port()}}, func() rte.Component {
+		return &component{init: func(k rte.Kernel) error { return k.Provide("greeting", greeter{}) }}
+	}))
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
+	require.NoError(t, err)
+	host.Start(ctx)
+	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
+	directory := rte.NewDirectory(catalog, nil)
+	require.NoError(t, directory.Bind("live", func() *rte.Runtime { return host }))
+	_, err = directory.ResolveComponentPort(consumerID, "greeting")
+	require.Error(t, err, "a catalog declaration must not grant another live component's port")
+}
+
 func TestDirectoryRejectsStaleSaveAndPreservesPendingRestartValues(t *testing.T) {
 	ctx := context.Background()
 	m := manifest.Manifest{ID: "pending", Config: []manifest.ConfigField{

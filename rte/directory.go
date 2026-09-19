@@ -178,10 +178,8 @@ func (d *Directory) ResolveComponentPort(id, name string) (any, error) {
 		}
 	}
 	for _, host := range d.runtimes() {
-		for _, status := range host.Statuses() {
-			if status.ID == id && status.State == Running {
-				return host.Resolve(name)
-			}
+		if value, err := host.resolveComponentPort(id, name); err == nil {
+			return value, nil
 		}
 	}
 	return nil, fmt.Errorf("component %s is unavailable", id)

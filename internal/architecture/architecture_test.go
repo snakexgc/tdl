@@ -17,6 +17,7 @@ const (
 	interfacesLayer  = "interfaces"
 	runtimeLayer     = "rte"
 	applicationLayer = "application"
+	legacyLayer      = "app"
 )
 
 func TestComponentDependencyDirection(t *testing.T) {

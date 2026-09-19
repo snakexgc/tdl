@@ -15,6 +15,9 @@ import (
 func (r *Runtime) ReconcileComponents(ctx context.Context, desired *Runtime) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.stopping || r.stopped || desired == nil || desired.started || desired.account != r.account {
 		return fmt.Errorf("invalid component reconciliation lifecycle")
 	}

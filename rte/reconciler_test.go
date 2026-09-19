@@ -35,11 +35,11 @@ func TestProductionGraphDrainsConsumersAndDoesNotOverlapAfterTimeout(t *testing.
 	blocked = false
 	events = nil
 	require.NoError(t, r.Reconcile(ctx, []rte.ManagedUnit{provider, consumer, independent}))
-	require.Equal(t, []string{stopConsumerEvent, "stop provider", "start provider", "start consumer"}, events)
+	require.Equal(t, []string{stopConsumerEvent, stopProviderEvent, "start provider", "start consumer"}, events)
 	events = nil
 	provider.Enabled = false
 	require.NoError(t, r.Reconcile(ctx, []rte.ManagedUnit{provider, consumer, independent}))
-	require.Equal(t, []string{stopConsumerEvent, "stop provider"}, events)
+	require.Equal(t, []string{stopConsumerEvent, stopProviderEvent}, events)
 	states := map[string]rte.State{}
 	for _, status := range r.Health().Components {
 		states[status.ID] = status.State
@@ -102,4 +102,63 @@ func TestProductionGraphDrainsOldDependenciesBeforeChangingGraph(t *testing.T) {
 	require.Equal(t, []string{"stop c", "stop p", "start c"}, events)
 }
 
-const stopConsumerEvent = "stop consumer"
+const (
+	stopConsumerEvent = "stop consumer"
+	stopProviderEvent = "stop provider"
+)
+
+func TestProductionGraphRestartsConsumersAfterProviderExits(t *testing.T) {
+	ctx := context.Background()
+	r := rte.NewReconciler(types.DefaultAccount)
+	events := []string{}
+	running := false
+	failStop := false
+	provider := rte.ManagedUnit{
+		ID: providerID, Enabled: true,
+		Running: func() bool { return running },
+		Start: func(context.Context) error {
+			events = append(events, "start provider")
+			running = true
+			return nil
+		},
+		Stop: func(context.Context) error {
+			events = append(events, stopProviderEvent)
+			if failStop {
+				return context.DeadlineExceeded
+			}
+			running = false
+			return nil
+		},
+	}
+	consumer := rte.ManagedUnit{
+		ID: consumerID, Enabled: true, Requires: []string{providerID},
+		Start: func(context.Context) error { events = append(events, "start consumer"); return nil },
+		Stop:  func(context.Context) error { events = append(events, stopConsumerEvent); return nil },
+	}
+	require.NoError(t, r.Reconcile(ctx, []rte.ManagedUnit{provider, consumer}))
+	running, failStop = false, true // The process exited, but its resources still need cleanup.
+	events = nil
+	require.ErrorIs(t, r.Reconcile(ctx, []rte.ManagedUnit{provider, consumer}), context.DeadlineExceeded)
+	require.Equal(t, []string{stopConsumerEvent, stopProviderEvent}, events)
+	failStop = false
+	events = nil
+	require.NoError(t, r.Reconcile(ctx, []rte.ManagedUnit{provider, consumer}))
+	require.Equal(t, []string{stopProviderEvent, "start provider", "start consumer"}, events)
+}
+
+func TestProductionGraphCanceledReconcilePreservesRunningResources(t *testing.T) {
+	r := rte.NewReconciler(types.DefaultAccount)
+	stops := 0
+	unit := rte.ManagedUnit{
+		ID: providerID, Enabled: true,
+		Start: func(context.Context) error { return nil },
+		Stop:  func(context.Context) error { stops++; return nil },
+	}
+	require.NoError(t, r.Reconcile(context.Background(), []rte.ManagedUnit{unit}))
+	before := r.Health()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, r.Reconcile(ctx, nil), context.Canceled)
+	require.Zero(t, stops)
+	require.Equal(t, before, r.Health())
+}

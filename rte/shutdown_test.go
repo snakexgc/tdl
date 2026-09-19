@@ -95,6 +95,26 @@ func TestStopHookFailurePreservesProviderForRetry(t *testing.T) {
 	host.Start(context.Background())
 	require.ErrorContains(t, host.Stop(context.Background()), "cleanup incomplete")
 	require.Empty(t, stopped)
+	_, err = host.Resolve("greeting")
+	require.Error(t, err, "stopping providers must not accept new port resolutions")
 	require.NoError(t, host.Stop(context.Background()))
 	require.Equal(t, []string{consumerID, providerID}, stopped)
+}
+
+func TestStopMarksFailedAndBlockedComponentsStopped(t *testing.T) {
+	registry := rte.NewRegistry()
+	require.NoError(t, registry.Register(manifest.Manifest{ID: providerID, Provides: []manifest.Port{port()}}, func() rte.Component {
+		return nil
+	}))
+	require.NoError(t, registry.Register(manifest.Manifest{ID: consumerID, Requires: []manifest.Require{{Port: port()}}}, factory))
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
+	require.NoError(t, err)
+	statuses := host.Start(context.Background())
+	require.Equal(t, rte.Failed, statuses[0].State)
+	require.Equal(t, rte.Blocked, statuses[1].State)
+	require.NoError(t, host.Stop(context.Background()))
+	for _, status := range host.Health().Components {
+		require.Equal(t, rte.Stopped, status.State)
+	}
+	require.NotEmpty(t, host.Health().Events, "shutdown must preserve diagnostic history")
 }

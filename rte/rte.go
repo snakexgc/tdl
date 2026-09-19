@@ -411,8 +411,23 @@ func (r *Runtime) startLocked(ctx context.Context) []Status {
 func (r *Runtime) Resolve(name string) (any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if value, ok := r.ports[name]; ok {
-		return value, nil
+	return r.resolvePortLocked(r.providers[name], name)
+}
+
+// Resolve identity, state and value together so reconciliation cannot substitute
+// another component between the ownership check and the port lookup.
+func (r *Runtime) resolveComponentPort(id, name string) (any, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.resolvePortLocked(id, name)
+}
+
+func (r *Runtime) resolvePortLocked(id, name string) (any, error) {
+	item := r.instances[id]
+	if item != nil && item.status.State == Running && r.providers[name] == id {
+		if value, ok := r.ports[name]; ok {
+			return value, nil
+		}
 	}
 	return nil, fmt.Errorf("port %s unavailable", name)
 }
@@ -488,6 +503,7 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	for i := len(r.order) - 1; i >= 0; i-- {
 		item := r.instances[r.order[i]]
 		if !item.initialized {
+			item.setStatus(Status{ID: r.order[i], State: Stopped})
 			continue
 		}
 		err := invoke(func() error { return item.component.Stop(ctx) })

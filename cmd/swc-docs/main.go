@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/snakexgc/tdl/application"
@@ -85,6 +86,9 @@ func run(path string) error {
 	}
 	if path == "-" {
 		_, err = os.Stdout.Write(buffer.Bytes())
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, buffer.Bytes(), 0o644)
