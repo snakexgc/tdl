@@ -20,12 +20,12 @@ import (
 
 func TestCatalogDoesNotRepublishRejectedRemoteCompletion(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "state")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "state"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
-	require.NoError(t, store.Set(ctx, downloadTaskKeyPrefix+testDocumentID, []byte(`{"id":"`+testDocumentID+`","file_name":"file.bin","file_size":42}`)))
+	require.NoError(t, store.Set(ctx, downloadTaskKeyPrefix+testDocumentID, []byte(`{"last_active_at":"2026-09-20T00:00:00Z","id":"`+testDocumentID+`","file_name":"file.bin","file_size":42}`)))
 	repository := taskhub.NewAria2Repository(store, 0)
 	record := types.Aria2TaskRecord{GID: "late-complete", TaskID: testDocumentID, Status: "active", CreatedAt: time.Now()}
 	require.NoError(t, repository.Add(ctx, record))

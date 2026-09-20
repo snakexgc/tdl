@@ -118,8 +118,7 @@ func (s *Server) markDownloadTaskDownloaded(ctx context.Context, taskID string) 
 	_ = taskhub.Links(s.opts.NamespaceKV).MarkDownloaded(ctx, taskID)
 }
 
-// downloadTaskActivity returns the record's sliding expiry base (LastActiveAt,
-// falling back to CreatedAt) and whether the record exists.
+// downloadTaskActivity returns the current record's sliding expiry clock.
 func (s *Server) downloadTaskActivity(ctx context.Context, taskID string) (time.Time, bool) {
 	if s.opts.NamespaceKV == nil || taskID == "" {
 		return time.Time{}, false
@@ -128,14 +127,8 @@ func (s *Server) downloadTaskActivity(ctx context.Context, taskID string) (time.
 	if err != nil {
 		return time.Time{}, false
 	}
-	var task persistentDownloadTask
-	if err := json.Unmarshal(data, &task); err != nil {
-		return time.Time{}, false
-	}
-	if !task.LastActiveAt.IsZero() {
-		return task.LastActiveAt, true
-	}
-	return task.CreatedAt, true
+	stamp, err := taskhub.LinkActivity(data)
+	return stamp, err == nil
 }
 
 // refreshDownloadTaskActivity slides a download link's expiry by stamping

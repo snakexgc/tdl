@@ -24,7 +24,6 @@ import (
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/internal/componentconfig"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	pkgtclient "github.com/snakexgc/tdl/pkg/tclient"
@@ -52,7 +51,7 @@ func TestLiveAccountSerialSmoke(t *testing.T) {
 	system, err := configuration.System(context.Background())
 	require.NoError(t, err)
 	cfg.Namespace, cfg.Debug = system.Namespace, system.Debug
-	cfg, _, err = componentconfig.Load(context.Background(), configuration.Store(), cfg)
+	cfg, _, err = config.Load(context.Background(), configuration.Store(), config.System(cfg))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		after, err := os.ReadFile(filepath.Join(root, configurationmanager.Filename))

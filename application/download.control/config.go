@@ -24,8 +24,8 @@ func Manifest() manifest.Manifest {
 		ID:      ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 20, KeepVisible: true, SettingsURL: "/config?tab=download"}}, Title: "下载任务控制",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 2, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0), manifest.PortOf[ports.DownloadPipeline](ports.DownloadPipelineName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: executorsField, Title: "执行器优先级", Help: "每行一个，按顺序尝试：local、aria2 或 http。至少填写一个；http 仅生成链接，必须放在最后。", Type: manifest.Strings, Default: []string{aria2Executor, httpExecutor}},
-			{Name: "local_root", Title: "本地下载根目录", Help: "使用本地执行器时必须填写本机绝对路径。", Type: manifest.String, Default: ""},
+			{Name: executorsField, Title: "下载方式与尝试顺序", Help: "勾选要使用的下载方式，按标出的顺序尝试。仅在上一种方式明确未接收任务时尝试下一种；仅生成链接始终放在最后。", Type: manifest.Strings, Default: []string{aria2Executor, httpExecutor}, Editor: "/static/js/download-methods.js"},
+			{Name: "local_root", Title: "本地保存目录", Help: "选择 local 时必填。填写 TDL 所在机器上的绝对路径，例如 D:\\Downloads 或 /data/downloads；容器部署时填写容器内路径。", Type: manifest.String, Default: ""},
 		},
 	}, "download", "下载方式").SettingsOrder(10)
 }

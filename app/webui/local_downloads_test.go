@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
 	local "github.com/snakexgc/tdl/application/downloader.local"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
@@ -25,7 +24,7 @@ func savedLinksForTest(t *testing.T, store storage.Storage, cfg *config.Config) 
 	t.Helper()
 	registry, err := application.Registry()
 	require.NoError(t, err)
-	host, err := registry.Build(types.DefaultAccount, map[string]bool{"naming.rules": true}, watch.PolicyValues(watch.DefaultOptions(cfg)))
+	host, err := registry.Build(types.DefaultAccount, map[string]bool{ports.NamingRulesName: true}, map[string]map[string]any{ports.NamingRulesName: {"filename": cfg.Filename, "directory": cfg.DownloadDir, "max_bytes": cfg.FilenameMax}})
 	require.NoError(t, err)
 	host.Start(context.Background())
 	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
@@ -65,7 +64,8 @@ func TestDownloadLinksUsesLocalDownloaderMode(t *testing.T) {
 			"date":0,
 			"location":{"kind":"document","id":42,"access_hash":99,"file_reference":"cmVm"}
 		},
-		"created_at":"` + createdAt.Format(time.RFC3339Nano) + `"
+		"created_at":"` + createdAt.Format(time.RFC3339Nano) + `",
+        "last_active_at":"` + createdAt.Format(time.RFC3339Nano) + `"
 	}`)
 
 	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
@@ -118,7 +118,7 @@ func TestMarkDownloadTaskDownloadedPreservesLocalDownloadMetadata(t *testing.T) 
 			"date":0,
 			"location":{"kind":"document","id":42,"access_hash":9007199254740993,"file_reference":"cmVm"}
 		},
-		"created_at":"2026-05-01T08:00:00Z"
+		"created_at":"2026-05-01T08:00:00Z", "last_active_at":"2026-05-01T08:00:00Z"
 	}`)
 
 	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
@@ -170,6 +170,7 @@ func TestDownloadLinksUsesCompletedHTTPDeliveryStatus(t *testing.T) {
 		"file_name":"video.mp4",
 		"file_size":100,
 		"created_at":"2026-08-12T08:00:00Z",
+        "last_active_at":"2026-08-12T08:00:00Z",
 		"downloaded":false,
 		"http_delivery":{"file_size":100,"completed_at":"` + completedAt.Format(time.RFC3339Nano) + `"}
 	}`)

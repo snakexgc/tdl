@@ -1,7 +1,6 @@
-package componentconfig
+package config
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,20 +8,13 @@ import (
 	"strings"
 
 	"github.com/snakexgc/tdl/application"
-	runtimeconfig "github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/rte/config"
 )
 
-func object(value any) (map[string]any, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var result map[string]any
-	err = decoder.Decode(&result)
-	return result, err
+// System selects the process-owned settings from a transport snapshot.
+func System(cfg *Config) ports.SystemConfiguration {
+	return ports.SystemConfiguration{Namespace: cfg.Namespace, Debug: cfg.Debug}
 }
 
 func put(root map[string]any, path string, value any) {
@@ -38,31 +30,34 @@ func put(root map[string]any, path string, value any) {
 	root[parts[len(parts)-1]] = value
 }
 
-// Load overlays all component-owned values, including defaults, onto bootstrap
-// settings. It never reads sessions or accesses the network.
-func Load(ctx context.Context, store *config.Store, bootstrap *runtimeconfig.Config) (*runtimeconfig.Config, map[string]bool, error) {
-	if bootstrap == nil {
-		bootstrap = runtimeconfig.DefaultConfig()
-	}
+// Load reads every component from the unified repository. Only system settings
+// come from the process snapshot; business values cannot fall back to it.
+func Load(ctx context.Context, store *config.Store, system ports.SystemConfiguration) (*Config, map[string]bool, error) {
 	if store == nil {
-		copy, err := runtimeconfig.Clone(bootstrap)
-		return copy, nil, err
+		return nil, nil, fmt.Errorf("component configuration store is required")
+	}
+	return loadComponents(ctx, store, system)
+}
+
+func loadComponents(ctx context.Context, store *config.Store, system ports.SystemConfiguration) (*Config, map[string]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	catalog, err := application.Catalog()
 	if err != nil {
 		return nil, nil, err
 	}
-	root, err := object(bootstrap)
-	if err != nil {
-		return nil, nil, err
-	}
+	root := map[string]any{"namespace": system.Namespace, "debug": system.Debug}
 	views := map[string]config.View{}
 	enabled := map[string]bool{}
 	for _, definition := range catalog.Definitions() {
 		id := definition.Manifest.ID
-		document, err := store.Load(ctx, id)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", id, err)
+		document := config.Document{Enabled: id != forwardTriggerComponentID}
+		if store != nil {
+			document, err = store.Load(ctx, id)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", id, err)
+			}
 		}
 		view, err := catalog.View(ctx, id, document.Values)
 		if err != nil {
@@ -70,7 +65,7 @@ func Load(ctx context.Context, store *config.Store, bootstrap *runtimeconfig.Con
 		}
 		views[id], enabled[id] = view, document.Enabled
 	}
-	for _, binding := range Bindings() {
+	for _, binding := range bindings() {
 		if binding.EnabledPath != "" {
 			put(root, binding.EnabledPath, enabled[binding.Component])
 		}
@@ -102,11 +97,8 @@ func Load(ctx context.Context, store *config.Store, bootstrap *runtimeconfig.Con
 	if err != nil {
 		return nil, nil, err
 	}
-	var result runtimeconfig.Config
+	var result Config
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, nil, err
-	}
-	if err := runtimeconfig.Validate(&result); err != nil {
 		return nil, nil, err
 	}
 	return &result, enabled, nil

@@ -22,11 +22,11 @@ func TestCredentialSaveKeepsActiveAccountResources(t *testing.T) {
 	owner, connections := manager.accountHost, manager.connections
 	require.NoError(t, manager.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 12345, apiHashField: "0123456789abcdef0123456789abcdef", fieldUseBuiltin: false}))
 	manager.transitionWG.Wait()
-	require.Same(t, owner, manager.accountHost, "credentials apply to future clients without disconnecting current transfers")
+	require.Same(t, owner, manager.accountHost, "credential edits wait for process restart")
 	require.Same(t, connections, manager.connections)
 	credentials, err := manager.Resolve(ctx, manager.downloadAccount)
 	require.NoError(t, err)
-	require.Equal(t, 12345, credentials.App.AppID)
+	require.NotEqual(t, 12345, credentials.App.AppID)
 }
 
 func TestComponentEditsKeepAccountBootConfiguration(t *testing.T) {
@@ -55,7 +55,7 @@ func TestComponentEditsKeepAccountBootConfiguration(t *testing.T) {
 func TestConnectionFeatureTogglesDoNotChangeTransportDependencies(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{Watch: true, Forward: true}
-	m := NewManager(config.WithSource(context.Background(), config.NewSource(cfg)), nil, nil, Options{})
+	m := NewManager(config.WithSource(context.Background(), config.NewSource(cfg)), nil, nil, Options{ComponentStore: newStoppedComponentStore(t)})
 	t.Cleanup(m.Shutdown)
 	watchUnit := func(cfg *config.Config) rte.ManagedUnit {
 		for _, unit := range m.managedUnits(cfg) {
@@ -97,7 +97,7 @@ func TestDownloadMetadataDoesNotRestartTransports(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
 	ctx := config.WithSource(context.Background(), config.NewSource(cfg))
-	manager := NewManager(ctx, nil, nil, Options{})
+	manager := NewManager(ctx, nil, nil, Options{ComponentStore: newStoppedComponentStore(t)})
 	t.Cleanup(manager.Shutdown)
 	find := func(units []rte.ManagedUnit, id string) rte.ManagedUnit {
 		for _, unit := range units {

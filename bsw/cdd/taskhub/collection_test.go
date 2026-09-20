@@ -26,7 +26,7 @@ func TestCollectionDrivers(t *testing.T) {
 	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverFile} {
 		t.Run(string(driver), func(t *testing.T) {
 			ctx := context.Background()
-			engine, err := kv.New(driver, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "tasks")})
+			engine, err := kv.New(driver, filepath.Join(t.TempDir(), "tasks"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			first, err := engine.Open("account-a")

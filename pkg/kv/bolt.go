@@ -6,17 +6,11 @@ import (
 	"sync"
 
 	"github.com/go-faster/errors"
-	"github.com/mitchellh/mapstructure"
 	"go.etcd.io/bbolt"
 	"go.uber.org/multierr"
 
 	"github.com/snakexgc/tdl/internal/core/storage"
-	"github.com/snakexgc/tdl/pkg/validator"
 )
-
-func init() {
-	register(DriverBolt, func(m map[string]any) (Storage, error) { return newBolt(m) })
-}
 
 type bolt struct {
 	path string
@@ -24,26 +18,13 @@ type bolt struct {
 	mu   *sync.Mutex
 }
 
-func newBolt(opts map[string]any) (*bolt, error) {
-	type options struct {
-		Path string `validate:"required" mapstructure:"path"`
-	}
-
-	var o options
-	if err := mapstructure.WeakDecode(opts, &o); err != nil {
-		return nil, errors.Wrap(err, "decode options")
-	}
-
-	if err := validator.Struct(&o); err != nil {
-		return nil, errors.Wrap(err, "validate options")
-	}
-
-	if err := os.MkdirAll(o.Path, 0o755); err != nil {
+func newBolt(path string) (*bolt, error) {
+	if err := os.MkdirAll(path, 0o755); err != nil {
 		return nil, errors.Wrap(err, "create dir")
 	}
 
 	return &bolt{
-		path: o.Path,
+		path: path,
 		dbs:  make(map[string]*bbolt.DB),
 		mu:   &sync.Mutex{},
 	}, nil

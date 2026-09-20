@@ -41,7 +41,8 @@ func TestLocalExecutorUsesAccountTaskRepository(t *testing.T) {
 	_, err = runtime.local.Submit(ctx, in)
 	require.ErrorContains(t, err, "source task is unavailable")
 	task := &httpdl.Task{
-		ID: testDocument1, FileName: testVideoFile, FileSize: 4, CreatedAt: time.Now(),
+		LastActiveAt: time.Now(),
+		ID:           testDocument1, FileName: testVideoFile, FileSize: 4, CreatedAt: time.Now(),
 		Peer:  &tg.InputPeerChannel{ChannelID: 12, AccessHash: 34},
 		Media: &tmedia.Media{Name: testVideoFile, Size: 4, DC: 2, InputFileLoc: &tg.InputDocumentFileLocation{ID: 1}},
 	}

@@ -29,17 +29,9 @@ func CleanupLinksAndAria2(ctx context.Context, s storage.Storage, now time.Time,
 			}
 			missing := errors.Is(err, storage.ErrNotFound)
 			if !missing {
-				var record struct {
-					CreatedAt    time.Time `json:"created_at"`
-					LastActiveAt time.Time `json:"last_active_at"`
-				}
-				if err := json.Unmarshal(data, &record); err != nil {
+				stamp, err = LinkActivity(data)
+				if err != nil {
 					return err
-				}
-				if !record.LastActiveAt.IsZero() {
-					stamp = record.LastActiveAt
-				} else if !record.CreatedAt.IsZero() {
-					stamp = record.CreatedAt
 				}
 			}
 			if missing || expired(stamp, now, ttl) {

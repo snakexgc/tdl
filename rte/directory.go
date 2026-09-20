@@ -19,6 +19,7 @@ type Directory struct {
 	patchMu   sync.Mutex
 	catalog   *Catalog
 	store     *config.Store
+	active    *config.Store
 	hosts     map[string]func() *Runtime
 	observers map[string]func() Health
 }
@@ -27,6 +28,13 @@ var ErrConfigurationConflict = errors.New("configuration changed; reload before 
 
 func NewDirectory(catalog *Catalog, store *config.Store) *Directory {
 	return &Directory{catalog: catalog, store: store, hosts: map[string]func() *Runtime{}, observers: map[string]func() Health{}}
+}
+
+// WithActiveStore supplies the immutable configuration used by this process.
+// Configure it before publishing the directory to concurrent callers.
+func (d *Directory) WithActiveStore(active *config.Store) *Directory {
+	d.active = active
+	return d
 }
 
 func (d *Directory) Bind(name string, host func() *Runtime) error {
@@ -135,6 +143,22 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 				} else {
 					entry.PendingRestart = active && entry.State == Running && !views[m.ID].Equal(view)
 					entry.Values = publicValues(m.Config, view)
+					entry.Previews = publicPreviews(m.Config, view)
+					if d.active != nil {
+						before, err := d.active.Load(ctx, m.ID)
+						if err != nil {
+							entry.Error = err.Error()
+						} else if baseline, err := d.catalog.View(ctx, m.ID, before.Values); err != nil {
+							entry.Error = err.Error()
+						} else {
+							entry.ActiveEnabled = &before.Enabled
+							entry.Changes = configurationChanges(m.Config, baseline, view)
+							if before.Enabled != document.Enabled {
+								entry.Changes = append(entry.Changes, ConfigurationChange{Name: "enabled", Before: before.Enabled, After: document.Enabled})
+							}
+							entry.PendingRestart = len(entry.Changes) > 0
+						}
+					}
 				}
 			}
 		} else if !active || entry.State == Stopped || entry.State == Failed || entry.State == Blocked {
@@ -143,6 +167,7 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 				entry.Error = err.Error()
 			} else {
 				entry.Values = publicValues(m.Config, view)
+				entry.Previews = publicPreviews(m.Config, view)
 			}
 		}
 		for i := range entry.Fields {
@@ -155,7 +180,7 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 	return result
 }
 
-// ResolveComponentPort checks ownership and desired enablement on each request;
+// ResolveComponentPort checks ownership and active enablement on each request;
 // callers never keep a handler from a replaced or disabled component instance.
 func (d *Directory) ResolveComponentPort(id, name string) (any, error) {
 	definition, ok := d.catalog.entries[id]
@@ -169,8 +194,12 @@ func (d *Directory) ResolveComponentPort(id, name string) (any, error) {
 	if !declared {
 		return nil, fmt.Errorf("%s does not provide %s", id, name)
 	}
-	if d.store != nil {
-		document, err := d.store.Load(context.Background(), id)
+	store := d.active
+	if store == nil {
+		store = d.store
+	}
+	if store != nil {
+		document, err := store.Load(context.Background(), id)
 		if err != nil {
 			return nil, err
 		}
@@ -186,8 +215,7 @@ func (d *Directory) ResolveComponentPort(id, name string) (any, error) {
 	return nil, fmt.Errorf("component %s is unavailable", id)
 }
 
-// Patch saves unavailable and disabled components without constructing resources.
-// Running components use their prepared update and persistence transaction.
+// Patch validates and saves configuration without changing running components.
 func (d *Directory) Patch(ctx context.Context, id string, patch map[string]any) error {
 	return d.PatchWithRevision(ctx, id, patch, "")
 }
@@ -210,23 +238,6 @@ func (d *Directory) PatchWithRevision(ctx context.Context, id string, patch map[
 	definition, exists := d.catalog.entries[id]
 	if !exists {
 		return fmt.Errorf("unknown component %s", id)
-	}
-	var owner *Runtime
-	for _, host := range d.runtimes() {
-		for _, item := range host.Health().Components {
-			if item.ID != id || item.State == Stopped {
-				continue
-			}
-			if owner != nil {
-				return fmt.Errorf("multiple active owners for %s", id)
-			}
-			if item.State == Starting || item.State == Stopping {
-				return fmt.Errorf("component %s is %s", id, item.State)
-			}
-			if item.State == Running {
-				owner = host
-			}
-		}
 	}
 	document, err := d.store.Load(ctx, id)
 	if err != nil {
@@ -254,28 +265,6 @@ func (d *Directory) PatchWithRevision(ctx context.Context, id string, patch map[
 	if err != nil {
 		return err
 	}
-	if owner != nil && document.Enabled {
-		owner.mu.Lock()
-		item := owner.instances[id]
-		var current config.View
-		if item != nil {
-			current = item.config
-		}
-		owner.mu.Unlock()
-		if item == nil {
-			return fmt.Errorf("component %s changed during configuration; retry saving", id)
-		}
-		restart := false
-		for _, field := range definition.Manifest.Config {
-			if field.RestartRequired && !current.EqualFields(view, field.Name) {
-				restart = true
-				break
-			}
-		}
-		if !restart {
-			return owner.PatchSaved(ctx, id, values, d.store)
-		}
-	}
 	return d.store.Save(ctx, id, document.Enabled, view)
 }
 
@@ -293,7 +282,7 @@ func publicValues(fields []manifest.ConfigField, view config.View) map[string]an
 	return values
 }
 
-// SetEnabled persists desired state; resource reconciliation remains the owner's job.
+// SetEnabled persists desired state for the next process start.
 func (d *Directory) SetEnabled(ctx context.Context, id string, enabled bool) error {
 	return d.SetEnabledWithRevision(ctx, id, enabled, "")
 }
@@ -322,36 +311,4 @@ func (d *Directory) SetEnabledWithRevision(ctx context.Context, id string, enabl
 		return err
 	}
 	return d.store.Save(ctx, id, enabled, view)
-}
-
-// ApplyPending publishes saved views only after the owning composition has
-// successfully reconciled restart-sensitive resources. Failed reconciliation
-// leaves the old live view and the pending-restart indicator intact.
-func (d *Directory) ApplyPending(ctx context.Context) error {
-	d.patchMu.Lock()
-	defer d.patchMu.Unlock()
-	if d.store == nil {
-		return nil
-	}
-	var result error
-	for _, host := range d.runtimes() {
-		for _, entry := range host.Configurations() {
-			if entry.State != Running {
-				continue
-			}
-			if _, known := d.catalog.entries[entry.ID]; !known {
-				continue
-			}
-			document, err := d.store.Load(ctx, entry.ID)
-			if err != nil {
-				result = errors.Join(result, err)
-				continue
-			}
-			if !document.Enabled {
-				continue
-			}
-			result = errors.Join(result, host.Reconfigure(ctx, entry.ID, document.Values))
-		}
-	}
-	return result
 }

@@ -88,7 +88,10 @@ func TestDeclaredFeatureUsesGenericAuthenticatedRoutesPagesAndConfiguration(t *t
 	require.NoError(t, err)
 	require.Equal(t, rte.Running, host.Start(ctx)[0].State)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
-	directory := exampleDirectory{rte.NewDirectory(catalog, configtest.NewStore())}
+	store := configtest.NewStore()
+	active, err := store.Snapshot(ctx, []string{exampleID, "panel.webui"})
+	require.NoError(t, err)
+	directory := exampleDirectory{rte.NewDirectory(catalog, store).WithActiveStore(active)}
 	require.NoError(t, directory.Bind("features", func() *rte.Runtime { return host }))
 	server := NewServer(Options{Catalog: catalog, ComponentManager: directory})
 	server.sessions["example-session"] = time.Now().Add(time.Hour)
@@ -110,8 +113,9 @@ func TestDeclaredFeatureUsesGenericAuthenticatedRoutesPagesAndConfiguration(t *t
 	require.Contains(t, request(http.MethodGet, "/api/example", "", true).Body.String(), "original")
 	require.Equal(t, http.StatusBadRequest, request(http.MethodPost, "/api/example", "broken", true).Code)
 	require.Equal(t, http.StatusOK, request(http.MethodPatch, "/api/components", `{"id":"example.feature","values":{"label":"changed"}}`, true).Code)
-	require.Contains(t, request(http.MethodGet, "/api/example", "", true).Body.String(), "changed")
+	require.Contains(t, request(http.MethodGet, "/api/example", "", true).Body.String(), "original")
 	require.NoError(t, directory.SetEnabled(ctx, exampleID, false))
-	require.Equal(t, http.StatusServiceUnavailable, request(http.MethodGet, "/api/example", "", true).Code)
+	require.Equal(t, http.StatusOK, request(http.MethodGet, "/api/example", "", true).Code)
+	require.NoError(t, func() error { _, err := directory.ResolveComponentPort(exampleID, exampleAction); return err }())
 	require.Error(t, func() error { _, err := directory.ResolveComponentPort("panel.webui", exampleAction); return err }())
 }

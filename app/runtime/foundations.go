@@ -53,11 +53,6 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 				if err := host.ReconcileComponents(m.parent, desired); err != nil {
 					return err
 				}
-				if m.componentStore == nil {
-					if err := host.ReconfigureBatch(ctx, daemonComponentValues(cfg)); err != nil {
-						return err
-					}
-				}
 				filter, filterErr := host.Resolve(ports.FilterRulesName)
 				naming, namingErr := host.Resolve(ports.NamingRulesName)
 				m.mu.Lock()
@@ -85,7 +80,7 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 		},
 		{
 			ID: accountResource, Enabled: true, Requires: []string{policyResource},
-			// Credential policy is hot-applied for future client creation. It
+			// Credential policy comes from the immutable startup store. It
 			// must not close an authenticated connection that is still in use.
 			Revision: revision(config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout),
 			Running:  func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.accountHost != nil },

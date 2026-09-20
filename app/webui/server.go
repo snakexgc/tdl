@@ -80,29 +80,29 @@ const (
 )
 
 type Options struct {
-	Dialogs          ports.DialogCatalog
-	Catalog          *rte.Catalog
-	ComponentStore   *rteconfig.Store
-	SessionChecker   ports.AccountSession
-	Connections      *tgauth.Connections
-	SetComponentHost func(*rte.Runtime)
-	DownloadControl  ports.DownloadControl
-	LocalLinks       ports.DownloadExecutor
-	Credentials      ports.TelegramCredentials
-	Updater          ports.Updater
-	ComponentManager ComponentManager
-	ForwardQueue     ports.ForwardTasks
-	Context          context.Context
-	KVEngine         kv.Storage
-	Namespace        string
-	NamespaceKV      storage.Storage
-	AfterConfigSave  func(*config.Config)
-	OnLoginSuccess   func(*tg.User)
-	RequestReboot    func()
-	ResetPlan        *reset.Plan
-	RequestReset     func()
-	RequestUpdate    func(types.UpdatePlan)
-	WatchRunning     func() bool
+	Dialogs              ports.DialogCatalog
+	Catalog              *rte.Catalog
+	ComponentStore       *rteconfig.Store
+	SessionChecker       ports.AccountSession
+	Connections          *tgauth.Connections
+	SetComponentHost     func(*rte.Runtime)
+	DownloadControl      ports.DownloadControl
+	LocalLinks           ports.DownloadExecutor
+	Credentials          ports.TelegramCredentials
+	Updater              ports.Updater
+	ComponentManager     ComponentManager
+	ForwardQueue         ports.ForwardTasks
+	Context              context.Context
+	KVEngine             kv.Storage
+	Namespace            string
+	NamespaceKV          storage.Storage
+	ConfigurationManager ports.ConfigurationManager
+	OnLoginSuccess       func(*tg.User)
+	RequestReboot        func()
+	ResetPlan            *reset.Plan
+	RequestReset         func()
+	RequestUpdate        func(types.UpdatePlan)
+	WatchRunning         func() bool
 }
 
 type ComponentManager interface {
@@ -123,6 +123,7 @@ type Server struct {
 
 	login               *webLoginManager
 	configuration       ports.Configuration
+	activeConfiguration ports.SystemConfiguration
 	sessionCatalog      ports.SessionCatalog
 	downloadLinksPort   ports.DownloadLinks
 	downloadCatalogPort ports.DownloadCatalog
@@ -190,14 +191,19 @@ func NewServer(opts Options) *Server {
 	if opts.ForwardQueue == nil {
 		opts.ForwardQueue = appforward.NewQueue(opts.NamespaceKV)
 	}
+	var active ports.SystemConfiguration
+	if cfg := config.From(opts.Context); cfg != nil {
+		active = config.System(cfg)
+	}
 	server := &Server{
-		samples:       telemetry.New(time.Second),
-		assets:        application.WebAssets(opts.Catalog),
-		configuration: panel.NewConfiguration(configurationStore{saved: opts.AfterConfigSave}),
-		opts:          opts,
-		login:         newWebLoginManager(opts),
-		sessions:      map[string]time.Time{},
-		logins:        map[string]loginFailure{},
+		samples:             telemetry.New(time.Second),
+		assets:              application.WebAssets(opts.Catalog),
+		configuration:       panel.NewConfiguration(configurationStore{manager: opts.ConfigurationManager, active: active}),
+		activeConfiguration: active,
+		opts:                opts,
+		login:               newWebLoginManager(opts),
+		sessions:            map[string]time.Time{},
+		logins:              map[string]loginFailure{},
 	}
 	server.dialogs = opts.Dialogs
 	if server.dialogs == nil {

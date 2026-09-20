@@ -24,8 +24,8 @@ func filterConfig(opts Options) map[string]any {
 	return map[string]any{"include": include, "exclude": exclude, "min_mb": opts.FileSizeMinMB, "max_mb": opts.FileSizeMaxMB}
 }
 
-// PolicyValues maps runtime options for the owning production RTE host.
-func PolicyValues(opts Options) map[string]map[string]any {
+// policyValues builds explicit test policies.
+func policyValues(opts Options) map[string]map[string]any {
 	return map[string]map[string]any{
 		filterComponentID: filterConfig(opts),
 		namingComponentID: namingConfig(opts),

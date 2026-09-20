@@ -84,14 +84,15 @@ function reconcileNavigation(data) {
       (component.pages || [])
         .filter(
           (page) =>
-            component.enabled !== false ||
+            (component.active_enabled ?? component.enabled) !== false ||
             page.keep_visible ||
             page.nav_hidden,
         )
         .map((page) => ({
           ...page,
           owner: component.id,
-          ownerEnabled: component.enabled !== false,
+          ownerEnabled:
+            (component.active_enabled ?? component.enabled) !== false,
         })),
     )
     .sort(

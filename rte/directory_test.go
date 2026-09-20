@@ -98,7 +98,17 @@ func TestDirectoryHealthDoesNotWaitForConfigurationAndFollowsReplacement(t *test
 	require.Error(t, directory.Bind("connection", current.Load))
 	done := make(chan error, 1)
 	go func() { done <- directory.Patch(ctx, "live", map[string]any{directoryValueField: 2}) }()
-	<-c.preparing
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("saving must not prepare or wait for the running component")
+	}
+	select {
+	case <-c.preparing:
+		t.Fatal("saving reconfigured a running component")
+	default:
+	}
 	health := make(chan []rte.Health, 1)
 	go func() { health <- directory.Health() }()
 	select {
@@ -107,8 +117,6 @@ func TestDirectoryHealthDoesNotWaitForConfigurationAndFollowsReplacement(t *test
 	case <-time.After(time.Second):
 		t.Error("health waited for prepared configuration")
 	}
-	close(c.unblock)
-	require.NoError(t, <-done)
 	require.NoError(t, host.Stop(ctx))
 	current.Store(nil)
 	require.Empty(t, directory.Health())
@@ -145,9 +153,10 @@ func TestDirectoryChecksLivePortOwnership(t *testing.T) {
 }
 
 func TestDirectoryRejectsStaleSaveAndPreservesPendingRestartValues(t *testing.T) {
+	const endpointField = "endpoint"
 	ctx := context.Background()
 	m := manifest.Manifest{ID: "pending", Config: []manifest.ConfigField{
-		manifest.Text("endpoint", "Endpoint", "old", false, true),
+		manifest.Text(endpointField, "Endpoint", "old", false, true),
 		manifest.Number("frequency", "Frequency", 1, 1, 100, false),
 	}}
 	registry := rte.NewRegistry()
@@ -161,16 +170,16 @@ func TestDirectoryRejectsStaleSaveAndPreservesPendingRestartValues(t *testing.T)
 	defer func() { require.NoError(t, host.Stop(ctx)) }()
 	require.NoError(t, directory.Bind("pending", func() *rte.Runtime { return host }))
 	first := directory.Configurations(ctx)[0]
-	require.NoError(t, directory.PatchWithRevision(ctx, m.ID, map[string]any{"endpoint": "new"}, first.Revision))
-	require.ErrorIs(t, directory.PatchWithRevision(ctx, m.ID, map[string]any{"endpoint": "stale"}, first.Revision), rte.ErrConfigurationConflict)
+	require.NoError(t, directory.PatchWithRevision(ctx, m.ID, map[string]any{endpointField: "new"}, first.Revision))
+	require.ErrorIs(t, directory.PatchWithRevision(ctx, m.ID, map[string]any{endpointField: "stale"}, first.Revision), rte.ErrConfigurationConflict)
 	require.NoError(t, directory.Patch(ctx, m.ID, map[string]any{"frequency": 2}))
 	pending := directory.Configurations(ctx)[0]
 	require.True(t, pending.PendingRestart)
 	values, err := json.Marshal(pending.Values)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"endpoint":"new","frequency":2}`, string(values))
-	require.Equal(t, "old", host.Configurations()[0].Values["endpoint"])
-	require.NoError(t, directory.ApplyPending(ctx))
+	require.Equal(t, "old", host.Configurations()[0].Values[endpointField])
+	require.EqualValues(t, 1, host.Configurations()[0].Values["frequency"])
+	require.NoError(t, directory.Patch(ctx, m.ID, map[string]any{endpointField: "old", "frequency": 1}))
 	require.False(t, directory.Configurations(ctx)[0].PendingRestart)
-	require.Equal(t, "new", host.Configurations()[0].Values["endpoint"])
 }

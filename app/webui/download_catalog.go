@@ -144,5 +144,5 @@ func (a catalogAdapter) Submission(ctx context.Context) (ports.LinkSubmissionRes
 	}
 	// Catalog submission must not expire unrelated associations as a side
 	// effect. The existing status maintenance runnable owns their cleanup.
-	return ports.LinkSubmissionResources{Records: records, Mode: config.PrimaryDownloadExecutor(&cfg), PublicBaseURL: cfg.HTTP.PublicBaseURL, RemoteDir: cfg.Aria2.Dir, Limit: config.EffectiveLimit(&cfg), Connections: config.EffectivePoolSize(&cfg), Local: a.server.opts.LocalLinks, Remote: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.NewAria2Repository(a.repository.Store, 0)}, nil
+	return ports.LinkSubmissionResources{Records: records, Mode: config.PrimaryDownloadExecutor(&cfg), PublicBaseURL: cfg.HTTP.PublicBaseURL, RemoteDir: cfg.Aria2.Dir, Limit: cfg.Limit, Connections: cfg.PoolSize, Local: a.server.opts.LocalLinks, Remote: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.NewAria2Repository(a.repository.Store, 0)}, nil
 }

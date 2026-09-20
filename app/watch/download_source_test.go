@@ -30,7 +30,7 @@ func TestWatchDownloadProtocolFeedsOwnedPipelineAndBoltQueue(t *testing.T) {
 			cfg.Downloader.Executors, cfg.Downloader.LocalRoot = []string{localExecutorName}, t.TempDir()
 			cfg.Aria2.Dir = filepath.Join(t.TempDir(), "remote-only")
 			ctx := config.WithSource(context.Background(), config.NewSource(cfg))
-			engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "state")})
+			engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "state"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			storage, err := engine.Open(string(types.DefaultAccount))

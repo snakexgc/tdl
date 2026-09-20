@@ -63,7 +63,6 @@ type Options struct {
 	ReconnectTimeout      time.Duration
 	WatchControl          watchControl
 	DisableAutoStartWatch bool
-	AfterConfigSave       func(*config.Config)
 	OnLoginSuccess        func(*tg.User)
 	SetNotifier           func(watch.NotifyFunc)
 	RequestReboot         func()

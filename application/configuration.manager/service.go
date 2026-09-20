@@ -1,6 +1,6 @@
 // Package configuration owns the complete user configuration and its persistence.
 // Business schemas are collected from the catalog, so adding a declared setting
-// also adds it to validation, migration and the generated tdl_config.json.
+// also adds it to validation and the generated tdl_config.json.
 package configuration
 
 import (
@@ -139,7 +139,7 @@ func (s *Service) write(ctx context.Context, doc Document, create bool) error {
 	return s.file.Write(ctx, append(data, '\n'), create)
 }
 
-// Create is exclusively used for first startup/import and refuses replacement.
+// Create is exclusively used for first startup and refuses replacement.
 func (s *Service) Create(ctx context.Context, doc Document) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -191,7 +191,7 @@ func (s *Service) Load(ctx context.Context, id string) (config.Document, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, component, err := s.component(ctx, id)
-	return config.Document{Version: config.CurrentVersion, Enabled: component.Enabled, Values: component.Values}, err
+	return config.Document{Enabled: component.Enabled, Values: component.Values}, err
 }
 
 func (s *Service) Revision(ctx context.Context, id string) (string, error) {

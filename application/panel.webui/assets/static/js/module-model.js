@@ -15,8 +15,9 @@ export function featureGroups(components) {
 
 export function componentStatus(component) {
   if (component.error) return { text: "异常", kind: "error" };
-  if (component.enabled === false) return { text: "已停用", kind: "off" };
   if (component.pending_restart) return { text: "等待重启", kind: "waiting" };
+  if ((component.active_enabled ?? component.enabled) === false)
+    return { text: "已停用", kind: "off" };
   const states = {
     running: ["运行中", "running"],
     starting: ["启动中", "waiting"],

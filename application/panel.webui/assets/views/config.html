@@ -2,12 +2,73 @@
   <header class="page-head">
     <div>
       <h1>设置</h1>
-      <p>按业务调整参数。每个区块独立保存，高级参数按需展开。</p>
+      <p>修改后核对顶部清单，点击“保存并重启”统一应用。也可先单独保存区块。</p>
     </div>
-    <button id="settings-reload" class="btn secondary" type="button">
-      重新读取 · 保留草稿
-    </button>
+    <div class="settings-header-actions">
+      <button
+        id="settings-reload"
+        class="btn secondary"
+        type="button"
+        title="重新读取 tdl_config.json，替换未保存的修改"
+      >
+        刷新
+      </button>
+    </div>
   </header>
+  <section
+    id="settings-pending"
+    class="settings-pending"
+    aria-labelledby="settings-pending-title"
+    hidden
+  >
+    <div class="settings-pending-head">
+      <h2 id="settings-pending-title">尚未保存的修改</h2>
+      <button id="settings-restart" class="btn primary" type="button" disabled>
+        保存并重启
+      </button>
+    </div>
+    <p id="settings-pending-status" class="subtle" role="status"></p>
+    <div id="settings-changes-table" class="settings-changes-table" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">设置项</th>
+            <th scope="col">当前运行值</th>
+            <th scope="col">修改后的值</th>
+          </tr>
+        </thead>
+        <tbody id="settings-changes"></tbody>
+      </table>
+    </div>
+    <p
+      class="notice"
+      id="settings-restart-message"
+      role="status"
+      aria-live="polite"
+    ></p>
+  </section>
+  <div class="settings-toolbar">
+    <label class="search-field settings-search">
+      <span class="sr-only">搜索全部设置</span>
+      <input
+        id="settings-search"
+        type="search"
+        placeholder="搜索设置，如：下载目录、代理、通知"
+        autocomplete="off"
+        aria-controls="settings-search-results"
+      />
+    </label>
+    <a class="btn secondary" href="/modules" data-app-link>管理功能开关</a>
+  </div>
+  <section
+    id="settings-search-results"
+    class="settings-search-results"
+    aria-label="设置搜索结果"
+    hidden
+  >
+    <p id="settings-search-count" class="subtle" role="status"></p>
+    <ul id="settings-search-list"></ul>
+  </section>
   <div
     class="tabs page-tabs settings-tabs"
     id="settings-tabs"
@@ -24,5 +85,8 @@
     id="settings-draft-status"
     role="status"
   ></div>
+  <p class="notice" id="settings-readonly" hidden>
+    当前为只读模式，可以查看设置，暂时无法保存更改。
+  </p>
   <div id="settings-panels"></div>
 </section>

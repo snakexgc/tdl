@@ -32,7 +32,7 @@ func stopResource(stop func(context.Context) error) func(context.Context) error 
 func (m *Manager) componentEnabled(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.configured == nil || m.configured[id]
+	return m.configured[id]
 }
 
 func (m *Manager) connectionNeeded(cfg *config.Config) bool {
@@ -40,7 +40,7 @@ func (m *Manager) connectionNeeded(cfg *config.Config) bool {
 }
 
 // managedUnits is the production composition boundary. Generic lifecycle code
-// knows neither module names nor legacy fields. Backend factories stay here.
+// knows neither module configuration. Backend factories stay here.
 func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 	return append(m.foundationUnits(cfg), []rte.ManagedUnit{
 		{
@@ -65,7 +65,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 					m.aria2Mgr = manager
 					m.aria2Config = next
 				}
-				m.aria2Mgr.UpdateTransferLimits(config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg))
+				m.aria2Mgr.UpdateTransferLimits(cfg.Limit, cfg.PoolSize)
 				m.aria2Mgr.UpdateLinks(cfg.HTTP)
 				return nil
 			}, Start: func(context.Context) error {

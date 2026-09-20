@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const (
@@ -43,18 +41,8 @@ func (p namingPort) Unique(ctx context.Context, in []ports.NamingResult) ([]port
 	return value.(ports.NamingRules).Unique(ctx, in)
 }
 
-func daemonComponentValues(cfg *config.Config) map[string]map[string]any {
-	values := watch.PolicyValues(watch.DefaultOptions(cfg))
-	values["trigger.reaction"] = map[string]any{fieldDownloadReaction: append([]string{}, cfg.TriggerReactions...), "forward": append([]string{}, cfg.Forward.TriggerReactions...)}
-	values["trigger.messagelink"] = map[string]any{}
-	values["account.telegram"] = map[string]any{apiIDField: cfg.Telegram.APIID, apiHashField: cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, fieldUseBuiltin: cfg.Telegram.UseBuiltin}
-	values["account.telegram"]["proxy"] = config.EffectiveProxy(cfg)
-	values["update.self"] = map[string]any{}
-	return values
-}
-
 // The injected facade resolves the current host after recovery from a failed
-// initial configuration. Requests never fall back to stale legacy credentials.
+// initial configuration. Requests never fall back to stale credentials.
 func (m *Manager) componentPort(name string) (any, error) {
 	m.mu.Lock()
 	host := m.policies

@@ -21,8 +21,8 @@ func Manifest() manifest.Manifest {
 		ID:      ID, Title: "本地下载器",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadExecutor](ports.DownloadExecutorName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: pollIntervalField, Title: "待执行任务扫描间隔（毫秒）", Type: manifest.Int, Default: 5000, Min: &minPoll, Max: &maxPoll},
-			{Name: shutdownTimeoutField, Title: "停机暂停记录超时（秒）", Type: manifest.Int, Default: 5, Min: &minShutdown, Max: &maxShutdown},
+			{Name: pollIntervalField, Title: "任务检查间隔（毫秒）", Help: "本地下载器检查待执行任务的间隔，仅使用 local 下载方式时生效。", Type: manifest.Int, Default: 5000, Min: &minPoll, Max: &maxPoll},
+			{Name: shutdownTimeoutField, Title: "停止时保存进度超时（秒）", Help: "停止本地下载器时，等待任务暂停并保存记录的最长时间。", Type: manifest.Int, Default: 5, Min: &minShutdown, Max: &maxShutdown},
 		},
 	}, "download", "本地下载器", "poll_interval_ms", "shutdown_timeout_seconds").SettingsOrder(200)
 }

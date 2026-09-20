@@ -3,7 +3,6 @@ package updater
 import (
 	"archive/tar"
 	"archive/zip"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -342,80 +341,43 @@ func downloadFile(ctx context.Context, client *http.Client, rawURL, dest string)
 }
 
 func chooseAsset(assets []githubAsset) (githubAsset, bool) {
-	bestScore := -1
-	var best githubAsset
+	name := releaseAssetName(runtime.GOOS, runtime.GOARCH, platform.BuildMetadata().GOARM)
 	for _, asset := range assets {
-		score := assetScore(asset.Name)
-		if score > bestScore {
-			bestScore = score
-			best = asset
+		if name != "" && asset.Name == name {
+			return asset, true
 		}
 	}
-	return best, bestScore > 0
+	return githubAsset{}, false
 }
 
-func assetScore(name string) int {
-	lower := strings.ToLower(name)
-	if strings.Contains(lower, "sha256") || strings.Contains(lower, "checksum") || strings.HasSuffix(lower, ".txt") {
-		return -1
+// releaseAssetName matches the single archive format in .goreleaser.yaml.
+func releaseAssetName(goos, arch, arm string) string {
+	osName, extension := "", tarGzExtension
+	switch goos {
+	case goosLinux:
+		osName = "Linux"
+	case goosDarwin:
+		osName = "MacOS"
+	case goosWindows:
+		osName, extension = "Windows", zipExtension
+	default:
+		return ""
 	}
-	score := 0
-	for _, alias := range osAliases(runtime.GOOS) {
-		if strings.Contains(lower, alias) {
-			score += 5
-			break
-		}
-	}
-	for _, alias := range archAliases(runtime.GOARCH) {
-		if strings.Contains(lower, alias) {
-			score += 5
-			break
-		}
-	}
-	if strings.Contains(lower, "tdl") {
-		score += 2
-	}
-	if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
-		score += 2
-	}
-	if runtime.GOOS == goosWindows && strings.Contains(lower, ".exe") {
-		score++
-	}
-	return score
-}
-
-func archAliases(arch string) []string {
 	switch arch {
 	case archAMD64:
-		// goreleaser replaces amd64 → 64bit in archive names
-		return []string{"amd64", "x86_64", "x64", "64bit"}
-	case "arm64":
-		return []string{"arm64", "aarch64"}
+		arch = "64bit"
 	case "386":
-		// goreleaser replaces 386 → 32bit in archive names
-		return []string{"386", "i386", "x86", "32bit"}
-	case "arm":
-		// goreleaser names arm builds armv5/armv6/armv7; prefer the exact
-		// variant that was compiled in (injected via GOARM ldflag).
-		arm := strings.TrimSpace(platform.BuildMetadata().GOARM)
-		if arm != "" {
-			return []string{"armv" + arm, "armv"}
+		arch = "32bit"
+	case archARM:
+		if arm != "5" && arm != "6" && arm != "7" {
+			return ""
 		}
-		return []string{"armv5", "armv6", "armv7", "armv"}
+		arch += "v" + arm
+	case "arm64", "riscv64", "loong64":
 	default:
-		return []string{arch}
+		return ""
 	}
-}
-
-func osAliases(goos string) []string {
-	switch goos {
-	case goosWindows:
-		return []string{"windows", "win"}
-	case goosDarwin:
-		return []string{"darwin", "macos", "osx"}
-	default:
-		return []string{goos}
-	}
+	return "tdl_" + osName + "_" + arch + extension
 }
 
 func needsUpdate(current, latest string) bool {
@@ -489,12 +451,12 @@ func isContainerRuntime() bool {
 func extractExecutable(assetPath, assetName, dir string) (string, error) {
 	lower := strings.ToLower(assetName)
 	switch {
-	case strings.HasSuffix(lower, ".zip"):
+	case strings.HasSuffix(lower, zipExtension):
 		return extractZipExecutable(assetPath, dir)
-	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+	case strings.HasSuffix(lower, tarGzExtension):
 		return extractTarGzExecutable(assetPath, dir)
 	default:
-		return assetPath, nil
+		return "", fmt.Errorf("unsupported update archive %q", assetName)
 	}
 }
 
@@ -506,18 +468,13 @@ func extractZipExecutable(assetPath, dir string) (string, error) {
 	defer reader.Close()
 
 	var chosen *zip.File
-	bestScore := -1
 	for _, file := range reader.File {
-		if file.FileInfo().IsDir() {
-			continue
-		}
-		score := executableEntryScore(file.Name)
-		if score > bestScore {
-			bestScore = score
+		if file.Name == executableFileName() && file.Mode().IsRegular() {
 			chosen = file
+			break
 		}
 	}
-	if chosen == nil || bestScore <= 0 {
+	if chosen == nil {
 		return "", errors.New("update zip does not contain a tdl executable")
 	}
 
@@ -543,62 +500,19 @@ func extractTarGzExecutable(assetPath, dir string) (string, error) {
 	}
 	defer gz.Close()
 
-	type candidate struct {
-		name string
-		data []byte
-	}
-	var chosen candidate
-	bestScore := -1
 	tr := tar.NewReader(gz)
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			break
+			return "", errors.New("update archive does not contain a tdl executable")
 		}
 		if err != nil {
 			return "", errors.Wrap(err, "read tar archive")
 		}
-		if header.FileInfo().IsDir() {
-			continue
-		}
-		score := executableEntryScore(header.Name)
-		if score <= bestScore {
-			continue
-		}
-		data, err := io.ReadAll(tr)
-		if err != nil {
-			return "", errors.Wrap(err, "read executable from tar")
-		}
-		chosen = candidate{name: header.Name, data: data}
-		bestScore = score
-	}
-	if chosen.name == "" || bestScore <= 0 {
-		return "", errors.New("update archive does not contain a tdl executable")
-	}
-	dest := filepath.Join(dir, executableFileName())
-	return writeExecutable(dest, bytes.NewReader(chosen.data))
-}
-
-func executableEntryScore(name string) int {
-	base := strings.ToLower(filepath.Base(name))
-	score := 0
-	if base == executableFileName() {
-		score += 10
-	}
-	if strings.Contains(base, "tdl") {
-		score += 5
-	}
-	if runtime.GOOS == goosWindows {
-		if strings.HasSuffix(base, ".exe") {
-			score += 4
-		} else {
-			return -1
+		if header.Name == executableFileName() && header.Typeflag == tar.TypeReg {
+			return writeExecutable(filepath.Join(dir, executableFileName()), tr)
 		}
 	}
-	if strings.Contains(base, "sha") || strings.Contains(base, "readme") || strings.Contains(base, "license") {
-		return -1
-	}
-	return score
 }
 
 func writeExecutable(dest string, src io.Reader) (string, error) {
@@ -615,9 +529,9 @@ func writeExecutable(dest string, src io.Reader) (string, error) {
 
 func executableFileName() string {
 	if runtime.GOOS == goosWindows {
-		return "tdl.exe"
+		return windowsExecutable
 	}
-	return "tdl"
+	return unixExecutable
 }
 
 func copyCurrentExecutableToTemp() (string, error) {
@@ -726,3 +640,15 @@ func safeFileName(name string) string {
 	}
 	return name
 }
+
+const (
+	tarGzExtension = ".tar.gz"
+	zipExtension   = ".zip"
+	goosLinux      = "linux"
+	archARM        = "arm"
+)
+
+const (
+	windowsExecutable = "tdl.exe"
+	unixExecutable    = "tdl"
+)

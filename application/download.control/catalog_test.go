@@ -119,7 +119,7 @@ func TestCatalogProjectionPreservesSlidingExpiryAndIncompleteTransfers(t *testin
 	now := time.Now()
 	source := &catalogSourceStub{markErr: errors.New("read only"), snapshot: types.LinkCatalogSnapshot{TTL: time.Hour, Records: []types.LinkCatalogRecord{
 		{Key: "b", Task: types.PersistentLink{ID: catalogSecond, CreatedAt: now.Add(-2 * time.Hour), LastActiveAt: now}, Aria2: []types.Aria2LinkEntry{{Status: statusComplete, Total: 100, Completed: 99}}},
-		{Key: "a", Task: types.PersistentLink{ID: catalogFirst, CreatedAt: now.Add(-2 * time.Hour)}, HTTPCompleted: true, HTTPCompletedAt: now, HTTPDeliveredBytes: 100},
+		{Key: "a", Task: types.PersistentLink{LastActiveAt: now.Add(-2 * time.Hour), ID: catalogFirst, CreatedAt: now.Add(-2 * time.Hour)}, HTTPCompleted: true, HTTPCompletedAt: now, HTTPDeliveredBytes: 100},
 	}}}
 	items, statusErr, err := NewCatalog(catalogAccount, source).List(context.Background(), catalogAccount)
 	require.NoError(t, err)

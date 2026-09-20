@@ -29,7 +29,7 @@ func TestSavedLocalLinkCannotResurrectDeletedOrReplacedSource(t *testing.T) {
 	for _, action := range []string{testDeleteAction, "replace"} {
 		t.Run(action, func(t *testing.T) {
 			ctx := context.Background()
-			engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "state")})
+			engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "state"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			storage, err := engine.Open(string(types.DefaultAccount))

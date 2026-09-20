@@ -26,7 +26,7 @@ func Register(registry *rte.Registry) error {
 		Feature: manifest.Feature{ID: "forward", Title: "转发管理", Order: 20, SettingsURL: "/config?tab=forward"},
 		ID:      ID, Title: "分组转发规则",
 		Provides: []manifest.Port{manifest.PortOf[ports.ForwardRules](ports.ForwardRulesName, 1, 0)},
-		Config:   []manifest.ConfigField{{Name: "rules", Title: "来源 → 目标", Type: manifest.Objects, Default: []types.ForwardRule{}, Editor: "/static/js/forward-rules.js"}},
+		Config:   []manifest.ConfigField{{Name: "rules", Title: "来源 → 目标", Help: "按来源分组指定转发目标、转发方式和静默选项。添加或修改规则后，点击本区块的保存按钮生效。", Type: manifest.Objects, Default: []types.ForwardRule{}, Editor: "/static/js/forward-rules.js"}},
 	}, "forward", "转发规则"), func() rte.Component { return &Rules{} })
 }
 

@@ -18,8 +18,6 @@ import (
 	"github.com/snakexgc/tdl/rte/configtest"
 )
 
-const testStoragePath = "path"
-
 func TestIntentToggleRetainsSiblingAndRefreshesExistingFacade(t *testing.T) {
 	ctx := context.Background()
 	store := configtest.NewStore()
@@ -94,7 +92,7 @@ func (p completionTransport) Forward(_ context.Context, job *types.ForwardJob, _
 func TestForwarderCanBeEnabledTwiceWithoutReplacingConnectionHost(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "tasks")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "tasks"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	storage, err := engine.Open(string(types.DefaultAccount))
@@ -204,6 +202,20 @@ func TestForwarderCanBeEnabledTwiceWithoutReplacingConnectionHost(t *testing.T) 
 		case <-time.After(3 * time.Second):
 			t.Fatal("message router did not reach the production queue")
 		}
+		// The transport signal precedes persistence of the completed status.
+		// Wait before stopping, or recovery may legitimately retry the last job.
+		require.Eventually(t, func() bool {
+			jobs, err := queue.List(ctx)
+			if err != nil {
+				return false
+			}
+			for _, job := range jobs {
+				if job.Status != types.StatusDone {
+					return false
+				}
+			}
+			return true
+		}, 3*time.Second, time.Millisecond)
 		require.NoError(t, store.Save(ctx, "forwarder", false, view))
 		require.NoError(t, host.ReconcileSaved(ctx, store))
 		_, err = command.Execute(ctx, request)

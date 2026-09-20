@@ -17,7 +17,6 @@ import (
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/bsw/services/logging"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/internal/componentconfig"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
@@ -62,7 +61,7 @@ func TestBrowserPreview(t *testing.T) {
 	}
 	source := config.NewSource(cfg)
 	manager := &previewComponents{Directory: rte.NewDirectory(catalog, store), store: store, source: source, cfg: cfg}
-	engine, err := kv.New(kv.DriverFile, map[string]any{"path": filepath.Join(t.TempDir(), "state")})
+	engine, err := kv.New(kv.DriverFile, filepath.Join(t.TempDir(), "state"))
 	require.NoError(t, err)
 	defer engine.Close()
 	kvd, err := engine.Open(cfg.Namespace)
@@ -112,7 +111,7 @@ func (p *previewComponents) SetComponentEnabled(ctx context.Context, id string, 
 }
 
 func (p *previewComponents) refresh(ctx context.Context) error {
-	cfg, _, err := componentconfig.Load(ctx, p.store, p.cfg)
+	cfg, _, err := config.Load(ctx, p.store, config.System(p.cfg))
 	if err != nil {
 		return err
 	}

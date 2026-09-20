@@ -3,9 +3,10 @@ import { api } from "./api.js";
 export async function renderComponentForms(host, message, data, ids) {
   host.replaceChildren();
   const mode = document.getElementById("component-mode");
-  if (mode) mode.textContent = data.editable
-    ? "配置以此处保存的值为准。标注重启的字段将在对应服务重启后生效；未启动的组件也可编辑。"
-    : "当前为只读预览。启用组件配置目录后可在此编辑；当前设置仍由配置文件页面管理。";
+  if (mode)
+    mode.textContent = data.editable
+      ? "保存只写入配置文件。请前往设置页核对修改并重启后生效；未启动的组件也可编辑。"
+      : "当前为只读预览。启用组件配置目录后可在此编辑；当前设置仍由配置文件页面管理。";
   for (const component of data.components) {
     if (ids && !ids.includes(component.id)) continue;
     const form = document.createElement("form");
@@ -20,20 +21,36 @@ export async function renderComponentForms(host, message, data, ids) {
     const ownMessage = document.createElement("p");
     ownMessage.className = "notice";
     ownMessage.setAttribute("role", "status");
-    const report = text => { ownMessage.textContent = text; if (message) message.textContent = text; };
+    const report = (text) => {
+      ownMessage.textContent = text;
+      if (message) message.textContent = text;
+    };
     form.append(ownMessage);
     if (data.can_toggle) {
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "btn";
-      toggle.textContent = component.enabled === false ? "启用组件" : "停用组件";
+      toggle.textContent =
+        component.enabled === false ? "启用组件" : "停用组件";
       toggle.addEventListener("click", async () => {
         toggle.disabled = true;
         try {
-          await api("/api/components", { method: "PATCH", body: JSON.stringify({ id: component.id, enabled: !component.enabled, revision: component.revision || "" }) });
-          report("启停请求已保存，正在协调依赖。");
+          await api("/api/components", {
+            method: "PATCH",
+            body: JSON.stringify({
+              id: component.id,
+              enabled: !component.enabled,
+              revision: component.revision || "",
+            }),
+          });
+          report("启停设置已保存，请前往设置页重启后生效。");
           window.dispatchEvent(new CustomEvent("components-changed"));
-          await renderComponentForms(host, message, await api("/api/components"), ids);
+          await renderComponentForms(
+            host,
+            message,
+            await api("/api/components"),
+            ids,
+          );
         } catch (error) {
           report(error.message);
           toggle.disabled = false;
@@ -58,19 +75,33 @@ export async function renderComponentForms(host, message, data, ids) {
       label.style.display = "block";
       label.style.margin = "16px 0";
       const caption = document.createElement("span");
-      caption.textContent = `${field.title || field.name}${field.restart_required ? "（自动重启此服务）" : "（热更新）"}`;
+      caption.textContent = `${field.title || field.name}（保存后需重启生效）`;
       label.append(caption);
       if (field.editor) {
         const url = new URL(field.editor, window.location.origin);
-        if (url.origin !== window.location.origin || !url.pathname.startsWith("/static/js/")) throw new Error("无效的配置编辑器路径");
-        const editor = await (await import(url.pathname)).createEditor(component.values[field.name], { editable: data.editable });
+        if (
+          url.origin !== window.location.origin ||
+          !url.pathname.startsWith("/static/js/")
+        )
+          throw new Error("无效的配置编辑器路径");
+        const editor = await (
+          await import(url.pathname)
+        ).createEditor(component.values[field.name], {
+          editable: data.editable,
+        });
         const group = document.createElement("div");
         group.append(caption, editor.element);
         form.append(group);
         fields.push({ field, editor });
         continue;
       }
-      const input = document.createElement(field.choices?.length ? "select" : field.type === "strings" ? "textarea" : "input");
+      const input = document.createElement(
+        field.choices?.length
+          ? "select"
+          : field.type === "strings"
+            ? "textarea"
+            : "input",
+      );
       input.name = field.name;
       input.disabled = !data.editable;
       const value = component.values[field.name];
@@ -118,22 +149,44 @@ export async function renderComponentForms(host, message, data, ids) {
       if (!form.reportValidity()) return;
       const values = {};
       for (const { field, input, editor } of fields) {
-        if (editor) { values[field.name] = editor.value(); continue; }
+        if (editor) {
+          values[field.name] = editor.value();
+          continue;
+        }
         if (field.secret && input.value === "") continue;
         if (field.type === "bool") values[field.name] = input.checked;
         else if (field.type === "int") values[field.name] = Number(input.value);
-        else if (field.type === "strings") values[field.name] = input.value.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+        else if (field.type === "strings")
+          values[field.name] = input.value
+            .split(/\r?\n/)
+            .map((v) => v.trim())
+            .filter(Boolean);
         else values[field.name] = input.value;
       }
       button.disabled = true;
       try {
-        const result = await api("/api/components", { method: "PATCH", body: JSON.stringify({ id: component.id, values, revision: component.revision || "" }) });
-        const saved = result.components.find(item => item.id === component.id);
+        const result = await api("/api/components", {
+          method: "PATCH",
+          body: JSON.stringify({
+            id: component.id,
+            values,
+            revision: component.revision || "",
+          }),
+        });
+        const saved = result.components.find(
+          (item) => item.id === component.id,
+        );
         if (saved) component.revision = saved.revision;
-        report(saved?.pending_restart ? "已保存，正在重新配置此服务。" : "配置已保存并应用。");
-        window.dispatchEvent(new CustomEvent("configuration-changed", { detail: { id: component.id } }));
-        if (saved) status.textContent = `${saved.enabled === false ? "已停用" : "已启用"} · ${saved.state}${saved.pending_restart ? " · 等待重启生效" : ""}${saved.error ? ` · ${saved.error}` : ""}`;
-        for (const { field, input } of fields) if (field.secret && input) input.value = "";
+        report("配置已保存，请前往设置页核对修改并重启后生效。");
+        window.dispatchEvent(
+          new CustomEvent("configuration-changed", {
+            detail: { id: component.id },
+          }),
+        );
+        if (saved)
+          status.textContent = `${saved.enabled === false ? "已停用" : "已启用"} · ${saved.state}${saved.pending_restart ? " · 等待重启生效" : ""}${saved.error ? ` · ${saved.error}` : ""}`;
+        for (const { field, input } of fields)
+          if (field.secret && input) input.value = "";
       } catch (error) {
         report(error.message);
       } finally {
@@ -143,4 +196,3 @@ export async function renderComponentForms(host, message, data, ids) {
     host.append(form);
   }
 }
-

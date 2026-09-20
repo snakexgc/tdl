@@ -67,9 +67,9 @@
 .task-toolbar select {
   max-width: 100%;
 }
-.settings-field > input:not([type="checkbox"]),
-.settings-field > select,
-.settings-field > textarea,
+.settings-input > input:not([type="checkbox"]),
+.settings-input > select,
+.settings-input > textarea,
 .proxy-editor input,
 .proxy-editor select,
 .task-toolbar input,
@@ -89,14 +89,14 @@
 .search-field > input {
   width: 100%;
 }
-.settings-field > input:hover,
-.settings-field > textarea:hover,
-.settings-field > select:hover,
+.settings-input > input:hover,
+.settings-input > textarea:hover,
+.settings-input > select:hover,
 .proxy-editor input:hover,
 .proxy-editor select:hover {
   border-color: var(--line-strong);
 }
-.settings-field > input[type="checkbox"] {
+.settings-input > input[type="checkbox"] {
   accent-color: var(--primary);
 }
 #kv-search {
@@ -233,7 +233,7 @@
   min-width: 0;
 }
 .settings-draft-status {
-  color: var(--warning);
+  color: var(--muted);
   font-size: 13px;
   margin-bottom: 16px;
 }
@@ -264,11 +264,8 @@
 }
 .settings-field {
   display: grid;
-  grid-template-columns: minmax(140px, 200px) minmax(0, 600px) minmax(
-      160px,
-      1fr
-    );
-  gap: 12px 24px;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr);
+  gap: 8px 24px;
   align-items: start;
   padding: 16px 0;
   border-bottom: 1px solid var(--line);
@@ -277,19 +274,21 @@
   font-weight: 500;
   padding-top: 9px;
 }
-.settings-field > input:not([type="checkbox"]),
-.settings-field > select,
-.settings-field > textarea {
+.settings-input > input:not([type="checkbox"]),
+.settings-input > select,
+.settings-input > textarea {
   width: 100%;
   min-width: 0;
 }
-.settings-field > input[type="checkbox"] {
+.settings-input > input[type="checkbox"] {
   width: 18px;
   height: 18px;
-  margin-top: 10px;
+  margin: 0;
 }
+.settings-field > .settings-help,
 .settings-field > small {
-  padding-top: 9px;
+  grid-column: 2;
+  padding-top: 0;
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -437,6 +436,7 @@
   .settings-field {
     grid-template-columns: 180px minmax(0, 1fr);
   }
+  .settings-field > .settings-help,
   .settings-field > small {
     grid-column: 2;
     padding-top: 0;
@@ -465,6 +465,7 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
   }
+  .settings-field > .settings-help,
   .settings-field > small,
   .settings-field .server-value {
     grid-column: 1;

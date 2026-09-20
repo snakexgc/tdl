@@ -34,7 +34,7 @@ func Register(registry *rte.Registry) error {
 			{Name: minMBField, Title: "最小文件大小（MB）", Help: "包含边界，0 表示不限制。", Type: manifest.Int, Default: 0, Min: &zero},
 			{Name: maxMBField, Title: "最大文件大小（MB）", Help: "包含边界，0 表示不限制。", Type: manifest.Int, Default: 0, Min: &zero},
 		},
-	}, "download", "文件过滤"), func() rte.Component { return &Rules{} })
+	}, "download", "文件过滤").SettingsOrder(40), func() rte.Component { return &Rules{} })
 }
 
 type settings struct {

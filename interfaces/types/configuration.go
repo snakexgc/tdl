@@ -55,7 +55,7 @@ type ForwardConfig struct {
 	TriggerReactions []string `json:"trigger_reactions"`
 }
 
-// Config 全局配置结构
+// RuntimeConfig is an in-memory transport snapshot, not a configuration file format.
 type RuntimeConfig struct {
 	Telegram         TelegramCredentialsConfig `json:"telegram"`
 	Proxy            string                    `json:"proxy"`

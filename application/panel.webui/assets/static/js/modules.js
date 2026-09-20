@@ -179,7 +179,8 @@ function render() {
   }
   if (!groups.length)
     $("module-list").append(element("p", "暂无已声明的功能模块。", "empty"));
-  $("module-mode").textContent = "按功能查看细分模块的启用状态与运行状态。";
+  $("module-mode").textContent =
+    "启停选择保存到配置文件，重启后生效。前往设置页可核对全部修改并重启。";
   if (focus)
     [...$("module-list").querySelectorAll("[data-module-focus]")]
       .find((item) => item.dataset.moduleFocus === focus)
@@ -197,7 +198,7 @@ async function toggle(component) {
   if (
     !enabled &&
     !confirm(
-      `确认停用「${component.title || component.id}」？依赖它的服务和任务可能暂停。${panelWarning}`,
+      `确认将「${component.title || component.id}」保存为停用？重启后其依赖服务和任务可能暂停。${panelWarning}`,
     )
   )
     return;
@@ -206,7 +207,7 @@ async function toggle(component) {
   request = null;
   $("refresh-modules").disabled = true;
   render();
-  report(enabled ? "正在启用…" : "正在停用…");
+  report("正在保存启停设置…");
   try {
     const result = await api("/api/components", {
       method: "PATCH",
@@ -217,7 +218,7 @@ async function toggle(component) {
       }),
     });
     components = result.components || components;
-    report("启停请求已保存，运行状态会自动刷新。", "success");
+    report("启停设置已保存。请前往设置页确认修改并重启后生效。", "success");
     window.dispatchEvent(new Event("components-changed"));
     void loadStatus();
   } catch (error) {

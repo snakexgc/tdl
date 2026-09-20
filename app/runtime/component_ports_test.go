@@ -22,7 +22,7 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 	host, filter, naming, err := newPolicyHostStored(ctx, cfg, store)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
-	m := &Manager{policies: host, filter: filter, naming: naming, componentStore: store}
+	m := &Manager{policies: host, filter: filter, naming: naming, componentStore: store, savedStore: store}
 	require.NoError(t, m.initDirectory())
 	opts := m.watchOptions(cfg)
 	require.NotNil(t, opts.Reaction)
@@ -35,9 +35,9 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 	in := ports.ReactionInput{Account: account, Reactions: []ports.Reaction{{Mine: true, Value: "🔥"}}}
 	require.True(t, opts.Reaction.Matches(ctx, in))
 	require.NoError(t, m.SaveComponentConfiguration(ctx, "trigger.reaction", map[string]any{fieldDownloadReaction: []string{"👍"}}))
-	require.False(t, opts.Reaction.Matches(ctx, in), "existing watcher sees the same port's new configuration")
+	require.True(t, opts.Reaction.Matches(ctx, in), "saved edits must not change the running watcher")
 	in.Reactions[0].Value = "👍"
-	require.True(t, opts.Reaction.Matches(ctx, in))
+	require.False(t, opts.Reaction.Matches(ctx, in))
 	require.NoError(t, m.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 54321, apiHashField: ""}))
 	require.ErrorContains(t, m.SaveComponentConfiguration(ctx, "update.self", map[string]any{"proxy": "http://user:password@127.0.0.1:8080"}), "undeclared")
 	require.NoError(t, m.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{"proxy": "http://user:password@127.0.0.1:8080"}))

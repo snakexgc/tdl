@@ -15,16 +15,15 @@ import (
 )
 
 const (
-	optPath       = "path"
 	testCaseValid = "valid"
 	testNSBar     = "bar"
 	testNSFoo     = "foo"
 )
 
 func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
-	storages := map[Driver]map[string]any{
-		DriverBolt: {optPath: t.TempDir()},
-		DriverFile: {optPath: filepath.Join(t.TempDir(), "test.json")},
+	storages := map[Driver]string{
+		DriverBolt: t.TempDir(),
+		DriverFile: filepath.Join(t.TempDir(), "test.json"),
 	}
 
 	for driver, opts := range storages {
@@ -39,8 +38,8 @@ func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
 }
 
 func forEachBoltBackedStorage(t *testing.T, fn func(driver Driver, e Storage, t *testing.T)) {
-	storages := map[Driver]map[string]any{
-		DriverBolt: {optPath: t.TempDir()},
+	storages := map[Driver]string{
+		DriverBolt: t.TempDir(),
 	}
 
 	for driver, opts := range storages {
@@ -79,18 +78,18 @@ func bytePointer(v []byte) uintptr {
 func TestNew(t *testing.T) {
 	tests := map[Driver][]struct {
 		name    string
-		opts    map[string]any
+		opts    string
 		wantErr bool
 	}{
 		DriverBolt: {
-			{name: testCaseValid, opts: map[string]any{optPath: t.TempDir()}, wantErr: false},
-			{name: "invalid", opts: map[string]any{optPath: ""}, wantErr: true},
+			{name: testCaseValid, opts: t.TempDir(), wantErr: false},
+			{name: "invalid", opts: "", wantErr: true},
 		},
 		DriverFile: {
-			{name: testCaseValid, opts: map[string]any{optPath: filepath.Join(t.TempDir(), "test.json")}, wantErr: false},
+			{name: testCaseValid, opts: filepath.Join(t.TempDir(), "test.json"), wantErr: false},
 		},
 		Driver("unknown"): {
-			{name: "unknown", opts: map[string]any{optPath: ""}, wantErr: true},
+			{name: "unknown", opts: "", wantErr: true},
 		},
 	}
 
@@ -159,9 +158,7 @@ func TestBoltBackedStorage_GetReturnsOwnedBytes(t *testing.T) {
 }
 
 func TestFileStorageConcurrentSetKeepsAllKeys(t *testing.T) {
-	storage, err := New(DriverFile, map[string]any{
-		optPath: filepath.Join(t.TempDir(), "test.json"),
-	})
+	storage, err := New(DriverFile, filepath.Join(t.TempDir(), "test.json"))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, storage.Close())
@@ -205,9 +202,7 @@ func TestFileStorageConcurrentSetKeepsAllKeys(t *testing.T) {
 }
 
 func TestLegacyDriverIsRejected(t *testing.T) {
-	_, err := ParseDriver("legacy")
-	require.Error(t, err)
-	_, err = New(Driver("legacy"), map[string]any{optPath: filepath.Join(t.TempDir(), "data.kv")})
+	_, err := New(Driver("legacy"), filepath.Join(t.TempDir(), "data.kv"))
 	require.ErrorContains(t, err, "unsupported driver")
 }
 

@@ -14,7 +14,7 @@ import (
 )
 
 func TestStateConcurrentUpdatesAndChannelPreservation(t *testing.T) {
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "state")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "state"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	kvd, err := engine.Open("default")

@@ -22,6 +22,7 @@ import (
 	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
 	"github.com/snakexgc/tdl/internal/core/dcpool"
 	"github.com/snakexgc/tdl/internal/core/storage"
@@ -70,7 +71,7 @@ func TestTaskStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	store := newTaskStore(nil)
-	task := &downloadTask{ID: testTaskID, FileName: testFileNameA}
+	task := &downloadTask{LastActiveAt: time.Now(), ID: testTaskID, FileName: testFileNameA}
 	require.NoError(t, store.Add(context.Background(), task))
 
 	got, ok, err := store.Get(context.Background(), testTaskID)
@@ -117,13 +118,14 @@ func TestTaskStoreRestoresPersistentTask(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	original := newTaskStore(kvd)
 	task := &downloadTask{
-		ID:        "photo_42_y",
-		PeerID:    100,
-		MessageID: 200,
-		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
-		FileName:  "photo.jpg",
-		FileSize:  10,
-		CreatedAt: time.Now(),
+		LastActiveAt: time.Now(),
+		ID:           "photo_42_y",
+		PeerID:       100,
+		MessageID:    200,
+		Peer:         &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
+		FileName:     "photo.jpg",
+		FileSize:     10,
+		CreatedAt:    time.Now(),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputPhotoFileLocation{
 				ID:            42,
@@ -166,13 +168,14 @@ func TestTaskStoreExpiresPersistentTask(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	original := newTaskStore(kvd)
 	task := &downloadTask{
-		ID:        "document_42",
-		PeerID:    100,
-		MessageID: 200,
-		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
-		FileName:  testFileName,
-		FileSize:  10,
-		CreatedAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
+		LastActiveAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
+		ID:           "document_42",
+		PeerID:       100,
+		MessageID:    200,
+		Peer:         &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    time.Now().Add(-defaultDownloadTaskTTL - time.Second),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{
 				ID:            42,
@@ -203,13 +206,14 @@ func TestTaskStoreKeepsPersistentTaskWhenTTLDisabled(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	original := newTaskStore(kvd, 0)
 	task := &downloadTask{
-		ID:        "document_42",
-		PeerID:    100,
-		MessageID: 200,
-		Peer:      &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
-		FileName:  testFileName,
-		FileSize:  10,
-		CreatedAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
+		LastActiveAt: time.Now().Add(-defaultDownloadTaskTTL - time.Second),
+		ID:           "document_42",
+		PeerID:       100,
+		MessageID:    200,
+		Peer:         &tg.InputPeerChannel{ChannelID: 100, AccessHash: 101},
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    time.Now().Add(-defaultDownloadTaskTTL - time.Second),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{
 				ID:            42,
@@ -306,12 +310,13 @@ func TestSetDownloadTaskLastActiveThrottlesAndPreservesFields(t *testing.T) {
 	now := time.Now()
 
 	data, err := json.Marshal(map[string]any{
-		"id":         "document_5",
-		"file_name":  "f.bin",
-		"file_size":  99,
-		"created_at": now.Add(-2 * time.Hour),
-		"downloaded": true,
-		"media":      map[string]any{"location": map[string]any{"kind": "document", "id": 5}},
+		"id":             "document_5",
+		"file_name":      "f.bin",
+		"file_size":      99,
+		"created_at":     now.Add(-2 * time.Hour),
+		"last_active_at": now.Add(-2 * time.Hour),
+		"downloaded":     true,
+		"media":          map[string]any{"location": map[string]any{"kind": "document", "id": 5}},
 	})
 	require.NoError(t, err)
 
@@ -337,10 +342,11 @@ func TestTaskStoreAddPreservesExternalStatusFields(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	store := newTaskStore(kvd, time.Hour)
 	task := &downloadTask{
-		ID:        "document_79",
-		FileName:  testFileName,
-		FileSize:  10,
-		CreatedAt: time.Now(),
+		LastActiveAt: time.Now(),
+		ID:           "document_79",
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    time.Now(),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{ID: 79, AccessHash: 1, FileReference: []byte("r")},
 			Name:         testFileName,
@@ -380,10 +386,11 @@ func TestTaskStoreRecordsConcurrentHTTPRangesWithoutLostUpdates(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	store := newTaskStore(kvd, time.Hour)
 	task := &downloadTask{
-		ID:        "document_80",
-		FileName:  testFileName,
-		FileSize:  10,
-		CreatedAt: time.Now(),
+		LastActiveAt: time.Now(),
+		ID:           "document_80",
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    time.Now(),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{ID: 80, AccessHash: 1, FileReference: []byte("r")},
 			Name:         testFileName,
@@ -465,9 +472,10 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 	}
 
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: int64(len(payload)),
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     int64(len(payload)),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
 			Name:         testFileName,
@@ -517,10 +525,11 @@ func TestDownloadHandlerSupportsMultipartRanges(t *testing.T) {
 		return err
 	}
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: int64(len(payload)),
-		Media:    &tmedia.Media{DC: 2},
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     int64(len(payload)),
+		Media:        &tmedia.Media{DC: 2},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
@@ -568,9 +577,10 @@ func TestDownloadHandlerTracksCompletedHTTPRanges(t *testing.T) {
 		return err
 	}
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: int64(len(payload)),
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     int64(len(payload)),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
 			Name:         testFileName,
@@ -625,9 +635,10 @@ func TestDownloadHandlerDoesNotTrackFailedOrHeadResponses(t *testing.T) {
 	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, kvd, nil)
 	proxy.pools.Set(testDownloadPool{})
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: 10,
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     10,
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
 			Name:         testFileName,
@@ -665,10 +676,11 @@ func TestDownloadHandlerHonorsIfRangeETag(t *testing.T) {
 		return err
 	}
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: int64(len(payload)),
-		Media:    &tmedia.Media{DC: 2},
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     int64(len(payload)),
+		Media:        &tmedia.Media{DC: 2},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
@@ -695,9 +707,10 @@ func TestDownloadHandlerServesEmptyFile(t *testing.T) {
 	kvd := newMemoryTaskStorage()
 	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, kvd, nil)
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: 0,
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     0,
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{ID: 1, AccessHash: 2, FileReference: []byte("ref")},
 			Name:         testFileName,
@@ -725,10 +738,11 @@ func TestDownloadHandlerReturnsServiceUnavailableBeforeTelegramIsReady(t *testin
 	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 1, &poolHolder{}, nil, nil)
 	proxy.clientWaitTimeout = time.Millisecond
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: 10,
-		Media:    &tmedia.Media{DC: 2},
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     10,
+		Media:        &tmedia.Media{DC: 2},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
@@ -763,10 +777,11 @@ func TestDownloadHandlerInvalidRange(t *testing.T) {
 	}, 2, 4, &poolHolder{}, nil, nil)
 
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: 10,
-		Media:    &tmedia.Media{Name: testFileName, Size: 10},
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     10,
+		Media:        &tmedia.Media{Name: testFileName, Size: 10},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
@@ -793,10 +808,11 @@ func TestDownloadHandlerHead(t *testing.T) {
 	}
 
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: 10,
-		Media:    &tmedia.Media{Name: testFileName, Size: 10},
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     10,
+		Media:        &tmedia.Media{Name: testFileName, Size: 10},
 	}
 	require.NoError(t, proxy.tasks.Add(context.Background(), task))
 
@@ -1062,7 +1078,7 @@ func TestStreamTelegramMediaReleasesPermitAfterWriterFailure(t *testing.T) {
 
 func TestSourceRegistryCleansIdleMetadata(t *testing.T) {
 	registry := newSourceRegistry()
-	task := &downloadTask{ID: testTaskID, Media: &tmedia.Media{DC: 2}}
+	task := &downloadTask{LastActiveAt: time.Now(), ID: testTaskID, Media: &tmedia.Media{DC: 2}}
 	handle := registry.Acquire(task, nil)
 	require.NotNil(t, handle.Source())
 	handle.Release()
@@ -1075,7 +1091,7 @@ func TestSourceRegistryDoesNotRegressRefreshedMedia(t *testing.T) {
 	registry := newSourceRegistry()
 	stale := &tmedia.Media{InputFileLoc: &tg.InputDocumentFileLocation{FileReference: []byte("stale")}, DC: 2}
 	fresh := &tmedia.Media{InputFileLoc: &tg.InputDocumentFileLocation{FileReference: []byte("fresh")}, DC: 2}
-	task := &downloadTask{ID: testTaskID, Media: stale}
+	task := &downloadTask{LastActiveAt: time.Now(), ID: testTaskID, Media: stale}
 
 	first := registry.Acquire(task, nil)
 	first.entry.source.mu.Lock()
@@ -1135,7 +1151,7 @@ func TestDownloadProxyUsesPerDCSchedulerCapacity(t *testing.T) {
 	require.Equal(t, 3, proxy.scheduler.Capacity())
 
 	fallback := newDownloadProxy(config.HTTPConfig{}, 2, 0, &poolHolder{}, nil, nil)
-	require.Equal(t, config.DefaultPoolSize, fallback.scheduler.Capacity())
+	require.Equal(t, config.DefaultConfig().PoolSize, fallback.scheduler.Capacity())
 }
 
 func TestDownloadProxyUsesBoundedHTTPHeaderAndIdleTimeouts(t *testing.T) {
@@ -1364,9 +1380,10 @@ func TestConcurrentRangesShareTaskQuotaWithoutCaching(t *testing.T) {
 	pools.Set(testDownloadPool{client: client})
 	proxy := newDownloadProxy(config.HTTPConfig{}, 1, 2, pools, nil, nil)
 	task := &downloadTask{
-		ID:       testTaskID,
-		FileName: testFileName,
-		FileSize: int64(len(payload)),
+		LastActiveAt: time.Now(),
+		ID:           testTaskID,
+		FileName:     testFileName,
+		FileSize:     int64(len(payload)),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{},
 			Size:         int64(len(payload)),
@@ -1688,3 +1705,26 @@ func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskI
 }
 
 const testHTTPAddress = "127.0.0.1"
+
+func TestStoredLinksRequireActivityClock(t *testing.T) {
+	ctx := context.Background()
+	kvd := newMemoryTaskStorage()
+	store := newTaskStore(kvd, time.Hour)
+	for _, data := range []string{
+		`{"id":"old","created_at":"2026-09-20T00:00:00Z"}`,
+		`{"id":"old","last_active_at":null}`,
+		`{"id":"old","last_active_at":"invalid"}`,
+		`null`,
+	} {
+		require.NoError(t, taskhub.Links(kvd).Put(ctx, "old", []byte(data), time.Now()))
+		_, _, err := store.Get(ctx, "old")
+		require.Error(t, err)
+		_, changed, err := SetDownloadTaskLastActive([]byte(data), time.Now(), time.Hour)
+		require.Error(t, err)
+		require.False(t, changed)
+		require.Error(t, store.CleanupExpired(ctx, time.Now()))
+		saved, err := taskhub.Links(kvd).Get(ctx, "old")
+		require.NoError(t, err)
+		require.Equal(t, data, string(saved), "rejected records must not be repaired or deleted")
+	}
+}

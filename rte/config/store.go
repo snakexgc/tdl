@@ -2,10 +2,7 @@ package config
 
 import "context"
 
-const CurrentVersion = 1
-
 type Document struct {
-	Version int            `json:"version"`
 	Enabled bool           `json:"enabled"`
 	Values  map[string]any `json:"values"`
 }

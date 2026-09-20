@@ -24,7 +24,10 @@ func Manifest() manifest.Manifest {
 		Feature: manifest.Feature{ID: "bot", Title: "机器人与通知", Order: 50, SettingsURL: "/config?tab=bot"},
 		ID:      ID, Commands: Commands(), Title: "Bot 控制台",
 		Provides: []manifest.Port{manifest.PortOf[ports.Console](ports.ConsoleName, 1, 0)},
-		Config:   []manifest.ConfigField{manifest.Text("token", "机器人 Token", "", true, true), {Name: allowedField, Title: "允许的用户 ID", Type: manifest.Strings, Default: []string{}}},
+		Config: []manifest.ConfigField{
+			manifest.Text("token", "机器人 Token", "", true, true).WithHelp("填写从 Telegram @BotFather 获取的 Token，用于机器人命令及通知。留空保留原值。"),
+			{Name: allowedField, Title: "允许操作机器人的用户", Help: "每行一个 Telegram 数字用户 ID，不能填写 @用户名。留空时不允许任何用户执行机器人命令。", Type: manifest.Strings, Default: []string{}},
+		},
 	}, "bot", "机器人访问")
 }
 

@@ -74,10 +74,10 @@ func DefaultOptions(cfg *config.Config) Options {
 	return Options{
 		Account:           types.AccountID(cfg.Namespace),
 		Dir:               cfg.DownloadDir,
-		Template:          config.EffectiveFilename(cfg),
-		FilenameMaxLength: config.EffectiveFilenameMax(cfg),
-		PoolSize:          config.EffectivePoolSize(cfg),
-		Limit:             config.EffectiveLimit(cfg),
+		Template:          cfg.Filename,
+		FilenameMaxLength: cfg.FilenameMax,
+		PoolSize:          cfg.PoolSize,
+		Limit:             cfg.Limit,
 		Download:          cfg.Modules.Watch,
 		Include:           append([]string(nil), cfg.Include...),
 		Exclude:           append([]string(nil), cfg.Exclude...),
@@ -89,14 +89,14 @@ func DefaultOptions(cfg *config.Config) Options {
 
 func effectiveWatchOptionLimit(value int, cfg *config.Config) int {
 	if value < 1 {
-		return config.EffectiveLimit(cfg)
+		return cfg.Limit
 	}
 	return value
 }
 
 func effectiveWatchOptionPoolSize(value int, cfg *config.Config) int {
 	if value < 1 {
-		return config.EffectivePoolSize(cfg)
+		return cfg.PoolSize
 	}
 	return value
 }

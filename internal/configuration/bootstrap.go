@@ -12,7 +12,6 @@ import (
 	"github.com/snakexgc/tdl/application"
 	manager "github.com/snakexgc/tdl/application/configuration.manager"
 	"github.com/snakexgc/tdl/interfaces/ports"
-	"github.com/snakexgc/tdl/internal/componentconfig"
 	runtimeconfig "github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte/config"
 )
@@ -46,9 +45,7 @@ func Install(ctx context.Context, service *manager.Service) (*config.Store, erro
 		return nil, err
 	}
 	store := service.Store()
-	bootstrap := runtimeconfig.DefaultConfig()
-	bootstrap.Namespace, bootstrap.Debug = system.Namespace, system.Debug
-	effective, _, err := componentconfig.Load(ctx, store, bootstrap)
+	effective, _, err := runtimeconfig.Load(ctx, store, system)
 	if err != nil {
 		return nil, err
 	}

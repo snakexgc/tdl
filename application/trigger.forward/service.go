@@ -26,10 +26,13 @@ func Register(registry *rte.Registry, handler ports.ForwardIntentHandler, capaci
 func Manifest() manifest.Manifest {
 	return manifest.WithSettings(manifest.Manifest{
 		Feature: manifest.Feature{ID: "forward", Title: "转发管理", Order: 20, SettingsURL: "/config?tab=forward"},
-		ID:      ID, Config: []manifest.ConfigField{manifest.List("listen", "监听来源", false), manifest.Flag("listen_comments", "监听频道评论", true, false)}, Title: "转发触发意图",
+		ID:      ID, Config: []manifest.ConfigField{
+			manifest.List("listen", "自动转发的监听来源", false).WithHelp("每行一个来源，例如 channel:123、chat:123 或 user:123。留空只监听已启用转发规则中的来源。"),
+			manifest.Flag("listen_comments", "同时监听频道评论", true, false).WithHelp("将监听频道关联讨论组中的评论也纳入转发监听。"),
+		}, Title: "转发触发意图",
 		Provides:  []manifest.Port{manifest.PortOf[ports.ForwardIntents](ports.ForwardIntentsName, 1, 0), manifest.PortOf[ports.ForwardListening](ports.ForwardListeningName, 1, 0)},
 		Publishes: []string{types.ForwardRequested}, Subscribes: []string{types.ForwardRequested},
-	}, "forward", "监听范围")
+	}, "forward", "自动转发的监听范围").SettingsOrder(10)
 }
 
 type service struct {

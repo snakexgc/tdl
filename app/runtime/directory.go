@@ -21,7 +21,7 @@ func (m *Manager) initDirectory() error {
 	if err != nil {
 		return err
 	}
-	directory := rte.NewDirectory(catalog, m.componentStore)
+	directory := rte.NewDirectory(catalog, m.savedStore).WithActiveStore(m.componentStore)
 	for _, binding := range []struct {
 		name    string
 		resolve func() *rte.Runtime

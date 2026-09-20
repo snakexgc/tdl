@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ func TestCommandFailureClosesLogs(t *testing.T) {
 		command.SetContext(context.Background())
 		switch phase {
 		case "initialization":
-			DefaultBoltStorage = map[string]string{kv.DriverTypeKey: "invalid-test-driver"}
+			openStorage = func() (kv.Storage, error) { return nil, errors.New("test storage initialization failure") }
 			command.SetArgs(nil)
 			require.Error(t, command.Execute())
 		case "run":
@@ -31,7 +32,7 @@ func TestCommandFailureClosesLogs(t *testing.T) {
 			// Removing startup state makes RunE fail before starting services.
 			command.SetContext(context.WithValue(command.Context(), startupConfigurationKey{}, false))
 			require.Error(t, command.RunE(command, nil))
-			store, err := kv.NewWithMap(DefaultBoltStorage)
+			store, err := kv.New(kv.DriverBolt, consts.DataDir)
 			require.NoError(t, err, "the previous database handle must be closed")
 			require.NoError(t, store.Close())
 		}

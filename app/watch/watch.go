@@ -66,7 +66,6 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Forward && len(cfg.Forward.Listen) == 0 {
 		logctx.From(ctx).Warn("转发监听来源为空", zap.String("component", "trigger.forward"))
 	}
-	opts.FileSizeMinMB, opts.FileSizeMaxMB, _ = config.NormalizeFileSizeRange(opts.FileSizeMinMB, opts.FileSizeMaxMB)
 	if opts.Filter == nil || opts.Naming == nil || opts.ForwardQueue == nil || opts.HTTPService == nil {
 		return errors.New("watch requires runtime policy, forward and HTTP services")
 	}
@@ -138,9 +137,6 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	reconnectDelay := time.Duration(cfg.ReconnectTimeout) * time.Second
-	if reconnectDelay <= 0 {
-		reconnectDelay = 5 * time.Second
-	}
 	for {
 		if runCtx.Err() != nil {
 			return nil

@@ -222,7 +222,7 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cfg.Aria2.Secret != "" || bytes.Contains(body, []byte("/download/")) {
-		connections := config.EffectivePoolSize(cfg)
+		connections := cfg.PoolSize
 		body, err = rewriteAria2ProxyRequest(body, cfg.HTTP.PublicBaseURL, cfg.Aria2.Secret, connections)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)

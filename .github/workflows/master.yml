@@ -84,29 +84,5 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           TARGET_ARM: ${{ matrix.arm }}
         run: |
-          flags=$(go run ./cmd/buildflags --version migration-check --commit "$GITHUB_SHA" --arm "$TARGET_ARM")
+          flags=$(go run ./cmd/buildflags --version baseline-check --commit "$GITHUB_SHA" --arm "$TARGET_ARM")
           CGO_ENABLED=0 GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" GOARM="$TARGET_ARM" go build -trimpath -ldflags "$flags" -o "$RUNNER_TEMP/tdl-check" .
-  e2e-test:
-    runs-on: ubuntu-22.04
-    if: false # skip e2e test for now, since it is not stable
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Setup Golang env
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
-      - name: Setup Teamgram Env
-        run: |
-          git clone https://github.com/iyear/teamgram-server.git
-          cd teamgram-server
-          git checkout 10151bb92555aa1bedcba9f8f24b0e7deac22dee
-          sudo docker compose -f ./docker-compose-env.yaml up -d --quiet-pull
-          sudo docker compose up -d --quiet-pull
-      - name: Build
-        run: go build
-      - name: E2E Test
-        run: ginkgo -v -r ./test

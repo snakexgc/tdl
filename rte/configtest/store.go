@@ -26,7 +26,7 @@ func (r *Repository) Load(ctx context.Context, id string) (config.Document, erro
 	if err := ctx.Err(); err != nil {
 		return config.Document{}, err
 	}
-	doc := config.Document{Version: config.CurrentVersion, Enabled: true, Values: map[string]any{}}
+	doc := config.Document{Enabled: true, Values: map[string]any{}}
 	if data := r.documents[id]; len(data) != 0 {
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.UseNumber()
@@ -46,7 +46,7 @@ func (r *Repository) Save(ctx context.Context, id string, enabled bool, view con
 	if r.SaveError != nil {
 		return r.SaveError
 	}
-	data, err := json.Marshal(config.Document{Version: config.CurrentVersion, Enabled: enabled, Values: view.Values()})
+	data, err := json.Marshal(config.Document{Enabled: enabled, Values: view.Values()})
 	if err != nil {
 		return err
 	}

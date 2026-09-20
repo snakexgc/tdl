@@ -64,7 +64,7 @@ func (c *Client) Run(ctx context.Context, fn func(context.Context) error) error 
 
 func New(ctx context.Context, o Options, login bool, middlewares ...telegram.Middleware) (*Client, error) {
 	if o.ReconnectTimeout <= 0 {
-		o.ReconnectTimeout = 5 * time.Second
+		return nil, errors.New("reconnect timeout must be positive")
 	}
 	var app types.TelegramApp
 	var err error

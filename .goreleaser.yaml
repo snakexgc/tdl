@@ -4,8 +4,6 @@ dist: .tdl/dist
 snapshot:
   # release.yml supplies the requested vyyyyMMdd_dev_<shortSHA> version.
   version_template: '{{ .Env.RELEASE_VERSION }}'
-env:
-  - GO111MODULE=on
 builds:
   - env:
       - CGO_ENABLED=0

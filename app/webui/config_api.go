@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -21,7 +22,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"config": value})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"config":            value,
+			"active_config":     s.activeConfiguration,
+			"restart_available": s.opts.RequestReboot != nil,
+			"editable":          s.opts.ConfigurationManager != nil,
+		})
 	case http.MethodPatch:
 		var req struct {
 			Values map[string]json.RawMessage `json:"values"`
@@ -32,14 +38,21 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		next, err := s.configuration.Patch(r.Context(), req.Values)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
+			status := http.StatusBadRequest
+			if errors.Is(err, ports.ErrConfigurationConflict) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err)
 			return
 		}
 		slog.Info("运行设置已保存", "component", "panel.webui", "account", s.namespace())
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":         true,
-			"config":     next,
-			fieldMessage: "运行选项已保存。",
+			"ok":                true,
+			"config":            next,
+			"active_config":     s.activeConfiguration,
+			"restart_available": s.opts.RequestReboot != nil,
+			"editable":          s.opts.ConfigurationManager != nil,
+			fieldMessage:        "设置已保存到 tdl_config.json，重启后生效。",
 		})
 	default:
 		methodNotAllowed(w, "GET, PATCH")

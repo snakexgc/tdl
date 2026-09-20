@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/snakexgc/tdl/rte/platform"
 )
 
 const (
-	testArchAMD64     = "amd64"
-	testOSDarwin      = "darwin"
 	testChecksumsFile = "tdl_checksums.txt"
 )
 
@@ -41,13 +41,7 @@ func TestContainerRuntimeCanBeMarkedByEnvironment(t *testing.T) {
 }
 
 func TestDockerReleaseRequiresNewImage(t *testing.T) {
-	osName := goreleaserOSName(runtime.GOOS)
-	archName := goreleaserArchName(runtime.GOARCH)
-	ext := ".tar.gz"
-	if runtime.GOOS == goosWindows {
-		ext = ".zip"
-	}
-	assetName := "tdl_" + osName + "_" + archName + ext
+	assetName := releaseAssetName(runtime.GOOS, runtime.GOARCH, platform.BuildMetadata().GOARM)
 
 	info := infoForRelease(Info{
 		CurrentVersion: "v202609042",
@@ -69,44 +63,9 @@ func TestDockerReleaseRequiresNewImage(t *testing.T) {
 	require.Equal(t, containerUpdateMessage, info.Message)
 }
 
-// goreleaserArchName returns the goreleaser archive arch string for the current
-// GOARCH, matching the replacements in .goreleaser.yaml.
-func goreleaserArchName(arch string) string {
-	switch arch {
-	case testArchAMD64:
-		return "64bit"
-	case "386":
-		return "32bit"
-	default:
-		return arch
-	}
-}
-
-// goreleaserOSName returns the goreleaser archive OS string for the current
-// GOOS, matching the replacements in .goreleaser.yaml.
-func goreleaserOSName(goos string) string {
-	switch goos {
-	case testOSDarwin:
-		return "MacOS"
-	case "linux":
-		return "Linux"
-	case "windows":
-		return "Windows"
-	default:
-		return goos
-	}
-}
-
 func TestChooseAssetSkipsChecksums(t *testing.T) {
-	// Use goreleaser-style names (e.g. tdl_Linux_64bit.tar.gz) to ensure
-	// archAliases correctly handles the renamed arch strings.
-	osName := goreleaserOSName(runtime.GOOS)
-	archName := goreleaserArchName(runtime.GOARCH)
-	ext := ".tar.gz"
-	if runtime.GOOS == goosWindows {
-		ext = ".zip"
-	}
-	goodName := "tdl_" + osName + "_" + archName + ext
+	// Only the current release archive can be selected.
+	goodName := releaseAssetName(runtime.GOOS, runtime.GOARCH, platform.BuildMetadata().GOARM)
 	assets := []githubAsset{
 		{Name: testChecksumsFile, BrowserDownloadURL: "bad"},
 		{Name: goodName, BrowserDownloadURL: "good"},
@@ -116,49 +75,46 @@ func TestChooseAssetSkipsChecksums(t *testing.T) {
 	require.Equal(t, "good", asset.BrowserDownloadURL)
 }
 
-func TestArchAliasesGoreleaserNames(t *testing.T) {
-	// Verify that goreleaser-renamed arch strings score above zero.
-	cases := []struct {
-		assetName string
-		wantScore int
-	}{
-		{"tdl_Linux_64bit.tar.gz", 14}, // os+arch+tdl+archive
-		{"tdl_Linux_32bit.tar.gz", 14},
-		{"tdl_Windows_64bit.zip", 14},
-		{"tdl_MacOS_64bit.tar.gz", 14},
-		{"tdl_Linux_arm64.tar.gz", 14},
-		{"tdl_Linux_armv7.tar.gz", 14},
-		{testChecksumsFile, -1},
+func TestReleaseAssetNames(t *testing.T) {
+	for _, tc := range []struct{ os, arch, arm, want string }{
+		{goosLinux, "amd64", "", "tdl_Linux_64bit.tar.gz"},
+		{"windows", "386", "", "tdl_Windows_32bit.zip"},
+		{"darwin", "arm64", "", "tdl_MacOS_arm64.tar.gz"},
+		{goosLinux, archARM, "5", "tdl_Linux_armv5.tar.gz"},
+		{goosLinux, archARM, "6", "tdl_Linux_armv6.tar.gz"},
+		{goosLinux, archARM, "7", "tdl_Linux_armv7.tar.gz"},
+		{goosLinux, archARM, "", ""},
+		{goosLinux, archARM, "8", ""},
+		{goosLinux, "riscv64", "", "tdl_Linux_riscv64.tar.gz"},
+		{goosLinux, "loong64", "", "tdl_Linux_loong64.tar.gz"},
+		{"freebsd", "amd64", "", ""},
+	} {
+		require.Equal(t, tc.want, releaseAssetName(tc.os, tc.arch, tc.arm))
 	}
-	for _, tc := range cases {
-		_ = tc // scores depend on runtime arch; just verify chooseAsset picks a non-checksum
-	}
+}
 
-	// On any platform, checksums must never win.
-	assets := []githubAsset{
-		{Name: testChecksumsFile, BrowserDownloadURL: "bad"},
-		{Name: "tdl_Linux_64bit.tar.gz", BrowserDownloadURL: "a"},
-		{Name: "tdl_Linux_32bit.tar.gz", BrowserDownloadURL: "b"},
-		{Name: "tdl_Windows_64bit.zip", BrowserDownloadURL: "c"},
-		{Name: "tdl_MacOS_64bit.tar.gz", BrowserDownloadURL: "d"},
+func TestChooseAssetRequiresExactCurrentPlatform(t *testing.T) {
+	for _, name := range []string{"tdl_checksums.txt", windowsExecutable, "tdl_windows_x64.zip", "tdl_linux_amd64.tar.gz", "tdl_MacOS_aarch64.tar.gz", "tdl_Linux_64bit.tgz", "tdl_Windows_arm64.zip", "tdl_Linux_armv6.tar.gz"} {
+		if name == releaseAssetName(runtime.GOOS, runtime.GOARCH, platform.BuildMetadata().GOARM) {
+			continue
+		}
+		_, ok := chooseAsset([]githubAsset{{Name: name}})
+		require.False(t, ok, name)
 	}
-	asset, ok := chooseAsset(assets)
-	require.True(t, ok)
-	require.NotEqual(t, "bad", asset.BrowserDownloadURL)
 }
 
 func TestParseApplyArgs(t *testing.T) {
 	source, target, pid, cwd, runArgs, err := parseApplyArgs([]string{
 		flagSource, "new",
-		flagTarget, "tdl",
+		flagTarget, unixExecutable,
 		flagPID, "123",
 		flagCWD, "work",
-		"--", "bot", "--debug",
+		"--", "version",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "new", source)
-	require.Equal(t, "tdl", target)
+	require.Equal(t, unixExecutable, target)
 	require.Equal(t, int32(123), pid)
 	require.Equal(t, "work", cwd)
-	require.Equal(t, []string{"bot", "--debug"}, runArgs)
+	require.Equal(t, []string{"version"}, runArgs)
 }

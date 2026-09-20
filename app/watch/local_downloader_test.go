@@ -37,8 +37,8 @@ func TestLocalModeUsesConfiguredPoolSize(t *testing.T) {
 	cfg.Limit = 2
 	opts := DefaultOptions(cfg)
 
-	require.Equal(t, 3, config.EffectivePoolSize(cfg))
-	require.Equal(t, 2, config.EffectiveLimit(cfg))
+	require.Equal(t, 3, cfg.PoolSize)
+	require.Equal(t, 2, cfg.Limit)
 
 	runtime := newTestWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
 
@@ -247,13 +247,14 @@ func TestLocalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) {
 
 	kvd := newMemoryTaskStorage()
 	task := &httpdl.Task{
-		ID:        "document_42",
-		PeerID:    12345,
-		MessageID: 7,
-		Peer:      &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
-		FileName:  testVideoFile,
-		FileSize:  4,
-		CreatedAt: time.Now(),
+		LastActiveAt: time.Now(),
+		ID:           "document_42",
+		PeerID:       12345,
+		MessageID:    7,
+		Peer:         &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
+		FileName:     testVideoFile,
+		FileSize:     4,
+		CreatedAt:    time.Now(),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{
 				ID:            42,
@@ -329,13 +330,14 @@ func TestLocalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) {
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
 	task := &httpdl.Task{
-		ID:        "document_42",
-		PeerID:    12345,
-		MessageID: 7,
-		Peer:      &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
-		FileName:  testVideoFile,
-		FileSize:  100,
-		CreatedAt: time.Now(),
+		LastActiveAt: time.Now(),
+		ID:           "document_42",
+		PeerID:       12345,
+		MessageID:    7,
+		Peer:         &tg.InputPeerChannel{ChannelID: 12345, AccessHash: 99},
+		FileName:     testVideoFile,
+		FileSize:     100,
+		CreatedAt:    time.Now(),
 		Media: &tmedia.Media{
 			InputFileLoc: &tg.InputDocumentFileLocation{
 				ID:            42,

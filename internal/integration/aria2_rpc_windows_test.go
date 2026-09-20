@@ -77,7 +77,7 @@ func TestIsolatedAria2RPCRecovery(t *testing.T) {
 	ready := func() bool { _, callErr := client.GetGlobalOptions(ctx); return callErr == nil }
 	start()
 	require.Eventually(t, ready, 10*time.Second, 100*time.Millisecond)
-	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(directory, "store")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(directory, "store"))
 	require.NoError(t, err)
 	defer engine.Close()
 	store, err := engine.Open(string(types.DefaultAccount))

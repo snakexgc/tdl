@@ -22,7 +22,7 @@ func startPolicies(ctx context.Context, account string, opts Options) (*rte.Runt
 	if account == "" {
 		account = string(types.DefaultAccount)
 	}
-	runtime, err := registry.Build(types.AccountID(account), map[string]bool{filterComponentID: true, namingComponentID: true}, PolicyValues(opts))
+	runtime, err := registry.Build(types.AccountID(account), map[string]bool{filterComponentID: true, namingComponentID: true}, policyValues(opts))
 	if err != nil {
 		return nil, nil, nil, err
 	}

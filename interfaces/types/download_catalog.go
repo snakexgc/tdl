@@ -54,7 +54,7 @@ type PersistentLink struct {
 	FileName     string    `json:"file_name"`
 	FileSize     int64     `json:"file_size"`
 	CreatedAt    time.Time `json:"created_at"`
-	LastActiveAt time.Time `json:"last_active_at,omitempty"`
+	LastActiveAt time.Time `json:"last_active_at"`
 	Downloaded   bool      `json:"downloaded"`
 }
 

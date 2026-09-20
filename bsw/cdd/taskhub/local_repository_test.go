@@ -16,11 +16,9 @@ import (
 	"github.com/snakexgc/tdl/pkg/kv"
 )
 
-const testStoragePath = "path"
-
 func TestLocalRepositoryConcurrentUpdatesAndDeletion(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "db")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	first, err := engine.Open("alice")

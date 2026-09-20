@@ -35,17 +35,17 @@ func Manifest() manifest.Manifest {
 		Subscribes: []string{types.NotificationRequested},
 		Requires:   []manifest.Require{{Port: manifest.PortOf[ports.NotificationTransport](ports.NotificationTransportName, 1, 0), Optional: true}},
 		Config: []manifest.ConfigField{
-			manifest.Flag("on_download_start", "下载开始通知", false, false),
-			manifest.Flag("on_download_complete", "下载完成通知", false, false),
-			manifest.Flag("on_download_pause", "下载暂停通知", false, false),
-			manifest.Flag("on_download_error", "下载失败通知", false, false),
-			manifest.Flag("live_progress", "实时进度通知", false, false),
-			manifest.Number("live_progress_interval_seconds", "进度更新间隔（秒）", 5, 5, 86400, false),
+			{Name: recipientsField, Title: "通知接收者", Help: "每行一个 Telegram 用户或群组的数字 ID，群组 ID 可为负数。需先配置机器人 Token，并确保机器人能向接收者发送消息；留空不发送通知。", Type: manifest.Strings, Default: []string{}},
+			manifest.Flag("on_download_start", "下载开始时通知", false, false).WithHelp("任务开始下载时发送消息。"),
+			manifest.Flag("on_download_complete", "下载完成时通知", false, false).WithHelp("任务下载完成时发送消息。"),
+			manifest.Flag("on_download_pause", "下载暂停时通知", false, false).WithHelp("任务暂停时发送消息。"),
+			manifest.Flag("on_download_error", "下载失败时通知", false, false).WithHelp("任务下载出错时发送消息。"),
+			manifest.Flag("live_progress", "持续更新下载进度", false, false).WithHelp("通过编辑进度消息显示下载状态；接收者列表不能为空。"),
+			manifest.Number("live_progress_interval_seconds", "进度更新间隔（秒）", 5, 5, 86400, false).WithHelp("仅在开启持续更新下载进度时生效，增大间隔可减少消息更新频率。"),
 
-			{Name: recipientsField, Title: "接收者 ID", Type: manifest.Strings, Default: []string{}},
-			{Name: "timeout_seconds", Title: "发送超时（秒）", Type: manifest.Int, Default: 15, Min: &minimum, Max: &maximum},
+			{Name: "timeout_seconds", Title: "发送超时（秒）", Help: "向每位接收者发送或更新通知时的最长等待时间。", Type: manifest.Int, Default: 15, Min: &minimum, Max: &maximum},
 		},
-	}, "notifications", "下载通知")
+	}, "notifications", "下载通知", "timeout_seconds")
 }
 
 func Register(registry *rte.Registry) error {

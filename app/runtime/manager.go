@@ -27,7 +27,6 @@ import (
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/internal/componentconfig"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
@@ -98,6 +97,7 @@ type Manager struct {
 	botComponents     *rte.Runtime
 	botRefresh        func(context.Context) error
 	componentStore    *rteconfig.Store
+	savedStore        *rteconfig.Store
 	configurationHost *rte.Runtime
 	policyErr         error
 	policies          *rte.Runtime
@@ -190,8 +190,9 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	componentStore := opts.ComponentStore
-	effective, enabled, configErr := componentconfig.Load(ctx, componentStore, cfg)
+	componentStore, snapshotErr := startupStore(ctx, opts.ComponentStore)
+	effective, enabled, configErr := config.Load(ctx, componentStore, config.System(cfg))
+	configErr = errors.Join(snapshotErr, configErr)
 	if configErr == nil {
 		cfg = effective
 	}
@@ -201,6 +202,7 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		configSource: source, configured: enabled, configurationErr: configErr,
 		downloadAccount:   types.AccountID(cfg.Namespace),
 		componentStore:    componentStore,
+		savedStore:        opts.ComponentStore,
 		configurationHost: opts.ConfigurationHost,
 		policyErr:         configErr,
 		parent:            ctx,
@@ -262,20 +264,20 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 			Connections:      m.connections,
 			SessionChecker:   m.sessionPort,
 			Credentials:      m, Updater: m,
-			DownloadControl:  m,
-			LocalLinks:       savedLocalLinks{manager: m},
-			KVEngine:         m.kvEngine,
-			ForwardQueue:     m.forwardQueue,
-			Namespace:        cfg.Namespace,
-			NamespaceKV:      m.namespaceKV,
-			AfterConfigSave:  m.ApplyConfig,
-			OnLoginSuccess:   m.onLoginSuccess,
-			RequestReboot:    m.requestReboot,
-			ResetPlan:        m.resetPlan,
-			RequestReset:     m.requestReset,
-			RequestUpdate:    m.requestUpdate,
-			WatchRunning:     m.watchCtrl.Running,
-			ComponentManager: m,
+			DownloadControl:      m,
+			LocalLinks:           savedLocalLinks{manager: m},
+			KVEngine:             m.kvEngine,
+			ForwardQueue:         m.forwardQueue,
+			Namespace:            cfg.Namespace,
+			NamespaceKV:          m.namespaceKV,
+			ConfigurationManager: m,
+			OnLoginSuccess:       m.onLoginSuccess,
+			RequestReboot:        m.requestReboot,
+			ResetPlan:            m.resetPlan,
+			RequestReset:         m.requestReset,
+			RequestUpdate:        m.requestUpdate,
+			WatchRunning:         m.watchCtrl.Running,
+			ComponentManager:     m,
 		})
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
 			logctx.From(ctx).Error("Web 管理面板异常停止", zap.String("component", panelComponentID), zap.Error(err))
@@ -314,7 +316,7 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 		return
 	}
 	if m.configSource != nil {
-		effective, enabled, err := componentconfig.Load(m.parent, m.componentStore, cfg)
+		effective, enabled, err := config.Load(m.parent, m.componentStore, config.System(cfg))
 		if err != nil {
 			logctx.From(m.parent).Error("load component configuration", zap.Error(err))
 			return
@@ -357,9 +359,6 @@ func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bo
 		}
 		if result != nil {
 			return result
-		}
-		if m.directory != nil {
-			return m.directory.ApplyPending(m.parent)
 		}
 		return nil
 	}
@@ -426,7 +425,6 @@ func (m *Manager) StartBot() {
 			ReconnectTimeout:      time.Duration(cfg.ReconnectTimeout) * time.Second,
 			WatchControl:          m.watchCtrl,
 			DisableAutoStartWatch: true,
-			AfterConfigSave:       m.ApplyConfig,
 			OnLoginSuccess:        m.onLoginSuccess,
 			SetNotifier:           m.setNotifier,
 			RequestReboot:         m.requestReboot,
@@ -638,10 +636,6 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 }
 
 // The daemon owns policies independently of watcher reconnects and module toggles.
-func newPolicyHost(ctx context.Context, cfg *config.Config) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
-	return newPolicyHostStored(ctx, cfg, nil)
-}
-
 func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconfig.Store) (*rte.Runtime, ports.FilterRules, ports.NamingRules, error) {
 	catalog, err := application.Catalog()
 	if err != nil {
@@ -651,13 +645,16 @@ func newPolicyHostStored(ctx context.Context, cfg *config.Config, store *rteconf
 }
 
 func buildCatalogPolicyHost(ctx context.Context, cfg *config.Config, store *rteconfig.Store, catalog *rte.Catalog) (*rte.Runtime, error) {
+	if store == nil {
+		return nil, fmt.Errorf("component configuration store is required")
+	}
 	registry := rte.NewRegistry()
 	account := types.AccountID(cfg.Namespace)
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	values := daemonComponentValues(cfg)
-	enabled := make(map[string]bool, len(values))
+	values := map[string]map[string]any{}
+	enabled := map[string]bool{}
 	for _, definition := range catalog.Definitions() {
 		if definition.Factory == nil || definition.Host != "" {
 			continue
@@ -666,14 +663,11 @@ func buildCatalogPolicyHost(ctx context.Context, cfg *config.Config, store *rtec
 			return nil, err
 		}
 		id := definition.Manifest.ID
-		enabled[id] = true
-		if store != nil {
-			doc, err := store.Load(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-			values[id], enabled[id] = doc.Values, doc.Enabled
+		doc, err := store.Load(ctx, id)
+		if err != nil {
+			return nil, err
 		}
+		values[id], enabled[id] = doc.Values, doc.Enabled
 	}
 	host, err := registry.Build(account, enabled, values)
 	if err != nil {
@@ -699,7 +693,7 @@ func (m *Manager) ComponentConfigurations() ([]rte.Configuration, bool) {
 	if m.directory == nil {
 		return nil, false
 	}
-	return m.directory.Configurations(context.Background()), m.componentStore != nil
+	return m.directory.Configurations(context.Background()), m.savedStore != nil
 }
 
 func (m *Manager) ComponentHealth() []rte.Health {
@@ -719,19 +713,5 @@ func (m *Manager) SaveComponentConfigurationVersion(ctx context.Context, id stri
 	if m.directory == nil {
 		return fmt.Errorf("component directory is unavailable")
 	}
-	if err := m.directory.PatchWithRevision(ctx, id, values, revision); err != nil {
-		return err
-	}
-	if m.configSource == nil {
-		return nil
-	}
-	cfg, enabled, err := componentconfig.Load(ctx, m.componentStore, config.From(m.parent))
-	if err != nil {
-		return err
-	}
-	m.configSource.Replace(cfg)
-	m.mu.Lock()
-	m.configured = enabled
-	m.mu.Unlock()
-	return m.applyConfigLocked(cfg, m.applyVersion.Add(1), true)
+	return m.directory.PatchWithRevision(ctx, id, values, revision)
 }

@@ -39,9 +39,9 @@ func (s *Catalog) List(ctx context.Context, account types.AccountID) ([]types.Do
 			stamp := record.HTTPCompletedAt
 			item.HTTPDownloadedAt = &stamp
 		}
-		base := task.CreatedAt
-		if !task.LastActiveAt.IsZero() {
-			base = task.LastActiveAt
+		base := task.LastActiveAt
+		if base.IsZero() {
+			return nil, snapshot.StatusError, fmt.Errorf("download link %s: last_active_at is required", task.ID)
 		}
 		if snapshot.TTL <= 0 {
 			item.Permanent = true

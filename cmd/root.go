@@ -25,25 +25,16 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
-	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 type (
 	startupConfigurationKey struct{}
 	startupConfiguration    struct {
 		service *configuration.Service
-		store   *rteconfig.Store
 	}
 )
 
-var (
-	defaultBoltPath = consts.DataDir
-
-	DefaultBoltStorage = map[string]string{
-		kv.DriverTypeKey: kv.DriverBolt.String(),
-		"path":           defaultBoltPath,
-	}
-)
+var openStorage = func() (kv.Storage, error) { return kv.New(kv.DriverBolt, consts.DataDir) }
 
 func New() *cobra.Command {
 	var closeLog func() error
@@ -105,11 +96,11 @@ func New() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			store, err := bootstrapconfig.Install(cmd.Context(), service)
+			_, err = bootstrapconfig.Install(cmd.Context(), service)
 			if err != nil {
 				return err
 			}
-			cmd.SetContext(context.WithValue(cmd.Context(), startupConfigurationKey{}, startupConfiguration{service, store}))
+			cmd.SetContext(context.WithValue(cmd.Context(), startupConfigurationKey{}, startupConfiguration{service}))
 			cfg := config.Get()
 			// init logger
 			level := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
@@ -129,7 +120,7 @@ func New() *cobra.Command {
 
 			logger.Info("TDL 正在启动", zap.Bool("debug_enabled", cfg.Debug))
 
-			stg, err := kv.NewWithMap(DefaultBoltStorage)
+			stg, err := openStorage()
 			if err != nil {
 				return errors.Wrap(err, "create kv storage")
 			}
@@ -172,6 +163,10 @@ func runBot(cmd *cobra.Command) error {
 	if !ok {
 		return errors.New("configuration manager is not initialized")
 	}
+	store, err := ensureStartupNTP(cmd.Context(), startup.service)
+	if err != nil {
+		return err
+	}
 	host, err := application.ConfigurationHost(cmd.Context(), types.AccountID(config.Get().Namespace), startup.service)
 	if err != nil {
 		return err
@@ -180,7 +175,7 @@ func runBot(cmd *cobra.Command) error {
 	logctx.From(cmd.Context()).Info("统一配置已加载", zap.String("component", configuration.ID), zap.String("file", filepath.Join(consts.HomeDir, configuration.Filename)))
 	plan := reset.New(consts.HomeDir)
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
-		ComponentStore:    startup.store,
+		ComponentStore:    store,
 		ConfigurationHost: host,
 		ResetPlan:         plan,
 		RequestReset:      func() { reset.Request(plan) },

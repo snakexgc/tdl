@@ -12,7 +12,7 @@ import (
 )
 
 func TestDatasetOwnershipAndScope(t *testing.T) {
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "db")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open("account-a")
@@ -59,7 +59,7 @@ func TestExactKeysCannotEscapeOrOverlap(t *testing.T) {
 	const testOwner = "auth"
 	const testKey = "key"
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "db")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open("account")

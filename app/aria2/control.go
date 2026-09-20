@@ -31,7 +31,7 @@ func componentOptions(cfg *config.Config, kvd storage.Storage) component.Options
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	return component.Options{Account: types.AccountID(cfg.Namespace), Client: NewClient(cfg.Aria2), Store: NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP)), PublicBaseURL: cfg.HTTP.PublicBaseURL, Connections: config.EffectivePoolSize(cfg), Limit: config.EffectiveLimit(cfg)}
+	return component.Options{Account: types.AccountID(cfg.Namespace), Client: NewClient(cfg.Aria2), Store: NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP)), PublicBaseURL: cfg.HTTP.PublicBaseURL, Connections: cfg.PoolSize, Limit: cfg.Limit}
 }
 
 func NewController(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Controller {

@@ -138,7 +138,8 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	service := httpdl.NewService(cfg, store, zap.NewNop())
 	service.Pools().Set(pool)
 	task := &httpdl.Task{
-		ID: "live-serial-fixture", PeerID: groups[0].ID(), Peer: groups[0].InputPeer(), MessageID: message.ID,
+		LastActiveAt: time.Now(),
+		ID:           "live-serial-fixture", PeerID: groups[0].ID(), Peer: groups[0].InputPeer(), MessageID: message.ID,
 		FileName: liveFixtureName, FileSize: media.Size, Media: media, CreatedAt: time.Now(),
 	}
 	require.NoError(t, service.Proxy().Tasks().Add(ctx, task))

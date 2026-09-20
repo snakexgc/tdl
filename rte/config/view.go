@@ -138,7 +138,9 @@ func (v View) Get(name string, target any) error {
 	if !ok {
 		return fmt.Errorf("config access denied: %q", name)
 	}
-	return json.Unmarshal(raw, target)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
 }
 
 func (v View) Equal(other View) bool {

@@ -41,9 +41,9 @@ func Register(registry *rte.Registry) error {
 		Config: []manifest.ConfigField{
 			{Name: filenameField, Title: "文件名模板", Help: "支持 G 名称、P 来源 ID、I 消息文字、F 原始文件名、S/R 消息 ID、A 相册 ID、Y/M/D 日期，例如 G-I-F。", Type: manifest.String, Default: "P_S_F"},
 			{Name: directoryField, Title: "目录模板", Help: "使用与文件名相同的变量；I 会保留中英文及数字并自动截断。", Type: manifest.String, Default: "G\\Y&M"},
-			{Name: maxBytesField, Title: "文件名字节上限", Type: manifest.Int, Default: 255, Min: &zero, Max: &maximum},
+			{Name: maxBytesField, Title: "文件名长度上限（字节）", Help: "按 UTF-8 字节计算，中文通常每字占 3 字节。0 使用 255 字节上限；过长的文件名会截短。", Type: manifest.Int, Default: 255, Min: &zero, Max: &maximum},
 		},
-	}, "download", "文件命名"), func() rte.Component { return &Rules{} })
+	}, "download", "目录与文件命名", maxBytesField).SettingsOrder(50), func() rte.Component { return &Rules{} })
 }
 
 func (r *Rules) Init(ctx context.Context, k rte.Kernel) error {

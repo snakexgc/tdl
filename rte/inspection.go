@@ -9,6 +9,8 @@ import (
 // Configuration describes a running component for a schema-driven HMI.
 // Sensitive values are omitted; callers never receive references to live data.
 type Configuration struct {
+	ActiveEnabled  *bool                  `json:"active_enabled,omitempty"`
+	Changes        []ConfigurationChange  `json:"changes,omitempty"`
 	Feature        manifest.Feature       `json:"feature"`
 	Revision       string                 `json:"revision,omitempty"`
 	PendingRestart bool                   `json:"pending_restart,omitempty"`
@@ -20,7 +22,17 @@ type Configuration struct {
 	State          State                  `json:"state"`
 	Fields         []manifest.ConfigField `json:"fields"`
 	Values         map[string]any         `json:"values"`
+	Previews       map[string]string      `json:"previews,omitempty"`
 	Pages          []manifest.Page        `json:"pages"`
+}
+
+// ConfigurationChange compares the startup value with the value saved for the
+// next start. Secret values are represented only by their presence.
+type ConfigurationChange struct {
+	Name   string `json:"name"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
+	Secret bool   `json:"secret,omitempty"`
 }
 
 func (r *Runtime) Configurations() []Configuration {
@@ -36,6 +48,7 @@ func (r *Runtime) configurationsLocked() []Configuration {
 		m := item.registration.Manifest
 		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Enabled: true, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
 		entry.Feature = m.Feature
+		entry.Previews = publicPreviews(m.Config, item.config)
 		entry.Pages = append([]manifest.Page{}, m.Pages...)
 		for i := range entry.Pages {
 			entry.Pages[i].Settings = append([]string(nil), entry.Pages[i].Settings...)

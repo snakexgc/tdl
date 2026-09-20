@@ -20,14 +20,14 @@ func TestObservationCannotResurrectDeletedOrOverwriteControlledTask(t *testing.T
 		t.Run(string(driver), func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Now()
-			engine, err := kv.New(driver, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "observations")})
+			engine, err := kv.New(driver, filepath.Join(t.TempDir(), "observations"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			store, err := engine.Open("observations")
 			require.NoError(t, err)
 			links := taskhub.LinkRepository{Store: store, Engine: engine, Namespace: "observations"}
 			repo := taskhub.Aria2Observations{Links: links}
-			require.NoError(t, taskhub.Links(store).Put(ctx, "source", []byte(`{"id":"source","media":{"secret":"preserved"}}`), now))
+			require.NoError(t, taskhub.Links(store).Put(ctx, "source", []byte(`{"last_active_at":"2026-09-20T00:00:00Z","id":"source","media":{"secret":"preserved"}}`), now))
 			snapshot, err := repo.Snapshot(ctx)
 			require.NoError(t, err)
 			observation := types.Aria2TaskRecord{GID: "remote-retry", TaskID: "source", Status: testRemoteActive, CreatedAt: now}

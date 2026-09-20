@@ -365,10 +365,11 @@ func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        testDocumentID,
-		FileName:  testFileName,
-		FileSize:  123,
-		CreatedAt: createdAt,
+		LastActiveAt: createdAt,
+		ID:           testDocumentID,
+		FileName:     testFileName,
+		FileSize:     123,
+		CreatedAt:    createdAt,
 	})
 	require.NoError(t, err)
 	indexData, err := json.Marshal(map[string]time.Time{
@@ -398,10 +399,11 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        testDocumentID,
-		FileName:  "video.mp4",
-		FileSize:  100,
-		CreatedAt: createdAt,
+		LastActiveAt: createdAt,
+		ID:           testDocumentID,
+		FileName:     "video.mp4",
+		FileSize:     100,
+		CreatedAt:    createdAt,
 	})
 	require.NoError(t, err)
 	oldRecordData, err := json.Marshal(aria2TaskRecord{
@@ -863,10 +865,11 @@ func TestRefreshDownloadTaskActivitySlidesExpiry(t *testing.T) {
 
 	created := time.Now().Add(-72 * time.Hour)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        testDocumentID,
-		FileName:  testFileName,
-		FileSize:  10,
-		CreatedAt: created,
+		LastActiveAt: created,
+		ID:           testDocumentID,
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    created,
 	})
 	require.NoError(t, err)
 

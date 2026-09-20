@@ -49,7 +49,7 @@ export async function createEditor(value, { editable }) {
   const root = node("div", "", "forward-rules");
   const help = node(
     "p",
-    "每条规则可选择多个来源和多个目标。所有匹配规则都会执行；相同目标只发送一次，采用靠前规则的模式。匹配规则的来源不再走默认目标。保存后对新消息立即生效，请同时启用转发触发组件。",
+    "每条规则可选择多个来源和多个目标。所有匹配规则都会执行；相同目标只发送一次，采用靠前规则的模式。匹配规则的来源不再走默认目标。保存并重启后生效，请同时启用转发触发组件。",
     "rule-help",
   );
   const status = node("p", "", "notice");
@@ -317,7 +317,7 @@ export async function createEditor(value, { editable }) {
       silentLabel,
       node(
         "p",
-        "完成编辑后，请在规则区点击「保存更改」应用全部规则。",
+        "完成编辑后，请在规则区点击保存按钮应用全部规则。",
         "subtle",
       ),
       button("完成编辑", closeDrawer),

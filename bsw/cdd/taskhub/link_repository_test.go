@@ -17,7 +17,7 @@ func TestLinkCatalogOnlyIncludesIndexedAssociations(t *testing.T) {
 	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverFile} {
 		t.Run(string(driver), func(t *testing.T) {
 			ctx := context.Background()
-			engine, err := kv.New(driver, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "links")})
+			engine, err := kv.New(driver, filepath.Join(t.TempDir(), "links"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			store, err := engine.Open("links-account")

@@ -26,9 +26,8 @@ type downloadTask struct {
 	CreatedAt time.Time
 	// LastActiveAt is the sliding expiry clock: the link stays valid until
 	// LastActiveAt+TTL. It is refreshed whenever the link is downloaded or while
-	// a non-complete aria2/internal task still references it, so an in-progress
-	// or queued download cannot have its link expire out from under it. Falls
-	// back to CreatedAt when zero (older records, tests).
+	// a non-complete aria2/local task still references it, so an in-progress
+	// or queued download cannot have its link expire out from under it.
 	LastActiveAt time.Time
 }
 
@@ -41,7 +40,7 @@ type persistentDownloadTask struct {
 	FileSize     int64                   `json:"file_size"`
 	Media        persistentDownloadMedia `json:"media"`
 	CreatedAt    time.Time               `json:"created_at"`
-	LastActiveAt time.Time               `json:"last_active_at,omitempty"`
+	LastActiveAt time.Time               `json:"last_active_at"`
 }
 
 type persistentDownloadMedia struct {
@@ -101,6 +100,9 @@ func persistentDownloadTaskFromTask(task *downloadTask) (persistentDownloadTask,
 }
 
 func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
+	if p.LastActiveAt.IsZero() {
+		return nil, errors.New("download link last_active_at is required")
+	}
 	media, err := p.Media.ToMedia()
 	if err != nil {
 		return nil, err
@@ -244,6 +246,9 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 	if task == nil {
 		return errors.New("download task is nil")
 	}
+	if task.LastActiveAt.IsZero() {
+		return errors.New("download link last_active_at is required")
+	}
 	if s.kv == nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -262,7 +267,7 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 	if err != nil {
 		return err
 	}
-	return taskhub.Links(s.kv).Merge(ctx, task.ID, data, downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt))
+	return taskhub.Links(s.kv).Merge(ctx, task.ID, data, task.LastActiveAt)
 }
 
 func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, error) {
@@ -275,7 +280,7 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 		if !ok {
 			return nil, false, nil
 		}
-		if isDownloadTaskExpired(downloadTaskExpiryBase(task.CreatedAt, task.LastActiveAt), now, ttl) {
+		if isDownloadTaskExpired(task.LastActiveAt, now, ttl) {
 			delete(s.tasks, id)
 			return nil, false, nil
 		}
@@ -288,7 +293,10 @@ func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, er
 		if err := json.Unmarshal(data, &persisted); err != nil {
 			return nil, stamp, err
 		}
-		if isDownloadTaskExpired(downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt), now, ttl) {
+		if persisted.LastActiveAt.IsZero() {
+			return nil, stamp, errors.New("download link last_active_at is required")
+		}
+		if isDownloadTaskExpired(persisted.LastActiveAt, now, ttl) {
 			return nil, stamp, nil
 		}
 		var err error
@@ -324,13 +332,10 @@ func (s *taskStore) CleanupExpired(ctx context.Context, now time.Time) error {
 	if ttl <= 0 {
 		return nil
 	}
-	return taskhub.Links(s.kv).Sweep(ctx, func(data []byte, stamp time.Time) (bool, error) {
-		var persisted persistentDownloadTask
-		if err := json.Unmarshal(data, &persisted); err != nil {
+	return taskhub.Links(s.kv).Sweep(ctx, func(data []byte, _ time.Time) (bool, error) {
+		stamp, err := taskhub.LinkActivity(data)
+		if err != nil {
 			return false, err
-		}
-		if base := downloadTaskExpiryBase(persisted.CreatedAt, persisted.LastActiveAt); !base.IsZero() {
-			stamp = base
 		}
 		return isDownloadTaskExpired(stamp, now, ttl), nil
 	})
@@ -354,20 +359,8 @@ func (s *taskStore) SetTTL(ttl time.Duration) {
 	s.ttl = ttl
 }
 
-func isDownloadTaskExpired(createdAt, now time.Time, ttl time.Duration) bool {
-	if createdAt.IsZero() || ttl == 0 {
-		return false
-	}
-	return !createdAt.Add(ttl).After(now)
-}
-
-// downloadTaskExpiryBase returns the timestamp the TTL is measured from: the
-// sliding LastActiveAt when set, otherwise the original CreatedAt.
-func downloadTaskExpiryBase(createdAt, lastActiveAt time.Time) time.Time {
-	if !lastActiveAt.IsZero() {
-		return lastActiveAt
-	}
-	return createdAt
+func isDownloadTaskExpired(lastActiveAt, now time.Time, ttl time.Duration) bool {
+	return ttl > 0 && !lastActiveAt.Add(ttl).After(now)
 }
 
 // downloadTaskRefreshInterval is the minimum spacing between activity refreshes,
@@ -403,20 +396,11 @@ func SetDownloadTaskLastActive(data []byte, now time.Time, minInterval time.Dura
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, false, errors.Wrap(err, "decode download task for refresh")
 	}
-	if raw == nil {
-		raw = map[string]json.RawMessage{}
+	last, err := taskhub.LinkActivity(data)
+	if err != nil {
+		return nil, false, err
 	}
-
-	var last time.Time
-	if r, ok := raw["last_active_at"]; ok {
-		_ = json.Unmarshal(r, &last)
-	}
-	if last.IsZero() {
-		if r, ok := raw["created_at"]; ok {
-			_ = json.Unmarshal(r, &last)
-		}
-	}
-	if minInterval > 0 && !last.IsZero() && now.Sub(last) < minInterval {
+	if minInterval > 0 && now.Sub(last) < minInterval {
 		return data, false, nil
 	}
 

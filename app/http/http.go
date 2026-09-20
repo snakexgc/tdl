@@ -119,10 +119,10 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 		logger = zap.NewNop()
 	}
 	if maxFiles < 1 {
-		maxFiles = config.DefaultLimit
+		maxFiles = config.DefaultConfig().Limit
 	}
 	if poolSize < 1 {
-		poolSize = config.DefaultPoolSize
+		poolSize = config.DefaultConfig().PoolSize
 	}
 	if pools == nil {
 		pools = &poolHolder{}

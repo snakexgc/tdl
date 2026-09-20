@@ -94,7 +94,7 @@ func (q *Queue) SubmitMessage(ctx context.Context, message types.ForwardMessage)
 
 func (rt Runtime) Forward(ctx context.Context, job *Job, report func(Job)) error {
 	if rt.PoolSize <= 0 {
-		rt.PoolSize = config.DefaultPoolSize
+		rt.PoolSize = config.DefaultConfig().PoolSize
 	}
 	to, err := ResolvePeer(ctx, rt.Manager, job.Destination)
 	if err != nil {

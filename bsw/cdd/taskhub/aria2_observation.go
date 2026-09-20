@@ -158,8 +158,10 @@ func (r Aria2Observations) Apply(ctx context.Context, source ports.ObservedLink,
 			if complete {
 				link["downloaded"] = json.RawMessage("true")
 			} else if ttl > 0 {
-				var last time.Time
-				_ = json.Unmarshal(link["last_active_at"], &last)
+				last, err := LinkActivity(linkData)
+				if err != nil {
+					return err
+				}
 				if last.Before(now) {
 					link["last_active_at"], _ = json.Marshal(now)
 				}
@@ -176,9 +178,9 @@ func (r Aria2Observations) Apply(ctx context.Context, source ports.ObservedLink,
 			if err != nil {
 				return err
 			}
-			linkStamp := source.Task.LastActiveAt
-			if linkStamp.IsZero() {
-				linkStamp = source.Task.CreatedAt
+			linkStamp, err := LinkActivity(linkData)
+			if err != nil {
+				return err
 			}
 			if !complete && ttl > 0 {
 				linkStamp = now

@@ -55,9 +55,7 @@ function renderCredentialWarning() {
 export async function openCredentialSettings() {
   await navigate("/config?tab=panel#setting-panel.webui-username");
   requestAnimationFrame(() => {
-    const input =
-      document.getElementById("setting-panel.webui-username") ||
-      document.querySelector('#config-form [data-path="webui.username"]');
+    const input = document.getElementById("setting-panel.webui-username");
     if (input) {
       input.focus();
       input.scrollIntoView({ block: "center" });

@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -34,13 +35,15 @@ func (observationClient) TellStopped(context.Context, int, int) ([]types.Aria2Do
 
 func TestAria2ObservationMaintainsIndexedLinkWithoutPanel(t *testing.T) {
 	ctx := context.Background()
-	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "store")})
+	engine, err := kv.New(kv.DriverBolt, filepath.Join(t.TempDir(), "store"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open(testIsolatedAccount)
 	require.NoError(t, err)
 	// The source is persisted through the task index; no panel or watcher runs.
-	require.NoError(t, taskhub.Links(store).Put(ctx, testLinkSource, []byte(`{"id":"source","file_name":"movie.mp4"}`), time.Now()))
+	data, err := json.Marshal(map[string]any{"id": "source", "file_name": "movie.mp4", "last_active_at": time.Now()})
+	require.NoError(t, err)
+	require.NoError(t, taskhub.Links(store).Put(ctx, testLinkSource, data, time.Now()))
 	repo := taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: store, Engine: engine, Namespace: testIsolatedAccount}}
 	observer := aria2.Observer{Client: observationClient{}, Repository: repo, PublicBaseURL: "https://downloads.test/prefix", TTL: time.Hour}
 	require.NoError(t, observer.Sync(ctx))
