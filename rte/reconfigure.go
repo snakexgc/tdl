@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/snakexgc/tdl/rte/config"
@@ -92,6 +93,7 @@ func (r *Runtime) reconfigureLocked(ctx context.Context, values map[string]map[s
 	for _, next := range changes {
 		next.commit()
 		next.item.config = next.view
+		slog.Info("组件配置已生效", "component", next.item.status.ID, "account", r.account)
 	}
 	return nil
 }

@@ -1,0 +1,124 @@
+<section class="view" id="logs-view">
+  <header class="page-head">
+    <div>
+      <h1>日志管理</h1>
+      <p class="subtle">
+        查看当前账号和系统的运行记录，按功能或细分模块定位问题。
+      </p>
+    </div>
+    <div class="page-actions">
+      <button class="btn secondary" id="logs-live" type="button">
+        暂停刷新</button
+      ><button class="btn secondary" id="logs-refresh" type="button">
+        刷新</button
+      ><a class="btn secondary" id="logs-export" href="/api/logs?download=1"
+        >导出筛选结果</a
+      >
+    </div>
+  </header>
+  <div class="page-tabs" id="logs-tabs" role="tablist" aria-label="日志视图">
+    <button
+      type="button"
+      role="tab"
+      class="tab-button"
+      data-tab="runtime"
+      aria-controls="logs-runtime"
+      id="logs-tab-runtime"
+    >
+      运行日志</button
+    ><button
+      type="button"
+      role="tab"
+      class="tab-button"
+      data-tab="health"
+      aria-controls="logs-health"
+      id="logs-tab-health"
+    >
+      组件健康
+    </button>
+  </div>
+  <form class="log-filters" id="logs-filters">
+    <label
+      >功能模块<select id="logs-feature">
+        <option value="">全部功能模块</option>
+      </select></label
+    >
+    <label
+      >细分模块<select id="logs-component">
+        <option value="">全部细分模块</option>
+      </select></label
+    >
+    <label data-log-filter
+      >级别<select id="logs-level">
+        <option value="">全部级别</option>
+        <option value="debug">调试</option>
+        <option value="info">信息</option>
+        <option value="warn">警告</option>
+        <option value="error">错误</option>
+      </select></label
+    >
+    <label data-log-filter
+      >类型<select id="logs-kind">
+        <option value="">全部日志</option>
+        <option value="runtime">运行日志</option>
+        <option value="diagnostic">诊断事件</option>
+      </select></label
+    >
+    <label data-log-filter
+      >时间<select id="logs-range">
+        <option value="">全部保留记录</option>
+        <option value="15">最近 15 分钟</option>
+        <option value="60">最近 1 小时</option>
+        <option value="1440">最近 24 小时</option>
+      </select></label
+    >
+    <label class="log-search"
+      >关键词<input
+        id="logs-query"
+        type="search"
+        maxlength="256"
+        placeholder="搜索模块、消息或错误内容" /></label
+    ><button class="btn secondary" type="submit">查询</button>
+  </form>
+  <p class="notice" id="logs-notice" role="status"></p>
+  <section id="logs-runtime" role="tabpanel" aria-labelledby="logs-tab-runtime">
+    <p class="subtle" id="logs-summary" role="status"></p>
+    <div class="table-wrap log-table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>级别</th>
+            <th>功能 / 细分模块</th>
+            <th>日志内容</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="logs-rows"></tbody>
+      </table>
+    </div>
+    <div class="log-pagination">
+      <button type="button" class="btn secondary" id="logs-latest">
+        返回最新</button
+      ><span class="subtle" id="logs-page-note"></span
+      ><button type="button" class="btn secondary" id="logs-older">
+        更早日志
+      </button>
+    </div>
+    <p class="subtle log-retention">
+      页面保留最近 5000 条结构化日志。日志文件每 10 MB 轮转，最多保留 3 份备份和
+      7 天；重启后恢复当前日志文件中的记录。
+    </p>
+  </section>
+  <section
+    id="logs-health"
+    role="tabpanel"
+    aria-labelledby="logs-tab-health"
+    hidden
+  >
+    <p class="subtle">
+      查看组件状态、调度任务及诊断错误。服务启停请前往模块管理。
+    </p>
+    <div id="logs-health-content"></div>
+  </section>
+</section>

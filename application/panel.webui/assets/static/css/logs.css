@@ -1,0 +1,157 @@
+#logs-view .page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.log-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  max-height: max(360px, calc(100dvh - 440px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.log-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-soft);
+}
+.log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 20px 0;
+}
+.log-filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.log-filters select,
+.log-filters input {
+  min-height: 38px;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.log-filters select {
+  max-width: 260px;
+}
+.log-search {
+  flex: 1 1 220px;
+}
+.log-table {
+  width: 100%;
+  min-width: 780px;
+  table-layout: fixed;
+}
+.log-table th:nth-child(1) {
+  width: 170px;
+}
+.log-table th:nth-child(2) {
+  width: 80px;
+}
+.log-table th:nth-child(3) {
+  width: 200px;
+}
+.log-table th:nth-child(5) {
+  width: 80px;
+}
+.log-table td {
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.log-table td small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.log-table .log-message {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+.log-level {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel-soft);
+}
+.log-level-warn {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+.log-level-error,
+.log-level-fatal,
+.log-level-panic,
+.log-level-dpanic {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.log-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0;
+}
+.log-retention {
+  font-size: 12px;
+}
+.log-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 16px;
+  background: var(--panel-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.log-health-card {
+  margin: 16px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.log-health-card summary {
+  cursor: pointer;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.log-health-card p {
+  overflow-wrap: anywhere;
+}
+.log-health-events {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.nav-item[data-view="logs"]::before {
+  --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M14 3H5v18h14V8l-5-5Z M14 3v5h5 M8 12h8 M8 16h6'/%3E%3C/svg%3E");
+}
+@media (max-width: 600px) {
+  .log-filters label {
+    flex: 1 1 140px;
+  }
+  .log-filters select {
+    width: 100%;
+    max-width: none;
+  }
+  .log-search {
+    flex-basis: 100%;
+  }
+}

@@ -44,7 +44,7 @@ func New(source ports.LocalDownloadSource, store ports.LocalDownloadRepository, 
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &Worker{source: source, store: store, logger: logger.Named("local-downloader"), queued: map[string]struct{}{}, active: map[string]struct{}{}, configChanged: make(chan struct{}, 1)}
+	return &Worker{source: source, store: store, logger: logger.Named("local-downloader").With(zap.String("component", "downloader.local")), queued: map[string]struct{}{}, active: map[string]struct{}{}, configChanged: make(chan struct{}, 1)}
 }
 
 func (d *Worker) Start(ctx context.Context) error {
@@ -452,6 +452,7 @@ func (d *Worker) markComplete(ctx context.Context, record types.LocalDownloadRec
 	if err := d.store.MarkDownloaded(context.WithoutCancel(ctx), record.TaskID); err != nil {
 		d.logger.Warn("Failed to mark source downloaded", zap.String("id", record.ID), zap.Error(err))
 	}
+	d.logger.Info("本地下载已完成", zap.String("id", record.ID), zap.Int64("bytes", record.Total))
 }
 
 func (d *Worker) markError(ctx context.Context, record types.LocalDownloadRecord, cause error) {

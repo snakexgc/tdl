@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -596,6 +597,10 @@ func (q *Queue) runJob(ctx context.Context, rt ports.ForwardTransport, store por
 	})
 	if err != nil || !changed {
 		notification = ""
+	} else if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		slog.Warn("转发任务执行失败", "component", ID, "task_id", job.ID, "status", job.Status, "attempts", job.Attempts, "error", runErr)
+	} else {
+		slog.Info("转发任务状态已更新", "component", ID, "task_id", job.ID, "status", job.Status)
 	}
 }
 

@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ func (l *shutdownAwareTelegoLogger) Errorf(format string, args ...any) {
 	if l.replacer != nil {
 		msg = l.replacer.Replace(msg)
 	}
+	slog.Error(msg, "component", "console.bot")
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

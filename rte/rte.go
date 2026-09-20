@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"reflect"
 	"sort"
@@ -121,6 +122,7 @@ type Status struct {
 	Detail string `json:"detail,omitempty"`
 }
 type instance struct {
+	account      types.AccountID
 	registration Registration
 	component    Component
 	config       config.View
@@ -139,8 +141,12 @@ type observation struct {
 
 // Called under Runtime.mu; health readers only access the immutable snapshot.
 func (i *instance) setStatus(status Status) {
+	previous := i.status
 	i.status = status
 	i.observation.Store(&observation{status: status, runnables: i.runnables})
+	if previous != status {
+		slog.Info("组件状态变化", "component", status.ID, "account", i.account, "from", previous.State, "to", status.State)
+	}
 }
 
 type Runtime struct {
@@ -195,7 +201,7 @@ func (r *Registry) Build(account types.AccountID, enabled map[string]bool, value
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", id, err)
 		}
-		run.instances[id] = &instance{registration: entry, config: view, status: Status{ID: id, State: Stopped}}
+		run.instances[id] = &instance{account: account, registration: entry, config: view, status: Status{ID: id, State: Stopped}}
 		for _, p := range entry.Manifest.Provides {
 			if err := validatePort(p); err != nil {
 				return nil, fmt.Errorf("%s: %w", id, err)

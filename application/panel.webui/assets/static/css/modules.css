@@ -87,7 +87,7 @@
 }
 .feature-component {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 12px;
   padding: 16px 0;
@@ -139,9 +139,6 @@
 .feature-components > a {
   margin-top: 16px;
 }
-#module-diagnostics {
-  margin-top: 24px;
-}
 @media (max-width: 1200px) {
   .module-list {
     grid-template-columns: minmax(0, 1fr);
@@ -165,6 +162,10 @@
   }
   .feature-component {
     gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .feature-component .component-name {
+    grid-column: 1 / -1;
   }
   .feature-component > .btn {
     padding: 6px 10px;

@@ -275,6 +275,7 @@ func (s *Server) routes() http.Handler {
 		"/api/modules":                    s.handleModules,
 		"/api/components":                 s.handleComponents,
 		"/api/components/health":          s.handleComponentHealth,
+		"/api/logs":                       s.handleLogs,
 		"/api/config":                     s.handleConfig,
 		"/api/update/check":               s.handleUpdateCheck,
 		"/api/update/apply":               s.handleUpdateApply,

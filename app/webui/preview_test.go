@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/services/logging"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/componentconfig"
 	"github.com/snakexgc/tdl/pkg/config"
@@ -31,12 +32,21 @@ func TestBrowserPreview(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	logs := logging.New(nil)
+	ctx = logging.WithStore(ctx, logs)
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
 	cfg.Modules.WebUI = true
 	cfg.Downloader.Mode = "local"
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
+	for _, definition := range catalog.Definitions() {
+		require.NoError(t, logs.Write(logging.Entry{Component: definition.Manifest.ID, Account: cfg.Namespace, Level: logInfoLevel, Kind: logRuntimeKind, Message: definition.Manifest.Title + "已启动"}))
+	}
+	for count := range 220 {
+		require.NoError(t, logs.Write(logging.Entry{Component: logLocalComponent, Account: cfg.Namespace, Level: logInfoLevel, Kind: logRuntimeKind, Message: fmt.Sprintf("本地下载已完成 · 示例任务 %d", count)}))
+	}
+	require.NoError(t, logs.Write(logging.Entry{Component: logForwardComponent, Account: cfg.Namespace, Level: fieldError, Kind: logDiagnosticKind, Message: "转发任务需要重试", Details: `{"operation":"forward.queue","error":"fixture timeout"}`}))
 	store := rteconfig.NewStore(t.TempDir())
 	docs, err := componentconfig.Export(cfg, catalog)
 	require.NoError(t, err)
@@ -107,8 +117,12 @@ func (p *previewComponents) refresh(ctx context.Context) error {
 }
 func (p *previewComponents) ConfigurationVersion() uint64 { return p.version.Load() }
 
+func (p *previewComponents) ComponentHealth() []rte.Health {
+	return []rte.Health{{Account: types.AccountID(p.cfg.Namespace), Components: []rte.ComponentHealth{{Status: rte.Status{ID: logForwardComponent, State: rte.Running}}, {Status: rte.Status{ID: logLocalComponent, State: rte.Running}}}, Events: []types.DiagnosticEvent{{Sequence: 1, Component: logForwardComponent, Operation: "forward.queue", Message: "fixture timeout", At: time.Now()}}}}
+}
+
 type previewDialogs struct{}
 
 func (previewDialogs) Dialogs(context.Context) ([]types.Dialog, error) {
-	return []types.Dialog{{Ref: "channel:11", Title: "产品交流", Username: "product", Kind: "group"}, {Ref: "channel:12", Title: "开发团队", Kind: "group"}, {Ref: "user:21", Title: "通知机器人", Username: "notice_bot", Kind: "bot"}, {Ref: "channel:13", Title: "项目归档", Kind: "channel"}}, nil
+	return []types.Dialog{{Ref: "channel:11", Title: "产品交流", Username: "product", Kind: "group"}, {Ref: "channel:12", Title: "开发团队", Kind: "group"}, {Ref: "user:21", Title: "通知机器人", Username: "notice_bot", Kind: logBotAdapter}, {Ref: "channel:13", Title: "项目归档", Kind: "channel"}}, nil
 }

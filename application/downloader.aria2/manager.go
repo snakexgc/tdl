@@ -39,6 +39,7 @@ func NewManager(opts Options, logger *zap.Logger) *Manager {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	logger = logger.With(zap.String("component", "downloader.aria2"))
 	m := &Manager{
 		statusChanged: make(chan struct{}, 1), retryChanged: make(chan struct{}, 1),
 		limitChanged: make(chan struct{}, 1),

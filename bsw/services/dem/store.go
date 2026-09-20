@@ -2,6 +2,7 @@
 package dem
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ func (s *Store) Report(component, operation string, err error) {
 	defer s.mu.Unlock()
 	s.sequence++
 	event := types.DiagnosticEvent{Sequence: s.sequence, Account: s.account, Component: component, Operation: operation, Message: err.Error(), At: time.Now()}
+	slog.Error("组件诊断事件", "kind", "diagnostic", "component", component, "account", s.account, "operation", operation, "error", err)
 	if len(s.events) == s.capacity {
 		copy(s.events, s.events[1:])
 		s.events[len(s.events)-1] = event

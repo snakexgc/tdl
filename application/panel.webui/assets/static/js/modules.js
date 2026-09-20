@@ -1,7 +1,6 @@
 import { api } from "./api.js";
 import { element, button } from "./ui.js";
 import { featureGroups, componentStatus } from "./module-model.js";
-import { renderDiagnostics } from "./module-diagnostics.js";
 import { loadStatus } from "./status.js";
 
 let components = [],
@@ -24,7 +23,6 @@ function report(text, kind = "") {
 
 export function initModules() {
   $("refresh-modules").addEventListener("click", () => void refresh());
-  renderDiagnostics($("module-diagnostics"));
 }
 
 async function refresh() {
@@ -120,9 +118,8 @@ function render() {
   $("module-list").replaceChildren();
   // Each column stacks independently; changing one card's height only moves
   // the cards beneath it. A single column preserves manifest order on mobile.
-  const columns = Array.from(
-    { length: compactLayout.matches ? 1 : 2 },
-    () => element("div", null, "module-column"),
+  const columns = Array.from({ length: compactLayout.matches ? 1 : 2 }, () =>
+    element("div", null, "module-column"),
   );
   if (groups.length) $("module-list").append(...columns);
   for (const [index, group] of groups.entries()) {
@@ -187,6 +184,15 @@ function render() {
       if (!managed && !component.legacy)
         control.title = "旧版配置模式仅支持已声明的功能服务开关";
       row.append(control);
+      const logs = link(
+        "日志",
+        `/logs?component=${encodeURIComponent(component.id)}`,
+      );
+      logs.setAttribute(
+        "aria-label",
+        `查看 ${component.title || component.id} 的日志`,
+      );
+      row.append(logs);
       body.append(row);
     }
     if (group.settings_url) {

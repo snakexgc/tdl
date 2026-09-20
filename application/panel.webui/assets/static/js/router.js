@@ -155,12 +155,14 @@ function resolve(value) {
   let url = localURL(value);
   // Preserve bookmarks from the former settings-based services/update pages.
   if (url.pathname === "/config" && url.searchParams.get("tab") === "system") {
-    if (url.hash === "#services" || url.hash === "#diagnostics")
-      url = localURL(`/modules${url.hash === "#diagnostics" ? url.hash : ""}`);
+    if (url.hash === "#services") url = localURL("/modules");
+    else if (url.hash === "#diagnostics") url = localURL("/logs?tab=health");
     else if (url.hash === "#updates") url = localURL("/update");
     else if (url.hash === "#setting-account.telegram-proxy")
       url.searchParams.set("tab", "network");
   }
+  if (url.pathname === "/modules" && url.hash === "#diagnostics")
+    url = localURL("/logs?tab=health");
   if (url.pathname === "/")
     url = localURL(
       [...pages.values()].find(

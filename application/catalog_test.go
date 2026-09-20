@@ -36,6 +36,7 @@ func TestCatalogValidatesUnavailableResources(t *testing.T) {
 }
 
 func TestWebUISettingsCoverageAndNavigation(t *testing.T) {
+	const logsPath = "/logs"
 	catalog, err := Catalog()
 	require.NoError(t, err)
 	tabs := map[string]bool{}
@@ -43,6 +44,7 @@ func TestWebUISettingsCoverageAndNavigation(t *testing.T) {
 		tabs[tab] = true
 	}
 	visible := map[string]string{}
+	orders := map[string]int{}
 	proxyEditors := []string{}
 	for _, definition := range catalog.Definitions() {
 		m := definition.Manifest
@@ -59,9 +61,12 @@ func TestWebUISettingsCoverageAndNavigation(t *testing.T) {
 		for _, page := range m.Pages {
 			if !page.NavHidden {
 				visible[page.Path] = page.Title
+				orders[page.Path] = page.Order
 			}
 		}
 	}
 	require.Equal(t, []string{"account.telegram.proxy"}, proxyEditors)
-	require.Equal(t, map[string]string{"/dashboard": "总览", "/downloads": "下载管理", "/forwards": "转发管理", "/user": "账号管理", "/config": "设置", "/modules": "模块管理", "/update": "检查更新"}, visible)
+	require.Equal(t, map[string]string{"/dashboard": "总览", "/downloads": "下载管理", "/forwards": "转发管理", "/user": "账号管理", "/config": "设置", "/modules": "模块管理", logsPath: "日志管理", "/update": "检查更新"}, visible)
+	require.Greater(t, orders[logsPath], orders["/config"])
+	require.Less(t, orders[logsPath], orders["/update"])
 }

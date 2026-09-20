@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -9,10 +10,12 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/snakexgc/tdl/app/bot"
 	"github.com/snakexgc/tdl/app/reset"
 	tdlruntime "github.com/snakexgc/tdl/app/runtime"
+	"github.com/snakexgc/tdl/bsw/services/logging"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/internal/core/util/fsutil"
 	"github.com/snakexgc/tdl/internal/core/util/logutil"
@@ -61,13 +64,17 @@ func New() *cobra.Command {
 			}
 			cfg := config.Get()
 			// init logger
-			debug, level := cfg.Debug, zap.InfoLevel
-			if debug {
-				level = zap.DebugLevel
-			}
-			logger, closeFile := logutil.NewWithClose(level, filepath.Join(consts.LogPath, "latest.log"))
-			closeLog = closeFile
-			cmd.SetContext(logctx.With(cmd.Context(), logger))
+			level := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+				if config.Get().Debug {
+					return level >= zap.DebugLevel
+				}
+				return level >= zap.InfoLevel
+			})
+			logger, logs, closeFile := logutil.NewSession(level, filepath.Join(consts.LogPath, "latest.log"), cfg.Namespace)
+			previous := slog.Default()
+			slog.SetDefault(logging.Slog(logger))
+			closeLog = func() error { slog.SetDefault(previous); return closeFile() }
+			cmd.SetContext(logging.WithStore(logctx.With(cmd.Context(), logger), logs))
 
 			ns := cfg.Namespace
 			if ns != "" {

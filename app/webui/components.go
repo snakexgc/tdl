@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"slices"
 
+	"github.com/snakexgc/tdl/bsw/services/logging"
 	"github.com/snakexgc/tdl/rte"
 )
 
@@ -30,7 +33,26 @@ func (s *Server) handleComponentHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("component diagnostics are unavailable"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hosts": manager.ComponentHealth()})
+	hosts := []rte.Health{}
+	for _, host := range manager.ComponentHealth() {
+		if string(host.Account) != "" && string(host.Account) != s.namespace() {
+			continue
+		}
+		host.Components = slices.Clone(host.Components)
+		host.Events = slices.Clone(host.Events)
+		for i := range host.Components {
+			host.Components[i].Detail = logging.Redact(host.Components[i].Detail)
+			host.Components[i].Runnables = slices.Clone(host.Components[i].Runnables)
+			for j := range host.Components[i].Runnables {
+				host.Components[i].Runnables[j].LastError = logging.Redact(host.Components[i].Runnables[j].LastError)
+			}
+		}
+		for i := range host.Events {
+			host.Events[i].Message = logging.Redact(host.Events[i].Message)
+		}
+		hosts = append(hosts, host)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts})
 }
 
 func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +108,7 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request) {
 			err = s.opts.ComponentManager.SaveComponentConfiguration(r.Context(), request.ID, request.Values)
 		}
 		if err != nil {
+			slog.Warn("组件配置操作失败", "component", request.ID, "account", s.namespace(), "error", err)
 			status := http.StatusBadRequest
 			if errors.Is(err, rte.ErrConfigurationConflict) {
 				status = http.StatusConflict
@@ -94,6 +117,11 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items, editable := s.opts.ComponentManager.ComponentConfigurations()
+		if request.Enabled != nil {
+			slog.Info("组件启停设置已保存", "component", request.ID, "account", s.namespace(), "enabled", *request.Enabled)
+		} else {
+			slog.Info("组件配置已保存", "component", request.ID, "account", s.namespace())
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldComponents: items, fieldEditable: editable})
 	default:
 		methodNotAllowed(w, "GET, PATCH")

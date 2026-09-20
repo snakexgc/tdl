@@ -3,6 +3,7 @@ package webui
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-faster/errors"
@@ -36,6 +37,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
+		slog.Info("运行设置已保存", "component", "panel.webui", "account", s.namespace())
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":                true,
 			"config":            publicConfig(next),
@@ -70,6 +72,7 @@ func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
+		slog.Info("模块启停设置已保存", "component", state.ComponentID, "account", s.namespace(), "enabled", req.Enabled)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":      true,
 			"module":  state,
@@ -87,9 +90,11 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := s.checkUpdate(r)
 	if err != nil {
+		slog.Warn("检查软件更新失败", "component", "update.self", "account", s.namespace(), "error", err)
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
+	slog.Info("软件更新检查已完成", "component", "update.self", "account", s.namespace())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "update": info})
 }
 

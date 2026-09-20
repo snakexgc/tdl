@@ -29,6 +29,7 @@ test("declared pages mount lazily, redirect aliases, preserve query and guide di
     { id: "example", enabled: true, pages: [
       { path: "/example", title: "Example", view: "example", module: "/static/js/example.js" },
       { path: "/other", title: "Other", view: "other", module: "/static/js/other.js" },
+      { path: "/logs", title: "Logs", view: "logs", module: "/static/js/logs.js" },
       { path: "/old", title: "Old", nav_hidden: true, redirect_to: "/other?tab=links#details" },
     ] },
     { id: "disabled", enabled: false, pages: [{ path: "/disabled", title: "Disabled", view: "disabled" }] },
@@ -77,7 +78,7 @@ test("declared pages mount lazily, redirect aliases, preserve query and guide di
   const router = await load("router.js");
   await router.evaluate();
   await router.namespace.initRouter();
-  assert.equal(nav.children.length, 3);
+  assert.equal(nav.children.length, 4);
   assert.deepEqual(fetched, ["/api/components", "/views/example.html"]);
   await router.namespace.navigate("other");
   assert(calls.some(([module, action]) => module.endsWith("example.js") && action === "stop"));
@@ -93,5 +94,11 @@ test("declared pages mount lazily, redirect aliases, preserve query and guide di
   await router.namespace.navigate("/sleeping");
   assert.match(find(host, "page-sleeping").innerHTML, /相关服务已停用/);
   assert(!fetched.includes("/views/sleeping.html"));
+  for (const alias of ["/modules#diagnostics", "/config?tab=system#diagnostics"]) {
+    await router.namespace.navigate(alias);
+    assert.deepEqual(calls.at(-1), ["/static/js/logs.js", "load", "?tab=health", ""]);
+  }
+  await router.namespace.navigate("/logs?component=downloader.local&level=warn");
+  assert.equal(calls.at(-1)[2], "?component=downloader.local&level=warn");
   router.namespace.stopPages();
 });

@@ -21,6 +21,7 @@ func Routes() []types.WebRoute {
 		{Path: "/api/modules", Public: false},
 		{Path: "/api/components", Public: false},
 		{Path: "/api/components/health", Public: false},
+		{Path: "/api/logs", Public: false},
 		{Path: "/api/config", Public: false},
 		{Path: "/api/system/reboot", Public: false},
 		{Path: "/api/system/reset", Public: false},

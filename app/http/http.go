@@ -134,7 +134,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 		pools:             pools,
 		sources:           newSourceRegistry(),
 		scheduler:         transfer.NewScheduler(maxFiles, poolSize),
-		logger:            logger.Named("http-download"),
+		logger:            logger.Named("http-download").With(zap.String("component", "proxy.range")),
 		clientWaitTimeout: telegramClientWaitTimeout,
 	}
 
