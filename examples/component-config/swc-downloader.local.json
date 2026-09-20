@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "enabled": true,
-  "values": {
-    "poll_interval_ms": 5000,
-    "shutdown_timeout_seconds": 5
-  }
-}
