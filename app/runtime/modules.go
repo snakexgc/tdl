@@ -33,7 +33,7 @@ func (m *Manager) panelState(cfg *config.Config) webui.ModuleState {
 	if running {
 		status = moduleStatusRunning
 	}
-	return webui.ModuleState{ID: "webui", Name: "Web 管理面板", Description: "关闭后可通过组件配置文件重新启用。", Enabled: cfg != nil && cfg.Modules.WebUI, Running: running, CanToggle: true, Status: status}
+	return webui.ModuleState{ID: "webui", Name: "Web 管理面板", Description: "关闭后可在 tdl_config.json 中重新启用。", Enabled: cfg != nil && cfg.Modules.WebUI, Running: running, CanToggle: true, Status: status}
 }
 
 func (m *Manager) ModuleStates() []webui.ModuleState {

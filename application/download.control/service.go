@@ -48,12 +48,9 @@ func New(account types.AccountID, backends map[string]ports.DownloadBackend) *Se
 	return s
 }
 
-func (s *Service) backend(ctx context.Context, account types.AccountID, executor string) (ports.DownloadBackend, error) {
+func (s *Service) backend(ctx context.Context, executor string) (ports.DownloadBackend, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	if account != s.account {
-		return nil, fmt.Errorf("download account mismatch")
 	}
 	backend := s.backends[executor]
 	if backend == nil {
@@ -62,13 +59,13 @@ func (s *Service) backend(ctx context.Context, account types.AccountID, executor
 	return backend, nil
 }
 
-func (s *Service) Tasks(ctx context.Context, account types.AccountID, executor string) ([]types.DownloadTask, error) {
+func (s *Service) Tasks(ctx context.Context, executor string) ([]types.DownloadTask, error) {
 	ctx, done, err := s.begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	backend, err := s.backend(ctx, account, executor)
+	backend, err := s.backend(ctx, executor)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +75,7 @@ func (s *Service) Tasks(ctx context.Context, account types.AccountID, executor s
 	}
 	items = append([]types.DownloadTask{}, items...)
 	for i := range items {
-		items[i].Account = account
+		items[i].Account = s.account
 		items[i].Executor = executor
 		items[i].State = types.NormalizeDownloadState(items[i].Status)
 		if items[i].StartedAt != nil {
@@ -100,7 +97,10 @@ func (s *Service) Control(ctx context.Context, request types.DownloadAction) (ty
 		return result, err
 	}
 	defer done()
-	backend, err := s.backend(ctx, request.Account, request.Executor)
+	if request.Account != s.account {
+		return result, fmt.Errorf("download account mismatch")
+	}
+	backend, err := s.backend(ctx, request.Executor)
 	if err != nil {
 		return result, err
 	}

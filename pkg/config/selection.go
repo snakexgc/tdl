@@ -34,7 +34,7 @@ func SelectNamespace(ctx context.Context, expected, target string) (bool, error)
 		return false, err
 	}
 	next.Namespace = target
-	if err := Save(configPath, next); err != nil {
+	if err := persistConfig(ctx, next); err != nil {
 		return false, err
 	}
 	instance = next

@@ -179,7 +179,7 @@ type Runtime struct {
 // Build validates the complete graph and all configurations before invoking
 // any factories. A nil enabled map enables all registered components.
 func (r *Registry) Build(account types.AccountID, enabled map[string]bool, values map[string]map[string]any) (*Runtime, error) {
-	run := &Runtime{account: account, instances: map[string]*instance{}, providers: map[string]string{}, ports: map[string]any{}, bus: eventbus.New(), diagnostics: dem.New(account, 128)}
+	run := &Runtime{account: account, instances: map[string]*instance{}, providers: map[string]string{}, ports: map[string]any{}, bus: eventbus.New(account), diagnostics: dem.New(account, 128)}
 	run.registry = NewRegistry()
 	for id, registration := range r.entries {
 		run.registry.entries[id] = registration
@@ -333,7 +333,7 @@ func (r *Runtime) startLocked(ctx context.Context) []Status {
 		item.runnables = schedule.NewObserved(runCtx, func(name string, err error) { r.diagnostics.Report(id, "runnable:"+name, err) })
 		item.setStatus(Status{ID: id, State: Starting})
 		kernel.Runnables = item.runnables
-		kernel.Events = Events{bus: r.bus, account: r.account, ctx: runCtx, publishes: item.registration.Manifest.Publishes, subscribes: item.registration.Manifest.Subscribes, report: func(topic string, err error) { r.diagnostics.Report(id, "event:"+topic, err) }}
+		kernel.Events = Events{bus: r.bus, ctx: runCtx, publishes: item.registration.Manifest.Publishes, subscribes: item.registration.Manifest.Subscribes, report: func(topic string, err error) { r.diagnostics.Report(id, "event:"+topic, err) }}
 		// Required ports are a private immutable snapshot; resolving them from
 		// component goroutines never touches the runtime's mutable binding map.
 		required := make(map[string]any)

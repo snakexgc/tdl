@@ -25,6 +25,14 @@ func TestCloseReleasesLogFileForReset(t *testing.T) {
 
 func TestBothSinksRedactAndFollowLiveLevel(t *testing.T) {
 	dir := t.TempDir()
+	console, err := os.CreateTemp(dir, "console-*")
+	require.NoError(t, err)
+	previousStdout, previousStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = console, console
+	t.Cleanup(func() {
+		os.Stdout, os.Stderr = previousStdout, previousStderr
+		require.NoError(t, console.Close())
+	})
 	level := zap.NewAtomicLevelAt(zap.InfoLevel)
 	logger, store, closeLog := NewSession(level, filepath.Join(dir, "latest.log"), "alice")
 	defer closeLog()
@@ -45,6 +53,9 @@ func TestBothSinksRedactAndFollowLiveLevel(t *testing.T) {
 	entries, _ := store.Snapshot()
 	require.Len(t, entries, 2)
 	require.Contains(t, entries[0].Caller, "logutil_test.go")
+	data, err := os.ReadFile(console.Name())
+	require.NoError(t, err)
+	require.Empty(t, string(data), "runtime logs must stay in files and WebUI, even with debug enabled")
 }
 
 func TestTextSinkFailureRemainsVisibleAfterJournalSuccess(t *testing.T) {

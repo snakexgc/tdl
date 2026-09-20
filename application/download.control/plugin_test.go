@@ -36,7 +36,7 @@ func TestStopCancelsAndDrainsDownloadControl(t *testing.T) {
 	require.NoError(t, err)
 	control := port.(ports.DownloadControl)
 	done := make(chan error, 1)
-	go func() { _, err := control.Tasks(context.Background(), "account", localExecutor); done <- err }()
+	go func() { _, err := control.Tasks(context.Background(), localExecutor); done <- err }()
 	select {
 	case <-b.entered:
 	case <-time.After(time.Second):
@@ -45,7 +45,7 @@ func TestStopCancelsAndDrainsDownloadControl(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	require.Error(t, host.Stop(ctx))
-	_, err = control.Tasks(context.Background(), "account", localExecutor)
+	_, err = control.Tasks(context.Background(), localExecutor)
 	require.ErrorContains(t, err, "stopped")
 	close(b.release)
 	require.NoError(t, host.Stop(context.Background()))

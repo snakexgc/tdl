@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 	"github.com/mymmrac/telego"
@@ -111,7 +112,7 @@ func RequestUpdate(plan updater.Plan) {
 
 func Run(ctx context.Context, opts Options) (rerr error) {
 	if opts.Token == "" {
-		return errors.New("bot token is empty, please set bot.token in config.json")
+		return errors.New("bot token is empty, please set console.bot values.token for the selected account in tdl_config.json")
 	}
 
 	// create telego bot with proxy
@@ -131,6 +132,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	botLogger.logger = botLogger.logger.With("account", account)
 	slog.Info("机器人身份验证成功", "component", "console.bot", "account", account, "bot_id", botUser.ID)
+	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
 	transport := &botNotificationTransport{sender: bot, editor: bot}
 	host, console, notifications, err := application.BotHost(ctx, account, transport, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...)
 	if err != nil {
@@ -441,6 +443,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}, th.AnyMessage())
 
 	slog.Info("机器人已开始接收消息", "component", "console.bot", "account", account)
+	color.Green("🔄 Bot is running... Press Ctrl+C to stop")
 
 	err = bh.Start()
 	botLogger.SetShuttingDown()

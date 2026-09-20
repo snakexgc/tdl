@@ -92,7 +92,7 @@ func TestBotComponentConfigurationPersistence(t *testing.T) {
 	require.NoError(t, manager.initDirectory())
 	configurations, editable := manager.ComponentConfigurations()
 	require.True(t, editable)
-	require.Len(t, configurations, 18)
+	require.Len(t, configurations, 19)
 	// Missing documents use schema defaults, never the legacy permission list.
 	require.False(t, console.Allowed(types.DefaultAccount, 42))
 	const consoleID = "console.bot"
@@ -100,7 +100,7 @@ func TestBotComponentConfigurationPersistence(t *testing.T) {
 	require.NoError(t, manager.SaveComponentConfiguration(ctx, consoleID, map[string]any{testAllowedUsersField: []string{"7"}}))
 	require.True(t, console.Allowed(types.DefaultAccount, 7))
 	require.NoError(t, manager.SaveComponentConfiguration(ctx, notifyID, map[string]any{"recipients": []string{"-100"}}))
-	_, err = notifications.Send(ctx, types.DefaultAccount, "hello")
+	_, err = notifications.Send(ctx, "hello")
 	require.NoError(t, err)
 	require.Equal(t, []int64{-100}, transport.recipients)
 	require.Error(t, manager.SaveComponentConfiguration(ctx, consoleID, map[string]any{testAllowedUsersField: []string{"invalid"}}))

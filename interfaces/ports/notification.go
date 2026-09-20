@@ -14,9 +14,9 @@ const (
 type Notifications interface {
 	// Enqueue accepts a best-effort notification into a bounded event queue.
 	// It reports admission errors; successful admission is not delivery confirmation.
-	Enqueue(context.Context, types.AccountID, string) error
-	Send(context.Context, types.AccountID, string) ([]types.NotificationMessage, error)
-	Edit(context.Context, types.AccountID, []types.NotificationMessage, string) error
+	Enqueue(context.Context, string) error
+	Send(context.Context, string) ([]types.NotificationMessage, error)
+	Edit(context.Context, []types.NotificationMessage, string) error
 }
 
 // NotificationTransport adapts protocol-specific messages at the host boundary.

@@ -18,7 +18,7 @@ func fixtureFile(t *testing.T, root, name string) string {
 
 func TestResetClearsAllAccountsAndConfigurationWithoutRemovingUnrelatedFiles(t *testing.T) {
 	home := t.TempDir()
-	removed := []string{".tdl/account-a.db", ".tdl/account-b.db", ".tdl/log/latest.log", ".tdl/nested/.hidden", "config.json", ".config.json.tmp-test", "components/account-a/swc-panel.webui.json", "components/account-b/secrets/swc-account.telegram-old.json"}
+	removed := []string{".tdl/account-a.db", ".tdl/account-b.db", ".tdl/log/latest.log", ".tdl/nested/.hidden", "config.json", ".config.json.tmp-test", "tdl_config.json", ".tdl_config.json.tmp-test", "components/account-a/swc-panel.webui.json", "components/account-b/secrets/swc-account.telegram-old.json"}
 	for _, name := range removed {
 		fixtureFile(t, home, name)
 	}
@@ -28,7 +28,7 @@ func TestResetClearsAllAccountsAndConfigurationWithoutRemovingUnrelatedFiles(t *
 	plan := New(home, filepath.Join(home, "components", "account-a"))
 	targets, err := plan.Targets()
 	require.NoError(t, err)
-	require.Len(t, targets, 3)
+	require.Len(t, targets, 4)
 	require.FileExists(t, filepath.Join(home, "config.json"), "preflight must not delete data")
 	require.NoError(t, plan.Execute())
 	for _, name := range removed {
@@ -57,7 +57,7 @@ func TestResetCustomConfigurationRemovesOnlyOwnedDocumentsAndSecretGenerations(t
 	plan := New(home, extra)
 	targets, err := plan.Targets()
 	require.NoError(t, err)
-	require.Len(t, targets, 4)
+	require.Len(t, targets, 5)
 	require.NoError(t, plan.Execute())
 	for _, name := range removed {
 		require.NoFileExists(t, filepath.Join(extra, name))

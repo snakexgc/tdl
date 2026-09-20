@@ -455,7 +455,24 @@ var (
 	once       sync.Once
 	configPath string
 	mu         sync.RWMutex
+	persist    func(context.Context, *Config, *Config) error
 )
+
+// Install binds compatibility DTOs to the configuration SWC. Normal startup
+// uses this instead of opening the historical config.json singleton.
+func Install(cfg *Config, save func(context.Context, *Config, *Config) error) {
+	mu.Lock()
+	defer mu.Unlock()
+	instance = cfg
+	persist = save
+}
+
+func persistConfig(ctx context.Context, next *Config) error {
+	if persist != nil {
+		return persist(ctx, instance, next)
+	}
+	return Save(configPath, next)
+}
 
 // Init 初始化配置，从 JSON 文件加载
 func Init(execDir string) error {
@@ -580,7 +597,7 @@ func Set(cfg *Config) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if err := Save(configPath, cfg); err != nil {
+	if err := persistConfig(context.Background(), cfg); err != nil {
 		return err
 	}
 
@@ -599,7 +616,7 @@ func CompareAndSet(ctx context.Context, expected, next *Config) error {
 	if !reflect.DeepEqual(instance, expected) {
 		return ports.ErrConfigurationConflict
 	}
-	if err := Save(configPath, next); err != nil {
+	if err := persistConfig(ctx, next); err != nil {
 		return err
 	}
 	instance = next

@@ -45,10 +45,10 @@ func TestRecipientTimeoutIsolation(t *testing.T) {
 			require.NoError(t, host.Reconfigure(context.Background(), ID, map[string]any{recipientsField: []string{"1", "2"}, "timeout_seconds": 1}))
 			var err error
 			if edit {
-				err = service.Edit(context.Background(), types.DefaultAccount, []types.NotificationMessage{{Account: types.DefaultAccount, ChatID: 1, MessageID: 42}, {Account: types.DefaultAccount, ChatID: 2, MessageID: 42}}, "edited")
+				err = service.Edit(context.Background(), []types.NotificationMessage{{Account: types.DefaultAccount, ChatID: 1, MessageID: 42}, {Account: types.DefaultAccount, ChatID: 2, MessageID: 42}}, "edited")
 			} else {
 				var refs []types.NotificationMessage
-				refs, err = service.Send(context.Background(), types.DefaultAccount, "sent")
+				refs, err = service.Send(context.Background(), "sent")
 				require.Len(t, refs, 1)
 				require.Equal(t, int64(2), refs[0].ChatID)
 			}
@@ -67,7 +67,7 @@ func TestCallerCancellationStopsFanout(t *testing.T) {
 		cancel()
 		return 0, context.Canceled
 	}})
-	_, err := service.Send(ctx, types.DefaultAccount, "canceled")
+	_, err := service.Send(ctx, "canceled")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, []int64{1}, attempted)
 }
@@ -117,25 +117,23 @@ func TestFanoutFailureDeduplicationAndConfiguration(t *testing.T) {
 	}
 	host, service := testHost(t, transport)
 	ctx := context.Background()
-	refs, err := service.Send(ctx, types.DefaultAccount, "progress")
+	refs, err := service.Send(ctx, "progress")
 	require.ErrorContains(t, err, "unreachable")
 	require.Equal(t, []int64{1, 2, 3}, sent)
 	require.Len(t, refs, 2)
-	require.NoError(t, service.Edit(ctx, types.DefaultAccount, refs, "complete"))
+	require.NoError(t, service.Edit(ctx, refs, "complete"))
 	require.Equal(t, []int64{1, 3}, edited)
-	_, err = service.Send(ctx, "other", "denied")
-	require.ErrorContains(t, err, "account mismatch")
-	require.Len(t, sent, 3)
+	require.Equal(t, types.DefaultAccount, refs[0].Account)
 	refs[1].Account = "other"
-	require.Error(t, service.Edit(ctx, types.DefaultAccount, refs, "denied"))
+	require.Error(t, service.Edit(ctx, refs, "denied"))
 	require.Len(t, edited, 2, "validate every reference before sending any edits")
 	require.Error(t, host.ReconfigureBatch(ctx, map[string]map[string]any{ID: {recipientsField: []string{"invalid"}}}))
 	sent = nil
-	_, _ = service.Send(ctx, types.DefaultAccount, "unchanged")
+	_, _ = service.Send(ctx, "unchanged")
 	require.Equal(t, []int64{1, 2, 3}, sent)
 	require.NoError(t, host.ReconfigureBatch(ctx, map[string]map[string]any{ID: {recipientsField: []string{"3"}}}))
 	sent = nil
-	_, err = service.Send(ctx, types.DefaultAccount, "new")
+	_, err = service.Send(ctx, "new")
 	require.NoError(t, err)
 	require.Equal(t, []int64{3}, sent)
 }
@@ -153,7 +151,7 @@ func TestStopCancelsAndWaitsForActiveSend(t *testing.T) {
 	}})
 	t.Cleanup(releaseSend)
 	sent := make(chan error, 1)
-	go func() { _, err := service.Send(context.Background(), types.DefaultAccount, "pending"); sent <- err }()
+	go func() { _, err := service.Send(context.Background(), "pending"); sent <- err }()
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
@@ -174,7 +172,7 @@ func TestStopCancelsAndWaitsForActiveSend(t *testing.T) {
 	releaseSend()
 	require.ErrorIs(t, <-sent, context.Canceled)
 	require.NoError(t, <-stopped)
-	_, err := service.Send(context.Background(), types.DefaultAccount, "late")
+	_, err := service.Send(context.Background(), "late")
 	require.ErrorContains(t, err, "stopped")
 }
 
@@ -188,24 +186,23 @@ func TestQueuedNotificationBackpressureAndStop(t *testing.T) {
 		return 0, ctx.Err()
 	}})
 	ctx := context.Background()
-	require.ErrorContains(t, service.Enqueue(ctx, "other", "denied"), "account mismatch")
-	require.NoError(t, service.Enqueue(ctx, types.DefaultAccount, "first"))
+	require.NoError(t, service.Enqueue(ctx, "first"))
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
 		t.Fatal("event was not delivered")
 	}
 	for i := 0; i < 64; i++ {
-		require.NoError(t, service.Enqueue(ctx, types.DefaultAccount, "queued"))
+		require.NoError(t, service.Enqueue(ctx, "queued"))
 	}
-	require.ErrorIs(t, service.Enqueue(ctx, types.DefaultAccount, "overflow"), eventbus.ErrFull)
+	require.ErrorIs(t, service.Enqueue(ctx, "overflow"), eventbus.ErrFull)
 	require.NoError(t, host.Stop(ctx))
 	select {
 	case <-exited:
 	default:
 		t.Fatal("Stop returned before notification transport exited")
 	}
-	require.Error(t, service.Enqueue(ctx, types.DefaultAccount, "late"))
+	require.Error(t, service.Enqueue(ctx, "late"))
 	select {
 	case <-entered:
 		t.Fatal("queued notification sent during shutdown")

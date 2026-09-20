@@ -16,13 +16,12 @@ const (
 )
 
 type downloadControlSpy struct {
-	account  types.AccountID
 	executor string
 	request  types.DownloadAction
 }
 
-func (s *downloadControlSpy) Tasks(ctx context.Context, account types.AccountID, executor string) ([]types.DownloadTask, error) {
-	s.account, s.executor = account, executor
+func (s *downloadControlSpy) Tasks(ctx context.Context, executor string) ([]types.DownloadTask, error) {
+	s.executor = executor
 	return []types.DownloadTask{{ID: downloadTestTask, Status: "paused"}}, ctx.Err()
 }
 
@@ -38,7 +37,6 @@ func TestLocalDownloadCommandsUseAccountPort(t *testing.T) {
 	items, err := runInternalDownloadList(context.Background(), factory)
 	require.NoError(t, err)
 	require.Equal(t, downloadTestTask, items[0].ID)
-	require.Equal(t, types.AccountID(downloadTestAccount), spy.account)
 	require.Equal(t, config.DownloaderModeLocal, spy.executor)
 	for _, action := range []struct {
 		name string

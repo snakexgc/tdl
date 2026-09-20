@@ -23,16 +23,32 @@ type Document struct {
 	Secrets string         `json:"secrets,omitempty"`
 }
 
-// Store contains component-owned configuration files for one runtime scope.
-// Construction is side-effect free. Save replaces one complete document; it
-// does not promise a transaction across multiple component files.
-type Store struct{ directory string }
+// Repository is the persistence boundary used by RTE configuration consumers.
+type Repository interface {
+	Load(context.Context, string) (Document, error)
+	Save(context.Context, string, bool, View) error
+	Revision(context.Context, string) (string, error)
+}
 
+// Store delegates to the configuration SWC in production. Its directory backend
+// remains available for legacy import/export and compatibility tests.
+type Store struct {
+	directory  string
+	repository Repository
+}
+
+// NewManaged routes existing RTE consumers through the configuration SWC.
+func NewManaged(repository Repository) *Store { return &Store{repository: repository} }
+
+// NewStore opens the historical per-component directory format.
 func NewStore(directory string) *Store { return &Store{directory: directory} }
 
 // Revision hashes the public document, including its immutable secret reference,
 // without exposing secret values. It supports optimistic control-plane edits.
 func (s *Store) Revision(ctx context.Context, id string) (string, error) {
+	if s.repository != nil {
+		return s.repository.Revision(ctx, id)
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -58,6 +74,9 @@ func (s *Store) path(id string) (string, error) {
 }
 
 func (s *Store) Load(ctx context.Context, id string) (Document, error) {
+	if s.repository != nil {
+		return s.repository.Load(ctx, id)
+	}
 	if err := ctx.Err(); err != nil {
 		return Document{}, err
 	}
@@ -121,6 +140,9 @@ func (s *Store) Load(ctx context.Context, id string) (Document, error) {
 // Save syncs the temporary file before replacing the previous document. A
 // validation/IO/cancellation failure before rename leaves the old file intact.
 func (s *Store) Save(ctx context.Context, id string, enabled bool, view View) error {
+	if s.repository != nil {
+		return s.repository.Save(ctx, id, enabled, view)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

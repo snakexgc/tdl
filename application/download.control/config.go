@@ -23,7 +23,7 @@ func Manifest() manifest.Manifest {
 	return manifest.WithSettings(manifest.Manifest{
 		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"},
 		ID:      ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 20, KeepVisible: true, SettingsURL: "/config?tab=download"}}, Title: "下载任务控制",
-		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 1, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0), manifest.PortOf[ports.DownloadPipeline](ports.DownloadPipelineName, 1, 0)},
+		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 2, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0), manifest.PortOf[ports.DownloadPipeline](ports.DownloadPipelineName, 1, 0)},
 		Config: []manifest.ConfigField{
 			manifest.Choice("mode", "默认下载方式", "aria2", []string{"aria2", "local", legacyInternalMode}, false).WithHelp("aria2 使用外部下载器；local 使用本地下载器；internal 为 local 的兼容名称。"),
 

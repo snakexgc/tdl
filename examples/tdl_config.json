@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "system": {
+    "namespace": "default",
+    "debug": false
+  },
+  "components": {
+    "account.telegram": {
+      "enabled": true,
+      "values": {
+        "api_hash": "",
+        "api_id": 0,
+        "builtin_preset": "desktop",
+        "dc_pool_size": 8,
+        "delay_seconds": 0,
+        "file_limit": 1,
+        "ntp": "",
+        "proxy": "",
+        "reconnect_timeout_seconds": 3,
+        "use_builtin": true
+      }
+    },
+    "console.bot": {
+      "enabled": true,
+      "values": {
+        "allowed_users": [],
+        "token": ""
+      }
+    },
+    "download.control": {
+      "enabled": true,
+      "values": {
+        "executors": [],
+        "local_root": "",
+        "mode": "aria2"
+      }
+    },
+    "downloader.aria2": {
+      "enabled": true,
+      "values": {
+        "auto_download": true,
+        "connect_retry_max_ms": 60000,
+        "connect_retry_ms": 10000,
+        "directory": "",
+        "error_action_seconds": 30,
+        "error_cooldown_seconds": 10,
+        "error_pause_seconds": 5,
+        "error_threshold": 3,
+        "error_window_seconds": 10,
+        "monitor_action_seconds": 30,
+        "monitor_pause_seconds": 10,
+        "monitor_poll_ms": 30000,
+        "monitor_stall_seconds": 180,
+        "rpc_url": "http://127.0.0.1:6800/jsonrpc",
+        "secret": "",
+        "status_interval_ms": 60000,
+        "timeout_seconds": 30
+      }
+    },
+    "downloader.local": {
+      "enabled": true,
+      "values": {
+        "poll_interval_ms": 5000,
+        "shutdown_timeout_seconds": 5
+      }
+    },
+    "filter.rules": {
+      "enabled": true,
+      "values": {
+        "exclude": [],
+        "include": [],
+        "max_mb": 0,
+        "min_mb": 0
+      }
+    },
+    "forward.rules": {
+      "enabled": true,
+      "values": {
+        "rules": []
+      }
+    },
+    "forwarder": {
+      "enabled": true,
+      "values": {
+        "dedupe_ttl_seconds": 600,
+        "history_hours": 24,
+        "history_limit": 200,
+        "max_attempts": 10,
+        "mode": "default",
+        "poll_interval_ms": 2000,
+        "retry_base_seconds": 5,
+        "retry_max_seconds": 300,
+        "silent": false,
+        "target": ""
+      }
+    },
+    "naming.rules": {
+      "enabled": true,
+      "values": {
+        "directory": "G\\Y\u0026M",
+        "filename": "P_S_F",
+        "max_bytes": 255
+      }
+    },
+    "notify.telegram": {
+      "enabled": true,
+      "values": {
+        "live_progress": false,
+        "live_progress_interval_seconds": 5,
+        "on_download_complete": false,
+        "on_download_error": false,
+        "on_download_pause": false,
+        "on_download_start": false,
+        "recipients": [],
+        "timeout_seconds": 15
+      }
+    },
+    "panel.webui": {
+      "enabled": true,
+      "values": {
+        "address": "0.0.0.0",
+        "password": "admin",
+        "port": 22335,
+        "username": "admin"
+      }
+    },
+    "proxy.range": {
+      "enabled": true,
+      "values": {
+        "address": "0.0.0.0",
+        "client_wait_seconds": 30,
+        "link_ttl_hours": 24,
+        "persist_timeout_seconds": 5,
+        "port": 22334,
+        "public_base_url": "",
+        "source_cleanup_seconds": 60,
+        "task_cleanup_seconds": 3600
+      }
+    },
+    "storage.maintenance": {
+      "enabled": true,
+      "values": {}
+    },
+    "trigger.download": {
+      "enabled": true,
+      "values": {}
+    },
+    "trigger.forward": {
+      "enabled": false,
+      "values": {
+        "listen": [],
+        "listen_comments": true
+      }
+    },
+    "trigger.messagelink": {
+      "enabled": true,
+      "values": {}
+    },
+    "trigger.reaction": {
+      "enabled": true,
+      "values": {
+        "download": [],
+        "forward": []
+      }
+    },
+    "update.self": {
+      "enabled": true,
+      "values": {}
+    }
+  }
+}

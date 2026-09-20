@@ -3,7 +3,6 @@ package logutil
 import (
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 
 	"go.uber.org/zap"
@@ -45,10 +44,8 @@ func NewSession(level zapcore.LevelEnabler, path, account string) (*zap.Logger, 
 	_, separatorErr := journal.Write([]byte("\n"))
 	restoreErr = errors.Join(restoreErr, separatorErr)
 	writer := zapcore.AddSync(&sinkWriter{writer: rotate, store: store, name: "latest.log"})
-	console := zapcore.Lock(zapcore.AddSync(&sinkWriter{writer: os.Stderr, store: store, name: "stderr"}))
 	core := zapcore.NewTee(
 		zapcore.NewCore(zapcore.NewConsoleEncoder(config), writer, level),
-		zapcore.NewCore(zapcore.NewConsoleEncoder(config), console, level),
 		logging.NewCore(store, level),
 	)
 	logger := zap.New(logging.NewRedactingCore(core), zap.AddCaller()).With(zap.String("account", account))

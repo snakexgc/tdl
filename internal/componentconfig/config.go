@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	legacy "github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
@@ -73,6 +74,9 @@ func Export(cfg *legacy.Config, catalog *rte.Catalog) (map[string]config.Documen
 	}
 	documents := map[string]config.Document{}
 	for _, definition := range catalog.Definitions() {
+		if definition.Manifest.ID == ports.ConfigurationManagerName {
+			continue
+		}
 		documents[definition.Manifest.ID] = config.Document{Version: config.CurrentVersion, Enabled: true, Values: map[string]any{}}
 	}
 	for _, binding := range Bindings() {

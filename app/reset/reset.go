@@ -15,6 +15,7 @@ const (
 	dataDirectory      = ".tdl"
 	componentDirectory = "components"
 	configFile         = "config.json"
+	unifiedConfigFile  = "tdl_config.json"
 )
 
 var (
@@ -36,7 +37,7 @@ func (p *Plan) Targets() ([]string, error) {
 		return nil, err
 	}
 	defer home.Close()
-	targets := []string{filepath.Join(home.Name(), dataDirectory), filepath.Join(home.Name(), configFile), filepath.Join(home.Name(), componentDirectory)}
+	targets := []string{filepath.Join(home.Name(), dataDirectory), filepath.Join(home.Name(), configFile), filepath.Join(home.Name(), unifiedConfigFile), filepath.Join(home.Name(), componentDirectory)}
 	if extra != nil {
 		defer extra.Close()
 		targets = append(targets, extra.Name()+"（仅 swc-*.json、secrets 中的组件密钥及迁移记录）")
@@ -63,10 +64,14 @@ func (p *Plan) Execute() error {
 			return err
 		}
 	}
-	if err := home.Remove(configFile); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, name := range []string{configFile, unifiedConfigFile} {
+		if err := home.Remove(name); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
-	if err := removeEntries(home, func(name string) bool { return strings.HasPrefix(name, ".config.json.tmp-") }, true); err != nil {
+	if err := removeEntries(home, func(name string) bool {
+		return strings.HasPrefix(name, ".config.json.tmp-") || strings.HasPrefix(name, ".tdl_config.json.tmp-")
+	}, true); err != nil {
 		return err
 	}
 	return nil
@@ -81,8 +86,8 @@ func (p *Plan) open() (*os.Root, *os.Root, error) {
 		return nil, nil, err
 	}
 	fail := func(err error) (*os.Root, *os.Root, error) { _ = home.Close(); return nil, nil, err }
-	for _, name := range []string{dataDirectory, componentDirectory, configFile} {
-		if err := checkEntry(home, name, name != configFile); err != nil {
+	for _, name := range []string{dataDirectory, componentDirectory, configFile, unifiedConfigFile} {
+		if err := checkEntry(home, name, name == dataDirectory || name == componentDirectory); err != nil {
 			return fail(err)
 		}
 	}

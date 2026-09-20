@@ -18,7 +18,7 @@ const fieldResult = "result"
 
 func (s *Server) downloadTasksSnapshot(executor string) func(context.Context) (any, error) {
 	return func(ctx context.Context) (any, error) {
-		items, err := s.downloadControl().Tasks(ctx, s.downloadAccount(), executor)
+		items, err := s.downloadControl().Tasks(ctx, executor)
 		if err != nil {
 			return nil, err
 		}
@@ -49,7 +49,7 @@ func (s *Server) handleDownloadTasks(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	items, err := s.downloadControl().Tasks(r.Context(), s.downloadAccount(), r.URL.Query().Get("executor"))
+	items, err := s.downloadControl().Tasks(r.Context(), r.URL.Query().Get("executor"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

@@ -25,7 +25,7 @@ type eventNotifications struct {
 	count int
 }
 
-func (n *eventNotifications) Enqueue(context.Context, types.AccountID, string) error {
+func (n *eventNotifications) Enqueue(context.Context, string) error {
 	n.count++
 	return nil
 }

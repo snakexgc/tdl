@@ -50,9 +50,9 @@ jobs:
         run: |
           go run ./cmd/swc-check
           go run ./cmd/swc-check -empty
-          go run ./cmd/swc-docs
-          git ls-files --error-unmatch docs/configuration.md
-          git diff --exit-code -- docs/configuration.md
+          go run ./cmd/swc-docs -config-out examples/tdl_config.json
+          git ls-files --error-unmatch docs/configuration.md examples/tdl_config.json
+          git diff --exit-code -- docs/configuration.md examples/tdl_config.json
   release-build-check:
     runs-on: ubuntu-22.04
     strategy:

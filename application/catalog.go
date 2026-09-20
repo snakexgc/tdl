@@ -4,6 +4,7 @@ import (
 	"io/fs"
 
 	account "github.com/snakexgc/tdl/application/account.telegram"
+	configuration "github.com/snakexgc/tdl/application/configuration.manager"
 	console "github.com/snakexgc/tdl/application/console.bot"
 	downloadcontrol "github.com/snakexgc/tdl/application/download.control"
 	aria2 "github.com/snakexgc/tdl/application/downloader.aria2"
@@ -42,6 +43,7 @@ func definitions(commandSets ...[]types.ConsoleCommand) ([]rte.Definition, error
 		return rte.Definition{Scope: scope, Assets: assets, Routes: routes}
 	}
 	declarations := []declaration{
+		{nil, rte.Definition{Manifest: configuration.Manifest(), Scope: rte.ProcessScope}},
 		{account.Register, ui(rte.AccountScope, account.Assets(), account.Routes())},
 		{consoleRegister, rte.Definition{Scope: rte.AccountScope, Host: "bot"}},
 		{filter.Register, rte.Definition{Scope: rte.AccountScope}},

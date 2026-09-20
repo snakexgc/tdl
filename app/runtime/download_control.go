@@ -92,14 +92,14 @@ func (b aria2ControlBackend) ChangeTasks(ctx context.Context, action string, ids
 	return aria2.NewController(config.From(b.manager.parent), b.manager.namespaceKV, nil).ChangeTasks(ctx, action, ids)
 }
 
-func (m *Manager) Tasks(ctx context.Context, account types.AccountID, executor string) ([]types.DownloadTask, error) {
+func (m *Manager) Tasks(ctx context.Context, executor string) ([]types.DownloadTask, error) {
 	m.mu.Lock()
 	port := m.downloadPort
 	m.mu.Unlock()
 	if port == nil {
 		return nil, fmt.Errorf("download control is unavailable")
 	}
-	return port.Tasks(ctx, account, executor)
+	return port.Tasks(ctx, executor)
 }
 
 func (m *Manager) Control(ctx context.Context, request types.DownloadAction) (types.DownloadActionResult, error) {

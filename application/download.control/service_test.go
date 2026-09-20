@@ -31,10 +31,8 @@ func (b *backendStub) ChangeTasks(_ context.Context, action string, ids []string
 func TestAccountValidationPrecedesBackendAccess(t *testing.T) {
 	b := &backendStub{}
 	s := New("a", map[string]ports.DownloadBackend{localExecutor: b})
-	_, err := s.Tasks(context.Background(), "b", localExecutor)
+	_, err := s.Control(context.Background(), types.DownloadAction{Account: "b", Executor: localExecutor, Action: "delete_all"})
 	require.ErrorContains(t, err, "account mismatch")
-	_, err = s.Control(context.Background(), types.DownloadAction{Account: "b", Executor: localExecutor, Action: "delete_all"})
-	require.Error(t, err)
 	require.Zero(t, b.reads)
 	require.Empty(t, b.action)
 	_, err = s.Control(context.Background(), types.DownloadAction{Account: "a", Executor: localExecutor, Action: "invalid_all"})
@@ -52,7 +50,7 @@ func TestSafeBulkSelectionAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, actionResume, b.action)
 	require.Equal(t, []string{statusPaused}, b.ids)
-	items, err := s.Tasks(context.Background(), "a", localExecutor)
+	items, err := s.Tasks(context.Background(), localExecutor)
 	require.NoError(t, err)
 	require.Equal(t, types.AccountID("a"), items[0].Account)
 	require.Empty(t, b.items[0].Account, "backend records must not be mutated")
@@ -62,7 +60,7 @@ func TestUniformReportsPreserveBackendStatus(t *testing.T) {
 	for _, status := range []string{statusQueued, statusWaiting} {
 		b := &backendStub{items: []types.DownloadTask{{ID: "task", Status: status}}}
 		s := New("a", map[string]ports.DownloadBackend{localExecutor: b})
-		items, err := s.Tasks(context.Background(), "a", localExecutor)
+		items, err := s.Tasks(context.Background(), localExecutor)
 		require.NoError(t, err)
 		require.Equal(t, types.DownloadQueued, items[0].State)
 		require.Equal(t, status, items[0].Status)

@@ -30,7 +30,7 @@ func Manifest() manifest.Manifest {
 	return manifest.WithSettings(manifest.Manifest{
 		Feature: manifest.Feature{ID: "bot", Title: "机器人与通知", Order: 50, SettingsURL: "/config?tab=bot"},
 		ID:      ID, Title: "Telegram 通知",
-		Provides:   []manifest.Port{manifest.PortOf[ports.Notifications](ports.NotificationsName, 1, 1)},
+		Provides:   []manifest.Port{manifest.PortOf[ports.Notifications](ports.NotificationsName, 2, 0)},
 		Publishes:  []string{types.NotificationRequested},
 		Subscribes: []string{types.NotificationRequested},
 		Requires:   []manifest.Require{{Port: manifest.PortOf[ports.NotificationTransport](ports.NotificationTransportName, 1, 0), Optional: true}},
@@ -92,19 +92,16 @@ func (s *Service) deliverEvent(ctx context.Context, event eventbus.Event) error 
 	if err := json.Unmarshal(event.Payload, &request); err != nil {
 		return err
 	}
-	_, err := s.Send(ctx, event.Account, request.Text)
+	_, err := s.Send(ctx, request.Text)
 	return err
 }
 
-func (s *Service) Enqueue(ctx context.Context, account types.AccountID, text string) error {
+func (s *Service) Enqueue(ctx context.Context, text string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if account != s.account {
-		return errors.New("notification account mismatch")
-	}
 	if s.closed || s.ctx == nil || s.ctx.Err() != nil {
 		return errors.New("notification component is stopped")
 	}
@@ -170,15 +167,12 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 	return func() { s.settings.Store(next) }, nil
 }
 
-func (s *Service) begin(ctx context.Context, account types.AccountID) (context.Context, func(), *settings, error) {
+func (s *Service) begin(ctx context.Context) (context.Context, func(), *settings, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if account != s.account {
-		return nil, nil, nil, errors.New("notification account mismatch")
-	}
 	if s.closed || s.ctx == nil || s.ctx.Err() != nil {
 		return nil, nil, nil, errors.New("notification component is stopped")
 	}
@@ -194,8 +188,8 @@ func (s *Service) begin(ctx context.Context, account types.AccountID) (context.C
 	return callCtx, func() { unlink(); cancel(); s.active.Done() }, settings, nil
 }
 
-func (s *Service) Send(ctx context.Context, account types.AccountID, text string) ([]types.NotificationMessage, error) {
-	callCtx, done, settings, err := s.begin(ctx, account)
+func (s *Service) Send(ctx context.Context, text string) ([]types.NotificationMessage, error) {
+	callCtx, done, settings, err := s.begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -217,14 +211,14 @@ func (s *Service) Send(ctx context.Context, account types.AccountID, text string
 			continue
 		}
 		if id != 0 {
-			result = append(result, types.NotificationMessage{Account: account, ChatID: chatID, MessageID: id})
+			result = append(result, types.NotificationMessage{Account: s.account, ChatID: chatID, MessageID: id})
 		}
 	}
 	return result, combined
 }
 
-func (s *Service) Edit(ctx context.Context, account types.AccountID, refs []types.NotificationMessage, text string) error {
-	callCtx, done, settings, err := s.begin(ctx, account)
+func (s *Service) Edit(ctx context.Context, refs []types.NotificationMessage, text string) error {
+	callCtx, done, settings, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -235,7 +229,7 @@ func (s *Service) Edit(ctx context.Context, account types.AccountID, refs []type
 	}
 	// Validate the whole request before editing any messages.
 	for _, ref := range refs {
-		if ref.Account != account || !allowed[ref.ChatID] || ref.MessageID <= 0 {
+		if ref.Account != s.account || !allowed[ref.ChatID] || ref.MessageID <= 0 {
 			return errors.New("notification message reference is outside the current account recipients")
 		}
 	}

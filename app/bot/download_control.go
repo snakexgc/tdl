@@ -8,14 +8,14 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
-// localDownloadControl binds legacy command names to the account-scoped port.
+// localDownloadControl binds legacy command names to the current session's port.
 type localDownloadControl struct {
 	port    ports.DownloadControl
 	account types.AccountID
 }
 
 func (c *localDownloadControl) List(ctx context.Context) ([]types.DownloadTask, error) {
-	return c.port.Tasks(ctx, c.account, config.DownloaderModeLocal)
+	return c.port.Tasks(ctx, config.DownloaderModeLocal)
 }
 
 func (c *localDownloadControl) change(ctx context.Context, action string, ids []string) (types.DownloadActionResult, error) {

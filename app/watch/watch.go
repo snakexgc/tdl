@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/log/logzap"
 	"github.com/gotd/td/telegram/peers"
@@ -129,6 +130,7 @@ func Run(ctx context.Context, opts Options) error {
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
 			logctx.From(runCtx).Info("正在停止 Telegram 监听", zap.String("component", "account.telegram"))
+			color.Yellow("⏹ Stopping watcher...")
 			if (opts.Download || opts.FeatureFlags != nil) && runtime.internal != nil {
 				paused, err := runtime.internal.PauseForShutdown(runCtx)
 				if err != nil {
@@ -154,6 +156,13 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
+	if opts.Download && opts.Forward {
+		color.Green("👀 Watching for reactions and forward sources... Press Ctrl+C to stop")
+	} else if opts.Forward {
+		color.Green("👀 Watching forward sources... Press Ctrl+C to stop")
+	} else {
+		color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
+	}
 	logctx.From(runCtx).Info("Telegram 监听已启动",
 		zap.Bool("download_enabled", opts.Download), zap.Bool("forward_enabled", opts.Forward),
 		zap.String("downloader_mode", downloaderMode))
@@ -397,7 +406,7 @@ func validateWatchConfig(cfg *config.Config) error {
 	switch config.EffectiveDownloaderMode(cfg) {
 	case config.DownloaderModeAria2:
 		if cfg.HTTP.PublicBaseURL == "" {
-			return errors.New("http.public_base_url is empty, please set it in config.json")
+			return errors.New("HTTP public URL is empty, please set proxy.range values.public_base_url for the selected account in tdl_config.json")
 		}
 	case config.DownloaderModeInternal:
 	default:

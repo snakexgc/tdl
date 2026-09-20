@@ -16,14 +16,26 @@ import (
 	"github.com/snakexgc/tdl/app/bot"
 	"github.com/snakexgc/tdl/app/reset"
 	tdlruntime "github.com/snakexgc/tdl/app/runtime"
+	"github.com/snakexgc/tdl/application"
+	configuration "github.com/snakexgc/tdl/application/configuration.manager"
 	"github.com/snakexgc/tdl/bsw/services/logging"
+	"github.com/snakexgc/tdl/interfaces/types"
+	bootstrapconfig "github.com/snakexgc/tdl/internal/configuration"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/internal/core/util/fsutil"
 	"github.com/snakexgc/tdl/internal/core/util/logutil"
-	"github.com/snakexgc/tdl/internal/migration"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
+)
+
+type (
+	startupConfigurationKey struct{}
+	startupConfiguration    struct {
+		service *configuration.Service
+		store   *rteconfig.Store
+	}
 )
 
 var (
@@ -89,15 +101,25 @@ func New() *cobra.Command {
 					runErr = multierr.Combine(runErr, cleanup())
 				}
 			}()
-			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand {
+			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand || cmd.Name() == configInitCommand {
 				return nil
 			}
 			if err := consts.InitPaths(); err != nil {
 				return err
 			}
-			if err := config.Init(consts.HomeDir); err != nil {
+			directory, err := cmd.Flags().GetString("component-config")
+			if err != nil {
 				return err
 			}
+			service, err := bootstrapconfig.Open(cmd.Context(), consts.HomeDir, directory)
+			if err != nil {
+				return err
+			}
+			store, err := bootstrapconfig.Install(cmd.Context(), service)
+			if err != nil {
+				return err
+			}
+			cmd.SetContext(context.WithValue(cmd.Context(), startupConfigurationKey{}, startupConfiguration{service, store}))
 			cfg := config.Get()
 			// init logger
 			level := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
@@ -135,7 +157,7 @@ func New() *cobra.Command {
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand {
+			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand || cmd.Name() == configInitCommand {
 				return nil
 			}
 			return cleanup()
@@ -157,8 +179,8 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
-	cmd.Flags().String("component-config", "", "component configuration directory (default: import once under the application components directory)")
-	cmd.AddCommand(NewVersion(), NewMigrateConfig())
+	cmd.Flags().String("component-config", "", "legacy component directory to import when tdl_config.json does not exist")
+	cmd.AddCommand(NewVersion(), NewMigrateConfig(), NewConfigInit())
 
 	return cmd
 }
@@ -168,25 +190,24 @@ func runBot(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if directory == "" {
-		if _, statErr := os.Stat(migration.ComponentDirectory(consts.HomeDir, config.Get().Namespace)); os.IsNotExist(statErr) {
-			if err := ensureStartupNTP(cmd.Context()); err != nil {
-				return err
-			}
-		}
-		directory, err = migration.EnsureComponents(cmd.Context(), consts.HomeDir, config.Get())
-		if err != nil {
-			return err
-		}
+	startup, ok := cmd.Context().Value(startupConfigurationKey{}).(startupConfiguration)
+	if !ok {
+		return errors.New("configuration manager is not initialized")
 	}
-	logctx.From(cmd.Context()).Info("Component configuration", zap.String("directory", directory))
+	host, err := application.ConfigurationHost(cmd.Context(), types.AccountID(config.Get().Namespace), startup.service)
+	if err != nil {
+		return err
+	}
+	defer host.Stop(context.Background())
+	logctx.From(cmd.Context()).Info("统一配置已加载", zap.String("component", configuration.ID), zap.String("file", filepath.Join(consts.HomeDir, configuration.Filename)))
 	plan := reset.New(consts.HomeDir, directory)
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
-		ComponentConfigDir: directory,
-		ResetPlan:          plan,
-		RequestReset:       func() { reset.Request(plan) },
-		RequestReboot:      bot.RequestReboot,
-		RequestUpdate:      bot.RequestUpdate,
+		ComponentStore:    startup.store,
+		ConfigurationHost: host,
+		ResetPlan:         plan,
+		RequestReset:      func() { reset.Request(plan) },
+		RequestReboot:     bot.RequestReboot,
+		RequestUpdate:     bot.RequestUpdate,
 	})
 }
 

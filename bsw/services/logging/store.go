@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const Capacity = 5000
+const Capacity = 2000
 
 type Entry struct {
 	ID        uint64    `json:"id"`

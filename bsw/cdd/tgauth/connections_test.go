@@ -15,6 +15,34 @@ import (
 
 const connectionAccount types.AccountID = "account"
 
+func TestOnlyOneActiveAccountWhileOtherSessionsCanBeMaintained(t *testing.T) {
+	ctx := context.Background()
+	owner := NewConnections(ctx)
+	t.Cleanup(func() { require.NoError(t, owner.Stop(ctx)) })
+	c := testConnection(t, owner)
+	_, err := owner.Open("other", "profile", func(telegram.UpdateHandler) (*telegram.Client, error) {
+		t.Fatal("second account transport created")
+		return nil, nil
+	})
+	require.ErrorContains(t, err, "another account connection is active")
+	_, release, err := owner.BeginLogin(ctx, "other")
+	require.NoError(t, err)
+	committed := false
+	require.NoError(t, owner.Replace(ctx, "other", func() error { committed = true; return nil }))
+	release()
+	require.True(t, committed)
+	require.NoError(t, owner.ReplaceIdle(ctx, "other", func() error { return nil }))
+	same, err := owner.Open(connectionAccount, "profile", nil)
+	require.NoError(t, err)
+	require.Same(t, c, same)
+	require.NoError(t, owner.Drain(ctx, connectionAccount))
+	next, err := owner.Open("other", "profile", func(telegram.UpdateHandler) (*telegram.Client, error) {
+		return telegram.NewClient(1, "test", telegram.Options{}), nil
+	})
+	require.NoError(t, err)
+	require.NotSame(t, c, next)
+}
+
 func TestSessionMaintenanceAndLoginCannotOverlap(t *testing.T) {
 	owner := NewConnections(context.Background())
 	_, release, err := owner.BeginLogin(context.Background(), connectionAccount)

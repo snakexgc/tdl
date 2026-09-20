@@ -18,6 +18,16 @@ type View struct {
 	secrets map[string]bool
 }
 
+// Values returns an owned snapshot including secrets, for trusted persistence
+// adapters only. Public responses must continue to filter the schema's secrets.
+func (v View) Values() map[string]any {
+	values := make(map[string]any, len(v.values))
+	for name, raw := range v.values {
+		values[name] = append(json.RawMessage(nil), raw...)
+	}
+	return values
+}
+
 // New accepts only declared fields, filling absent fields from schema defaults.
 // Encoding values also takes ownership of caller-supplied maps and slices.
 func New(schema []manifest.ConfigField, values map[string]any) (View, error) {

@@ -30,36 +30,39 @@ type (
 )
 
 type subscriber struct {
-	account types.AccountID
-	topic   string
-	queue   chan Event
-	ctx     context.Context
-	cancel  context.CancelFunc
-	owner   <-chan struct{}
-	done    chan struct{}
+	topic  string
+	queue  chan Event
+	ctx    context.Context
+	cancel context.CancelFunc
+	owner  <-chan struct{}
+	done   chan struct{}
 }
 
 type Bus struct {
-	mu     sync.Mutex
-	subs   map[*subscriber]struct{}
-	closed bool
-	wg     sync.WaitGroup
+	account types.AccountID
+	mu      sync.Mutex
+	subs    map[*subscriber]struct{}
+	closed  bool
+	wg      sync.WaitGroup
 }
 
-func New() *Bus { return &Bus{subs: make(map[*subscriber]struct{})} }
+// New binds event metadata to the runtime that owns this bus.
+func New(account types.AccountID) *Bus {
+	return &Bus{account: account, subs: make(map[*subscriber]struct{})}
+}
 
 // Subscribe isolates handlers behind independent bounded queues. Cancellation
 // releases the subscription; handlers must obey their context.
-func (b *Bus) Subscribe(ctx context.Context, account types.AccountID, topic string, capacity int, handler Handler, report Reporter) (func(), error) {
-	if account == "" || topic == "" || capacity < 1 || handler == nil {
-		return nil, errors.New("account, topic, positive capacity and handler are required")
+func (b *Bus) Subscribe(ctx context.Context, topic string, capacity int, handler Handler, report Reporter) (func(), error) {
+	if topic == "" || capacity < 1 || handler == nil {
+		return nil, errors.New("topic, positive capacity and handler are required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	owner := ctx.Done()
 	ctx, cancel := context.WithCancel(ctx)
-	s := &subscriber{account: account, topic: topic, queue: make(chan Event, capacity), ctx: ctx, cancel: cancel, owner: owner, done: make(chan struct{})}
+	s := &subscriber{topic: topic, queue: make(chan Event, capacity), ctx: ctx, cancel: cancel, owner: owner, done: make(chan struct{})}
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -93,12 +96,12 @@ func (b *Bus) Subscribe(ctx context.Context, account types.AccountID, topic stri
 // Publish either enqueues to every active matching subscriber or to none when
 // one queue is full. It never blocks on application handlers. Each recipient
 // owns its payload bytes. Events are delivered in publish order per subscriber.
-func (b *Bus) Publish(ctx context.Context, account types.AccountID, topic string, payload any) error {
+func (b *Bus) Publish(ctx context.Context, topic string, payload any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if account == "" || topic == "" {
-		return errors.New("event account and topic are required")
+	if topic == "" {
+		return errors.New("event topic is required")
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -111,7 +114,7 @@ func (b *Bus) Publish(ctx context.Context, account types.AccountID, topic string
 	}
 	var recipients []*subscriber
 	for s := range b.subs {
-		if s.account == account && s.topic == topic && s.ctx.Err() == nil {
+		if s.topic == topic && s.ctx.Err() == nil {
 			if len(s.queue) == cap(s.queue) {
 				return ErrFull
 			}
@@ -119,7 +122,7 @@ func (b *Bus) Publish(ctx context.Context, account types.AccountID, topic string
 		}
 	}
 	for _, s := range recipients {
-		s.queue <- Event{Account: account, Topic: topic, Payload: bytes.Clone(data)}
+		s.queue <- Event{Account: b.account, Topic: topic, Payload: bytes.Clone(data)}
 	}
 	return nil
 }

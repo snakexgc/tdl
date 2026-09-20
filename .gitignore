@@ -9,6 +9,7 @@ tdl
 .DS_Store
 .workbuddy
 config.json
+/tdl_config.json
 /components/
 data
 .claude/

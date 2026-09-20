@@ -14,13 +14,14 @@ import (
 )
 
 type downloadControlStub struct {
+	account types.AccountID
 	request types.DownloadAction
 	calls   int
 }
 
-func (d *downloadControlStub) Tasks(_ context.Context, account types.AccountID, executor string) ([]types.DownloadTask, error) {
+func (d *downloadControlStub) Tasks(_ context.Context, executor string) ([]types.DownloadTask, error) {
 	d.calls++
-	return []types.DownloadTask{{Account: account, Executor: executor, ID: "example", Status: "paused"}}, nil
+	return []types.DownloadTask{{Account: d.account, Executor: executor, ID: "example", Status: "paused"}}, nil
 }
 
 func (d *downloadControlStub) Control(_ context.Context, request types.DownloadAction) (types.DownloadActionResult, error) {
@@ -57,8 +58,8 @@ func TestDownloadControlAPIUsesPortAndRejectsAccountOverride(t *testing.T) {
 	require.Contains(t, w.Body.String(), "example")
 }
 
-func TestDownloadTaskObservationUsesTheAccountScopedPort(t *testing.T) {
-	port := &downloadControlStub{}
+func TestDownloadTaskObservationUsesTheCurrentSessionPort(t *testing.T) {
+	port := &downloadControlStub{account: "scoped"}
 	s := NewServer(Options{Namespace: "scoped", DownloadControl: port})
 	for _, executor := range []string{localDownloadExecutor, config.DownloaderModeAria2} {
 		source := s.snapshotSource("download-tasks-" + executor)

@@ -49,7 +49,7 @@ func TestStoredDaemonComponentsReachProductionPorts(t *testing.T) {
 	require.NoError(t, m.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{"proxy": "http://user:password@127.0.0.1:8080"}))
 	entries, editable := m.ComponentConfigurations()
 	require.True(t, editable)
-	require.Len(t, entries, 18)
+	require.Len(t, entries, 19)
 	encoded, err := json.Marshal(entries)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "imported-secret")

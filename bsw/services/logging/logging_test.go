@@ -48,7 +48,8 @@ func TestJournalRedactionRestoreAndLevels(t *testing.T) {
 }
 
 func TestConcurrentLogsStayBoundedAndIndependent(t *testing.T) {
-	store := New(nil)
+	var output bytes.Buffer
+	store := New(&output)
 	logger := Slog(zap.New(NewCore(store, zap.DebugLevel)))
 	group := logger.WithGroup("transport").With("ready", true).WithGroup("details")
 	var workers sync.WaitGroup
@@ -65,7 +66,13 @@ func TestConcurrentLogsStayBoundedAndIndependent(t *testing.T) {
 	records, _ := store.Snapshot()
 	require.Len(t, records, Capacity)
 	require.Equal(t, uint64(5600), records[0].ID)
-	require.Equal(t, uint64(601), records[len(records)-1].ID)
+	require.Equal(t, uint64(3601), records[len(records)-1].ID)
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	require.NoError(t, os.WriteFile(path, output.Bytes(), 0o600))
+	restored := New(nil)
+	require.NoError(t, restored.Restore(path))
+	previous, _ := restored.Snapshot()
+	require.Equal(t, records, previous, "restoring a larger journal retains only the latest 2000 records")
 	for index := 1; index < len(records); index++ {
 		require.Less(t, records[index].ID, records[index-1].ID)
 	}
@@ -93,18 +100,18 @@ func TestDiskFailureKeepsLiveLogs(t *testing.T) {
 
 func TestSinkWarningsRecoverIndependently(t *testing.T) {
 	var journal bytes.Buffer
-	store := New(&journal)
+	store := New(brokenWriter{})
 	store.RecordSinkError("latest.log", errors.New("text unavailable"))
-	store.RecordSinkError("stderr", errors.New("console unavailable"))
-	require.NoError(t, store.Write(Entry{Message: "journal succeeds"}))
+	require.Error(t, store.Write(Entry{Message: "journal fails"}))
 	_, warning := store.Snapshot()
 	require.Contains(t, warning, "text unavailable")
-	require.Contains(t, warning, "console unavailable")
+	require.Contains(t, warning, "events.jsonl: disk full")
 	store.RecordSinkError("latest.log", nil)
 	_, warning = store.Snapshot()
 	require.NotContains(t, warning, "text unavailable")
-	require.Contains(t, warning, "console unavailable")
-	store.RecordSinkError("stderr", nil)
+	require.Contains(t, warning, "events.jsonl: disk full")
+	store.writer = &journal
+	require.NoError(t, store.Write(Entry{Message: "journal succeeds"}))
 	_, warning = store.Snapshot()
 	require.Empty(t, warning)
 }

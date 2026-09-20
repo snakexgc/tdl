@@ -52,6 +52,9 @@ func TestCommandFailureClosesLogs(t *testing.T) {
 			child.Env = append(os.Environ(), helperEnv+"="+phase, consts.EnvHome+"="+t.TempDir())
 			output, err := child.CombinedOutput()
 			require.NoError(t, err, string(output))
+			require.NotContains(t, string(output), "TDL 正在启动")
+			require.NotContains(t, string(output), "TDL 初始化失败")
+			require.NotContains(t, string(output), "TDL 运行失败")
 		})
 	}
 }

@@ -12,14 +12,14 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
-// Connections owns authenticated transports for one application lifetime.
+// Connections owns the current authenticated transport for one application lifetime.
 // Temporary login transports are isolated until their sessions are committed.
 type Connections struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.Mutex
 	closed    bool
-	accounts  map[types.AccountID]*Connection
+	current   *Connection
 	replacing map[types.AccountID]bool
 	changes   sync.WaitGroup
 	logins    map[types.AccountID]bool
@@ -30,7 +30,7 @@ func NewConnections(ctx context.Context) *Connections {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	return &Connections{ctx: ctx, cancel: cancel, accounts: map[types.AccountID]*Connection{}, replacing: map[types.AccountID]bool{}, logins: map[types.AccountID]bool{}}
+	return &Connections{ctx: ctx, cancel: cancel, replacing: map[types.AccountID]bool{}, logins: map[types.AccountID]bool{}}
 }
 
 func (o *Connections) Context() context.Context { return o.ctx }
@@ -72,7 +72,10 @@ func (o *Connections) Open(account types.AccountID, key string, factory func(tel
 	if o.replacing[account] {
 		return nil, errors.New("account session is being replaced")
 	}
-	if current := o.accounts[account]; current != nil {
+	if current := o.current; current != nil {
+		if current.account != account {
+			return nil, errors.New("another account connection is active; stop it before switching sessions")
+		}
 		current.mu.Lock()
 		defer current.mu.Unlock()
 		if current.closing {
@@ -92,7 +95,7 @@ func (o *Connections) Open(account types.AccountID, key string, factory func(tel
 		return nil, err
 	}
 	c.Client, c.run = client, client.Run
-	o.accounts[account] = c
+	o.current = c
 	return c, nil
 }
 
@@ -206,8 +209,8 @@ func (c *Connection) serve() {
 	// until all callers have observed cancellation and released their resources.
 	c.users.Wait()
 	c.owner.mu.Lock()
-	if c.owner.accounts[c.account] == c {
-		delete(c.owner.accounts, c.account)
+	if c.owner.current == c {
+		c.owner.current = nil
 	}
 	c.owner.mu.Unlock()
 	close(c.done)
@@ -254,15 +257,15 @@ func (o *Connections) Drain(ctx context.Context, account types.AccountID) error 
 		account = types.DefaultAccount
 	}
 	o.mu.Lock()
-	c := o.accounts[account]
-	if c == nil {
+	c := o.current
+	if c == nil || c.account != account {
 		o.mu.Unlock()
 		return nil
 	}
 	c.mu.Lock()
 	c.closing = true
 	if !c.started {
-		delete(o.accounts, account)
+		o.current = nil
 		c.mu.Unlock()
 		o.mu.Unlock()
 		return nil
@@ -285,13 +288,13 @@ func (o *Connections) Stop(ctx context.Context) error {
 	o.mu.Lock()
 	o.closed = true
 	o.cancel()
-	accounts := make([]types.AccountID, 0, len(o.accounts))
-	for account := range o.accounts {
-		accounts = append(accounts, account)
+	var account types.AccountID
+	if o.current != nil {
+		account = o.current.account
 	}
 	o.mu.Unlock()
 	var result error
-	for _, account := range accounts {
+	if account != "" {
 		if err := o.Drain(ctx, account); err != nil {
 			result = errors.Join(result, fmt.Errorf("%s: %w", account, err))
 		}

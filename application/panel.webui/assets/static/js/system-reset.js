@@ -13,13 +13,13 @@ export async function confirmReset(context) {
   heading.id = "reset-heading";
   const warning = element(
     "p",
-    "此操作不可撤销。将永久删除全部账号的配置、代理与密钥、Telegram 登录凭据、任务记录、日志，以及 .tdl 文件夹中的所有内容。",
+    "此操作不可撤销。将永久删除全局配置、代理与密钥，以及所有命名空间的 Telegram 登录凭据、任务记录、日志和 .tdl 文件夹中的所有内容。",
     "reset-warning",
   );
   warning.id = "reset-warning";
   const explanation = element(
     "p",
-    "当前版本的 config.json 和 components 配置目录位于 .tdl 外，也会一并清理。完成后 TDL 将退出，下次启动需要重新配置并登录。",
+    "tdl_config.json、旧 config.json 和 components 配置目录位于 .tdl 外，也会一并清理。完成后 TDL 将退出，下次启动需要重新配置并登录。",
     "subtle",
   );
   const targets = element("ul", null, "reset-targets");

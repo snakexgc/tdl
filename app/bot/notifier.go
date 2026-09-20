@@ -86,7 +86,7 @@ func (n *botNotifier) Notify(ctx context.Context, text string) {
 	if service == nil || text == "" {
 		return
 	}
-	if err := service.Enqueue(notificationContext(ctx), n.account, text); err != nil {
+	if err := service.Enqueue(notificationContext(ctx), text); err != nil {
 		slog.Warn("通知入队失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }
@@ -96,7 +96,7 @@ func (n *botNotifier) SendAndTrack(ctx context.Context, text string) []trackedMe
 	if service == nil || text == "" {
 		return nil
 	}
-	refs, err := service.Send(notificationContext(ctx), n.account, text)
+	refs, err := service.Send(notificationContext(ctx), text)
 	if err != nil {
 		slog.Error("发送通知失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
@@ -108,7 +108,7 @@ func (n *botNotifier) EditTracked(ctx context.Context, refs []trackedMessage, te
 	if service == nil || text == "" || len(refs) == 0 {
 		return
 	}
-	if err := service.Edit(notificationContext(ctx), n.account, refs, text); err != nil {
+	if err := service.Edit(notificationContext(ctx), refs, text); err != nil {
 		slog.Warn("更新通知失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
@@ -49,6 +50,8 @@ const (
 
 type Options struct {
 	ComponentConfigDir string
+	ComponentStore     *rteconfig.Store
+	ConfigurationHost  *rte.Runtime
 	ResetPlan          *reset.Plan
 	RequestReset       func()
 	RequestReboot      func()
@@ -81,35 +84,36 @@ func watchAutoDownloadEnabled(cfg *config.Config) bool {
 }
 
 type Manager struct {
-	transitionWG     sync.WaitGroup
-	scheduleMu       sync.Mutex
-	closing          atomic.Bool
-	reconciler       *rte.Reconciler
-	configSource     *config.Source
-	configured       map[string]bool
-	configurationErr error
-	directory        *rte.Directory
-	accountHost      *rte.Runtime
-	sessionPort      ports.AccountSession
-	connections      *tgauth.Connections
-	intentHost       *rte.Runtime
-	botProcess       *rte.Process
-	aria2Process     *rte.Process
-	panelProcess     *rte.Process
-	panelHost        *rte.Runtime
-	localHost        *rte.Runtime
-	botComponents    *rte.Runtime
-	botRefresh       func(context.Context) error
-	componentStore   *rteconfig.Store
-	policyErr        error
-	policies         *rte.Runtime
-	filter           ports.FilterRules
-	naming           ports.NamingRules
-	parent           context.Context
-	forwardQueue     *appforward.Queue
-	downloadAccount  types.AccountID
-	downloadHost     *rte.Runtime
-	downloadPort     ports.DownloadControl
+	transitionWG      sync.WaitGroup
+	scheduleMu        sync.Mutex
+	closing           atomic.Bool
+	reconciler        *rte.Reconciler
+	configSource      *config.Source
+	configured        map[string]bool
+	configurationErr  error
+	directory         *rte.Directory
+	accountHost       *rte.Runtime
+	sessionPort       ports.AccountSession
+	connections       *tgauth.Connections
+	intentHost        *rte.Runtime
+	botProcess        *rte.Process
+	aria2Process      *rte.Process
+	panelProcess      *rte.Process
+	panelHost         *rte.Runtime
+	localHost         *rte.Runtime
+	botComponents     *rte.Runtime
+	botRefresh        func(context.Context) error
+	componentStore    *rteconfig.Store
+	configurationHost *rte.Runtime
+	policyErr         error
+	policies          *rte.Runtime
+	filter            ports.FilterRules
+	naming            ports.NamingRules
+	parent            context.Context
+	forwardQueue      *appforward.Queue
+	downloadAccount   types.AccountID
+	downloadHost      *rte.Runtime
+	downloadPort      ports.DownloadControl
 
 	kvEngine    kv.Storage
 	namespaceKV storage.Storage
@@ -195,8 +199,8 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	var componentStore *rteconfig.Store
-	if opts.ComponentConfigDir != "" {
+	componentStore := opts.ComponentStore
+	if componentStore == nil && opts.ComponentConfigDir != "" {
 		componentStore = rteconfig.NewStore(opts.ComponentConfigDir)
 	}
 	effective, enabled, configErr := componentconfig.Load(ctx, componentStore, cfg)
@@ -207,24 +211,25 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	ctx = config.WithSource(ctx, source)
 	manager := &Manager{
 		configSource: source, configured: enabled, configurationErr: configErr,
-		downloadAccount: types.AccountID(cfg.Namespace),
-		componentStore:  componentStore,
-		policyErr:       configErr,
-		parent:          ctx,
-		forwardQueue:    appforward.NewQueue(namespaceKV),
-		kvEngine:        engine,
-		namespaceKV:     namespaceKV,
-		requestReboot:   opts.RequestReboot,
-		resetPlan:       opts.ResetPlan,
-		requestReset:    opts.RequestReset,
-		requestUpdate:   opts.RequestUpdate,
-		botStatus:       moduleStatusNotStarted,
-		watchMode:       config.EffectiveDownloaderMode(cfg),
-		watchEnabled:    cfg.Modules.Watch,
-		forwardEnabled:  cfg.Modules.Forward,
-		aria2Enabled:    cfg.Modules.Aria2,
-		aria2Auto:       watchAutoDownloadEnabled(cfg),
-		aria2Config:     effectiveAria2ManagerConfig(cfg),
+		downloadAccount:   types.AccountID(cfg.Namespace),
+		componentStore:    componentStore,
+		configurationHost: opts.ConfigurationHost,
+		policyErr:         configErr,
+		parent:            ctx,
+		forwardQueue:      appforward.NewQueue(namespaceKV),
+		kvEngine:          engine,
+		namespaceKV:       namespaceKV,
+		requestReboot:     opts.RequestReboot,
+		resetPlan:         opts.ResetPlan,
+		requestReset:      opts.RequestReset,
+		requestUpdate:     opts.RequestUpdate,
+		botStatus:         moduleStatusNotStarted,
+		watchMode:         config.EffectiveDownloaderMode(cfg),
+		watchEnabled:      cfg.Modules.Watch,
+		forwardEnabled:    cfg.Modules.Forward,
+		aria2Enabled:      cfg.Modules.Aria2,
+		aria2Auto:         watchAutoDownloadEnabled(cfg),
+		aria2Config:       effectiveAria2ManagerConfig(cfg),
 	}
 	if manager.downloadAccount == "" {
 		manager.downloadAccount = types.DefaultAccount
@@ -254,10 +259,12 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 	cfg := config.From(m.parent)
 	if cfg == nil || !cfg.Modules.WebUI || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
 		logctx.From(ctx).Warn("Web 管理面板未启动：监听地址未配置", zap.String("component", "panel.webui"))
+		color.Yellow("Web 管理面板未启动：webui.address 或 webui.port 为空。")
 		return false
 	}
 	if strings.TrimSpace(cfg.WebUI.Username) == "" || cfg.WebUI.Password == "" {
 		logctx.From(ctx).Warn("Web 管理面板未启动：登录凭据未配置", zap.String("component", "panel.webui"))
+		color.Yellow("Web 管理面板未启动：请设置 webui.username 和 webui.password。")
 		return false
 	}
 
@@ -304,6 +311,7 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 	case <-time.After(200 * time.Millisecond):
 	}
 	logctx.From(ctx).Info("Web 管理面板已启动", zap.String("component", "panel.webui"), zap.String("listen_addr", config.WebUIListenAddr(cfg)))
+	color.Green("WebUI: http://%s", config.WebUIListenAddr(cfg))
 	return true
 }
 

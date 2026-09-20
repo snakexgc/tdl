@@ -8,13 +8,13 @@ import (
 
 const DownloadControlName = "download.control"
 
-// DownloadControl routes explicit executor commands within one account.
+// DownloadControl uses the current session's task repository.
 type DownloadControl interface {
-	Tasks(context.Context, types.AccountID, string) ([]types.DownloadTask, error)
+	Tasks(context.Context, string) ([]types.DownloadTask, error)
 	Control(context.Context, types.DownloadAction) (types.DownloadActionResult, error)
 }
 
-// DownloadBackend operates on an already isolated account repository. Batch
+// DownloadBackend operates on the selected session's repository. Batch
 // selection and action validation belong to the control component.
 type DownloadBackend interface {
 	ListTasks(context.Context) ([]types.DownloadTask, error)

@@ -31,7 +31,7 @@ func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) internalDownloadsSnapshot(ctx context.Context) (any, error) {
-	items, err := s.downloadControl().Tasks(ctx, s.downloadAccount(), localDownloadExecutor)
+	items, err := s.downloadControl().Tasks(ctx, localDownloadExecutor)
 	if err != nil {
 		return nil, err
 	}
