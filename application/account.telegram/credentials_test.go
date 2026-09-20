@@ -56,6 +56,25 @@ func TestCredentialOverrideAndRestore(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestNetworkProxyFollowsAccountConfiguration(t *testing.T) {
+	ctx := context.Background()
+	registry := rte.NewRegistry()
+	require.NoError(t, Register(registry))
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
+	require.NoError(t, err)
+	host.Start(ctx)
+	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
+	value, err := host.Resolve(ports.NetworkProxyName)
+	require.NoError(t, err)
+	proxy := value.(ports.NetworkProxy)
+	for _, address := range []string{"socks5://user:secret@127.0.0.1:1080", "http://127.0.0.1:8000", ""} {
+		require.NoError(t, host.Reconfigure(ctx, ID, map[string]any{"proxy": address}))
+		actual, err := proxy.Proxy(ctx)
+		require.NoError(t, err)
+		require.Equal(t, address, actual)
+	}
+}
+
 func TestCredentialValidation(t *testing.T) {
 	for _, settings := range []types.TelegramCredentialsConfig{
 		{APIID: -1}, {APIID: 123}, {APIHash: "private-hash"}, {BuiltinPreset: "unknown"},

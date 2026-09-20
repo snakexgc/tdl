@@ -5,39 +5,59 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TDL 管理面板</title>
   <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/workspace.css">
 </head>
 <body>
+  <a class="skip-link" href="#view-host">跳到主要内容</a>
   <div class="app-shell">
-    <aside class="sidebar">
+    <aside class="sidebar" id="app-sidebar" aria-label="工作空间导航">
       <div class="brand">
         <div class="brand-mark">TDL</div>
         <div>
           <div class="brand-title">管理面板</div>
-          <div class="brand-subtitle">Telegram Download Toolkit</div>
+          <div class="brand-subtitle">TELEGRAM TOOLKIT</div>
         </div>
+        <button class="icon-button sidebar-close" id="sidebar-close" type="button" aria-label="关闭导航">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
+        </button>
       </div>
-      <nav class="nav" aria-label="Main navigation"></nav>
+      <div class="nav-label">工作空间</div>
+      <nav class="nav" aria-label="主导航"></nav>
       <div class="sidebar-foot">
+        <div class="sidebar-foot-title">TDL 状态</div>
         <div class="heartbeat" id="heartbeat-indicator" data-state="checking" role="status" aria-live="polite">
           <span class="heartbeat-dot" aria-hidden="true"></span>
-          <span id="heartbeat-label">TDL 连接中</span>
+          <span id="heartbeat-label">断开连接</span>
         </div>
-        <div id="runtime-version">版本：-</div>
-        <div id="runtime-namespace">数据空间：-</div>
-        <div id="runtime-watch">监听：-</div>
+        <div id="runtime-version">版本：—</div>
         <button class="sidebar-logout" id="logout" type="button">退出登录</button>
       </div>
     </aside>
-
+    <button class="sidebar-backdrop" id="sidebar-backdrop" type="button" aria-label="关闭导航" tabindex="-1" hidden></button>
+    <header class="topbar">
+      <div class="topbar-location">
+        <button class="icon-button menu-toggle" id="menu-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false" aria-label="打开导航">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+        </button>
+        <span class="topbar-workspace">工作空间</span>
+        <span class="breadcrumb-divider" aria-hidden="true">/</span>
+        <span id="current-page" aria-current="page">管理面板</span>
+      </div>
+      <a id="current-account" class="account-profile" data-app-link href="/user" aria-label="查看当前 Telegram 账号">
+        <span id="account-avatar" class="account-avatar" aria-hidden="true">TG</span>
+        <span class="account-profile-text"><strong id="account-name">Telegram 账号</strong><small id="account-detail">正在读取…</small></span>
+        <svg class="account-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+      </a>
+    </header>
     <main class="main">
       <div class="credential-warning" id="credential-warning" role="alert" hidden>
         <div>
           <strong>正在使用默认 WebUI 管理员账号：admin / admin。</strong>
-          <span>请立刻修改用户名和密码：从侧边栏进入“配置文件”，填写新凭据并保存；新凭据会立即生效，无需重启 TDL。</span>
+          <span>请前往面板设置修改用户名和密码。</span>
         </div>
         <button class="btn danger" id="credential-warning-action" type="button">去修改</button>
       </div>
-      <div id="view-host" aria-live="polite">
+      <div id="view-host" tabindex="-1">
         <div class="view-loading">正在载入管理面板...</div>
       </div>
     </main>

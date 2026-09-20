@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 type downloadControlStub struct {
@@ -54,4 +55,21 @@ func TestDownloadControlAPIUsesPortAndRejectsAccountOverride(t *testing.T) {
 	s.handleInternalDownloads(w, r)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Contains(t, w.Body.String(), "example")
+}
+
+func TestDownloadTaskObservationUsesTheAccountScopedPort(t *testing.T) {
+	port := &downloadControlStub{}
+	s := NewServer(Options{Namespace: "scoped", DownloadControl: port})
+	for _, executor := range []string{localDownloadExecutor, config.DownloaderModeAria2} {
+		source := s.snapshotSource("download-tasks-" + executor)
+		require.NotNil(t, source)
+		data, err := source(context.Background())
+		require.NoError(t, err)
+		items := data.(map[string]any)[fieldItems].([]types.DownloadTask)
+		require.Len(t, items, 1)
+		require.Equal(t, types.AccountID("scoped"), items[0].Account)
+		require.Equal(t, executor, items[0].Executor)
+	}
+	require.NotNil(t, s.snapshotSource("downloads"), "legacy topic remains supported")
+	require.Nil(t, s.snapshotSource("download-tasks-other"))
 }

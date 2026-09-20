@@ -1,29 +1,30 @@
 <section class="view" id="view-user">
   <header class="page-head">
     <div>
-      <h1>用户管理</h1>
+      <h1>账号管理</h1>
       <p>查看当前 Telegram 账号状态，或直接在面板中完成登录。</p>
     </div>
+    <a class="btn secondary" data-app-link href="/config?tab=account">账号设置</a>
   </header>
   <div class="tabs">
-    <button class="tab-button active" data-user-tab="current" type="button">当前用户</button>
-    <button class="tab-button" data-user-tab="login" type="button">用户登录</button>
+    <button class="tab-button active" data-user-tab="current" type="button">当前账号</button>
+    <button class="tab-button" data-user-tab="login" type="button">登录账号</button>
   </div>
   <div class="user-tab active" id="user-tab-current">
     <section class="user-switch">
       <label class="field-inline user-switch-field">
-        <span>选择用户</span>
+        <span>选择账号</span>
         <select id="switch-namespace">
           <option value="">正在读取已登录用户...</option>
         </select>
       </label>
       <div class="user-switch-copy">
-        <h2>切换或删除用户</h2>
+        <h2>切换或删除账号</h2>
         <p>选择已登录用户，可切换并重启，也可以删除不再需要的登录数据。</p>
       </div>
       <div class="user-switch-actions">
         <button class="btn primary" id="switch-user" type="button">切换并重启</button>
-        <button class="btn danger" id="delete-user" type="button">删除用户</button>
+        <button class="btn danger" id="delete-user" type="button">删除账号</button>
       </div>
     </section>
     <div class="section-actions">

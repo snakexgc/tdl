@@ -22,29 +22,31 @@ func Manifest() manifest.Manifest {
 	field := func(name, title string, value, low, high int64) manifest.ConfigField {
 		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
 	}
-	return manifest.Manifest{ID: ID, Title: "aria2 下载器", Pages: []manifest.Page{{Path: "/aria2ng.html", Title: "AriaNg"}}, Provides: []manifest.Port{
-		manifest.PortOf[ports.DownloadExecutor](ports.DownloadExecutorName, 1, 0),
-		manifest.PortOf[ports.Aria2Tasks](ports.Aria2TasksName, 1, 0),
-	}, Config: []manifest.ConfigField{
-		manifest.FormattedText("rpc_url", "RPC URL", "http://127.0.0.1:6800/jsonrpc", "url", true, true),
-		manifest.Text("secret", "RPC secret", "", true, true),
-		manifest.Text("directory", "Remote download directory", "", false, false),
-		manifest.Number("timeout_seconds", "RPC timeout (seconds)", 30, 1, 3600, true),
-		manifest.Flag("auto_download", "Automatically submit downloads", true, false),
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"}, ID: ID, Title: "aria2 下载器", Pages: []manifest.Page{{Path: "/aria2ng.html", Title: "高级下载控制（AriaNg）", NavHidden: true}}, Provides: []manifest.Port{
+			manifest.PortOf[ports.DownloadExecutor](ports.DownloadExecutorName, 1, 0),
+			manifest.PortOf[ports.Aria2Tasks](ports.Aria2TasksName, 1, 0),
+		}, Config: []manifest.ConfigField{
+			manifest.FormattedText("rpc_url", "RPC 连接地址", "http://127.0.0.1:6800/jsonrpc", "url", true, true),
+			manifest.Text("secret", "RPC 密钥", "", true, true),
+			manifest.Text("directory", "远程下载目录", "", false, false),
+			manifest.Number("timeout_seconds", "连接超时（秒）", 30, 1, 3600, true),
+			manifest.Flag("auto_download", "触发后自动下载", true, false),
 
-		field("status_interval_ms", "状态同步间隔（毫秒）", 60000, 100, 3600000),
-		field("connect_retry_ms", "连接首次重试间隔（毫秒）", 10000, 100, 3600000),
-		field("connect_retry_max_ms", "连接最大重试间隔（毫秒）", 60000, 100, 3600000),
-		field(monitorPollField, "零速检测间隔（毫秒）", 30000, 100, 3600000),
-		field("monitor_stall_seconds", "零速持续阈值（秒）", 180, 1, 86400),
-		field("monitor_pause_seconds", "零速恢复暂停时间（秒）", 10, 1, 3600),
-		field("monitor_action_seconds", "零速治理操作超时（秒）", 30, 1, 300),
-		field("error_window_seconds", "Telegram 错误统计窗口（秒）", 10, 1, 3600),
-		field("error_threshold", "Telegram 错误触发次数", 3, 1, 10000),
-		field("error_cooldown_seconds", "Telegram 错误治理冷却时间（秒）", 10, 1, 3600),
-		field("error_pause_seconds", "Telegram 错误恢复暂停时间（秒）", 5, 1, 3600),
-		field("error_action_seconds", "Telegram 错误治理操作超时（秒）", 30, 1, 300),
-	}}
+			field("status_interval_ms", "状态同步间隔（毫秒）", 60000, 100, 3600000),
+			field("connect_retry_ms", "连接首次重试间隔（毫秒）", 10000, 100, 3600000),
+			field("connect_retry_max_ms", "连接最大重试间隔（毫秒）", 60000, 100, 3600000),
+			field(monitorPollField, "零速检测间隔（毫秒）", 30000, 100, 3600000),
+			field("monitor_stall_seconds", "零速持续阈值（秒）", 180, 1, 86400),
+			field("monitor_pause_seconds", "零速恢复暂停时间（秒）", 10, 1, 3600),
+			field("monitor_action_seconds", "零速治理操作超时（秒）", 30, 1, 300),
+			field("error_window_seconds", "Telegram 错误统计窗口（秒）", 10, 1, 3600),
+			field("error_threshold", "Telegram 错误触发次数", 3, 1, 10000),
+			field("error_cooldown_seconds", "Telegram 错误治理冷却时间（秒）", 10, 1, 3600),
+			field("error_pause_seconds", "Telegram 错误恢复暂停时间（秒）", 5, 1, 3600),
+			field("error_action_seconds", "Telegram 错误治理操作超时（秒）", 30, 1, 300),
+		},
+	}, "download", "aria2 连接", "status_interval_ms", "connect_retry_ms", "connect_retry_max_ms", "monitor_poll_ms", "monitor_stall_seconds", "monitor_pause_seconds", "monitor_action_seconds", "error_window_seconds", "error_threshold", "error_cooldown_seconds", "error_pause_seconds", "error_action_seconds").SettingsOrder(20)
 }
 
 func (m *Manager) policy() governancePolicy {

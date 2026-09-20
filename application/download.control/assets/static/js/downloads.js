@@ -1,418 +1,365 @@
-// Downloads view: AriaNg iframe for aria2 mode, internal download table otherwise.
-import { state } from "./state.js";
 import { api } from "./api.js";
-import { escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
-
 import { observe } from "./events.js";
-let unobserve, loadGeneration = 0;
+import { navigate } from "./router.js";
+import {
+  escapeHTML as esc,
+  escapeAttr,
+  formatBytes,
+  formatTime,
+} from "./utils.js";
+import {
+  fragment,
+  element,
+  openDrawer,
+  closeDrawer,
+  tabKeyboard,
+  activateTabs,
+} from "./ui.js";
+import {
+  executors,
+  executorLabel,
+  taskKey,
+  taskState,
+  statusLabel,
+  groupActions,
+  eligible,
+} from "./download-model.js";
 
-export function initDownloads() {
-  window.addEventListener("downloader-changed", () => { if (document.getElementById("view-downloads")?.classList.contains("active") && !document.getElementById("downloads-information")?.hidden) void loadDownloads(true); });
-  document.getElementById("reload-aria2").addEventListener("click", () => loadDownloads(true));
-  document.getElementById("aria2-retry-check").addEventListener("click", () => loadDownloads(true));
-  document.getElementById("aria2-open-config").addEventListener("click", () => {
-    document.getElementById("view-downloads").dispatchEvent(new CustomEvent("open-settings", { bubbles: true }));
+export const internalStatusLabel = statusLabel;
+export const internalStatusClass = (status) =>
+  status === "error" ? "bad" : status === "complete" ? "" : "warn";
+let snapshots = {},
+  errors = {},
+  selected = new Set(),
+  releases = [],
+  active = false,
+  generation = 0,
+  linksReady,
+  linksPage,
+  busy = false;
+const $ = (id) => document.getElementById(id);
+const allTasks = () =>
+  executors.flatMap((executor) => snapshots[executor] || []);
+const visible = () =>
+  allTasks().filter(
+    (task) =>
+      ($("download-executor").value === "all" ||
+        task.executor === $("download-executor").value) &&
+      ($("download-state").value === "all" ||
+        taskState(task) === $("download-state").value) &&
+      (task.file_name || task.id)
+        .toLocaleLowerCase()
+        .includes($("download-search").value.trim().toLocaleLowerCase()),
+  );
+const time = (value) =>
+  value && !String(value).startsWith("0001-") ? formatTime(value) : "—";
+
+function init() {
+  snapshots = {};
+  errors = {};
+  selected = new Set();
+  releases = [];
+  linksReady = null;
+  linksPage = null;
+  tabKeyboard($("download-tabs"));
+  $("download-tabs")
+    .querySelectorAll("[data-tab]")
+    .forEach((tab) =>
+      tab.addEventListener("click", () =>
+        navigate(`/downloads?tab=${tab.dataset.tab}`),
+      ),
+    );
+  for (const id of ["download-search", "download-executor", "download-state"])
+    $(id).addEventListener(
+      id === "download-search" ? "input" : "change",
+      () => {
+        selected.clear();
+        render();
+      },
+    );
+  $("download-refresh").addEventListener("click", refresh);
+  $("download-select").addEventListener("change", (event) => {
+    const choice = event.target.value;
+    selected.clear();
+    if (choice !== "clear")
+      for (const task of visible())
+        if (
+          choice === "all" ||
+          (choice === "unfinished"
+            ? !["complete", "removed"].includes(taskState(task))
+            : taskState(task) === choice)
+        )
+          selected.add(taskKey(task));
+    event.target.value = "";
+    render();
   });
-
-  document.getElementById("internal-select-visible").addEventListener("change", (event) => {
-    if (event.target.checked) {
-      state.internalDownloads.forEach((item) => {
-        const id = internalDownloadID(item);
-        if (id) state.selectedInternalDownloads.add(id);
-      });
-    } else {
-      state.selectedInternalDownloads.clear();
-    }
-    renderInternalDownloads();
+  $("download-check-all").addEventListener("change", (event) => {
+    selected = new Set(event.target.checked ? visible().map(taskKey) : []);
+    render();
   });
-  document.getElementById("internal-select-all").addEventListener("click", () => selectInternalDownloads("all"));
-  document.getElementById("internal-select-complete").addEventListener("click", () => selectInternalDownloads("complete"));
-  document.getElementById("internal-select-unfinished").addEventListener("click", () => selectInternalDownloads("unfinished"));
-  document.getElementById("internal-select-error").addEventListener("click", () => selectInternalDownloads("error"));
-  document.getElementById("internal-select-clear").addEventListener("click", () => selectInternalDownloads("clear"));
-  document.getElementById("internal-start-selected").addEventListener("click", () => runInternalDownloadBulkAction("start"));
-  document.getElementById("internal-pause-selected").addEventListener("click", () => runInternalDownloadBulkAction("pause"));
-  document.getElementById("internal-delete-selected").addEventListener("click", () => runInternalDownloadBulkAction("delete"));
-
-  document.getElementById("internal-download-body").addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-internal-action]");
-    if (!button) return;
-    const action = button.dataset.internalAction;
-    const id = button.dataset.internalId;
-    if (!id) return;
-    if (action === "delete" && !confirm(`删除下载任务 ${id}？未完成的本地临时文件会一并删除。`)) return;
-    await runInternalDownloadAction(action, [id]);
+  $("download-body").addEventListener("change", (event) => {
+    const check = event.target.closest("[data-task-check]");
+    if (!check) return;
+    if (check.checked) selected.add(check.dataset.taskCheck);
+    else selected.delete(check.dataset.taskCheck);
+    selection();
   });
-
-  document.getElementById("internal-download-body").addEventListener("change", (event) => {
-    const checkbox = event.target.closest("[data-internal-check]");
-    if (!checkbox) return;
-    if (checkbox.checked) {
-      state.selectedInternalDownloads.add(checkbox.dataset.internalCheck);
-    } else {
-      state.selectedInternalDownloads.delete(checkbox.dataset.internalCheck);
-    }
-    updateInternalSelectionState();
+  $("download-body").addEventListener("click", (event) => {
+    const action = event.target.closest("[data-task-action]");
+    if (!action) return;
+    const task = allTasks().find(
+      (task) => taskKey(task) === action.dataset.taskKey,
+    );
+    if (!task) return;
+    if (action.dataset.taskAction === "details") details(task);
+    else void control(action.dataset.taskAction, [task]);
   });
-}
-
-export async function loadDownloads(force = false) {
-  const generation = ++loadGeneration;
-  let status = null;
-  try {
-    status = await api("/api/status");
-    if (generation !== loadGeneration) return;
-    state.downloaderMode = status.downloader && status.downloader.mode ? status.downloader.mode : "aria2";
-  } catch (error) {
-    if (generation !== loadGeneration) return;
-    setInternalDownloadStatus(error.message, "error");
-    return;
-  }
-
-  if (state.downloaderMode === "local") {
-    state.aria2Loaded = false;
-    const frame = document.getElementById("aria2-frame");
-    const guide = document.getElementById("aria2-guide");
-    if (frame) {
-      frame.hidden = true;
-      frame.removeAttribute("src");
-    }
-    if (guide) guide.hidden = true;
-    document.getElementById("internal-downloads").hidden = false;
-    startInternalDownloadPolling();
-    await loadInternalDownloads();
-    return;
-  }
-
-  stopInternalDownloadPolling();
-  document.getElementById("internal-downloads").hidden = true;
-  await loadAria2Frame(force, generation);
-}
-
-async function loadAria2Frame(force = false, generation = loadGeneration) {
-  if (state.aria2Loaded && !force) return;
-  if (force) {
-    state.aria2Loaded = false;
-    document.getElementById("aria2-frame").removeAttribute("src");
-  }
-  showAria2Guide({
-    message: "正在检查 aria2 配置...",
-    checking: true,
-  });
-
-  let check;
-  try {
-    check = await api("/api/aria2/check");
-  } catch (error) {
-    if (generation !== loadGeneration) return;
-    showAria2Guide({
-      message: "无法检查 aria2 配置。",
-      error: error.message,
-    });
-    return;
-  }
-
-  if (generation !== loadGeneration || state.downloaderMode === "local") return;
-  if (!check.ok) {
-    showAria2Guide(check);
-    return;
-  }
-
+  $("download-bulk")
+    .querySelectorAll("[data-download-bulk]")
+    .forEach((button) =>
+      button.addEventListener("click", () =>
+        control(
+          button.dataset.downloadBulk,
+          allTasks().filter((task) => selected.has(taskKey(task))),
+        ),
+      ),
+    );
   const protocol = location.protocol.replace(":", "");
-  const port = location.port || (protocol === "https" ? "443" : "80");
-  const query = new URLSearchParams({
-    protocol,
-    host: location.hostname,
-    port,
-    interface: "aria2/jsonrpc",
-  });
-  hideAria2Guide();
-  const frame = document.getElementById("aria2-frame");
-  frame.src = `/aria2ng.html#!/settings/rpc/set?${query.toString()}`;
-  state.aria2Loaded = true;
+  $("advanced-download").href =
+    `/aria2ng.html#!/settings/rpc/set?${new URLSearchParams({ protocol, host: location.hostname, port: location.port || (protocol === "https" ? "443" : "80"), interface: "aria2/jsonrpc" })}`;
 }
-
-function showAria2Guide(result = {}) {
-  const guide = document.getElementById("aria2-guide");
-  const frame = document.getElementById("aria2-frame");
-  const message = document.getElementById("aria2-guide-message");
-  frame.hidden = true;
-  guide.hidden = false;
-  if (!result.checking) {
-    frame.removeAttribute("src");
-  }
-  const parts = [];
-  if (result.message) parts.push(result.message);
-  if (result.rpc_url) parts.push(`当前 aria2.rpc_url：${result.rpc_url}`);
-  if (result.error) parts.push(`错误详情：${result.error}`);
-  message.textContent = parts.join("\n") || "请先完成 aria2 配置。";
-}
-
-function hideAria2Guide() {
-  document.getElementById("aria2-guide").hidden = true;
-  document.getElementById("aria2-frame").hidden = false;
-}
-
-function startInternalDownloadPolling() {
-  unobserve ||= observe("downloads", (data, error) => {
-    if (state.downloaderMode !== "local") return;
-    if (error) { setInternalDownloadStatus(error, "error"); return; }
-    receiveDownloads(data);
-  });
-}
-export function stopInternalDownloadPolling() { unobserve?.(); unobserve = null; }
-function receiveDownloads(data) {
-  state.internalDownloads = updateInternalDownloadSpeeds(data.items || []);
-  pruneInternalDownloadSelection();
-  renderInternalDownloads();
-}
-
-async function loadInternalDownloads(options = {}) {
-  if (state.internalDownloadLoading) return;
-  state.internalDownloadLoading = true;
-  const silent = Boolean(options.silent);
-  const body = document.getElementById("internal-download-body");
-  if (!silent) {
-    setInternalDownloadStatus("");
-    body.innerHTML = `<tr><td colspan="7" class="empty">正在加载...</td></tr>`;
-  }
-  try {
-    const data = await api("/api/internal-downloads");
-    receiveDownloads(data);
-  } catch (error) {
-    if (!silent) {
-      state.internalDownloads = [];
-      state.internalDownloadSamples.clear();
-      state.selectedInternalDownloads.clear();
-      body.innerHTML = `<tr><td colspan="7" class="empty">加载失败</td></tr>`;
-      updateInternalSelectionState();
-    }
-    setInternalDownloadStatus(error.message, "error");
-  } finally {
-    state.internalDownloadLoading = false;
-  }
-}
-
-function renderInternalDownloads() {
-  const body = document.getElementById("internal-download-body");
-  if (!state.internalDownloads.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">没有本地下载任务</td></tr>`;
-    updateInternalSelectionState();
+async function load(url) {
+  const tab = url?.searchParams?.get("tab") === "links" ? "links" : "tasks";
+  activateTabs($("download-tabs"), tab);
+  $("download-tasks-panel").hidden = tab !== "tasks";
+  $("download-links-panel").hidden = tab !== "links";
+  if (tab === "links") {
+    stop();
+    linksReady ||= (async () => {
+      await fragment($("download-links-panel"), "kv");
+      linksPage = (await import("./kv.js")).page;
+      linksPage.init();
+    })().catch((error) => {
+      linksReady = null;
+      throw error;
+    });
+    await linksReady;
+    if (
+      location.pathname === "/downloads" &&
+      new URLSearchParams(location.search).get("tab") === "links"
+    )
+      await linksPage.load();
     return;
   }
-  body.innerHTML = state.internalDownloads.map(renderInternalDownloadRow).join("");
-  updateInternalSelectionState();
+  linksPage?.stop?.();
+  active = true;
+  if (!releases.length)
+    for (const executor of executors)
+      releases.push(
+        observe(`download-tasks-${executor}`, (data, error) =>
+          receive(executor, data, error),
+        ),
+      );
+  $("download-state").value = url?.searchParams?.get("state") || "all";
+  render();
+  await refresh();
 }
-
-export function internalDownloadID(item) {
-  return item.id || item.task_id || item.file_name || "";
+export async function loadDownloads() {
+  if (active) await refresh();
 }
-
-function updateInternalDownloadSpeeds(items) {
-  const now = Date.now();
-  const seen = new Set();
-  items.forEach((item) => {
-    const id = internalDownloadID(item);
-    if (!id) return;
-    seen.add(id);
-    const completed = Number(item.completed || 0);
-    const total = Number(item.total || 0);
-    const status = item.status || "queued";
-    const previous = state.internalDownloadSamples.get(id);
-    let speed = previous ? previous.speed : 0;
-
-    if (previous && now > previous.sampledAt) {
-      const elapsed = (now - previous.sampledAt) / 1000;
-      const delta = completed - previous.completed;
-      if (status === "active" && elapsed > 0 && delta >= 0) {
-        speed = delta / elapsed;
-      } else if (status !== "active") {
-        speed = 0;
+async function refresh() {
+  if (!active) return;
+  const version = ++generation;
+  await Promise.all(
+    executors.map(async (executor) => {
+      try {
+        const data = await api(`/api/download-tasks?executor=${executor}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (version === generation && active) receive(executor, data);
+      } catch (error) {
+        if (version === generation && active)
+          receive(executor, null, error.message);
       }
-    } else if (status !== "active") {
-      speed = 0;
-    }
-    if (total > 0 && completed >= total) {
-      speed = 0;
-    }
-
-    item.speed_bps = speed;
-    state.internalDownloadSamples.set(id, {
-      completed,
-      sampledAt: now,
-      speed,
+    }),
+  );
+}
+function receive(executor, data, error) {
+  if (!active) return;
+  if (error) errors[executor] = error;
+  else {
+    snapshots[executor] = (data?.items || []).map((task) => ({
+      ...task,
+      executor,
+    }));
+    delete errors[executor];
+  }
+  const valid = new Set(allTasks().map(taskKey));
+  selected = new Set([...selected].filter((key) => valid.has(key)));
+  render();
+}
+function render() {
+  const focus = document.activeElement?.closest?.(
+    "#download-body [data-task-key], #download-body [data-task-check]",
+  );
+  const focusKey = focus?.dataset.taskKey || focus?.dataset.taskCheck,
+    focusAction = focus?.dataset.taskAction;
+  $("download-health").innerHTML = executors
+    .map(
+      (executor) =>
+        `<span class="${errors[executor] ? "bad-text" : "subtle"}">${executorLabel(executor)}：${errors[executor] ? `连接不可用${snapshots[executor] ? "，保留上次数据" : ""} · ${esc(errors[executor])}` : snapshots[executor] ? `${snapshots[executor].length} 项任务` : "连接中…"}</span>`,
+    )
+    .join("");
+  const tasks = visible().sort(
+    (a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0),
+  );
+  $("download-body").innerHTML = tasks.length
+    ? tasks.map(row).join("")
+    : '<tr><td colspan="8" class="empty">没有符合条件的任务。<p>通过 Telegram 触发下载，或在「链接记录」中提交下载。</p></td></tr>';
+  if (focusKey)
+    [
+      ...$("download-body").querySelectorAll(
+        "[data-task-key], [data-task-check]",
+      ),
+    ]
+      .find(
+        (node) =>
+          (node.dataset.taskKey || node.dataset.taskCheck) === focusKey &&
+          node.dataset.taskAction === focusAction,
+      )
+      ?.focus({ preventScroll: true });
+  selection();
+}
+function row(task) {
+  const key = escapeAttr(taskKey(task)),
+    value = taskState(task),
+    percent =
+      task.total > 0
+        ? Math.min(100, Math.max(0, (task.completed / task.total) * 100))
+        : 0;
+  const action =
+    value === "error"
+      ? eligible(task, "resume")
+        ? "resume"
+        : ""
+      : eligible(task, "pause")
+        ? "pause"
+        : eligible(task, "resume")
+          ? "resume"
+          : "";
+  const controls = action
+    ? `<button class="btn secondary compact" data-task-key="${key}" data-task-action="${action}" ${busy || errors[task.executor] ? "disabled" : ""}>${action === "pause" ? "暂停" : "恢复"}</button>`
+    : "";
+  return `<tr><td><input type="checkbox" data-task-check="${key}" aria-label="选择 ${escapeAttr(task.file_name || task.id)}" ${selected.has(taskKey(task)) ? "checked" : ""}></td>
+    <td class="task-name"><button class="text-button" data-task-key="${key}" data-task-action="details">${esc(task.file_name || task.id)}</button>${errors[task.executor] ? '<small class="bad-text">数据已过期</small>' : ""}</td>
+    <td>${executorLabel(task.executor)}</td><td><span class="pill ${internalStatusClass(value)}">${esc(statusLabel(value))}</span></td>
+    <td class="task-progress"><div>${task.total > 0 ? `${formatBytes(task.completed || 0)} / ${formatBytes(task.total)}` : "—"}</div><progress max="100" value="${percent}" aria-label="${escapeAttr(statusLabel(value))}进度"></progress></td>
+    <td class="time-cell">${task.download_speed != null ? `${formatBytes(task.download_speed)}/s` : "—"}</td><td class="time-cell">${time(task.created_at)}</td>
+    <td><div class="row-actions">${controls}<button class="btn secondary compact" data-task-key="${key}" data-task-action="details">详情</button><button class="btn danger compact" data-task-key="${key}" data-task-action="delete" ${busy || errors[task.executor] ? "disabled" : ""}>删除</button></div></td></tr>`;
+}
+function selection() {
+  const tasks = visible(),
+    count = selected.size;
+  $("download-bulk").hidden = count === 0;
+  $("download-selection-count").textContent = `已选 ${count} 项`;
+  $("download-check-all").checked =
+    tasks.length > 0 && tasks.every((task) => selected.has(taskKey(task)));
+  $("download-check-all").indeterminate =
+    count > 0 && !$("download-check-all").checked;
+  $("download-bulk")
+    .querySelectorAll("button")
+    .forEach((button) => {
+      button.disabled =
+        busy ||
+        !allTasks().some(
+          (task) =>
+            selected.has(taskKey(task)) &&
+            !errors[task.executor] &&
+            eligible(task, button.dataset.downloadBulk),
+        );
     });
-  });
-
-  Array.from(state.internalDownloadSamples.keys()).forEach((id) => {
-    if (!seen.has(id)) state.internalDownloadSamples.delete(id);
-  });
-  return items;
 }
-
-function renderInternalDownloadRow(item) {
-  const id = internalDownloadID(item);
-  const total = Number(item.total || 0);
-  const completed = Number(item.completed || 0);
-  const pct = total > 0 ? Math.min(100, Math.max(0, (completed / total) * 100)) : 0;
-  const status = item.status || "queued";
-  const error = item.error ? `<div class="subtle bad-text">${escapeHTML(item.error)}</div>` : "";
-  const speed = Number(item.speed_bps || 0);
-  const speedText = status === "active" ? `${formatBytes(speed)}/s` : "-";
-  const selected = state.selectedInternalDownloads.has(id) ? "checked" : "";
-  return `
-    <tr>
-      <td class="select-col"><input type="checkbox" data-internal-check="${escapeAttr(id)}" ${selected} aria-label="选择 ${escapeAttr(item.file_name || id)}"></td>
-      <td>
-        <strong>${escapeHTML(item.file_name || id)}</strong>
-        <div class="mono subtle">${escapeHTML(id)}</div>
-      </td>
-      <td><span class="pill ${internalStatusClass(status)}">${escapeHTML(internalStatusLabel(status))}</span>${error}</td>
-      <td>
-        <div class="download-progress">
-          <div class="download-progress-meta">
-            <span>${pct.toFixed(1)}%</span>
-            <span>${formatBytes(completed)} / ${formatBytes(total)}</span>
-          </div>
-          <div class="download-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}">
-            <span style="width: ${pct.toFixed(2)}%"></span>
-          </div>
-          <div class="download-speed">速度：${escapeHTML(speedText)}</div>
-        </div>
-      </td>
-      <td class="mono">${escapeHTML(item.path || "-")}</td>
-      <td class="time-cell">${formatTime(item.updated_at || item.created_at)}</td>
-      <td>
-        <div class="row-actions">
-          ${status === "paused" || status === "error" ? `<button class="btn primary compact" data-internal-action="start" data-internal-id="${escapeAttr(id)}">开始</button>` : ""}
-          ${status !== "complete" && status !== "paused" ? `<button class="btn secondary compact" data-internal-action="pause" data-internal-id="${escapeAttr(id)}">暂停</button>` : ""}
-          <button class="btn danger compact" data-internal-action="delete" data-internal-id="${escapeAttr(id)}">删除</button>
-        </div>
-      </td>
-    </tr>
-  `;
+function details(task) {
+  const content = element("dl", null, "detail-list");
+  for (const [label, value] of [
+    ["文件", task.file_name],
+    ["执行器", executorLabel(task.executor)],
+    ["状态", statusLabel(taskState(task))],
+    ["账号", task.account],
+    ["任务 ID", task.id],
+    ["来源记录", task.task_id],
+    ["保存路径", task.path || task.dir],
+    ["创建时间", time(task.created_at)],
+    ["开始时间", time(task.started_at)],
+    ["更新时间", time(task.updated_at)],
+    [
+      "已用时间",
+      task.elapsed_seconds > 0 ? `${task.elapsed_seconds} 秒` : null,
+    ],
+    ["预计剩余", task.eta_seconds > 0 ? `${task.eta_seconds} 秒` : null],
+    ["错误", task.error],
+  ])
+    content.append(element("dt", label), element("dd", value || "—"));
+  if (task.executor === "aria2" && taskState(task) === "error")
+    content.append(
+      element("dt", "重新下载"),
+      element("dd", "此 aria2 任务已终止，可在「链接记录」中重新提交下载。"),
+    );
+  openDrawer("下载任务详情", content);
 }
-
-function selectInternalDownloads(mode) {
-  state.selectedInternalDownloads.clear();
-  if (mode !== "clear") {
-    state.internalDownloads.forEach((item) => {
-      const id = internalDownloadID(item);
-      const status = item.status || "queued";
-      if (!id) return;
-      if (mode === "all" || mode === status || (mode === "unfinished" && status !== "complete")) {
-        state.selectedInternalDownloads.add(id);
+async function control(action, tasks) {
+  if (busy) return;
+  if (
+    action === "delete" &&
+    !confirm(
+      `删除选中的 ${tasks.length} 项下载任务？本地未完成任务的临时文件会清理，已完成文件保留；aria2 移除任务或结果记录，不主动删除下载文件。`,
+    )
+  )
+    return;
+  const available = tasks.filter((task) => !errors[task.executor]),
+    groups = groupActions(available, action);
+  if (!groups.length) return;
+  busy = true;
+  render();
+  let changed = 0,
+    skipped =
+      tasks.length - available.filter((task) => eligible(task, action)).length;
+  const failures = [];
+  await Promise.all(
+    groups.map(async (request) => {
+      try {
+        const data = await api("/api/download-tasks/actions", {
+          method: "POST",
+          body: JSON.stringify(request),
+        });
+        changed += data.result?.changed || 0;
+        skipped += data.result?.skipped || 0;
+        failures.push(
+          ...(data.result?.errors || []).map(
+            (error) => `${executorLabel(request.executor)}：${error}`,
+          ),
+        );
+      } catch (error) {
+        failures.push(`${executorLabel(request.executor)}：${error.message}`);
       }
-    });
-  }
-  renderInternalDownloads();
-  setInternalDownloadStatus(`已选中 ${state.selectedInternalDownloads.size} 个任务。`);
+    }),
+  );
+  busy = false;
+  if (!failures.length) selected.clear();
+  await refresh();
+  $("download-message").className =
+    `notice ${failures.length ? "error" : "success"}`;
+  $("download-message").textContent =
+    `已处理 ${changed} 项，跳过 ${skipped} 项${failures.length ? `；${failures.join("；")}` : ""}`;
+  selection();
 }
-
-async function runInternalDownloadBulkAction(action) {
-  const ids = Array.from(state.selectedInternalDownloads);
-  if (!ids.length) {
-    setInternalDownloadStatus("请先选择需要处理的本地下载任务。", "error");
-    return;
-  }
-  if (action === "delete" && !confirm(`删除选中的 ${ids.length} 个下载任务？未完成的本地文件会一并删除。`)) return;
-  await runInternalDownloadAction(action, ids);
+function stop() {
+  active = false;
+  ++generation;
+  releases.forEach((release) => release());
+  releases = [];
+  linksPage?.stop?.();
+  closeDrawer();
 }
-
-async function runInternalDownloadAction(action, ids) {
-  const uniqueIDs = Array.from(new Set(ids)).filter(Boolean);
-  if (!uniqueIDs.length) {
-    setInternalDownloadStatus("请先选择需要处理的本地下载任务。", "error");
-    return;
-  }
-  setInternalDownloadStatus(internalActionPending(action));
-  try {
-    const data = await api("/api/internal-downloads/actions", {
-      method: "POST",
-      body: JSON.stringify({ action, ids: uniqueIDs }),
-    });
-    if (action === "delete") {
-      uniqueIDs.forEach((id) => state.selectedInternalDownloads.delete(id));
-    }
-    await loadInternalDownloads();
-    const result = data.result || {};
-    const errors = result.errors && result.errors.length ? `；失败 ${result.errors.length} 项：${result.errors.join("；")}` : "";
-    setInternalDownloadStatus(`已处理 ${result.changed || 0} 个任务，跳过 ${result.skipped || 0} 个${errors}`, errors ? "error" : "success");
-  } catch (error) {
-    setInternalDownloadStatus(error.message, "error");
-  }
-}
-
-function internalActionPending(action) {
-  if (action === "pause") return "正在暂停任务...";
-  if (action === "start") return "正在加入队列...";
-  if (action === "delete") return "正在删除任务...";
-  return "正在处理任务...";
-}
-
-export function internalStatusLabel(status) {
-  switch (status) {
-    case "queued":
-      return "排队中";
-    case "active":
-      return "下载中";
-    case "paused":
-      return "已暂停";
-    case "complete":
-      return "已完成";
-    case "error":
-      return "出错";
-    default:
-      return status || "-";
-  }
-}
-
-export function internalStatusClass(status) {
-  switch (status) {
-    case "complete":
-      return "";
-    case "error":
-      return "bad";
-    default:
-      return "warn";
-  }
-}
-
-function setInternalDownloadStatus(message, kind = "") {
-  const status = document.getElementById("internal-download-status");
-  status.className = `notice ${kind}`.trim();
-  status.textContent = message || "";
-}
-
-function pruneInternalDownloadSelection() {
-  const ids = new Set(state.internalDownloads.map(internalDownloadID).filter(Boolean));
-  state.selectedInternalDownloads = new Set(Array.from(state.selectedInternalDownloads).filter((id) => ids.has(id)));
-}
-
-function updateInternalSelectionState() {
-  pruneInternalDownloadSelection();
-  const ids = state.internalDownloads.map(internalDownloadID).filter(Boolean);
-  const selectedVisible = ids.filter((id) => state.selectedInternalDownloads.has(id)).length;
-  const selectVisible = document.getElementById("internal-select-visible");
-  if (selectVisible) {
-    selectVisible.checked = ids.length > 0 && selectedVisible === ids.length;
-    selectVisible.indeterminate = selectedVisible > 0 && selectedVisible < ids.length;
-  }
-
-  const count = state.selectedInternalDownloads.size;
-  const countLabel = document.getElementById("internal-selection-count");
-  if (countLabel) countLabel.textContent = `已选 ${count} 项`;
-  ["internal-start-selected", "internal-pause-selected", "internal-delete-selected"].forEach((id) => {
-    const button = document.getElementById(id);
-    if (button) button.disabled = count === 0;
-  });
-}
-
-export const page = { init: initDownloads, load: loadDownloads, stop: stopDownloads };
-
-function stopDownloads() {
- ++loadGeneration;
- stopInternalDownloadPolling();
- state.aria2Loaded = false;
- document.getElementById("aria2-frame")?.removeAttribute("src");
-}
+export const stopInternalDownloadPolling = stop;
+export const page = { init, load, stop };

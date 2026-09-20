@@ -34,14 +34,15 @@ func Manifest() manifest.Manifest {
 	field := func(name, title string, value, low, high int64) manifest.ConfigField {
 		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
 	}
-	return manifest.Manifest{
-		ID: ID, Commands: Commands(), Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发监控", View: "forwards", Module: "/static/js/forwards.js", Style: "/static/css/forwards.css", Order: 50, Settings: []string{"forward.rules", "trigger.forward", "forwarder"}}},
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "forward", Title: "转发管理", Order: 20, SettingsURL: "/config?tab=forward"},
+		ID:      ID, Commands: Commands(), Title: "转发队列", Pages: []manifest.Page{{Path: "/forwards", Title: "转发管理", View: "forwards", Module: "/static/js/forwards.js", Style: "/static/css/forwards.css", Order: 30, KeepVisible: true, SettingsURL: "/config?tab=forward"}},
 		Provides: []manifest.Port{manifest.PortOf[ports.ForwardTasks](ports.ForwardTasksName, 1, 0), manifest.PortOf[ports.ConsoleCommandHandler](commandPort, 1, 0), manifest.PortOf[ports.ForwardRouting](ports.ForwardRoutingName, 1, 0)},
 		Config: []manifest.ConfigField{
-			manifest.Choice("mode", "Forward mode", forwardModeDefault, []string{forwardModeDefault, forwardModeClone}, false),
-			manifest.Text("target", "Destination", "", false, false),
-			manifest.Flag("silent", "Send silently", false, false),
-			manifest.Number("dedupe_ttl_seconds", "Deduplication lifetime (seconds)", 600, 0, 8640000, false),
+			manifest.Choice("mode", "默认转发模式", forwardModeDefault, []string{forwardModeDefault, forwardModeClone}, false).WithHelp("default 优先官方转发，失败时降级为复制；clone 始终复制发送。"),
+			manifest.Text("target", "默认目标", "", false, false).WithHelp("未指定目标时使用；留空表示收藏夹。已匹配规则的来源使用规则目标。"),
+			manifest.Flag("silent", "静默发送", false, false),
+			manifest.Number("dedupe_ttl_seconds", "去重有效期（秒）", 600, 0, 8640000, false),
 
 			field("poll_interval_ms", "队列扫描间隔（毫秒）", 2000, 100, 3600000),
 			field(retryBaseField, "首次重试间隔（秒）", 5, 1, 86400),
@@ -50,7 +51,7 @@ func Manifest() manifest.Manifest {
 			field("history_hours", "已结束任务保留时间（小时）", 24, 1, 8760),
 			field("history_limit", "已结束任务保留数量", 200, 1, 100000),
 		},
-	}
+	}, "forward", "默认转发与队列", "dedupe_ttl_seconds", "poll_interval_ms", "retry_base_seconds", "retry_max_seconds", "max_attempts", "history_hours", "history_limit")
 }
 
 func (s *service) PrepareConfig(ctx context.Context, view config.View) (func(), error) {

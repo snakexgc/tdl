@@ -1,19 +1,99 @@
-.rule-help, .rule-summary { color: var(--muted); line-height: 1.65; }
-.forward-rules > .btn { margin: 0 8px 12px 0; }
-.forward-rule-card { margin: 16px 0; padding: 20px; border: 1px solid var(--line); background: var(--panel-soft); border-radius: 12px; }
-.rule-heading { display: flex; align-items: center; gap: 10px; }
-.rule-heading > input { flex: 1; min-width: 0; }
-.rule-heading > label { white-space: nowrap; }
-.rule-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 16px; }
-.chat-picker { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
-.chat-picker legend { font-weight: 600; padding: 0 6px; }
-.chat-picker > input, .chat-picker > select { margin-bottom: 8px; }
-.chat-results { max-height: 240px; overflow: auto; }
-.chat-choice { display: flex; align-items: center; gap: 9px; padding: 9px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
-.chat-choice > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.chat-choice > small { color: var(--muted); white-space: nowrap; }
-.selected-chats { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
-.selected-chats > .btn { font-size: 12px; padding: 5px 8px; background: var(--primary-soft); color: var(--primary-dark); }
-.forward-rule-card > select { width: auto; margin-right: 12px; }
-.rule-empty { padding: 28px; text-align: center; background: var(--panel-soft); border-radius: 10px; }
-@media (max-width: 850px) { .rule-columns { grid-template-columns: 1fr; } .rule-heading { flex-wrap: wrap; } }
+.rule-help,
+.rule-summary {
+  color: var(--muted);
+  line-height: 1.65;
+}
+.forward-rules > .btn {
+  margin: 0 8px 12px 0;
+}
+.forward-rule-card {
+  margin: 16px 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  border-radius: var(--radius);
+}
+.rule-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rule-heading > input {
+  flex: 1;
+  min-width: 0;
+}
+.rule-heading > label {
+  white-space: nowrap;
+}
+.rule-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+.chat-picker {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.chat-picker legend {
+  font-weight: 600;
+  padding: 0 6px;
+}
+.chat-picker > input,
+.chat-picker > select {
+  margin-bottom: 8px;
+}
+.chat-results {
+  max-height: 240px;
+  overflow: auto;
+}
+.chat-choice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.chat-choice > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chat-choice > small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.selected-chats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.selected-chats > .btn {
+  font-size: 12px;
+  padding: 5px 8px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+.forward-rule-card > select {
+  width: auto;
+  margin-right: 12px;
+}
+.rule-empty {
+  padding: 28px;
+  text-align: center;
+  background: var(--panel-soft);
+  border-radius: 10px;
+}
+@media (max-width: 850px) {
+  .rule-columns {
+    grid-template-columns: 1fr;
+  }
+  .rule-heading {
+    flex-wrap: wrap;
+  }
+}

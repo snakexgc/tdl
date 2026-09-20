@@ -34,15 +34,16 @@ type Rules struct{ settings atomic.Pointer[settings] }
 
 func Register(registry *rte.Registry) error {
 	zero, maximum := int64(0), int64(255)
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "目录与文件命名",
+	return registry.Register(manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"},
+		ID:      ID, Title: "目录与文件命名",
 		Provides: []manifest.Port{manifest.PortOf[ports.NamingRules](ports.NamingRulesName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: filenameField, Title: "文件名模板", Type: manifest.String, Default: "P_S_F"},
-			{Name: directoryField, Title: "目录模板", Type: manifest.String, Default: "G\\Y&M"},
+			{Name: filenameField, Title: "文件名模板", Help: "支持 G 名称、P 来源 ID、I 消息文字、F 原始文件名、S/R 消息 ID、A 相册 ID、Y/M/D 日期，例如 G-I-F。", Type: manifest.String, Default: "P_S_F"},
+			{Name: directoryField, Title: "目录模板", Help: "使用与文件名相同的变量；I 会保留中英文及数字并自动截断。", Type: manifest.String, Default: "G\\Y&M"},
 			{Name: maxBytesField, Title: "文件名字节上限", Type: manifest.Int, Default: 255, Min: &zero, Max: &maximum},
 		},
-	}, func() rte.Component { return &Rules{} })
+	}, "download", "文件命名"), func() rte.Component { return &Rules{} })
 }
 
 func (r *Rules) Init(ctx context.Context, k rte.Kernel) error {

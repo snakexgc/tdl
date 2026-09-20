@@ -19,17 +19,19 @@ func Manifest() manifest.Manifest {
 		low := int64(1)
 		return manifest.ConfigField{Name: name, Title: title, Type: manifest.Int, Default: value, Min: &low, Max: &high}
 	}
-	return manifest.Manifest{ID: ID, Title: "HTTP Range 代理", Provides: []manifest.Port{manifest.PortOf[http.Handler](ports.RangeHandlerName, 1, 0)}, Config: []manifest.ConfigField{
-		manifest.Text("address", "Listen address", "0.0.0.0", false, true),
-		manifest.Number("port", "Listen port", 22334, 1, 65535, true),
-		manifest.FormattedText("public_base_url", "Public download URL", "", "url", false, false),
-		manifest.Number("link_ttl_hours", "Download link lifetime (hours)", 24, 0, 876000, false),
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "links", Title: "下载链接服务", Order: 30, SettingsURL: "/config?tab=links"}, ID: ID, Title: "HTTP Range 代理", Provides: []manifest.Port{manifest.PortOf[http.Handler](ports.RangeHandlerName, 1, 0)}, Config: []manifest.ConfigField{
+			manifest.Text("address", "监听地址", "0.0.0.0", false, true),
+			manifest.Number("port", "监听端口", 22334, 1, 65535, true),
+			manifest.FormattedText("public_base_url", "公开访问地址", "", "url", false, false),
+			manifest.Number("link_ttl_hours", "链接有效期（小时）", 24, 0, 876000, false),
 
-		field(clientWaitField, "等待账号连接超时（秒）", 30, 600),
-		field("persist_timeout_seconds", "传输记录保存超时（秒）", 5, 300),
-		field("task_cleanup_seconds", "过期任务清理间隔（秒）", 3600, 86400),
-		field("source_cleanup_seconds", "闲置源清理间隔（秒）", 60, 3600),
-	}}
+			field(clientWaitField, "等待账号连接超时（秒）", 30, 600),
+			field("persist_timeout_seconds", "传输记录保存超时（秒）", 5, 300),
+			field("task_cleanup_seconds", "过期任务清理间隔（秒）", 3600, 86400),
+			field("source_cleanup_seconds", "闲置源清理间隔（秒）", 60, 3600),
+		},
+	}, "links", "下载链接服务", "client_wait_seconds", "persist_timeout_seconds", "task_cleanup_seconds", "source_cleanup_seconds")
 }
 
 func (h *Handler) policy() policy {

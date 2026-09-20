@@ -12,7 +12,10 @@ import (
 	"github.com/snakexgc/tdl/rte/config"
 )
 
-const ID = "trigger.reaction"
+const (
+	ID            = "trigger.reaction"
+	reactionTitle = "表情触发"
+)
 
 const (
 	downloadField = "download"
@@ -20,14 +23,15 @@ const (
 )
 
 func Register(registry *rte.Registry) error {
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "表情触发",
+	return registry.Register(manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "triggers", Title: reactionTitle, Order: 60, SettingsURL: "/config?tab=download"},
+		ID:      ID, Title: reactionTitle,
 		Provides: []manifest.Port{manifest.PortOf[ports.ReactionTrigger](ports.ReactionTriggerName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: downloadField, Title: "下载表情", Type: manifest.Strings, Default: []string{}},
-			{Name: forwardField, Title: "转发表情", Type: manifest.Strings, Default: []string{}},
+			{Name: downloadField, Title: "下载表情", Help: "每行一个表情；留空允许任意表情触发下载。", Type: manifest.Strings, Default: []string{}},
+			{Name: forwardField, SettingsTab: "forward", SettingsSection: reactionTitle, Title: "转发表情", Help: "每行一个表情；留空关闭表情触发转发，监听转发仍按规则工作。", Type: manifest.Strings, Default: []string{}},
 		},
-	}, func() rte.Component { return &Trigger{} })
+	}, "download", reactionTitle), func() rte.Component { return &Trigger{} })
 }
 
 type Trigger struct {

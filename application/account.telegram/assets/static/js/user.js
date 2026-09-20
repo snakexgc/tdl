@@ -57,6 +57,7 @@ export async function loadUser() {
   target.innerHTML = `<div class="info-item info-item-wide"><div class="info-value">正在检查...</div></div>`;
   try {
     const data = await api("/api/user");
+    window.dispatchEvent(new CustomEvent("current-account-changed", { detail: data }));
     const user = data.user || {};
     target.innerHTML = renderUserInfoItems(data, user);
     state.userSessions = data.sessions || [];

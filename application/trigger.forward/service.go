@@ -24,11 +24,12 @@ func Register(registry *rte.Registry, handler ports.ForwardIntentHandler, capaci
 }
 
 func Manifest() manifest.Manifest {
-	return manifest.Manifest{
-		ID: ID, Config: []manifest.ConfigField{manifest.List("listen", "Source chats", false), manifest.Flag("listen_comments", "Listen to comments", true, false)}, Title: "转发触发意图",
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "forward", Title: "转发管理", Order: 20, SettingsURL: "/config?tab=forward"},
+		ID:      ID, Config: []manifest.ConfigField{manifest.List("listen", "监听来源", false), manifest.Flag("listen_comments", "监听频道评论", true, false)}, Title: "转发触发意图",
 		Provides:  []manifest.Port{manifest.PortOf[ports.ForwardIntents](ports.ForwardIntentsName, 1, 0), manifest.PortOf[ports.ForwardListening](ports.ForwardListeningName, 1, 0)},
 		Publishes: []string{types.ForwardRequested}, Subscribes: []string{types.ForwardRequested},
-	}
+	}, "forward", "监听范围")
 }
 
 type service struct {

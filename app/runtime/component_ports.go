@@ -48,7 +48,8 @@ func daemonComponentValues(cfg *config.Config) map[string]map[string]any {
 	values["trigger.reaction"] = map[string]any{"download": append([]string{}, cfg.TriggerReactions...), "forward": append([]string{}, cfg.Forward.TriggerReactions...)}
 	values["trigger.messagelink"] = map[string]any{}
 	values["account.telegram"] = map[string]any{apiIDField: cfg.Telegram.APIID, apiHashField: cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, "use_builtin": cfg.Telegram.UseBuiltin}
-	values["update.self"] = map[string]any{"proxy": config.EffectiveProxy(cfg)}
+	values["account.telegram"]["proxy"] = config.EffectiveProxy(cfg)
+	values["update.self"] = map[string]any{}
 	return values
 }
 

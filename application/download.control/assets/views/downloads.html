@@ -2,75 +2,147 @@
   <header class="page-head">
     <div>
       <h1>下载管理</h1>
-      <p>根据当前下载器模式查看和控制任务。</p>
+      <p>查看下载进度，管理任务与下载链接。</p>
     </div>
-    <button class="btn secondary" id="reload-aria2" type="button">重新载入</button>
+    <div class="actions">
+      <a class="btn secondary" data-app-link href="/config?tab=download"
+        >下载设置</a
+      ><a
+        class="btn secondary"
+        id="advanced-download"
+        target="_blank"
+        rel="noopener"
+        href="/aria2ng.html"
+        >高级下载控制（AriaNg）</a
+      >
+    </div>
   </header>
-  <div class="frame-wrap">
-    <section class="aria2-guide" id="aria2-guide" hidden>
-      <div>
-        <h2>aria2 尚未连接</h2>
-        <p id="aria2-guide-message">正在检查 aria2 配置...</p>
-      </div>
-      <div class="guide-grid">
-        <div>
-          <h3>需要确认</h3>
-          <ul>
-            <li><code>aria2.rpc_url</code> 是 tdl 服务端可以访问的 JSON-RPC 地址。</li>
-            <li><code>aria2.secret</code> 与 aria2 的 RPC 密钥一致。</li>
-            <li>如果 aria2 运行在 Docker、NAS 或另一台机器上，不要使用只能在本机访问的地址。</li>
-          </ul>
-        </div>
-        <div>
-          <h3>常见示例</h3>
-          <ul>
-            <li>同一台宿主机：<code>http://127.0.0.1:6800/jsonrpc</code></li>
-            <li>Docker Compose 同网络：<code>http://aria2-pro:6800/jsonrpc</code></li>
-            <li>另一台机器：<code>http://可访问的IP:6800/jsonrpc</code></li>
-          </ul>
-        </div>
-      </div>
-      <div class="actions guide-actions">
-        <button class="btn primary" id="aria2-open-config" type="button">打开配置文件</button>
-        <button class="btn secondary" id="aria2-retry-check" type="button">重新检查</button>
-      </div>
-    </section>
-    <iframe id="aria2-frame" title="AriaNg 下载管理" hidden></iframe>
-    <section class="internal-downloads" id="internal-downloads" hidden>
-      <div class="notice" id="internal-download-status"></div>
-      <div class="internal-bulk-toolbar">
-        <div class="internal-bulk-group">
-          <button class="btn secondary compact" id="internal-select-all" type="button">全选</button>
-          <button class="btn secondary compact" id="internal-select-complete" type="button">选中已完成</button>
-          <button class="btn secondary compact" id="internal-select-unfinished" type="button">选中未完成</button>
-          <button class="btn secondary compact" id="internal-select-error" type="button">选中失败</button>
-          <button class="btn secondary compact" id="internal-select-clear" type="button">清空选择</button>
-        </div>
-        <div class="internal-bulk-group">
-          <span class="internal-selection-count" id="internal-selection-count">已选 0 项</span>
-          <button class="btn primary compact" id="internal-start-selected" type="button" disabled>开始选中</button>
-          <button class="btn secondary compact" id="internal-pause-selected" type="button" disabled>暂停选中</button>
-          <button class="btn danger compact" id="internal-delete-selected" type="button" disabled>删除选中</button>
-        </div>
-      </div>
-      <div class="table-shell internal-table-shell">
-        <table id="internal-download-table">
-          <thead>
-            <tr>
-              <th class="select-col"><input id="internal-select-visible" type="checkbox" aria-label="全选本地下载任务"></th>
-              <th>文件</th>
-              <th>状态</th>
-              <th>进度</th>
-              <th>保存路径</th>
-              <th>更新时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="internal-download-body">
-            <tr><td colspan="7" class="empty">正在加载...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+  <div class="tabs page-tabs" id="download-tabs" aria-label="下载管理分类">
+    <button
+      class="tab-button active"
+      id="download-tab-tasks"
+      type="button"
+      role="tab"
+      data-tab="tasks"
+      aria-controls="download-tasks-panel"
+    >
+      任务
+    </button>
+    <button
+      class="tab-button"
+      id="download-tab-links"
+      type="button"
+      role="tab"
+      data-tab="links"
+      aria-controls="download-links-panel"
+    >
+      链接记录
+    </button>
   </div>
+  <section
+    id="download-tasks-panel"
+    role="tabpanel"
+    aria-labelledby="download-tab-tasks"
+  >
+    <div class="task-toolbar">
+      <label class="search-field"
+        ><span class="sr-only">搜索下载文件</span
+        ><input id="download-search" type="search" placeholder="搜索文件名"
+      /></label>
+      <label
+        ><span class="sr-only">执行器</span
+        ><select id="download-executor">
+          <option value="all">全部执行器</option>
+          <option value="local">本地下载</option>
+          <option value="aria2">aria2</option>
+        </select></label
+      >
+      <label
+        ><span class="sr-only">任务状态</span
+        ><select id="download-state">
+          <option value="all">全部状态</option>
+          <option value="active">下载中</option>
+          <option value="queued">排队中</option>
+          <option value="paused">已暂停</option>
+          <option value="complete">已完成</option>
+          <option value="error">出错</option>
+          <option value="unknown">未知</option>
+          <option value="removed">已移除</option>
+        </select></label
+      >
+      <label
+        ><span class="sr-only">快速选择</span
+        ><select id="download-select">
+          <option value="">快速选择</option>
+          <option value="all">选中当前列表</option>
+          <option value="complete">选中已完成</option>
+          <option value="unfinished">选中未完成</option>
+          <option value="error">选中出错</option>
+          <option value="clear">清空选择</option>
+        </select></label
+      >
+      <button class="btn secondary" id="download-refresh" type="button">
+        刷新
+      </button>
+    </div>
+    <div id="download-health" class="executor-health" role="status"></div>
+    <div id="download-message" class="notice" role="status"></div>
+    <div id="download-bulk" class="bulk-toolbar" hidden>
+      <span id="download-selection-count"></span>
+      <button
+        class="btn secondary compact"
+        type="button"
+        data-download-bulk="resume"
+      >
+        恢复选中
+      </button>
+      <button
+        class="btn secondary compact"
+        type="button"
+        data-download-bulk="pause"
+      >
+        暂停选中
+      </button>
+      <button
+        class="btn danger compact"
+        type="button"
+        data-download-bulk="delete"
+      >
+        删除选中
+      </button>
+    </div>
+    <div class="table-shell">
+      <table id="download-table">
+        <thead>
+          <tr>
+            <th class="select-col">
+              <input
+                id="download-check-all"
+                type="checkbox"
+                aria-label="选择当前列表"
+              />
+            </th>
+            <th>文件名</th>
+            <th>执行器</th>
+            <th>状态</th>
+            <th>进度</th>
+            <th>速度</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="download-body">
+          <tr>
+            <td colspan="8" class="empty">正在加载任务…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <section
+    id="download-links-panel"
+    role="tabpanel"
+    aria-labelledby="download-tab-links"
+    hidden
+  ></section>
 </section>

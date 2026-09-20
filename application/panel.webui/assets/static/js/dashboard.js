@@ -13,6 +13,7 @@ import {
 
 import { observe } from "./events.js";
 let unobserve;
+let overviewReleases = [], overviewData = {}, overviewErrors = {}, overviewActive = false, overviewGeneration = 0;
 
 export function initDashboard() {
   document.getElementById("refresh-dashboard").addEventListener("click", () => loadDashboard({ force: true }));
@@ -20,6 +21,7 @@ export function initDashboard() {
 
 export async function loadDashboard(options = {}) {
   startDashboardPolling();
+  void loadOverview();
   if (state.dashboardLoading) return;
   state.dashboardLoading = true;
   const silent = Boolean(options.silent);
@@ -48,6 +50,7 @@ function startDashboardPolling() {
 export function stopDashboardPolling() {
   unobserve?.();
   unobserve = null;
+  overviewActive = false; ++overviewGeneration; overviewReleases.forEach(release => release()); overviewReleases = [];
 }
 
 function pushDashboardSample(data) {
@@ -112,18 +115,18 @@ function renderDashboard() {
   renderDashboardStatBars(latest);
 
   renderSmoothChart("dashboard-cpu-chart", "dashboard-cpu-axis", [
-    { key: "cpu", label: "CPU", color: "#0b7f72" },
+    { key: "cpu", label: "CPU", color: "var(--chart-1)" },
   ], { min: 0, formatter: formatPercent });
 
   renderSmoothChart("dashboard-memory-chart", "dashboard-memory-axis", [
-    { key: "memoryTotal", label: "总用量", color: "#0b7f72" },
-    { key: "memorySoftware", label: "软件用量", color: "#6f5cc2" },
-    { key: "memoryRetained", label: "保留堆", color: "#6a7380" },
+    { key: "memoryTotal", label: "总用量", color: "var(--chart-1)" },
+    { key: "memorySoftware", label: "软件用量", color: "var(--chart-2)" },
+    { key: "memoryRetained", label: "保留堆", color: "var(--chart-3)" },
   ], { min: 0, formatter: formatBytes });
 
   renderSmoothChart("dashboard-speed-chart", "dashboard-speed-axis", [
-    { key: "gotdSpeed", label: "gotd", color: "#0b7f72" },
-    { key: "aria2Speed", label: "aria2", color: "#c47a16" },
+    { key: "gotdSpeed", label: "gotd", color: "var(--chart-1)" },
+    { key: "aria2Speed", label: "aria2", color: "var(--chart-3)" },
   ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
 }
 
@@ -172,7 +175,7 @@ function renderSmoothChart(svgID, axisID, series, options = {}) {
   if (axis) axis.textContent = "";
 
   const bounds = svg.getBoundingClientRect();
-  const width = Math.max(320, Math.round(bounds.width || 640));
+  const width = Math.max(1, Math.round(bounds.width || 640));
   const height = Math.max(140, Math.round(bounds.height || 160));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.removeAttribute("preserveAspectRatio");
@@ -250,7 +253,7 @@ function bindDashboardChartHover(svg, chart) {
 
   hitArea.addEventListener("mousemove", (event) => {
     const rect = svg.getBoundingClientRect();
-    const rawX = event.clientX - rect.left;
+    const rawX = (event.clientX - rect.left) * chart.width / rect.width;
     const x = Math.min(chart.width - chart.padding.right, Math.max(chart.padding.left, rawX));
     const virtualIndex = ((x - chart.padding.left) / chart.plotWidth) * (chart.slotCount - 1) - chart.slotOffset;
     const index = Math.min(state.dashboardSamples.length - 1, Math.max(0, Math.round(virtualIndex)));
@@ -382,3 +385,28 @@ function setDashboardStatus(message, kind = "") {
 }
 
 export const page = { init: initDashboard, load: loadDashboard, stop: stopDashboardPolling };
+
+const overviewSources = { local: ["download-tasks-local", "/api/download-tasks?executor=local"], aria2: ["download-tasks-aria2", "/api/download-tasks?executor=aria2"], forward: ["forwards", "/api/forwards"] };
+async function loadOverview() {
+  overviewActive = true;
+  const generation = ++overviewGeneration;
+  if (!overviewReleases.length) for (const [name, [topic]] of Object.entries(overviewSources)) overviewReleases.push(observe(topic, (data, error) => receiveOverview(name, data, error)));
+  await Promise.all(Object.entries(overviewSources).map(async ([name, [, endpoint]]) => {
+    try { const data = await api(endpoint, { signal: AbortSignal.timeout(5000) }); if (generation === overviewGeneration && overviewActive) receiveOverview(name, data); }
+    catch (error) { if (generation === overviewGeneration && overviewActive) receiveOverview(name, null, error.message); }
+  }));
+}
+function receiveOverview(name, data, error) {
+  if (!overviewActive) return;
+  overviewErrors[name] = error;
+  if (!error) overviewData[name] = data?.items || [];
+  const downloads = ["local", "aria2"].flatMap(key => overviewErrors[key] ? [] : overviewData[key] || []);
+  const known = ["local", "aria2"].some(key => overviewData[key] && !overviewErrors[key]);
+  setText("overview-downloads", known ? downloads.filter(task => !["complete", "removed"].includes(task.state)).length : "—");
+  setText("overview-download-errors", known ? downloads.filter(task => task.state === "error").length : "—");
+  setText("overview-downloads-note", ["local", "aria2"].every(key => overviewData[key] && !overviewErrors[key]) ? "当前账号未结束任务" : "部分执行器尚不可用，统计可用数据");
+  const forwards = overviewData.forward;
+  setText("overview-forwards", forwards && !overviewErrors.forward ? forwards.filter(task => !["done", "error"].includes(task.status)).length : "—");
+  setText("overview-forward-errors", forwards && !overviewErrors.forward ? forwards.filter(task => task.status === "error").length : "—");
+  setText("overview-forwards-note", overviewErrors.forward ? "转发服务暂不可用" : "等待、运行及暂停中的任务");
+}

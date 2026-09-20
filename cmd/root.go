@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/bot"
+	"github.com/snakexgc/tdl/app/reset"
 	tdlruntime "github.com/snakexgc/tdl/app/runtime"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/internal/core/util/fsutil"
@@ -35,6 +36,7 @@ var (
 )
 
 func New() *cobra.Command {
+	var closeLog func() error
 	// allow PersistentPreRun to be called for every command
 	cobra.EnableTraverseRunHooks = true
 	cobra.MousetrapHelpText = ""
@@ -63,8 +65,9 @@ func New() *cobra.Command {
 			if debug {
 				level = zap.DebugLevel
 			}
-			cmd.SetContext(logctx.With(cmd.Context(),
-				logutil.New(level, filepath.Join(consts.LogPath, "latest.log"))))
+			logger, closeFile := logutil.NewWithClose(level, filepath.Join(consts.LogPath, "latest.log"))
+			closeLog = closeFile
+			cmd.SetContext(logctx.With(cmd.Context(), logger))
 
 			ns := cfg.Namespace
 			if ns != "" {
@@ -95,6 +98,7 @@ func New() *cobra.Command {
 			return multierr.Combine(
 				kv.From(cmd.Context()).Close(),
 				logctx.From(cmd.Context()).Sync(),
+				closeLog(),
 			)
 		},
 	}
@@ -137,8 +141,11 @@ func runBot(cmd *cobra.Command) error {
 		}
 	}
 	logctx.From(cmd.Context()).Info("Component configuration", zap.String("directory", directory))
+	plan := reset.New(consts.HomeDir, directory)
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
 		ComponentConfigDir: directory,
+		ResetPlan:          plan,
+		RequestReset:       func() { reset.Request(plan) },
 		RequestReboot:      bot.RequestReboot,
 		RequestUpdate:      bot.RequestUpdate,
 	})

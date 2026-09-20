@@ -27,24 +27,25 @@ const (
 
 func Manifest() manifest.Manifest {
 	minimum, maximum := int64(1), int64(300)
-	return manifest.Manifest{
-		ID: ID, Title: "Telegram 通知",
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "bot", Title: "机器人与通知", Order: 50, SettingsURL: "/config?tab=bot"},
+		ID:      ID, Title: "Telegram 通知",
 		Provides:   []manifest.Port{manifest.PortOf[ports.Notifications](ports.NotificationsName, 1, 1)},
 		Publishes:  []string{types.NotificationRequested},
 		Subscribes: []string{types.NotificationRequested},
 		Requires:   []manifest.Require{{Port: manifest.PortOf[ports.NotificationTransport](ports.NotificationTransportName, 1, 0), Optional: true}},
 		Config: []manifest.ConfigField{
-			manifest.Flag("on_download_start", "Notify download start", false, false),
-			manifest.Flag("on_download_complete", "Notify completion", false, false),
-			manifest.Flag("on_download_pause", "Notify pause", false, false),
-			manifest.Flag("on_download_error", "Notify errors", false, false),
-			manifest.Flag("live_progress", "Send live progress", false, false),
-			manifest.Number("live_progress_interval_seconds", "Progress interval (seconds)", 5, 5, 86400, false),
+			manifest.Flag("on_download_start", "下载开始通知", false, false),
+			manifest.Flag("on_download_complete", "下载完成通知", false, false),
+			manifest.Flag("on_download_pause", "下载暂停通知", false, false),
+			manifest.Flag("on_download_error", "下载失败通知", false, false),
+			manifest.Flag("live_progress", "实时进度通知", false, false),
+			manifest.Number("live_progress_interval_seconds", "进度更新间隔（秒）", 5, 5, 86400, false),
 
 			{Name: recipientsField, Title: "接收者 ID", Type: manifest.Strings, Default: []string{}},
 			{Name: "timeout_seconds", Title: "发送超时（秒）", Type: manifest.Int, Default: 15, Min: &minimum, Max: &maximum},
 		},
-	}
+	}, "notifications", "下载通知")
 }
 
 func Register(registry *rte.Registry) error {

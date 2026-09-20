@@ -29,8 +29,5 @@ func (m *Manager) SetComponentEnabled(ctx context.Context, id string, enabled bo
 }
 
 func (m *Manager) botProxy(cfg *config.Config) string {
-	if m.componentStore != nil || cfg.Bot.Proxy != "" {
-		return cfg.Bot.Proxy
-	}
 	return config.EffectiveProxy(cfg)
 }

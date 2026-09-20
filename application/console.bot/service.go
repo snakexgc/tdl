@@ -20,11 +20,12 @@ const (
 )
 
 func Manifest() manifest.Manifest {
-	return manifest.Manifest{
-		ID: ID, Commands: Commands(), Title: "Bot 控制台",
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "bot", Title: "机器人与通知", Order: 50, SettingsURL: "/config?tab=bot"},
+		ID:      ID, Commands: Commands(), Title: "Bot 控制台",
 		Provides: []manifest.Port{manifest.PortOf[ports.Console](ports.ConsoleName, 1, 0)},
-		Config:   []manifest.ConfigField{manifest.Text("token", "Bot token", "", true, true), manifest.FormattedText("proxy", "Bot proxy", "", "proxy", true, true), {Name: allowedField, Title: "允许的用户 ID", Type: manifest.Strings, Default: []string{}}},
-	}
+		Config:   []manifest.ConfigField{manifest.Text("token", "机器人 Token", "", true, true), {Name: "proxy", Title: "旧版机器人代理（已停用）", Type: manifest.String, Default: "", Secret: true, ReplacedBy: "account.telegram.proxy", Help: "仅兼容读取旧配置；实际使用网络配置中的统一网络代理。"}, {Name: allowedField, Title: "允许的用户 ID", Type: manifest.Strings, Default: []string{}}},
+	}, "bot", "机器人访问")
 }
 
 func Register(registry *rte.Registry) error { return RegisterCommands(registry, Commands()) }

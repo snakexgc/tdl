@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	account "github.com/snakexgc/tdl/application/account.telegram"
 	updater "github.com/snakexgc/tdl/application/update.self"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
@@ -11,6 +12,8 @@ import (
 )
 
 const DefaultUpdateRepository = updater.DefaultRepository
+
+const sharedProxyField = "proxy"
 
 // Process helpers remain in the composition boundary because the apply helper
 // also runs before the normal application runtime has been initialized.
@@ -40,7 +43,7 @@ func updatePort(ctx context.Context, proxy string) (ports.Updater, func(), error
 	if err != nil {
 		return nil, nil, err
 	}
-	host, err := registry.Build(types.DefaultAccount, map[string]bool{updater.ID: true}, map[string]map[string]any{updater.ID: {"proxy": proxy}})
+	host, err := registry.Build(types.DefaultAccount, map[string]bool{account.ID: true, updater.ID: true}, map[string]map[string]any{account.ID: {sharedProxyField: proxy}})
 	if err != nil {
 		return nil, nil, err
 	}

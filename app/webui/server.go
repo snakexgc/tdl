@@ -16,6 +16,7 @@ import (
 	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/app/reset"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
@@ -99,6 +100,8 @@ type Options struct {
 	AfterConfigSave  func(*config.Config)
 	OnLoginSuccess   func(*tg.User)
 	RequestReboot    func()
+	ResetPlan        *reset.Plan
+	RequestReset     func()
 	RequestUpdate    func(updater.Plan)
 	WatchRunning     func() bool
 	ModuleManager    ModuleManager
@@ -119,6 +122,7 @@ type ModuleManager interface {
 }
 
 type ModuleState struct {
+	ComponentID string `json:"component_id,omitempty"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -275,6 +279,7 @@ func (s *Server) routes() http.Handler {
 		"/api/update/check":               s.handleUpdateCheck,
 		"/api/update/apply":               s.handleUpdateApply,
 		"/api/system/reboot":              s.handleReboot,
+		"/api/system/reset":               s.handleReset,
 		"/":                               s.handleAppShell,
 	}
 	for _, route := range application.WebRoutes(s.opts.Catalog) {

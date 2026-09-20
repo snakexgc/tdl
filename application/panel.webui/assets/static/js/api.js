@@ -22,7 +22,9 @@ export async function api(path, options = {}) {
     }
   }
   if (!response.ok) {
-    throw new Error(data.error || data.message || response.statusText);
+    const error = new Error(data.error || data.message || response.statusText);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }

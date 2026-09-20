@@ -12,6 +12,8 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
+const shutdownInProgressMessage = "an update, reboot or reset is already in progress"
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -101,7 +103,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.shutdownRequested.CompareAndSwap(false, true) {
-		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
+		writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
 		return
 	}
 	plan, info, err := s.downloadUpdate(r)
@@ -143,7 +145,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.shutdownRequested.CompareAndSwap(false, true) {
-		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
+		writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldMessage: "正在重启 tdl"})

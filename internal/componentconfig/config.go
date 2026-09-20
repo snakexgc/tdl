@@ -60,11 +60,6 @@ func Export(cfg *legacy.Config, catalog *rte.Catalog) (map[string]config.Documen
 		return nil, err
 	}
 	put(root, proxyField, legacy.EffectiveProxy(cfg))
-	botProxy := cfg.Bot.Proxy
-	if botProxy == "" {
-		botProxy = legacy.EffectiveProxy(cfg)
-	}
-	put(root, "bot.proxy", botProxy)
 	// Import the historical shared directory once. Local downloads never read
 	// or create paths belonging to the remote aria2 host after migration.
 	if cfg.Downloader.LocalRoot == "" && legacy.EffectiveDownloaderMode(cfg) == legacy.DownloaderModeInternal {
@@ -99,7 +94,6 @@ func Export(cfg *legacy.Config, catalog *rte.Catalog) (map[string]config.Documen
 	}
 	documents["console.bot"].Values["allowed_users"] = users
 	documents["notify.telegram"].Values["recipients"] = users
-	documents["update.self"].Values[proxyField] = legacy.EffectiveProxy(cfg)
 	return documents, nil
 }
 
@@ -165,6 +159,9 @@ func Load(ctx context.Context, store *config.Store, bootstrap *legacy.Config) (*
 	}
 	put(root, "proxy_username", "")
 	put(root, "proxy_password", "")
+	// Historical bot-specific overrides no longer influence outbound traffic.
+	sharedProxy, _ := get(root, proxyField)
+	put(root, "bot.proxy", sharedProxy)
 	put(root, "http.listen", "")
 	put(root, "webui.listen", "")
 	data, err := json.Marshal(root)

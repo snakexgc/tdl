@@ -10,6 +10,7 @@ import (
 	bberrors "go.etcd.io/bbolt/errors"
 
 	"github.com/snakexgc/tdl/app/bot"
+	"github.com/snakexgc/tdl/app/reset"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/cmd"
 )
@@ -39,6 +40,14 @@ func main() {
 
 		color.Red("Error: %+v", err)
 		os.Exit(1)
+	}
+	if plan := reset.Requested(); plan != nil {
+		if err := plan.Execute(); err != nil {
+			color.Red("Reset failed; TDL remains stopped: %+v", err)
+			os.Exit(1)
+		}
+		color.Green("Reset complete. Start TDL again to configure and log in.")
+		return
 	}
 	if plan, ok := bot.UpdateRequested(); ok {
 		if err := startUpdate(plan); err != nil {

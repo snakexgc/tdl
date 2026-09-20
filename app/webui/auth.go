@@ -32,6 +32,10 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("authentication required"))
 			return
 		}
+		if s.shutdownRequested.Load() && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

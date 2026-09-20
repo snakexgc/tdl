@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,16 @@ import (
 )
 
 const fieldResult = "result"
+
+func (s *Server) downloadTasksSnapshot(executor string) func(context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		items, err := s.downloadControl().Tasks(ctx, s.downloadAccount(), executor)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{fieldItems: items}, nil
+	}
+}
 
 func (s *Server) downloadAccount() types.AccountID {
 	account := types.AccountID(s.opts.Namespace)

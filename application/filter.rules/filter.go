@@ -24,16 +24,17 @@ const (
 
 func Register(registry *rte.Registry) error {
 	zero := int64(0)
-	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "下载过滤规则",
+	return registry.Register(manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"},
+		ID:      ID, Title: "下载过滤规则",
 		Provides: []manifest.Port{manifest.PortOf[ports.FilterRules](ports.FilterRulesName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: includeField, Title: "允许的扩展名", Type: manifest.Strings, Default: []string{}},
-			{Name: excludeField, Title: "排除的扩展名", Type: manifest.Strings, Default: []string{}},
-			{Name: minMBField, Title: "最小文件大小（MB）", Type: manifest.Int, Default: 0, Min: &zero},
-			{Name: maxMBField, Title: "最大文件大小（MB）", Type: manifest.Int, Default: 0, Min: &zero},
+			{Name: includeField, Title: "允许的扩展名", Help: "例如 mp4、mkv，每行一项。与排除列表互斥。", Type: manifest.Strings, Default: []string{}},
+			{Name: excludeField, Title: "排除的扩展名", Help: "例如 png、jpg，每行一项。与允许列表互斥。", Type: manifest.Strings, Default: []string{}},
+			{Name: minMBField, Title: "最小文件大小（MB）", Help: "包含边界，0 表示不限制。", Type: manifest.Int, Default: 0, Min: &zero},
+			{Name: maxMBField, Title: "最大文件大小（MB）", Help: "包含边界，0 表示不限制。", Type: manifest.Int, Default: 0, Min: &zero},
 		},
-	}, func() rte.Component { return &Rules{} })
+	}, "download", "文件过滤"), func() rte.Component { return &Rules{} })
 }
 
 type settings struct {

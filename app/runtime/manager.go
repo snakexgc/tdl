@@ -20,6 +20,7 @@ import (
 	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/app/reset"
 	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/app/webui"
@@ -49,6 +50,8 @@ const (
 
 type Options struct {
 	ComponentConfigDir string
+	ResetPlan          *reset.Plan
+	RequestReset       func()
 	RequestReboot      func()
 	RequestUpdate      func(updater.Plan)
 }
@@ -119,6 +122,8 @@ type Manager struct {
 	aria2Config aria2ManagerConfig
 
 	requestReboot func()
+	resetPlan     *reset.Plan
+	requestReset  func()
 	requestUpdate func(updater.Plan)
 
 	applyMu        sync.Mutex
@@ -146,6 +151,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	opts.RequestReboot = wrapShutdown(cancel, opts.RequestReboot)
+	if opts.RequestReset != nil {
+		opts.RequestReset = wrapShutdown(cancel, opts.RequestReset)
+	}
 	opts.RequestUpdate = wrapUpdateShutdown(cancel, opts.RequestUpdate)
 
 	manager := NewManager(runCtx, engine, namespaceKV, opts)
@@ -162,8 +170,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	<-runCtx.Done()
-	manager.Shutdown()
-	return nil
+	return manager.shutdown()
 }
 
 func wrapShutdown(cancel context.CancelFunc, fn func()) func() {
@@ -209,6 +216,8 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		kvEngine:        engine,
 		namespaceKV:     namespaceKV,
 		requestReboot:   opts.RequestReboot,
+		resetPlan:       opts.ResetPlan,
+		requestReset:    opts.RequestReset,
 		requestUpdate:   opts.RequestUpdate,
 		botStatus:       moduleStatusNotStarted,
 		watchMode:       config.EffectiveDownloaderMode(cfg),
@@ -270,6 +279,8 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 			AfterConfigSave:  m.ApplyConfig,
 			OnLoginSuccess:   m.onLoginSuccess,
 			RequestReboot:    m.requestReboot,
+			ResetPlan:        m.resetPlan,
+			RequestReset:     m.requestReset,
 			RequestUpdate:    m.requestUpdate,
 			WatchRunning:     m.watchCtrl.Running,
 			ModuleManager:    m,
@@ -544,7 +555,9 @@ func (m *Manager) StopAria2Manager() {
 	}
 }
 
-func (m *Manager) Shutdown() {
+func (m *Manager) Shutdown() { _ = m.shutdown() }
+
+func (m *Manager) shutdown() error {
 	m.scheduleMu.Lock()
 	m.closing.Store(true)
 	m.applyVersion.Add(1)
@@ -558,7 +571,9 @@ func (m *Manager) Shutdown() {
 	}
 	if err := m.reconciler.Reconcile(context.Background(), units); err != nil {
 		logctx.From(m.parent).Error("stop component resources; instances retained for retry", zap.Error(err))
+		return err
 	}
+	return nil
 }
 
 func (m *Manager) Notify(ctx context.Context, text string) {

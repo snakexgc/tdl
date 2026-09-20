@@ -39,7 +39,8 @@ func Register(registry *rte.Registry, handler ports.DownloadIntentHandler, capac
 
 func Manifest() manifest.Manifest {
 	return manifest.Manifest{
-		ID: ID, Title: "下载触发意图",
+		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"},
+		ID:      ID, Title: "下载触发意图",
 		Provides:  []manifest.Port{manifest.PortOf[ports.DownloadIntents](ports.DownloadIntentsName, 1, 0)},
 		Publishes: []string{types.DownloadRequested}, Subscribes: []string{types.DownloadRequested},
 	}

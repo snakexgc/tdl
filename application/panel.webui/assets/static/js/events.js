@@ -2,14 +2,19 @@
 // only a bounded fallback when a proxy does not support WebSocket upgrades.
 const listeners = new Map();
 const endpoints = { status: "/api/status", dashboard: "/api/dashboard", downloads: "/api/internal-downloads", forwards: "/api/forwards" };
+endpoints["download-tasks-local"] = "/api/download-tasks?executor=local";
+endpoints["download-tasks-aria2"] = "/api/download-tasks?executor=aria2";
 let socket, reconnect, fallback, stopped = true, attempts = 0;
 const pending = new Set();
 
 function indicator(value) {
   const element = document.getElementById("heartbeat-indicator");
-  if (element) element.dataset.state = value;
+  if (element) {
+    element.dataset.state = value;
+    element.title = { online: "已连接，实时接收更新", offline: "连接已断开，正在自动重连", checking: "正在建立连接", fallback: "已连接，定时获取更新" }[value];
+  }
   const label = document.getElementById("heartbeat-label");
-  if (label) label.textContent = { online: "TDL 实时连接", offline: "连接中断 · 正在重连", checking: "TDL 连接中", fallback: "TDL HTTP 备用连接" }[value];
+  if (label) label.textContent = value === "online" || value === "fallback" ? "已连接" : "断开连接";
 }
 
 function publish(topic, packet) {
@@ -47,7 +52,7 @@ async function pollFallback() {
         if (stopped || socket?.readyState === WebSocket.OPEN) return;
         publish(topic, { data });
         if (socket?.readyState !== WebSocket.OPEN) indicator("fallback");
-      }).catch(() => indicator("offline")).finally(() => pending.delete(topic));
+      }).catch(error => { if (!stopped && socket?.readyState !== WebSocket.OPEN) { publish(topic, { error: error.message }); indicator("offline"); } }).finally(() => pending.delete(topic));
   }
 }
 

@@ -10,7 +10,7 @@
   color: inherit;
   background: transparent;
   font: inherit;
-  font-weight: 700;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
@@ -31,5 +31,5 @@
 }
 
 .row-expired {
-  background: #fffdf8;
+  background: var(--warning-soft);
 }

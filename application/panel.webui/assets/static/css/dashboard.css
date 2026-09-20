@@ -2,15 +2,35 @@
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 24px 16px;
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.dashboard-section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.dashboard-section-head .notice {
+  margin: 0;
+  font-size: 12px;
 }
 
 .dashboard-card {
-  min-height: 240px;
-  padding: 16px;
+  min-height: 340px;
+  padding: 24px;
   display: grid;
-  grid-template-rows: auto minmax(160px, 1fr) auto;
-  gap: 12px;
+  grid-template-rows: auto minmax(200px, 1fr) auto;
+  gap: 24px;
 }
 
 .dashboard-card-wide {
@@ -33,26 +53,26 @@
 }
 
 .dashboard-card-head h2 {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  line-height: 1.3;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  line-height: 24px;
 }
 
 .dashboard-card-head p {
-  margin-top: 4px;
+  margin-top: 6px;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 18px;
 }
 
 .dashboard-card-head strong {
   color: var(--text);
-  font-size: 28px;
-  line-height: 1;
-  font-weight: 800;
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
   text-align: right;
   overflow-wrap: anywhere;
@@ -61,7 +81,7 @@
 /* ── Stat bars (download status card) ── */
 .dashboard-stat-bars {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   align-content: center;
 }
 
@@ -85,9 +105,9 @@
 
 .dashboard-stat-line strong {
   color: var(--text);
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.1;
-  font-weight: 700;
+  font-weight: 600;
   text-align: right;
   overflow-wrap: anywhere;
   letter-spacing: -0.02em;
@@ -97,7 +117,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(94, 112, 104, 0.12);
+  background: var(--bg-strong);
 }
 
 .dashboard-stat-fill {
@@ -105,44 +125,53 @@
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: var(--primary);
+  background: var(--chart-2);
   transition: width 220ms ease;
 }
 
-.dashboard-stat-fill-danger   { background: #ef4444; }
-.dashboard-stat-fill-warning  { background: #f59e0b; }
-.dashboard-stat-fill-aria2-active { background: #3b82f6; }
-.dashboard-stat-fill-muted    { background: #94a3b8; }
+.dashboard-stat-fill-danger {
+  background: var(--danger);
+}
+.dashboard-stat-fill-warning {
+  background: var(--chart-4);
+}
+.dashboard-stat-fill-aria2-active {
+  background: var(--chart-3);
+}
+.dashboard-stat-fill-muted {
+  background: var(--line-strong);
+}
 
 /* ── SVG charts ── */
 .dashboard-chart-shell {
   position: relative;
   width: 100%;
-  min-height: 160px;
+  min-height: 200px;
   overflow: visible;
 }
 
 .dashboard-chart {
   display: block;
   width: 100%;
-  height: 100%;
-  min-height: 160px;
+  height: 220px;
+  min-height: 200px;
 }
 
 .dashboard-chart .grid-line {
-  stroke: rgba(94, 112, 104, 0.12);
+  stroke: var(--line);
+  stroke-dasharray: 3 4;
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .axis-line {
-  stroke: rgba(56, 81, 75, 0.5);
+  stroke: var(--line);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .axis-tick {
-  stroke: rgba(56, 81, 75, 0.4);
+  stroke: var(--line);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
@@ -154,14 +183,14 @@
 
 .dashboard-chart .series-line {
   fill: none;
-  stroke-width: 2.5;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .hover-line {
-  stroke: rgba(56, 81, 75, 0.5);
+  stroke: var(--muted);
   stroke-width: 1;
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
@@ -177,7 +206,7 @@
   fill: rgba(255, 255, 255, 0.97);
   stroke: var(--line-strong);
   stroke-width: 1;
-  filter: drop-shadow(0 6px 16px rgba(15, 28, 24, 0.14));
+  filter: drop-shadow(0 4px 8px rgb(0 0 0 / 0.08));
 }
 
 .dashboard-chart .hover-tooltip-title {
@@ -202,9 +231,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .dashboard-legend span {
@@ -214,35 +243,66 @@
 }
 
 .dashboard-legend i {
-  width: 16px;
-  height: 3px;
-  border-radius: 999px;
-  flex: 0 0 16px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
 }
 
+.legend-cpu,
 .legend-total,
 .legend-gotd {
-  background: var(--primary);
+  background: var(--chart-1);
 }
 
 .legend-software {
-  background: #8b5cf6;
+  background: var(--chart-2);
 }
 
 .legend-aria2 {
-  background: #f59e0b;
+  background: var(--chart-3);
 }
 
 .legend-retained {
-  background: #94a3b8;
+  background: var(--chart-3);
 }
 
-@media (max-width: 900px) {
+@media (min-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+  .dashboard-card {
+    grid-column: span 6;
+  }
+  .dashboard-pull-card {
+    grid-column: span 5;
+  }
+  .dashboard-speed-card {
+    grid-column: span 7;
+  }
+}
+
+@media (max-width: 1100px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
   .dashboard-card-wide {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard-card {
+    padding: 20px 16px;
+    gap: 20px;
+  }
+  .dashboard-card-head {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .dashboard-card-head strong {
+    font-size: 26px;
+    line-height: 32px;
   }
 }

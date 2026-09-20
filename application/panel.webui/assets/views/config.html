@@ -1,15 +1,28 @@
 <section class="view" id="view-config">
   <header class="page-head">
     <div>
-      <h1>配置文件</h1>
-      <p>按字段修改配置。密码、密钥等敏感项留空时会保留原值。</p>
+      <h1>设置</h1>
+      <p>按业务调整参数。每个区块独立保存，高级参数按需展开。</p>
     </div>
-    <div class="actions">
-      <button class="btn secondary" id="reload-config" type="button">重新读取</button>
-      <button class="btn danger" id="reboot" type="button">重启生效</button>
-      <button class="btn primary" id="save-config" type="button">保存配置</button>
-    </div>
+    <button id="settings-reload" class="btn secondary" type="button">
+      重新读取 · 保留草稿
+    </button>
   </header>
-  <div class="notice" id="config-status"></div>
-  <form id="config-form" class="config-form"></form>
+  <div
+    class="tabs page-tabs settings-tabs"
+    id="settings-tabs"
+    aria-label="设置分类"
+  ></div>
+  <div
+    class="notice"
+    id="settings-message"
+    role="status"
+    aria-live="polite"
+  ></div>
+  <div
+    class="settings-draft-status"
+    id="settings-draft-status"
+    role="status"
+  ></div>
+  <div id="settings-panels"></div>
 </section>

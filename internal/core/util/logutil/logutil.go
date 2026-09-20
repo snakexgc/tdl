@@ -7,6 +7,12 @@ import (
 )
 
 func New(level zapcore.LevelEnabler, path string) *zap.Logger {
+	logger, _ := NewWithClose(level, path)
+	return logger
+}
+
+// NewWithClose lets the process release the rotating log before resetting state.
+func NewWithClose(level zapcore.LevelEnabler, path string) (*zap.Logger, func() error) {
 	rotate := &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    10,
@@ -23,5 +29,5 @@ func New(level zapcore.LevelEnabler, path string) *zap.Logger {
 	config.EncodeLevel = zapcore.CapitalLevelEncoder
 
 	core := zapcore.NewCore(zapcore.NewConsoleEncoder(config), writer, level)
-	return zap.New(core, zap.AddCaller())
+	return zap.New(core, zap.AddCaller()), rotate.Close
 }

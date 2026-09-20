@@ -11,7 +11,7 @@ type Binding struct {
 func Bindings() []Binding {
 	return []Binding{
 		{"account.telegram", "", map[string]string{"api_id": "telegram.api_id", "api_hash": "telegram.api_hash", "builtin_preset": "telegram.builtin_preset", "use_builtin": "telegram.use_builtin", proxyField: proxyField, "ntp": "ntp", "file_limit": "limit", "dc_pool_size": "pool_size", "delay_seconds": "delay", "reconnect_timeout_seconds": "reconnect_timeout"}},
-		{"console.bot", "modules.bot", map[string]string{"token": "bot.token", proxyField: "bot.proxy", "allowed_users": "bot.allowed_users"}},
+		{"console.bot", "modules.bot", map[string]string{"token": "bot.token", "allowed_users": "bot.allowed_users"}},
 		{"notify.telegram", "", map[string]string{"on_download_start": "bot.notify.on_download_start", "on_download_complete": "bot.notify.on_download_complete", "on_download_pause": "bot.notify.on_download_pause", "on_download_error": "bot.notify.on_download_error", "live_progress": "bot.notify.live_progress", "live_progress_interval_seconds": "bot.notify.live_progress_interval_seconds"}},
 		{"filter.rules", "", map[string]string{"include": "include", "exclude": "exclude", "min_mb": "file_size_min_mb", "max_mb": "file_size_max_mb"}},
 		{"naming.rules", "", map[string]string{"filename": "filename", "directory": "download_dir", "max_bytes": "filename_max_length"}},

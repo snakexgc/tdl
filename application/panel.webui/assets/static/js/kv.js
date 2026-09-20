@@ -4,8 +4,9 @@ import { api } from "./api.js";
 import { collator, escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
 import { internalStatusClass, internalStatusLabel } from "./downloads.js";
 import { loadStatus } from "./status.js";
-
+import { element, openDrawer } from "./ui.js";
 export function initKV() {
+  document.getElementById("kv-search").addEventListener("input", () => { state.selectedKV.clear(); renderKVTable(); });
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
 
   document.getElementById("select-all-kv").addEventListener("change", (event) => {
@@ -19,7 +20,7 @@ export function initKV() {
 
   document.getElementById("select-undownloaded").addEventListener("click", () => {
     state.selectedKV.clear();
-    state.kvItems.forEach((item) => {
+    sortedKVItems().forEach((item) => {
       if (!item.downloaded) {
         state.selectedKV.add(item.id);
       }
@@ -53,6 +54,17 @@ export function initKV() {
   });
 
   document.getElementById("kv-body").addEventListener("click", async (event) => {
+    const detail = event.target.closest("[data-link-details]");
+    if (detail) {
+      const item = state.kvItems.find(item => item.id === detail.dataset.linkDetails);
+      if (item) {
+        const content = element("div");
+        content.innerHTML = `<h3>${escapeHTML(item.file_name || item.id)}</h3><p class="mono">${escapeHTML(item.id)}</p><p><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">${escapeHTML(item.url)}</a></p><h3>传输状态</h3>${renderDownloadedState(item)}<h3>本地下载记录</h3>${renderInternalEntries(item)}<h3>aria2 下载记录</h3>${renderAria2Entries(item)}`;
+        content.style.overflowWrap = "anywhere";
+        openDrawer("链接记录详情", content);
+      }
+      return;
+    }
     const downloadButton = event.target.closest("[data-download-link]");
     if (downloadButton) {
       await runKVAction("download", [downloadButton.dataset.downloadLink], { confirm: false });
@@ -130,8 +142,8 @@ export async function loadKV() {
 function renderKVTable() {
   const body = document.getElementById("kv-body");
   renderSortButtons();
-  if (!state.kvItems.length) {
-    body.innerHTML = `<tr><td colspan="8" class="empty">没有下载链接记录</td></tr>`;
+  if (!sortedKVItems().length) {
+    body.innerHTML = `<tr><td colspan="8" class="empty">没有符合条件的链接记录</td></tr>`;
     updateKVSelectionState();
     return;
   }
@@ -151,11 +163,11 @@ function renderKVRow(item) {
       </td>
       <td>
         <strong>${escapeHTML(item.file_name || item.id)}</strong>
-        <div class="mono subtle">${escapeHTML(item.id)}</div>
+
         <div class="subtle">${formatBytes(item.file_size || 0)}</div>
       </td>
-      <td class="mono"><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">${escapeHTML(item.url)}</a></td>
-      <td>${renderDownloadEntries(item)}</td>
+      <td class="mono"><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">打开下载链接</a></td>
+      <td><button class="btn secondary compact" data-link-details="${escapeAttr(item.id)}">查看传输记录</button></td>
       <td>${renderDownloadedState(item)}</td>
       <td class="time-cell">${formatTime(item.created_at)}</td>
       <td class="time-cell">${escapeHTML(expires)}</td>
@@ -262,7 +274,8 @@ function renderSortButtons() {
 }
 
 function sortedKVItems() {
-  const items = [...state.kvItems];
+  const query = (document.getElementById("kv-search")?.value || "").trim().toLocaleLowerCase();
+  const items = state.kvItems.filter(item => `${item.file_name} ${item.id} ${item.url}`.toLocaleLowerCase().includes(query));
   const direction = state.kvSort.dir === "asc" ? 1 : -1;
   items.sort((a, b) => compareKV(a, b, state.kvSort.field) * direction);
   return items;
@@ -316,6 +329,8 @@ function updateKVSelectionState() {
   selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
 
   const count = state.selectedKV.size;
+  document.getElementById("download-selected").hidden = count === 0;
+  document.getElementById("delete-selected").hidden = count === 0;
   const downloadText = state.downloaderMode === "local" ? "加入下载队列" : "发送到 aria2";
   document.getElementById("download-selected").textContent = count ? `${downloadText} (${count})` : downloadText;
   document.getElementById("delete-selected").textContent = count ? `批量删除 (${count})` : "批量删除";
@@ -357,7 +372,7 @@ function kvActionMessage(action, data) {
     const target = state.downloaderMode === "local" ? "内部下载队列" : "aria2 下载队列";
     return `已将 ${data.added || 0} 条链接提交到 ${target}，跳过 ${data.skipped || 0} 条${errors}`;
   }
-  return `已删除 ${data.deleted || 0} 条 KV 记录${errors}`;
+  return `已删除 ${data.deleted || 0} 条链接记录${errors}`;
 }
 
 function setKVStatus(message, kind = "") {

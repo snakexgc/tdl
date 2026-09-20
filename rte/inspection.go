@@ -9,6 +9,7 @@ import (
 // Configuration describes a running component for a schema-driven HMI.
 // Sensitive values are omitted; callers never receive references to live data.
 type Configuration struct {
+	Feature        manifest.Feature       `json:"feature"`
 	Revision       string                 `json:"revision,omitempty"`
 	PendingRestart bool                   `json:"pending_restart,omitempty"`
 	Scope          Scope                  `json:"scope,omitempty"`
@@ -34,6 +35,7 @@ func (r *Runtime) configurationsLocked() []Configuration {
 		item := r.instances[id]
 		m := item.registration.Manifest
 		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Enabled: true, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
+		entry.Feature = m.Feature
 		entry.Pages = append([]manifest.Page{}, m.Pages...)
 		for i := range entry.Pages {
 			entry.Pages[i].Settings = append([]string(nil), entry.Pages[i].Settings...)

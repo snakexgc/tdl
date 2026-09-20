@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 
 	"github.com/snakexgc/tdl/bsw/services/telemetry"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const statusTopic = "status"
@@ -135,6 +136,10 @@ func (s *Server) snapshotSource(topic string) telemetry.Source {
 		return s.dashboardSnapshot
 	case "downloads":
 		return s.internalDownloadsSnapshot
+	case "download-tasks-local":
+		return s.downloadTasksSnapshot(localDownloadExecutor)
+	case "download-tasks-aria2":
+		return s.downloadTasksSnapshot(config.DownloaderModeAria2)
 	case "forwards":
 		return s.forwardsSnapshot
 	default:

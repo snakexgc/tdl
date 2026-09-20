@@ -15,7 +15,8 @@ const ID = "trigger.messagelink"
 
 func Register(registry *rte.Registry) error {
 	return registry.Register(manifest.Manifest{
-		ID: ID, Title: "消息链接触发",
+		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"},
+		ID:      ID, Title: "消息链接触发",
 		Provides: []manifest.Port{manifest.PortOf[ports.MessageLinks](ports.MessageLinksName, 1, 0)},
 	}, func() rte.Component { return &Validator{} })
 }

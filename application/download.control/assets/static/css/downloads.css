@@ -1,7 +1,7 @@
 /* Downloads view: AriaNg iframe shell, aria2 connection guide, internal table. */
 .frame-wrap {
-  height: calc(100vh - 122px);
-  min-height: 560px;
+  height: calc(100dvh - 260px);
+  min-height: 440px;
   overflow: hidden;
 }
 
@@ -15,7 +15,7 @@
 
 .internal-downloads {
   height: 100%;
-  padding: 18px;
+  padding: 24px;
   overflow: auto;
   background: #ffffff;
 }
@@ -30,6 +30,7 @@
 
 .internal-bulk-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -122,20 +123,20 @@
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(13, 148, 136, 0.1);
+  background: var(--bg-strong);
 }
 
 .download-progress-bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary), var(--primary-light));
+  background: var(--chart-2);
   transition: width 240ms ease;
 }
 
 .download-speed {
   color: var(--muted);
-  font-family: "JetBrains Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 

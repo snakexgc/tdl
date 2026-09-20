@@ -31,6 +31,14 @@ test("one websocket multiplexes views and HTTP fallback stops after recovery", a
   assert.equal(sockets.length, 1);
   sockets[0].open();
   assert.deepEqual(Array.from(sockets[0].sent.at(-1).topics), ["status", "downloads"]);
+  const receivedTasks = [];
+  const leaveTasks = mod.namespace.observe("download-tasks-aria2", (data, error) => receivedTasks.push({data, error}));
+  assert(sockets[0].sent.at(-1).topics.includes("download-tasks-aria2"));
+  sockets[0].onmessage({ data: JSON.stringify({ topic: "download-tasks-aria2", error: "RPC unavailable" }) });
+  assert.equal(receivedTasks[0].error, "RPC unavailable");
+  sockets[0].onmessage({ data: JSON.stringify({ topic: "download-tasks-aria2", data: { items: [{id: "owned"}] } }) });
+  assert.equal(receivedTasks[1].data.items[0].id, "owned");
+  leaveTasks();
   sockets[0].onmessage({ data: JSON.stringify({ topic: "status", data: { mode: "aria2" } }) });
   assert.equal(received[0].mode, "aria2");
   leave();

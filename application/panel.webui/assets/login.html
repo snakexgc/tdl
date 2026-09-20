@@ -5,65 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 TDL 管理面板</title>
   <link rel="stylesheet" href="/static/css/base.css">
-  <style>
-    .auth-bg-grid {
-      position: fixed;
-      inset: 0;
-      z-index: 0;
-      overflow: hidden;
-      pointer-events: none;
-    }
-    .auth-bg-grid::before {
-      content: "";
-      position: absolute;
-      inset: -50%;
-      background-image:
-        linear-gradient(rgba(20, 184, 166, 0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(20, 184, 166, 0.04) 1px, transparent 1px);
-      background-size: 56px 56px;
-      animation: grid-drift 24s linear infinite;
-    }
-    @keyframes grid-drift {
-      from { transform: translate(0, 0); }
-      to   { transform: translate(56px, 56px); }
-    }
-    .auth-bg-orb {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(72px);
-      opacity: 0.55;
-      animation: orb-float 9s ease-in-out infinite alternate;
-    }
-    .auth-bg-orb:nth-child(1) {
-      width: 320px; height: 320px;
-      top: 8%; left: 12%;
-      background: radial-gradient(circle, rgba(13, 148, 136, 0.3), rgba(13, 148, 136, 0.05));
-    }
-    .auth-bg-orb:nth-child(2) {
-      width: 260px; height: 260px;
-      bottom: 12%; right: 8%;
-      background: radial-gradient(circle, rgba(52, 211, 153, 0.22), rgba(52, 211, 153, 0.04));
-      animation-delay: -4.5s;
-    }
-    .auth-bg-orb:nth-child(3) {
-      width: 180px; height: 180px;
-      top: 55%; left: 60%;
-      background: radial-gradient(circle, rgba(20, 184, 166, 0.15), transparent);
-      animation-delay: -2s;
-    }
-    @keyframes orb-float {
-      from { transform: translateY(0) scale(1); }
-      to   { transform: translateY(-28px) scale(1.06); }
-    }
-    .auth-shell { position: relative; z-index: 1; }
-  </style>
 </head>
 <body class="auth-page">
-  <div class="auth-bg-grid" aria-hidden="true">
-    <div class="auth-bg-orb"></div>
-    <div class="auth-bg-orb"></div>
-    <div class="auth-bg-orb"></div>
-  </div>
   <main class="auth-shell">
     <section class="auth-panel" aria-labelledby="auth-title">
       <div class="auth-brand">

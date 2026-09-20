@@ -40,7 +40,9 @@ func (m *Manager) ModuleStates() []webui.ModuleState {
 	cfg := config.From(m.parent)
 	states := []webui.ModuleState{}
 	for _, binding := range m.modules() {
-		states = append(states, binding.state(cfg))
+		state := binding.state(cfg)
+		state.ComponentID = binding.component
+		states = append(states, state)
 	}
 	return states
 }
@@ -85,7 +87,9 @@ func (m *Manager) SetModuleEnabled(ctx context.Context, id string, enabled bool)
 		if err := m.applyConfigLocked(cfg, m.applyVersion.Add(1), true); err != nil {
 			return webui.ModuleState{}, err
 		}
-		return binding.state(cfg), nil
+		state := binding.state(cfg)
+		state.ComponentID = binding.component
+		return state, nil
 	}
 	return webui.ModuleState{}, fmt.Errorf("unknown module %q", id)
 }

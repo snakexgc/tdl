@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/snakexgc/tdl/interfaces/manifest"
 	"github.com/snakexgc/tdl/interfaces/ports"
@@ -15,18 +14,22 @@ import (
 const ID = "update.self"
 
 func Register(registry *rte.Registry) error {
-	return registry.Register(manifest.Manifest{
-		ID: ID, Commands: Commands(), Title: "版本更新",
-		Pages:    []manifest.Page{{Path: "/update", Title: "检查更新", View: "update", Module: "/static/js/update.js", Style: "/static/css/update.css", Order: 80}},
+	return registry.Register(manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "update", Title: "软件更新", Order: 80, SettingsURL: "/config?tab=network"},
+		ID:      ID, Commands: Commands(), Title: "版本更新",
+		Pages:    []manifest.Page{{Path: "/update", Title: "检查更新", View: "update", Module: "/static/js/update.js", Style: "/static/css/update.css", Order: 80, KeepVisible: true, SettingsURL: "/modules#feature-update"}},
 		Provides: []manifest.Port{manifest.PortOf[ports.Updater](ports.UpdaterName, 1, 0)},
+		// Disabling the configuration provider must not reject the whole policy
+		// host. Init fails this consumer only when the shared proxy is unavailable.
+		Requires: []manifest.Require{{Port: manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0), Optional: true}},
 		Config: []manifest.ConfigField{
-			{Name: "proxy", Title: "代理", Type: manifest.String, Default: "", Secret: true},
+			{Name: "proxy", Title: "旧版更新代理（已停用）", Type: manifest.String, Default: "", Secret: true, ReplacedBy: "account.telegram.proxy", Help: "仅兼容读取旧配置；实际使用网络配置中的统一网络代理。"},
 		},
-	}, func() rte.Component { return &Service{} })
+	}, "network", "网络代理"), func() rte.Component { return &Service{} })
 }
 
 type Service struct {
-	proxy  atomic.Pointer[string]
+	proxy  ports.NetworkProxy
 	mu     sync.Mutex
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -35,6 +38,11 @@ type Service struct {
 }
 
 func (s *Service) Init(ctx context.Context, k rte.Kernel) error {
+	value, err := k.Resolve(ports.NetworkProxyName)
+	if err != nil {
+		return err
+	}
+	s.proxy = value.(ports.NetworkProxy)
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	if err := s.Reconfigure(ctx, k.Config); err != nil {
 		return err
@@ -72,11 +80,7 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var proxy string
-	if err := view.Get("proxy", &proxy); err != nil {
-		return nil, err
-	}
-	return func() { s.proxy.Store(&proxy) }, nil
+	return func() {}, nil
 }
 
 func (s *Service) begin(ctx context.Context) (context.Context, func(), error) {
@@ -100,7 +104,11 @@ func (s *Service) Check(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 	defer done()
-	return CheckLatest(call, *s.proxy.Load())
+	proxy, err := s.proxy.Proxy(call)
+	if err != nil {
+		return Info{}, err
+	}
+	return CheckLatest(call, proxy)
 }
 
 func (s *Service) Download(ctx context.Context) (Plan, Info, error) {
@@ -109,5 +117,9 @@ func (s *Service) Download(ctx context.Context) (Plan, Info, error) {
 		return Plan{}, Info{}, err
 	}
 	defer done()
-	return DownloadLatest(call, *s.proxy.Load())
+	proxy, err := s.proxy.Proxy(call)
+	if err != nil {
+		return Plan{}, Info{}, err
+	}
+	return DownloadLatest(call, proxy)
 }

@@ -8,12 +8,14 @@ import { escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
 import { observe } from "./events.js";
 let unobserve;
 
+const filteredTasks = () => state.forwardTasks.filter(task => document.getElementById("forward-state-filter").value === "all" || task.status === document.getElementById("forward-state-filter").value);
 export function initForwards() {
+  document.getElementById("forward-state-filter").addEventListener("change", () => { state.selectedForwards.clear(); renderForwards(); });
   document.getElementById("forward-reload").addEventListener("click", () => loadForwards());
 
   document.getElementById("forward-select-visible").addEventListener("change", (event) => {
     if (event.target.checked) {
-      state.forwardTasks.forEach((item) => {
+      filteredTasks().forEach((item) => {
         const id = forwardID(item);
         if (id) state.selectedForwards.add(id);
       });
@@ -52,6 +54,7 @@ export function initForwards() {
 }
 
 export async function loadForwards(options = {}) {
+  if (options.searchParams) document.getElementById("forward-state-filter").value = options.searchParams.get("state") || "all";
   startForwardPolling();
   if (state.forwardLoading) return;
   state.forwardLoading = true;
@@ -91,12 +94,12 @@ export function stopForwardPolling() { unobserve?.(); unobserve = null; }
 function renderForwards() {
   renderForwardSummary();
   const body = document.getElementById("forward-body");
-  if (!state.forwardTasks.length) {
+  if (!filteredTasks().length) {
     body.innerHTML = `<tr><td colspan="7" class="empty">暂无转发任务</td></tr>`;
     updateForwardSelectionState();
     return;
   }
-  body.innerHTML = state.forwardTasks.map(renderForwardRow).join("");
+  body.innerHTML = filteredTasks().map(renderForwardRow).join("");
   updateForwardSelectionState();
 }
 
@@ -364,13 +367,13 @@ function setForwardStatus(message, kind = "") {
 }
 
 function pruneForwardSelection() {
-  const ids = new Set(state.forwardTasks.map(forwardID).filter(Boolean));
+  const ids = new Set(filteredTasks().map(forwardID).filter(Boolean));
   state.selectedForwards = new Set(Array.from(state.selectedForwards).filter((id) => ids.has(id)));
 }
 
 function updateForwardSelectionState() {
   pruneForwardSelection();
-  const ids = state.forwardTasks.map(forwardID).filter(Boolean);
+  const ids = filteredTasks().map(forwardID).filter(Boolean);
   const selectedVisible = ids.filter((id) => state.selectedForwards.has(id)).length;
   const selectVisible = document.getElementById("forward-select-visible");
   if (selectVisible) {
@@ -379,6 +382,7 @@ function updateForwardSelectionState() {
   }
 
   const count = state.selectedForwards.size;
+  document.getElementById("forward-bulk-actions").hidden = count === 0;
   const countLabel = document.getElementById("forward-selection-count");
   if (countLabel) countLabel.textContent = `已选 ${count} 项`;
   ["forward-resume-selected", "forward-pause-selected", "forward-delete-selected"].forEach((id) => {

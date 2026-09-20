@@ -22,24 +22,25 @@ const (
 
 func Manifest() manifest.Manifest {
 	zero := int64(0)
-	return manifest.Manifest{
-		ID: ID, Commands: Commands(), Title: "Telegram 账号",
-		Pages:    []manifest.Page{{Path: "/user", Title: "用户管理", View: "user", Module: "/static/js/user.js", Style: "/static/css/user.css", Order: 20}},
-		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0)},
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "account", Title: "账号管理", Order: 40, SettingsURL: "/config?tab=account"},
+		ID:      ID, Commands: Commands(), Title: "Telegram 账号",
+		Pages:    []manifest.Page{{Path: "/user", Title: "账号管理", View: "user", Module: "/static/js/user.js", Style: "/static/css/user.css", Order: 40, KeepVisible: true, SettingsURL: "/config?tab=account"}},
+		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0), manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0)},
 		Config: []manifest.ConfigField{
-			manifest.FormattedText("proxy", "Telegram proxy", "", "proxy", true, true),
-			manifest.Text("ntp", "NTP server", "", false, true),
-			manifest.Number("file_limit", "Concurrent files", 1, 1, 10000, false),
-			manifest.Number("dc_pool_size", "Transfers per DC", 8, 1, 10000, false),
-			manifest.Number("delay_seconds", "Transfer delay (seconds)", 0, 0, 3600, true),
-			manifest.Number("reconnect_timeout_seconds", "Reconnect timeout (seconds)", 3, 0, 86400, true),
+			manifest.FormattedText("proxy", "统一网络代理", "", "proxy", true, true).InSettings("network", "网络代理").WithHelp("Telegram、机器人和软件更新共用此代理。选择协议后填写 IP 或域名加端口，例如 127.0.0.1:1080；需要认证时展开填写。整体留空保留已保存的代理，修改时请同时填写所需的认证信息。"),
+			manifest.Text("ntp", "时间校准服务器", "", false, true),
+			manifest.Number("file_limit", "并发下载文件数", 1, 1, 10000, false).InSettings("download", "下载并发与节奏"),
+			manifest.Number("dc_pool_size", "每 DC 下载容量", 8, 1, 10000, false).InSettings("download", "下载并发与节奏"),
+			manifest.Number("delay_seconds", "任务间隔（秒）", 0, 0, 3600, true).InSettings("download", "下载并发与节奏"),
+			manifest.Number("reconnect_timeout_seconds", "重连等待（秒）", 3, 0, 86400, true),
 
 			{Name: fieldAPIID, Title: "API ID", Type: manifest.Int, Default: 0, Min: &zero},
 			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true},
 			{Name: "builtin_preset", Title: "内置预设", Type: manifest.String, Default: ""},
 			{Name: "use_builtin", Title: "使用内置凭据", Type: manifest.Bool, Default: false},
 		},
-	}
+	}, "account", "Telegram 连接与凭据", "ntp", "reconnect_timeout_seconds", "builtin_preset", "use_builtin")
 }
 
 func Register(registry *rte.Registry) error {
@@ -47,6 +48,7 @@ func Register(registry *rte.Registry) error {
 }
 
 type Credentials struct {
+	proxy    atomic.Pointer[string]
 	account  types.AccountID
 	settings atomic.Pointer[types.TelegramCredentialsConfig]
 }
@@ -54,6 +56,9 @@ type Credentials struct {
 func (c *Credentials) Init(ctx context.Context, k rte.Kernel) error {
 	c.account = k.Account
 	if err := c.Reconfigure(ctx, k.Config); err != nil {
+		return err
+	}
+	if err := k.Provide(ports.NetworkProxyName, c); err != nil {
 		return err
 	}
 	return k.Provide(ports.TelegramCredentialsName, c)
@@ -71,6 +76,10 @@ func (c *Credentials) Reconfigure(ctx context.Context, view config.View) error {
 
 func (c *Credentials) PrepareConfig(ctx context.Context, view config.View) (func(), error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var proxy string
+	if err := view.Get("proxy", &proxy); err != nil {
 		return nil, err
 	}
 	var settings types.TelegramCredentialsConfig
@@ -92,7 +101,18 @@ func (c *Credentials) PrepareConfig(ctx context.Context, view config.View) (func
 	if err := Validate(settings); err != nil {
 		return nil, err
 	}
-	return func() { c.settings.Store(&settings) }, nil
+	return func() { c.settings.Store(&settings); c.proxy.Store(&proxy) }, nil
+}
+
+func (c *Credentials) Proxy(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	value := c.proxy.Load()
+	if value == nil {
+		return "", fmt.Errorf("network proxy is not initialized")
+	}
+	return *value, nil
 }
 
 func Validate(settings types.TelegramCredentialsConfig) error {

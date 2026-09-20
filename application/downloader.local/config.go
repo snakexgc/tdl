@@ -16,14 +16,15 @@ const (
 
 func Manifest() manifest.Manifest {
 	minPoll, maxPoll, minShutdown, maxShutdown := int64(100), int64(3600000), int64(1), int64(300)
-	return manifest.Manifest{
-		ID: ID, Title: "本地下载器",
+	return manifest.WithSettings(manifest.Manifest{
+		Feature: manifest.Feature{ID: "download", Title: "下载管理", Order: 10, SettingsURL: "/config?tab=download"},
+		ID:      ID, Title: "本地下载器",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadExecutor](ports.DownloadExecutorName, 1, 0)},
 		Config: []manifest.ConfigField{
 			{Name: pollIntervalField, Title: "待执行任务扫描间隔（毫秒）", Type: manifest.Int, Default: 5000, Min: &minPoll, Max: &maxPoll},
 			{Name: shutdownTimeoutField, Title: "停机暂停记录超时（秒）", Type: manifest.Int, Default: 5, Min: &minShutdown, Max: &maxShutdown},
 		},
-	}
+	}, "download", "本地下载器", "poll_interval_ms", "shutdown_timeout_seconds").SettingsOrder(200)
 }
 
 func (s *service) PrepareConfig(ctx context.Context, view config.View) (func(), error) {

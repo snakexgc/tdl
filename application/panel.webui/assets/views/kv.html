@@ -1,7 +1,7 @@
 <section class="view" id="view-kv">
   <header class="page-head">
     <div>
-      <h1>KV 管理</h1>
+      <h1>链接记录</h1>
       <p>管理 tdl 保存的下载链接，可重新提交到当前下载器，也可清理不再需要的记录。</p>
     </div>
     <div class="actions">
@@ -11,14 +11,15 @@
       <button class="btn danger" id="delete-selected" type="button">批量删除</button>
     </div>
   </header>
+  <label class="search-field"><span class="sr-only">搜索链接记录</span><input id="kv-search" type="search" placeholder="搜索文件名或链接"></label>
   <div class="notice" id="kv-status"></div>
   <div class="table-shell">
     <table id="kv-table">
       <colgroup>
         <col style="width:44px">
         <col style="width:260px">
-        <col style="width:360px">
-        <col style="width:240px">
+        <col style="width:160px">
+        <col style="width:180px">
         <col style="width:110px">
         <col style="width:180px">
         <col style="width:180px">

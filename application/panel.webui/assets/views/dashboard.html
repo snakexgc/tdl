@@ -1,16 +1,42 @@
 <section class="view active" id="view-dashboard">
   <header class="page-head">
     <div>
-      <h1>仪表盘</h1>
+      <h1>总览</h1>
+      <p>掌握资源使用、下载表现与任务运行状态。</p>
     </div>
     <button class="btn secondary" id="refresh-dashboard" type="button">刷新</button>
   </header>
-  <div class="notice" id="dashboard-status"></div>
+  <div class="summary-grid" id="task-overview">
+    <a class="summary-card" data-app-link href="/downloads?tab=tasks"><span>下载任务</span><strong id="overview-downloads">—</strong><small id="overview-downloads-note">正在读取</small></a>
+    <a class="summary-card" data-app-link href="/downloads?tab=tasks&state=error"><span>下载异常</span><strong id="overview-download-errors">—</strong><small>查看需要处理的任务</small></a>
+    <a class="summary-card" data-app-link href="/forwards"><span>转发任务</span><strong id="overview-forwards">—</strong><small id="overview-forwards-note">正在读取</small></a>
+    <a class="summary-card" data-app-link href="/forwards?state=error"><span>转发异常</span><strong id="overview-forward-errors">—</strong><small>查看失败任务</small></a>
+  </div>
+  <div class="dashboard-section-head">
+    <h2>运行概览 <span class="pill muted">最近 30 秒</span></h2>
+    <div class="notice" id="dashboard-status" role="status"></div>
+  </div>
   <div class="dashboard-grid">
+    <section class="dashboard-card dashboard-speed-card">
+      <div class="dashboard-card-head">
+        <div>
+          <h2>下载速度</h2>
+          <p id="dashboard-speed-meta">gotd / aria2</p>
+        </div>
+        <strong id="dashboard-speed-value">-</strong>
+      </div>
+      <div class="dashboard-chart-shell">
+        <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" role="img" aria-label="下载速度最近 30 秒曲线"></svg>
+      </div>
+      <div class="dashboard-legend">
+        <span><i class="legend-gotd"></i>gotd</span>
+        <span><i class="legend-aria2"></i>aria2</span>
+      </div>
+    </section>
     <section class="dashboard-card">
       <div class="dashboard-card-head">
         <div>
-          <h2>CPU</h2>
+          <h2>CPU 使用率</h2>
           <p id="dashboard-cpu-meta">最近 30 秒</p>
         </div>
         <strong id="dashboard-cpu-value">-</strong>
@@ -18,11 +44,12 @@
       <div class="dashboard-chart-shell">
         <svg class="dashboard-chart" id="dashboard-cpu-chart" viewBox="0 0 640 160" role="img" aria-label="CPU 最近 30 秒曲线"></svg>
       </div>
+      <div class="dashboard-legend"><span><i class="legend-cpu"></i>CPU 使用率</span></div>
     </section>
     <section class="dashboard-card">
       <div class="dashboard-card-head">
         <div>
-          <h2>内存</h2>
+          <h2>内存使用</h2>
           <p id="dashboard-memory-meta">总用量 / 软件用量 / 保留堆</p>
         </div>
         <strong id="dashboard-memory-value">-</strong>
@@ -36,6 +63,9 @@
         <span><i class="legend-retained"></i>保留堆</span>
       </div>
     </section>
+
+  </div>
+  <details class="dashboard-diagnostics"><summary>下载调度与诊断指标</summary>
     <section class="dashboard-card dashboard-pull-card">
       <div class="dashboard-card-head dashboard-card-head-plain">
         <div>
@@ -55,7 +85,7 @@
         </div>
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>近10秒错误请求数</span>
+            <span>近 10 秒错误请求数</span>
             <strong id="dashboard-file-errors-10s-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
@@ -73,7 +103,7 @@
         </div>
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>aria2活动任务数</span>
+            <span>aria2 活动任务数</span>
             <strong id="dashboard-aria2-active-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
@@ -82,7 +112,7 @@
         </div>
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>aria2等待任务数</span>
+            <span>aria2 等待任务数</span>
             <strong id="dashboard-aria2-waiting-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
@@ -91,7 +121,7 @@
         </div>
         <div class="dashboard-stat-row">
           <div class="dashboard-stat-line">
-            <span>aria2已停止任务数</span>
+            <span>aria2 已停止任务数</span>
             <strong id="dashboard-aria2-stopped-value">-</strong>
           </div>
           <div class="dashboard-stat-track">
@@ -100,21 +130,5 @@
         </div>
       </div>
     </section>
-    <section class="dashboard-card">
-      <div class="dashboard-card-head">
-        <div>
-          <h2>下载速度</h2>
-          <p id="dashboard-speed-meta">gotd / aria2</p>
-        </div>
-        <strong id="dashboard-speed-value">-</strong>
-      </div>
-      <div class="dashboard-chart-shell">
-        <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" role="img" aria-label="下载速度最近 30 秒曲线"></svg>
-      </div>
-      <div class="dashboard-legend">
-        <span><i class="legend-gotd"></i>gotd</span>
-        <span><i class="legend-aria2"></i>aria2</span>
-      </div>
-    </section>
-  </div>
+  </details>
 </section>

@@ -16,7 +16,9 @@
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  transition: color 150ms ease, border-color 150ms ease;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease;
   margin-bottom: -1px;
 }
 
@@ -46,11 +48,11 @@
 
 .user-switch {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr) auto;
   align-items: end;
   gap: 16px;
-  margin: 0 0 14px;
-  padding: 18px;
+  margin: 0 0 24px;
+  padding: 24px;
 }
 
 .user-switch-copy {
@@ -82,10 +84,10 @@
 
 .login-flow-head {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
   align-items: end;
   gap: 14px;
-  padding: 18px;
+  padding: 24px;
 }
 
 .login-flow-head h2,
@@ -128,7 +130,10 @@
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
-  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
 }
 
 .login-steps li.is-current {
@@ -143,13 +148,13 @@
 }
 
 .login-steps li.is-complete {
-  color: var(--primary-dark);
+  color: var(--success);
 }
 
 .login-steps li.is-complete span {
-  border-color: var(--primary-light);
-  background: var(--primary-soft);
-  color: var(--primary-dark);
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .login-steps li.is-error {
@@ -157,7 +162,7 @@
 }
 
 .login-steps li.is-error span {
-  border-color: #fca5a5;
+  border-color: var(--danger-line);
   background: var(--danger-soft);
   color: var(--danger);
 }
@@ -197,7 +202,7 @@
 
 .login-step-panel {
   min-height: 300px;
-  padding: 22px;
+  padding: 24px;
 }
 
 .login-step-panel.animate-in {
@@ -205,13 +210,21 @@
 }
 
 @keyframes login-panel-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .login-step-panel.animate-in,
-  .login-waiting-indicator { animation: none; }
+  .login-waiting-indicator {
+    animation: none;
+  }
 }
 
 .login-step-copy h3 {
@@ -248,7 +261,9 @@
 }
 
 @keyframes login-waiting-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ── Login result ── */
@@ -259,11 +274,11 @@
   height: 52px;
   margin-bottom: 16px;
   border-radius: 50%;
-  background: var(--primary-soft);
-  color: var(--primary-dark);
+  background: var(--success-soft);
+  color: var(--success);
   font-size: 28px;
   font-weight: 800;
-  border: 2px solid rgba(13, 148, 136, 0.2);
+  border: 2px solid var(--line);
 }
 
 .login-result-mark.error {
@@ -304,14 +319,14 @@
 }
 
 #login-status.success:not(:empty) {
-  background: var(--primary-soft);
-  border-color: #99e6de;
-  color: var(--primary-dark);
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success);
 }
 
 #login-status.error:not(:empty) {
   background: var(--danger-soft);
-  border-color: #fca5a5;
+  border-color: var(--danger-line);
   color: var(--danger);
 }
 
@@ -337,7 +352,7 @@
 /* Status dot for valid/invalid badges */
 .user-badge-valid::before,
 .user-badge-invalid::before {
-  content: '';
+  content: "";
   display: inline-block;
   width: 6px;
   height: 6px;
@@ -347,46 +362,46 @@
 }
 
 .user-badge-valid {
-  background: var(--primary-soft);
-  border-color: #99e6de;
-  color: var(--primary-dark);
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success);
 }
 
 .user-badge-valid::before {
-  background: #34d399;
+  background: var(--success);
 }
 
 .user-badge-invalid {
   background: var(--danger-soft);
-  border-color: #fca5a5;
+  border-color: var(--danger-line);
   color: var(--danger);
 }
 
 .user-badge-invalid::before {
-  background: #f87171;
+  background: var(--danger);
 }
 
 .user-badge-premium {
-  background: #fffbeb;
-  border-color: #fcd34d;
-  color: #92400e;
+  background: var(--warning-soft);
+  border-color: var(--warning-line);
+  color: var(--warning);
 }
 
 .user-badge-verified {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
+  background: var(--info-soft);
+  border-color: var(--info-line);
+  color: var(--info);
 }
 
 .user-badge-bot {
-  background: #f5f3ff;
-  border-color: #ddd6fe;
-  color: #6d28d9;
+  background: var(--info-soft);
+  border-color: var(--info-line);
+  color: var(--info);
 }
 
 .user-badge-restricted {
   background: var(--danger-soft);
-  border-color: #fca5a5;
+  border-color: var(--danger-line);
   color: var(--danger);
 }
 
@@ -398,8 +413,8 @@
 
 /* ── Status-colored info rows ── */
 .info-item.info-item-status-ok {
-  background: var(--primary-soft);
-  box-shadow: inset 3px 0 0 var(--primary);
+  background: var(--success-soft);
+  box-shadow: inset 3px 0 0 var(--success);
 }
 
 .info-item.info-item-status-danger {
@@ -408,13 +423,13 @@
 }
 
 .info-item.info-item-status-warning {
-  background: #fffbeb;
-  box-shadow: inset 3px 0 0 #f59e0b;
+  background: var(--warning-soft);
+  box-shadow: inset 3px 0 0 var(--warning);
 }
 
 .info-item.info-item-status-info {
-  background: #eff6ff;
-  box-shadow: inset 3px 0 0 #3b82f6;
+  background: var(--info-soft);
+  box-shadow: inset 3px 0 0 var(--info);
 }
 
 .info-item.info-item-status-muted {

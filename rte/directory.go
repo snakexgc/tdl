@@ -120,6 +120,7 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 		if !active {
 			entry = Configuration{ID: m.ID, Title: m.Title, State: Stopped, Fields: m.Config, Pages: m.Pages, Values: map[string]any{}}
 		}
+		entry.Feature = m.Feature
 		entry.Scope, entry.Enabled = definition.Scope, true
 		if d.store != nil {
 			entry.Revision, _ = d.store.Revision(ctx, m.ID)
@@ -238,6 +239,9 @@ func (d *Directory) PatchWithRevision(ctx context.Context, id string, patch map[
 	for key, value := range patch {
 		keep := false
 		for _, field := range definition.Manifest.Config {
+			if field.Name == key && field.ReplacedBy != "" {
+				return fmt.Errorf("%s.%s has been replaced by %s", id, key, field.ReplacedBy)
+			}
 			if field.Name == key && field.Secret {
 				if text, ok := value.(string); ok && text == "" {
 					keep = true

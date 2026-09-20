@@ -6,7 +6,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 // Exercise the generic loader without a browser, a build step or third-party DOM.
-test("declared pages mount lazily, stop on navigation and omit disabled owners", async () => {
+test("declared pages mount lazily, redirect aliases, preserve query and guide disabled features", async () => {
   class Element {
     constructor() {
       this.children = [];
@@ -29,8 +29,10 @@ test("declared pages mount lazily, stop on navigation and omit disabled owners",
     { id: "example", enabled: true, pages: [
       { path: "/example", title: "Example", view: "example", module: "/static/js/example.js" },
       { path: "/other", title: "Other", view: "other", module: "/static/js/other.js" },
+      { path: "/old", title: "Old", nav_hidden: true, redirect_to: "/other?tab=links#details" },
     ] },
     { id: "disabled", enabled: false, pages: [{ path: "/disabled", title: "Disabled", view: "disabled" }] },
+    { id: "sleeping", enabled: false, pages: [{ path: "/sleeping", title: "Sleeping", view: "sleeping", keep_visible: true, settings_url: "/example?tab=settings" }] },
   ];
   const context = vm.createContext({
     URL, Intl,
@@ -59,7 +61,7 @@ test("declared pages mount lazily, stop on navigation and omit disabled owners",
         const feature = new vm.SyntheticModule(["page"], function () {
           this.setExport("page", {
             init: () => calls.push([specifier, "init"]),
-            load: () => calls.push([specifier, "load"]),
+            load: url => calls.push([specifier, "load", url?.search, url?.hash]),
             stop: () => calls.push([specifier, "stop"]),
           });
         }, { context });
@@ -75,7 +77,7 @@ test("declared pages mount lazily, stop on navigation and omit disabled owners",
   const router = await load("router.js");
   await router.evaluate();
   await router.namespace.initRouter();
-  assert.equal(nav.children.length, 2);
+  assert.equal(nav.children.length, 3);
   assert.deepEqual(fetched, ["/api/components", "/views/example.html"]);
   await router.namespace.navigate("other");
   assert(calls.some(([module, action]) => module.endsWith("example.js") && action === "stop"));
@@ -85,5 +87,11 @@ test("declared pages mount lazily, stop on navigation and omit disabled owners",
   await router.namespace.navigate("disabled");
   assert.equal(find(host, "page-unavailable").hidden, false);
   assert(!fetched.includes("/views/disabled.html"));
+  await router.namespace.navigate("/old");
+  assert(calls.some(([module, action, query, hash]) => module.endsWith("other.js") && action === "load" && query === "?tab=links" && hash === "#details"));
+  assert(!fetched.includes("/views/old.html"));
+  await router.namespace.navigate("/sleeping");
+  assert.match(find(host, "page-sleeping").innerHTML, /相关服务已停用/);
+  assert(!fetched.includes("/views/sleeping.html"));
   router.namespace.stopPages();
 });

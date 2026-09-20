@@ -19,7 +19,8 @@ func TestExportAndLoadOwnEveryAdapterSetting(t *testing.T) {
 	original.Namespace = "alice"
 	original.Debug = true
 	original.Bot.Token = "bot-secret"
-	original.Bot.Proxy = "http://bot:secret@localhost:8888"
+	original.Proxy = "http://shared:secret@localhost:8888"
+	original.Bot.Proxy = original.Proxy
 	original.Bot.AllowedUsers = []int64{123}
 	original.Aria2.RPCURL = "http://localhost:7001/jsonrpc"
 	original.Aria2.Secret = "rpc-secret"
@@ -76,3 +77,27 @@ func TestMissingDocumentsUseDefaultsAndSnapshotsAreIsolated(t *testing.T) {
 }
 
 const legacyPoison = "wrong"
+
+func TestProxyOverridesRemainReadableButCannotOverrideSharedProxy(t *testing.T) {
+	ctx := context.Background()
+	catalog, err := application.Catalog()
+	require.NoError(t, err)
+	store := config.NewStore(t.TempDir())
+	for id, proxy := range map[string]string{"account.telegram": "socks5://shared:secret@127.0.0.1:1080", "console.bot": "http://old-bot:secret@127.0.0.1:8000", "update.self": "http://old-update:secret@127.0.0.1:9000"} {
+		view, err := catalog.View(ctx, id, map[string]any{proxyField: proxy})
+		require.NoError(t, err)
+		require.NoError(t, store.Save(ctx, id, true, view))
+	}
+	loaded, _, err := Load(ctx, store, legacy.DefaultConfig())
+	require.NoError(t, err)
+	require.Equal(t, "socks5://shared:secret@127.0.0.1:1080", loaded.Proxy)
+	require.Equal(t, loaded.Proxy, loaded.Bot.Proxy)
+	// Explicit direct connectivity must not revive an old per-service override.
+	view, err := catalog.View(ctx, "account.telegram", nil)
+	require.NoError(t, err)
+	require.NoError(t, store.Save(ctx, "account.telegram", true, view))
+	loaded, _, err = Load(ctx, store, loaded)
+	require.NoError(t, err)
+	require.Empty(t, loaded.Proxy)
+	require.Empty(t, loaded.Bot.Proxy)
+}

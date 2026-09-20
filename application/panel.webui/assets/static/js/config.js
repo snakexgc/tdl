@@ -1,462 +1,322 @@
-// Config view: renders the config form from a field schema and saves changes.
-import { state } from "./state.js";
 import { api } from "./api.js";
-import { escapeHTML, escapeAttr, getPath, splitList } from "./utils.js";
-import { loadStatus } from "./status.js";
-import { loadModules } from "./modules.js";
-import { loadDownloads } from "./downloads.js";
+import { navigate } from "./router.js";
+import {
+  element,
+  button,
+  fragment,
+  tabKeyboard,
+  activateTabs,
+  closeDrawer,
+} from "./ui.js";
+import {
+  ConfigurationDrafts,
+  settingsTabs,
+  settingsGroups,
+} from "./settings-model.js";
+import { renderSettingsBlock } from "./settings-fields.js";
+import { renderSystem } from "./settings-system.js";
 
-let componentManaged = false;
+let store,
+  data,
+  managed,
+  legacy,
+  legacyReady,
+  legacyDirty = false,
+  runtimeDraft,
+  legacyBaseline,
+  configData,
+  activeTab = settingsTabs[0][0],
+  mounted = new Map(),
+  blocks = [],
+  busy = new Set(),
+  reloadOnEntry = false;
+const $ = (id) => document.getElementById(id);
+const dirty = () =>
+  Boolean(store?.dirty || legacyDirty || runtimeDraft !== undefined);
+const message = (text, kind = "") => {
+  $("settings-message").textContent = text;
+  $("settings-message").className = `notice ${kind}`;
+};
 
-const exclusiveListPairs = [["include", "exclude"]];
-const proxySchemes = ["socks5://", "socks5h://", "http://", "https://"];
-
-const sections = [
-  {
-    title: "Telegram 应用凭据",
-    fields: [
-      ["telegram.api_id", "API ID", "number", "与 API Hash 一起填写时使用自己的应用凭据；两项都留空则沿用内置凭据。可在 my.telegram.org 申请。"],
-      ["telegram.api_hash", "API Hash", "password", "与 API ID 成对填写；保存时留空表示保持已保存的值。凭据变化后可能需要重新登录，已有会话不会被删除。"],
-      ["telegram.builtin_preset", "内置预设", "select", "留空沿用当前会话的预设；新登录默认 desktop。内置预设属于第三方应用，建议使用自己申请的凭据。", ["", "builtin", "desktop"]],
-      ["telegram.use_builtin", "使用内置凭据", "bool", "开启后暂时停用自定义凭据，保留已填写的 API ID 和 Hash，方便恢复原设置。"],
-    ],
-  },
-  {
-    title: "基础",
-    fields: [
-      ["proxy", "代理地址", "proxy", "选择代理协议后，只填写 IP 或域名加端口，例如 127.0.0.1:1080。"],
-      ["proxy_username", "代理用户名", "text", "代理需要认证时填写；没有认证时留空。"],
-      ["proxy_password", "代理密码", "password", "代理需要认证时填写；没有认证时留空，保存时留空表示保持原密码。"],
-      ["debug", "详细日志", "bool", "排查问题时开启，平时保持关闭。"],
-      ["limit", "并发下载数", "number", "与 tdl --limit 一致，限制同时下载的文件任务数量。"],
-      ["pool_size", "每 DC 下载容量", "number", "同时限制每个 Telegram DC 的连接池和下载流，并作为 aria2 的 split 与 max-connection-per-server；默认 8，填 0 或负数会恢复为 8。"],
-      ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
-      ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
-      ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
-      ["download_dir", "下载目录规则", "text", "目录模板；可用 G 名称、P 来源 ID、I 触发消息文字、F 原始文件名、S/R 消息 ID、A 相册 ID、Y/M/D 日期，例如 G\\Y&M；I 会仅保留中英文数字并自动截断。"],
-      ["filename", "文件名规则", "text", "文件名模板；与 download_dir 使用同一组变量，例如 G-I-F。"],
-      ["filename_max_length", "文件名字节上限", "number", "最终文件名的 UTF-8 字节数上限（含扩展名）；超长时优先缩短 I（保留头尾，中间用 ... 代替），默认 255。"],
-      ["trigger_reactions", "触发表情", "list", "只监听这些表情；留空表示任意表情都可以触发。"],
-      ["include", "只下载这些扩展名", "list", "例如 mp4、mkv；留空表示不限制。"],
-      ["exclude", "跳过这些扩展名", "list", "例如 png、jpg；留空表示不跳过。"],
-      ["file_size_min_mb", "文件大小范围", "sizeRange", "单位 MB；左右边界均包含在内，任一边填 0 表示该侧不限制。", "file_size_max_mb"],
-    ],
-  },
-  {
-    title: "下载链接",
-    fields: [
-      ["http.address", "监听地址", "text", "tdl 提供下载链接的监听地址，例如 0.0.0.0 或 127.0.0.1。"],
-      ["http.port", "监听端口", "number", "tdl 提供下载链接的监听端口，例如 22334。"],
-      ["http.public_base_url", "对外访问地址", "text", "aria2 能访问到的 tdl 地址，不同机器时请填写局域网地址。"],
-      ["http.download_link_ttl_hours", "链接保留时间", "number", "单位小时；填 0 表示永久保留。"],
-    ],
-  },
-  {
-    title: "Web 管理面板",
-    fields: [
-      ["webui.address", "监听地址", "text", "管理面板监听地址，例如 0.0.0.0 或 127.0.0.1。修改后需要重启。"],
-      ["webui.port", "监听端口", "number", "管理面板监听端口，例如 22335。修改后需要重启。"],
-      ["webui.username", "用户名", "text", "登录管理面板时使用的用户名。"],
-      ["webui.password", "密码", "password", "管理面板登录密码；留空表示保持原密码。"],
-    ],
-  },
-  {
-    title: "模块开关",
-    fields: [
-      ["modules.bot", "机器人控制", "bool", "启用后可以通过 Telegram 私聊命令控制 tdl。"],
-      ["modules.watch", "监听下载", "bool", "启用后监听 Telegram 表情并生成临时 HTTP 链接；是否自动提交给 aria2 由 aria2.auto_download 控制。"],
-      ["modules.http", "HTTP 下载代理", "bool", "独立启停 /download 文件流服务，不会连带重启监听下载或 aria2 自动化。"],
-      ["modules.aria2", "aria2 下载器管理", "bool", "独立启停 aria2 RPC 管理、任务恢复和异常监控；不会影响 watch 生成临时 HTTP 链接。"],
-      ["modules.forward", "监听转发", "bool", "启用后监听 forward.listen 中的 Telegram 对象并转发新消息。"],
-    ],
-  },
-  {
-    title: "下载器",
-    fields: [
-      ["downloader.mode", "下载器模式", "select", "aria2 使用外部 aria2；local 使用 tdl 本地下载器；并发文件数由 limit 控制，每个 DC 的连接与下载流由 pool_size 控制。", ["aria2", "local"]],
-    ],
-  },
-  {
-    title: "aria2",
-    fields: [
-      ["aria2.auto_download", "监听触发后自动下载", "bool", "仅当监听模块、aria2 模块均启用且 downloader.mode 为 aria2 时，把表情触发生成的临时 HTTP 链接自动提交到 aria2；关闭后只生成链接。"],
-      ["aria2.rpc_url", "aria2 连接地址", "text", "aria2 的连接地址，例如 http://127.0.0.1:6800/jsonrpc。"],
-      ["aria2.secret", "aria2 密钥", "password", "aria2 设置了密钥时填写；留空表示保持原密钥。"],
-      ["aria2.dir", "下载根目录", "text", "aria2 所在机器上的保存根目录；留空时使用 aria2 默认目录。"],
-      ["aria2.timeout_seconds", "连接超时", "number", "连接 aria2 等待的秒数。"],
-    ],
-  },
-  {
-    title: "机器人",
-    fields: [
-      ["bot.token", "机器人 Token", "password", "从 BotFather 获取；留空表示保持原 token。"],
-      ["bot.allowed_users", "允许用户 ID", "intList", "只有这些 Telegram 用户可以控制机器人。"],
-      ["bot.notify.on_download_start", "下载开始通知", "bool", "开始下载时发送进度消息（带进度条）。"],
-      ["bot.notify.on_download_complete", "下载完成通知", "bool", "下载完成后发送完成通知。"],
-      ["bot.notify.on_download_pause", "下载暂停通知", "bool", "任务暂停时冻结进度消息并更新状态。"],
-      ["bot.notify.on_download_error", "下载失败通知", "bool", "任务失败时冻结进度消息并显示错误。"],
-      ["bot.notify.live_progress", "实时进度更新", "bool", "开启后开始下载时发送进度消息，每隔指定秒数自动编辑更新，完成/暂停/失败时冻结。"],
-      ["bot.notify.live_progress_interval_seconds", "进度更新间隔（秒）", "number", "实时进度消息的编辑间隔，单位秒，最小 5 秒。"],
-    ],
-  },
-  {
-    title: "转发",
-    fields: [
-      ["forward.mode", "转发模式", "select", "default 优先官方转发，失败或受保护内容自动降级 clone；clone 始终复制发送。", ["default", "clone"]],
-      ["forward.target", "默认目标", "text", "机器人 /forward 未指定目标、监听转发触发时使用；留空表示收藏夹。"],
-      ["forward.listen", "监听对象", "list", "添加频道、群、用户的 ID 或用户名；频道会尝试同步监听关联评论区。"],
-      ["forward.listen_comments", "监听频道评论", "bool", "开启后会读取频道关联讨论组 ID，并监听其中的评论消息；账号必须有权限访问该讨论组。"],
-      ["forward.silent", "静默转发", "bool", "开启后转发消息不触发通知。"],
-      ["forward.dedupe_ttl_seconds", "去重时间", "number", "监听转发的消息/相册去重时间，单位秒。"],
-      ["forward.trigger_reactions", "触发表情", "list", "指定可触发转发的表情，如 👍、🔥；留空表示不启用表情触发转发，仅自动转发监听对象的新消息。"],
-    ],
-  },
-];
-
-export function initConfig() {
-  document.getElementById("reload-config").addEventListener("click", loadConfig);
-  document.getElementById("save-config").addEventListener("click", saveConfig);
-  document.getElementById("reboot").addEventListener("click", reboot);
+async function init() {
+  mounted = new Map();
+  blocks = [];
+  busy = new Set();
+  legacy = null;
+  legacyReady = null;
+  legacyDirty = false;
+  runtimeDraft = undefined;
+  reloadOnEntry = false;
+  const tabs = $("settings-tabs");
+  for (const [id, title] of settingsTabs) {
+    const tab = button(
+      title,
+      () => navigate(`/config?tab=${id}`),
+      "tab-button",
+    );
+    tab.dataset.tab = id;
+    tab.id = `settings-tab-${id}`;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", `settings-${id}`);
+    tabs.append(tab);
+    const panel = element("section", null, "settings-panel");
+    panel.id = `settings-${id}`;
+    panel.hidden = true;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", tab.id);
+    $("settings-panels").append(panel);
+  }
+  tabKeyboard(tabs);
+  $("settings-reload").addEventListener("click", () => {
+    void reload().catch((error) => message(error.message, "error"));
+  });
+  await readData();
+  store = new ConfigurationDrafts(data.components || []);
 }
-
-export async function loadConfig() {
-  const status = document.getElementById("config-status");
-  status.className = "notice";
-  status.textContent = "";
+async function readData() {
+  [data, configData] = await Promise.all([
+    api("/api/components"),
+    api("/api/config"),
+  ]);
+  managed = configData.component_managed === true;
+  $("settings-reload").textContent = managed
+    ? "重新读取 · 保留草稿"
+    : "重新读取旧版配置";
+  document.querySelector("#view-config > .page-head p").textContent = managed
+    ? "按业务调整参数。每个区块独立保存，高级参数按需展开。"
+    : "当前为旧版配置模式，参数按业务分类，统一保存；敏感项留空保留原值。";
+}
+async function reload() {
+  if (busy.size) {
+    message("正在保存，请稍后重新读取。");
+    return;
+  }
+  if (
+    !managed &&
+    legacyDirty &&
+    !confirm("重新读取旧版配置将撤销未保存修改，是否继续？")
+  )
+    return;
+  busy.add("reload");
   try {
-    const data = await api("/api/config");
-    state.config = data.config;
-    componentManaged = data.component_managed === true;
-    renderConfigForm();
-  } catch (error) {
-    status.className = "notice error";
-    status.textContent = error.message;
+    await Promise.allSettled([...mounted.values()]);
+    closeDrawer();
+    await readData();
+    store.rebase(data.components || []);
+    for (const block of blocks) block.dispose?.();
+    blocks = [];
+    mounted.clear();
+    legacy = null;
+    legacyReady = null;
+    legacyDirty = false;
+    $("legacy-settings")?.remove();
+    $("settings-panels")
+      .querySelectorAll(".settings-panel")
+      .forEach((panel) => panel.replaceChildren());
+    await display(activeTab);
+    message(
+      dirty()
+        ? "已读取服务端最新值，草稿已保留。请核对标注的服务端值后再保存。"
+        : "设置已重新读取。",
+      "success",
+    );
+  } finally {
+    busy.delete("reload");
+    updateDraft();
   }
 }
-
-function renderConfigForm() {
-  const form = document.getElementById("config-form");
-  const visibleSections = componentManaged ? sections.map(section => ({ ...section, fields: section.fields.filter(field => field[0] === "debug") })).filter(section => section.fields.length) : sections;
-  form.innerHTML = visibleSections.map((section) => `
-    <section class="config-section">
-      <h2>${escapeHTML(section.title)}</h2>
-      <div class="field-grid">
-        ${section.fields.map(renderField).join("")}
-      </div>
-    </section>
-  `).join("");
-  if (componentManaged) {
-    const link = document.createElement("a");
-    link.href = "/components.html";
-    link.textContent = "高级组件配置与诊断";
-    form.prepend(link);
+async function load(url) {
+  if (reloadOnEntry) {
+    reloadOnEntry = false;
+    await reload();
   }
-  initTagInputs(form);
-  updateExclusiveListFields();
-}
-
-function renderField(field) {
-  const [path, label, type, help, options] = field;
-  const value = getPath(state.config, path);
-  let control = "";
-  if (type === "select") {
-    control = `<select data-config-control data-path="${escapeAttr(path)}" data-type="${type}">
-      ${(options || []).map((option) => `<option value="${escapeAttr(option)}" ${String(value) === option ? "selected" : ""}>${escapeHTML(option)}</option>`).join("")}
-    </select>`;
-  } else if (type === "proxy") {
-    control = renderProxyInput(path, value || "");
-  } else if (type === "bool") {
-    control = `<label class="checkbox-line"><input data-config-control type="checkbox" data-path="${escapeAttr(path)}" data-type="${type}" ${value ? "checked" : ""}> 启用</label>`;
-  } else if (type === "list" || type === "intList") {
-    control = renderTagInput(path, type, value || []);
-  } else if (type === "password") {
-    control = `<input data-config-control type="password" data-path="${escapeAttr(path)}" data-type="${type}" value="" placeholder="留空保持不变">`;
-  } else if (type === "sizeRange") {
-    control = renderFileSizeRangeInput(path, options, value, getPath(state.config, options));
-  } else {
-    control = `<input data-config-control type="${type === "number" ? "number" : "text"}" data-path="${escapeAttr(path)}" data-type="${type}" value="${escapeAttr(value ?? "")}">`;
-  }
-  return `
-    <div class="field" data-field-path="${escapeAttr(path)}">
-      <label>${escapeHTML(label)}</label>
-      ${control}
-      <small>${escapeHTML(help || path)}</small>
-    </div>
-  `;
-}
-
-function renderFileSizeRangeInput(minPath, maxPath, minValue, maxValue) {
-  return `
-    <div class="file-size-range-control" data-file-size-range>
-      <input data-config-control data-file-size-min type="number" min="0" step="1" inputmode="numeric" data-path="${escapeAttr(minPath)}" data-type="number" value="${escapeAttr(minValue ?? 0)}" aria-label="文件大小左边界（MB）">
-      <span class="range-separator" aria-hidden="true">~</span>
-      <input data-config-control data-file-size-max type="number" min="0" step="1" inputmode="numeric" data-path="${escapeAttr(maxPath)}" data-type="number" value="${escapeAttr(maxValue ?? 0)}" aria-label="文件大小右边界（MB）">
-    </div>
-  `;
-}
-
-function renderProxyInput(path, value) {
-  const proxy = parseProxyValue(value);
-  return `
-    <div class="proxy-control" data-config-control data-path="${escapeAttr(path)}" data-type="proxy">
-      <select data-proxy-scheme aria-label="代理协议">
-        ${proxySchemes.map((scheme) => `<option value="${escapeAttr(scheme)}" ${proxy.scheme === scheme ? "selected" : ""}>${escapeHTML(scheme)}</option>`).join("")}
-      </select>
-      <input data-proxy-address type="text" value="${escapeAttr(proxy.address)}" placeholder="127.0.0.1:1080" autocomplete="off">
-    </div>
-  `;
-}
-
-function parseProxyValue(value) {
-  value = String(value || "").trim();
-  const fallback = { scheme: proxySchemes[0], address: "" };
-  if (!value) return fallback;
-
-  const matched = proxySchemes.find((scheme) => value.toLowerCase().startsWith(scheme));
-  if (!matched) {
-    return { scheme: fallback.scheme, address: trimProxyAddress(value) };
-  }
-
-  try {
-    const parsed = new URL(value);
-    return {
-      scheme: `${parsed.protocol}//`,
-      address: parsed.host || trimProxyAddress(value.slice(matched.length)),
-    };
-  } catch {
-    return {
-      scheme: matched,
-      address: trimProxyAddress(value.slice(matched.length)),
-    };
+  const requested = url?.searchParams?.get("tab");
+  activeTab = settingsTabs.some(([id]) => id === requested)
+    ? requested
+    : settingsTabs[0][0];
+  await display(activeTab);
+  const target =
+    url?.hash && document.getElementById(decodeURIComponent(url.hash.slice(1)));
+  if (target && !target.closest("[hidden]")) {
+    if (target.tagName === "DETAILS") target.open = true;
+    target.scrollIntoView({ block: "start" });
   }
 }
-
-function trimProxyAddress(value) {
-  value = String(value || "").trim();
-  const at = value.lastIndexOf("@");
-  if (at >= 0) value = value.slice(at + 1);
-  return value.replace(/^\/+/, "");
-}
-
-function renderTagInput(path, type, values) {
-  const tags = (values || []).map((value) => renderTagItem(value)).join("");
-  const placeholder = tagInputPlaceholder(path, type);
-  return `
-    <div class="tag-input" data-config-control data-path="${escapeAttr(path)}" data-type="${escapeAttr(type)}" aria-disabled="false">
-      <div class="tag-list" data-tag-list>${tags}</div>
-      <input class="tag-entry" data-tag-entry type="text" autocomplete="off" placeholder="${escapeAttr(placeholder)}">
-    </div>
-  `;
-}
-
-function tagInputPlaceholder(path, type) {
-  if (path === "trigger_reactions" || path === "forward.trigger_reactions") return "添加表情";
-  if (type === "intList") return "添加 ID";
-  return "添加词条";
-}
-
-function renderTagItem(value) {
-  return `
-    <span class="tag-item" data-tag-value="${escapeAttr(value)}">
-      <span>${escapeHTML(value)}</span>
-      <button class="tag-remove" data-tag-remove type="button" aria-label="移除 ${escapeAttr(value)}">x</button>
-    </span>
-  `;
-}
-
-function initTagInputs(root) {
-  root.querySelectorAll(".tag-input").forEach((control) => {
-    const input = control.querySelector("[data-tag-entry]");
-    control.addEventListener("click", (event) => {
-      const remove = event.target.closest("[data-tag-remove]");
-      if (remove) {
-        remove.closest("[data-tag-value]")?.remove();
-        updateExclusiveListFields();
-        return;
-      }
-      if (!input.disabled) input.focus();
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Tab") {
-        commitTagInput(control);
-        updateExclusiveListFields();
-        return;
-      }
-      if (event.key === "Enter" || event.key === ",") {
-        if (input.value.trim()) {
-          event.preventDefault();
-          commitTagInput(control);
-          updateExclusiveListFields();
-        }
-        return;
-      }
-      if (event.key === "Backspace" && !input.value) {
-        const tags = control.querySelectorAll("[data-tag-value]");
-        tags[tags.length - 1]?.remove();
-        updateExclusiveListFields();
-      }
-    });
-    input.addEventListener("input", updateExclusiveListFields);
-    input.addEventListener("blur", () => {
-      commitTagInput(control);
-      updateExclusiveListFields();
-    });
-  });
-}
-
-function commitPendingTagInputs() {
-  document.querySelectorAll("#config-form .tag-input").forEach(commitTagInput);
-}
-
-function commitTagInput(control) {
-  const input = control.querySelector("[data-tag-entry]");
-  if (!input || !input.value.trim()) return;
-  splitList(input.value).forEach((value) => addTagValue(control, value));
-  input.value = "";
-}
-
-function addTagValue(control, value) {
-  value = String(value || "").trim();
-  if (!value || tagValues(control).includes(value)) return;
-  control.querySelector("[data-tag-list]").insertAdjacentHTML("beforeend", renderTagItem(value));
-}
-
-function tagValues(control) {
-  return Array.from(control.querySelectorAll("[data-tag-value]")).map((tag) => tag.dataset.tagValue).filter(Boolean);
-}
-
-function listControlHasContent(control) {
-  if (!control) return false;
-  const pending = control.querySelector("[data-tag-entry]")?.value.trim();
-  return tagValues(control).length > 0 || Boolean(pending);
-}
-
-function updateExclusiveListFields() {
-  exclusiveListPairs.forEach(([leftPath, rightPath]) => {
-    const left = document.querySelector(`.tag-input[data-path="${leftPath}"]`);
-    const right = document.querySelector(`.tag-input[data-path="${rightPath}"]`);
-    const leftHas = listControlHasContent(left);
-    const rightHas = listControlHasContent(right);
-    setListControlDisabled(right, leftHas && !rightHas);
-    setListControlDisabled(left, rightHas && !leftHas);
-  });
-}
-
-function setListControlDisabled(control, disabled) {
-  if (!control) return;
-  control.classList.toggle("disabled", disabled);
-  control.setAttribute("aria-disabled", disabled ? "true" : "false");
-  control.querySelectorAll("input, button").forEach((item) => {
-    item.disabled = disabled;
-  });
-  const field = control.closest(".field");
-  if (field) field.classList.toggle("disabled", disabled);
-}
-
-async function saveConfig(event) {
-  event.preventDefault();
-  commitPendingTagInputs();
-  const fileSizeRangeWasReset = normalizeFileSizeRangeInputs();
-  const status = document.getElementById("config-status");
-  status.className = "notice";
-  status.textContent = "正在保存...";
-  const values = {};
-  document.querySelectorAll("#config-form [data-config-control]").forEach((input) => {
-    const path = input.dataset.path;
-    const type = input.dataset.type;
-    if (type === "password" && !input.value) return;
-    values[path] = fieldValue(input, type);
-  });
-  try {
-    const data = await api("/api/config", {
-      method: "PATCH",
-      body: JSON.stringify({ values }),
-    });
-    state.config = data.config;
-    componentManaged = data.component_managed === true;
-    renderConfigForm();
-    status.className = fileSizeRangeWasReset ? "notice warn" : "notice success";
-    status.textContent = fileSizeRangeWasReset
-      ? "文件大小范围输入有误，已按 0 ~ 0（不限制）保存。"
-      : (data.message || "配置已保存");
-    state.aria2Loaded = false;
-    document.getElementById("aria2-frame")?.removeAttribute("src");
-    if (document.getElementById("view-downloads")?.classList.contains("active")) {
-      loadDownloads(true);
+async function display(tab) {
+  activeTab = tab;
+  activateTabs($("settings-tabs"), tab);
+  for (const [id] of settingsTabs) $(`settings-${id}`).hidden = id !== tab;
+  if (!mounted.has(tab)) {
+    const promise = managed ? mountTab(tab) : mountLegacy(tab);
+    mounted.set(tab, promise);
+    try {
+      await promise;
+    } catch (error) {
+      mounted.delete(tab);
+      throw error;
     }
-    loadStatus();
-    loadModules();
-  } catch (error) {
-    status.className = "notice error";
-    status.textContent = error.message;
+  } else await mounted.get(tab);
+  if (!managed && legacy) legacy.showTab(activeTab);
+  updateDraft();
+}
+function updateDraft() {
+  const count = (store?.count || 0) + Number(runtimeDraft !== undefined);
+  $("settings-draft-status").textContent = count
+    ? `${count} 个字段尚未保存。切换设置标签会保留草稿。`
+    : legacyDirty
+      ? "旧版配置尚未保存。"
+      : "";
+  for (const block of blocks) block.sync();
+}
+async function mountTab(tab) {
+  const host = $(`settings-${tab}`);
+  host.replaceChildren();
+  if (tab === "system")
+    await renderSystem(host, {
+      store,
+      data,
+      configData,
+      onChanged: () => {
+        window.dispatchEvent(new Event("configuration-changed"));
+      },
+      getDraft: () => runtimeDraft,
+      onResetAccepted: discardDrafts,
+      markDirty: (value) => {
+        runtimeDraft = value;
+        updateDraft();
+      },
+      setBusy: (value) => {
+        if (value) busy.add("runtime");
+        else busy.delete("runtime");
+        updateDraft();
+      },
+    });
+  const groups = settingsGroups([...store.components.values()], tab);
+  for (const group of groups) {
+    const slot = element("div");
+    if (tab === "system" && group === groups[0]) slot.id = "advanced";
+    host.append(slot);
+    const block = await renderSettingsBlock(slot, group, {
+      store,
+      editable: data.editable,
+      busy,
+      update: updateDraft,
+      save: saveBlock,
+    });
+    blocks.push(block);
   }
+  if (!host.children.length)
+    host.append(element("p", "此分类暂无可配置项目。", "empty"));
 }
-
-function normalizeFileSizeRangeInputs() {
-  const control = document.querySelector("#config-form [data-file-size-range]");
-  if (!control) return false;
-
-  const minInput = control.querySelector("[data-file-size-min]");
-  const maxInput = control.querySelector("[data-file-size-max]");
-  const parseBoundary = (input) => {
-    const raw = input?.value.trim() || "0";
-    const value = Number(raw);
-    return {
-      value,
-      valid: Number.isSafeInteger(value) && value >= 0,
-    };
-  };
-  const minimum = parseBoundary(minInput);
-  const maximum = parseBoundary(maxInput);
-  const valid = minimum.valid && maximum.valid
-    && (minimum.value === 0 || maximum.value === 0 || minimum.value <= maximum.value);
-
-  if (!valid) {
-    window.alert("文件大小范围输入有误，将按 0 ~ 0（不限制）处理。");
-    minInput.value = "0";
-    maxInput.value = "0";
-    return true;
-  }
-
-  minInput.value = String(minimum.value);
-  maxInput.value = String(maximum.value);
-  return false;
-}
-
-function fieldValue(input, type) {
-  if (input.classList.contains("tag-input")) {
-    const values = tagValues(input);
-    if (type === "intList") return values.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-    return values;
-  }
-  if (input.classList.contains("proxy-control")) return proxyFieldValue(input);
-  if (type === "bool") return input.checked;
-  if (type === "number") return Number(input.value || 0);
-  if (type === "list") return splitList(input.value);
-  if (type === "intList") return splitList(input.value).map((value) => Number(value)).filter((value) => Number.isFinite(value));
-  return input.value;
-}
-
-function proxyFieldValue(control) {
-  const scheme = control.querySelector("[data-proxy-scheme]")?.value || proxySchemes[0];
-  const rawAddress = control.querySelector("[data-proxy-address]")?.value || "";
-  const pasted = parseProxyValue(rawAddress);
-  const address = rawAddress.includes("://") ? pasted.address : trimProxyAddress(rawAddress);
-  if (!address) return "";
-  return `${rawAddress.includes("://") ? pasted.scheme : scheme}${address}`;
-}
-
-async function reboot() {
-  if (!confirm("确认重启 tdl？当前 Web 连接会暂时断开。")) return;
-  const status = document.getElementById("config-status");
+async function saveBlock(group, report, redraw) {
+  const id = group.id,
+    names = group.fields.map((field) => field.name),
+    values = store.patch(id, names);
+  if (busy.has(id) || !Object.keys(values).length) return;
+  busy.add(id);
+  updateDraft();
   try {
-    const data = await api("/api/system/reboot", { method: "POST", body: "{}" });
-    status.className = "notice success";
-    status.textContent = data.message || "正在重启";
+    const result = await api("/api/components", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id,
+        values,
+        revision: store.components.get(id).revision || "",
+      }),
+    });
+    const saved = result.components.find((component) => component.id === id);
+    if (!saved) throw new Error("保存响应缺少组件信息，请重新读取核对。");
+    store.accept(saved, Object.keys(values));
+    await redraw();
+    report(
+      saved.pending_restart
+        ? "已保存，正在重新配置对应服务。"
+        : "更改已保存并应用。",
+      "success",
+    );
+    window.dispatchEvent(
+      new CustomEvent("configuration-changed", { detail: { id } }),
+    );
   } catch (error) {
-    status.className = "notice error";
-    status.textContent = error.message;
+    report(
+      error.status === 409
+        ? "服务端配置已变化，草稿已保留。请点击「重新读取 · 保留草稿」，核对后再次保存。"
+        : error.message,
+      "error",
+    );
+  } finally {
+    busy.delete(id);
+    updateDraft();
   }
 }
-
-export const page = { init: initConfig, load: loadConfig };
+async function mountLegacy() {
+  legacyReady ||= (async () => {
+    // Keep the legacy schema and save API, but present it through the same tabs.
+    const host = element("div");
+    host.id = "legacy-settings";
+    $("settings-panels").append(host);
+    await fragment(host, "legacy-config");
+    legacy = await import("./legacy-config.js");
+    legacy.initConfig();
+    await legacy.loadConfig();
+    legacyBaseline = legacy.snapshot();
+    host.addEventListener("input", () => {
+      legacyDirty = legacy.snapshot() !== legacyBaseline;
+      updateDraft();
+    });
+    host.addEventListener("change", () => {
+      legacyDirty = legacy.snapshot() !== legacyBaseline;
+      updateDraft();
+    });
+    host.addEventListener("legacy-config-saved", () => {
+      legacyBaseline = legacy.snapshot();
+      legacyDirty = false;
+      updateDraft();
+    });
+    const system = $("settings-system");
+    await renderSystem(system, {
+      store,
+      data,
+      configData,
+      legacy: true,
+      onResetAccepted: discardDrafts,
+      setBusy: (value) => {
+        if (value) busy.add("runtime");
+        else busy.delete("runtime");
+        updateDraft();
+      },
+      onChanged: () => {},
+      markDirty: (value) => {
+        legacyDirty = value;
+        updateDraft();
+      },
+    });
+  })();
+  await legacyReady;
+  legacy.showTab(activeTab);
+}
+function discardDrafts() {
+  store?.drafts.clear();
+  legacyDirty = false;
+  runtimeDraft = undefined;
+  updateDraft();
+}
+function beforeLeave() {
+  if (busy.size) {
+    message("正在保存，请等待完成后再离开。");
+    return false;
+  }
+  if (dirty() && !confirm("设置尚未保存，离开将撤销这些修改。是否继续？"))
+    return false;
+  if (dirty()) {
+    store.drafts.clear();
+    legacyDirty = false;
+    runtimeDraft = undefined;
+  }
+  reloadOnEntry = true;
+  return true;
+}
+function stop() {
+  closeDrawer();
+}
+export const page = { init, load, stop, dirty, beforeLeave };
