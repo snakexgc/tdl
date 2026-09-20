@@ -38,7 +38,7 @@ func (w *internalProgressWriter) Write(p []byte) (int, error) {
 
 func (w *internalProgressWriter) flush() {
 	_, _ = w.store.Update(context.WithoutCancel(w.ctx), w.id, func(record *types.LocalDownloadRecord) bool {
-		if record.Status != types.InternalDownloadStatusActive || !sameExecution(*record, w.record) {
+		if record.Status != types.LocalDownloadStatusActive || !sameExecution(*record, w.record) {
 			return false
 		}
 		record.Completed = w.completed
@@ -60,9 +60,9 @@ func (w *internalProgressWriter) checkStatus() error {
 		return types.ErrLocalDownloadRemoved
 	}
 	switch record.Status {
-	case types.InternalDownloadStatusPaused:
+	case types.LocalDownloadStatusPaused:
 		return types.ErrLocalDownloadPaused
-	case types.InternalDownloadStatusRemoved:
+	case types.LocalDownloadStatusRemoved:
 		return types.ErrLocalDownloadRemoved
 	default:
 		return nil

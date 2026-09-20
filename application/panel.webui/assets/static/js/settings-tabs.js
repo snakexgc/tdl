@@ -59,7 +59,7 @@ export function mountSettingsTabs(page, isActive) {
         if (!data.editable) {
           const note = document.createElement("p");
           note.className = "notice warn";
-          note.textContent = "当前使用旧配置文件。请先迁移至组件配置目录；原配置仍可在系统设置中编辑。";
+          note.textContent = "当前配置服务不可用，请检查服务运行状态。";
           settings.prepend(note);
         }
         loaded = true;

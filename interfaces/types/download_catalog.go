@@ -3,24 +3,24 @@ package types
 import "time"
 
 type DownloadLinkItem struct {
-	ID                 string              `json:"id"`
-	Key                string              `json:"key"`
-	URL                string              `json:"url"`
-	FileName           string              `json:"file_name"`
-	FileSize           int64               `json:"file_size"`
-	PeerID             int64               `json:"peer_id"`
-	MessageID          int                 `json:"message_id"`
-	CreatedAt          time.Time           `json:"created_at"`
-	ExpiresAt          *time.Time          `json:"expires_at,omitempty"`
-	Permanent          bool                `json:"permanent"`
-	Expired            bool                `json:"expired"`
-	Downloaded         bool                `json:"downloaded"`
-	HTTPDownloaded     bool                `json:"http_downloaded"`
-	HTTPDownloadedAt   *time.Time          `json:"http_downloaded_at,omitempty"`
-	HTTPDeliveredBytes int64               `json:"http_delivered_bytes"`
-	Status             string              `json:"status"`
-	Aria2              []Aria2LinkEntry    `json:"aria2"`
-	Internal           []InternalLinkEntry `json:"internal"`
+	ID                 string           `json:"id"`
+	Key                string           `json:"key"`
+	URL                string           `json:"url"`
+	FileName           string           `json:"file_name"`
+	FileSize           int64            `json:"file_size"`
+	PeerID             int64            `json:"peer_id"`
+	MessageID          int              `json:"message_id"`
+	CreatedAt          time.Time        `json:"created_at"`
+	ExpiresAt          *time.Time       `json:"expires_at,omitempty"`
+	Permanent          bool             `json:"permanent"`
+	Expired            bool             `json:"expired"`
+	Downloaded         bool             `json:"downloaded"`
+	HTTPDownloaded     bool             `json:"http_downloaded"`
+	HTTPDownloadedAt   *time.Time       `json:"http_downloaded_at,omitempty"`
+	HTTPDeliveredBytes int64            `json:"http_delivered_bytes"`
+	Status             string           `json:"status"`
+	Aria2              []Aria2LinkEntry `json:"aria2"`
+	Local              []LocalLinkEntry `json:"local"`
 }
 
 type Aria2LinkEntry struct {
@@ -36,7 +36,7 @@ type Aria2LinkEntry struct {
 	Error       string    `json:"error,omitempty"`
 }
 
-type InternalLinkEntry struct {
+type LocalLinkEntry struct {
 	ID        string    `json:"id"`
 	Status    string    `json:"status"`
 	Path      string    `json:"path"`
@@ -72,7 +72,7 @@ type LinkCatalogRecord struct {
 	HTTPCompletedAt    time.Time
 	HTTPDeliveredBytes int64
 	Aria2              []Aria2LinkEntry
-	Internal           []InternalLinkEntry
+	Local              []LocalLinkEntry
 }
 
 type LinkCatalogSnapshot struct {

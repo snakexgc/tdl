@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	executorsField     = "executors"
-	aria2Executor      = "aria2"
-	httpExecutor       = "http"
-	legacyInternalMode = "internal"
+	executorsField = "executors"
+	aria2Executor  = "aria2"
+	httpExecutor   = "http"
 )
 
 func Manifest() manifest.Manifest {
@@ -25,10 +24,8 @@ func Manifest() manifest.Manifest {
 		ID:      ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 20, KeepVisible: true, SettingsURL: "/config?tab=download"}}, Title: "下载任务控制",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 2, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0), manifest.PortOf[ports.DownloadPipeline](ports.DownloadPipelineName, 1, 0)},
 		Config: []manifest.ConfigField{
-			manifest.Choice("mode", "默认下载方式", "aria2", []string{"aria2", "local", legacyInternalMode}, false).WithHelp("aria2 使用外部下载器；local 使用本地下载器；internal 为 local 的兼容名称。"),
-
-			{Name: executorsField, Title: "执行器优先级", Help: "每行一个：local、aria2 或 http。留空沿用默认下载方式；http 仅生成链接。", Type: manifest.Strings, Default: []string{}},
-			{Name: "local_root", Title: "本地下载根目录", Help: "使用绝对路径；留空使用应用 downloads 目录。", Type: manifest.String, Default: ""},
+			{Name: executorsField, Title: "执行器优先级", Help: "每行一个，按顺序尝试：local、aria2 或 http。至少填写一个；http 仅生成链接，必须放在最后。", Type: manifest.Strings, Default: []string{aria2Executor, httpExecutor}},
+			{Name: "local_root", Title: "本地下载根目录", Help: "使用本地执行器时必须填写本机绝对路径。", Type: manifest.String, Default: ""},
 		},
 	}, "download", "下载方式").SettingsOrder(10)
 }
@@ -38,14 +35,14 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		return nil, err
 	}
 	var route ports.DownloadRoute
-	if err := view.Get("mode", &route.Mode); err != nil {
-		return nil, err
-	}
 	if err := view.Get(executorsField, &route.Executors); err != nil {
 		return nil, err
 	}
 	if err := view.Get("local_root", &route.LocalRoot); err != nil {
 		return nil, err
+	}
+	if len(route.Executors) == 0 {
+		return nil, fmt.Errorf("executors cannot be empty")
 	}
 	seen := map[string]bool{}
 	for index, name := range route.Executors {
@@ -85,7 +82,7 @@ func (s *Service) Route(ctx context.Context, account types.AccountID) (ports.Dow
 		return ports.DownloadRoute{}, err
 	}
 	if route := s.route.Load(); route != nil {
-		return ports.DownloadRoute{Mode: route.Mode, Executors: slices.Clone(route.Executors), LocalRoot: route.LocalRoot}, nil
+		return ports.DownloadRoute{Executors: slices.Clone(route.Executors), LocalRoot: route.LocalRoot}, nil
 	}
 	return ports.DownloadRoute{}, nil
 }

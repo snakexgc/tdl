@@ -106,10 +106,10 @@ func (s source) Stream(ctx context.Context, _ string, _ ports.DownloadLease, _, 
 
 func TestLateReportsCannotRestoreDeletedOrPausedTasks(t *testing.T) {
 	ctx := context.Background()
-	for _, status := range []string{types.InternalDownloadStatusPaused, types.InternalDownloadStatusRemoved, testDeleted} {
+	for _, status := range []string{types.LocalDownloadStatusPaused, types.LocalDownloadStatusRemoved, testDeleted} {
 		t.Run(status, func(t *testing.T) {
 			repo := newRepository()
-			stale := types.LocalDownloadRecord{ID: testTask, TaskID: testTask, Status: types.InternalDownloadStatusActive, Total: 4}
+			stale := types.LocalDownloadRecord{ID: testTask, TaskID: testTask, Status: types.LocalDownloadStatusActive, Total: 4}
 			if status != testDeleted {
 				current := stale
 				current.Status = status
@@ -135,13 +135,13 @@ func TestLateReportsCannotRestoreDeletedOrPausedTasks(t *testing.T) {
 func TestShortStreamDoesNotCompleteTask(t *testing.T) {
 	repo := newRepository()
 	path := filepath.Join(t.TempDir(), "file")
-	require.NoError(t, repo.Save(context.Background(), types.LocalDownloadRecord{ID: testTask, TaskID: testTask, Path: path, Dir: filepath.Dir(path), Status: types.InternalDownloadStatusQueued, Total: 4}))
+	require.NoError(t, repo.Save(context.Background(), types.LocalDownloadRecord{ID: testTask, TaskID: testTask, Path: path, Dir: filepath.Dir(path), Status: types.LocalDownloadStatusQueued, Total: 4}))
 	worker := New(source{stream: func(_ context.Context, w io.Writer) error { _, err := w.Write([]byte("x")); return err }}, repo, nil)
 	worker.Execute(context.Background(), testTask)
 	record, ok, err := repo.Get(context.Background(), testTask)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, types.InternalDownloadStatusError, record.Status)
+	require.Equal(t, types.LocalDownloadStatusError, record.Status)
 	require.Contains(t, record.Error, "unexpected EOF")
 	require.False(t, repo.downloaded)
 }
@@ -150,7 +150,7 @@ func TestLateReportsCannotModifyRecreatedOrRestartedTask(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	later := now.Add(time.Second)
-	stale := types.LocalDownloadRecord{ID: testTask, TaskID: testTask, CreatedAt: now, StartedAt: &now, Status: types.InternalDownloadStatusActive, Total: 4}
+	stale := types.LocalDownloadRecord{ID: testTask, TaskID: testTask, CreatedAt: now, StartedAt: &now, Status: types.LocalDownloadStatusActive, Total: 4}
 	for _, restart := range []bool{false, true} {
 		repo := newRepository()
 		current := stale

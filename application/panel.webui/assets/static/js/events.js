@@ -1,7 +1,7 @@
 // One connection per panel. HTTP remains the command/snapshot API; polling is
 // only a bounded fallback when a proxy does not support WebSocket upgrades.
 const listeners = new Map();
-const endpoints = { status: "/api/status", dashboard: "/api/dashboard", downloads: "/api/internal-downloads", forwards: "/api/forwards" };
+const endpoints = { status: "/api/status", dashboard: "/api/dashboard", forwards: "/api/forwards" };
 endpoints["download-tasks-local"] = "/api/download-tasks?executor=local";
 endpoints["download-tasks-aria2"] = "/api/download-tasks?executor=aria2";
 let socket, reconnect, fallback, stopped = true, attempts = 0;

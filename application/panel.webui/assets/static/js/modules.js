@@ -4,9 +4,7 @@ import { featureGroups, componentStatus } from "./module-model.js";
 import { loadStatus } from "./status.js";
 
 let components = [],
-  managed = false,
   canToggle = false,
-  legacyModules = [],
   timer,
   request,
   saving = false,
@@ -34,19 +32,10 @@ async function refresh() {
     const options = {
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
     };
-    const [data, configuration] = await Promise.all([
-      api("/api/components", options),
-      api("/api/config", options),
-    ]);
-    const isManaged = configuration.component_managed === true;
-    const legacy = isManaged
-      ? []
-      : (await api("/api/modules", options)).modules || [];
+    const data = await api("/api/components", options);
     if (controller.signal.aborted) return;
     components = data.components || [];
-    managed = isManaged;
     canToggle = Boolean(data.can_toggle && data.editable);
-    legacyModules = legacy;
     render();
     if ($("module-status").dataset.stale) {
       report("");
@@ -80,19 +69,7 @@ function render() {
     ),
   );
   const first = !$("module-list").children.length;
-  const display = components.map((component) => {
-    const legacy =
-      !managed &&
-      legacyModules.find((module) => module.component_id === component.id);
-    return legacy
-      ? {
-          ...component,
-          enabled: legacy.enabled,
-          state: legacy.running ? "running" : "stopped",
-          legacy,
-        }
-      : component;
-  });
+  const display = components;
   const groups = featureGroups(display);
   const overview = $("module-overview");
   overview.replaceChildren();
@@ -179,10 +156,7 @@ function render() {
         "aria-label",
         `${component.enabled === false ? "启用" : "停用"} ${component.title || component.id}`,
       );
-      control.disabled =
-        saving || (managed ? !canToggle : !component.legacy?.can_toggle);
-      if (!managed && !component.legacy)
-        control.title = "旧版配置模式仅支持已声明的功能服务开关";
+      control.disabled = saving || !canToggle;
       row.append(control);
       const logs = link(
         "日志",
@@ -205,9 +179,7 @@ function render() {
   }
   if (!groups.length)
     $("module-list").append(element("p", "暂无已声明的功能模块。", "empty"));
-  $("module-mode").textContent = managed
-    ? "按功能查看细分模块的启用状态与运行状态。"
-    : "旧版配置模式：保留功能服务开关，其他细分模块仅显示运行状态。";
+  $("module-mode").textContent = "按功能查看细分模块的启用状态与运行状态。";
   if (focus)
     [...$("module-list").querySelectorAll("[data-module-focus]")]
       .find((item) => item.dataset.moduleFocus === focus)
@@ -236,23 +208,15 @@ async function toggle(component) {
   render();
   report(enabled ? "正在启用…" : "正在停用…");
   try {
-    if (managed) {
-      const result = await api("/api/components", {
-        method: "PATCH",
-        body: JSON.stringify({
-          id: component.id,
-          enabled,
-          revision: component.revision || "",
-        }),
-      });
-      components = result.components || components;
-    } else {
-      const result = await api("/api/modules", {
-        method: "POST",
-        body: JSON.stringify({ id: component.legacy.id, enabled }),
-      });
-      legacyModules = result.modules || legacyModules;
-    }
+    const result = await api("/api/components", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: component.id,
+        enabled,
+        revision: component.revision || "",
+      }),
+    });
+    components = result.components || components;
     report("启停请求已保存，运行状态会自动刷新。", "success");
     window.dispatchEvent(new Event("components-changed"));
     void loadStatus();

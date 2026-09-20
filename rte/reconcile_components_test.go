@@ -12,7 +12,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/manifest"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 const testUnrelatedComponent = "unrelated"
@@ -89,7 +89,7 @@ func TestReconcileComponentsConcurrentInspection(t *testing.T) {
 	host.Start(ctx)
 	catalog, err := rte.NewCatalog(rte.Definition{Manifest: m, Scope: rte.AccountScope})
 	require.NoError(t, err)
-	directory := rte.NewDirectory(catalog, config.NewStore(t.TempDir()))
+	directory := rte.NewDirectory(catalog, configtest.NewStore())
 	require.NoError(t, directory.Bind("host", func() *rte.Runtime { return host }))
 	readCtx, cancel := context.WithCancel(ctx)
 	var readers sync.WaitGroup

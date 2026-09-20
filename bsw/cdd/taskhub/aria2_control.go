@@ -22,13 +22,15 @@ func (s *Aria2Repository) ReserveControl(ctx context.Context, expected types.Ari
 		return lease, false, fmt.Errorf("control deadline has expired")
 	}
 	err := Aria2(s.kv).Mutate(ctx, expected.GID, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
-		if err := json.Unmarshal(data, &lease); err != nil {
+		current, err := DecodeAria2Record(data, expected.GID)
+		if err != nil {
 			return nil, stamp, err
 		}
+		lease = current
 		if lease.Deleted || lease.Revision != expected.Revision || lease.TaskID != expected.TaskID || lease.ControlUntil.After(time.Now()) {
 			return data, stamp, nil
 		}
-		lease.GID, lease.Revision, lease.ControlUntil = expected.GID, lease.Revision+1, until
+		lease.Revision, lease.ControlUntil = lease.Revision+1, until
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(data, &raw); err != nil {
 			return nil, stamp, err
@@ -51,8 +53,8 @@ func (s *Aria2Repository) ReserveControl(ctx context.Context, expected types.Ari
 func (s *Aria2Repository) FinishControl(ctx context.Context, lease types.Aria2TaskRecord, status string, remove bool) (bool, error) {
 	changed := false
 	err := Aria2(s.kv).Mutate(ctx, lease.GID, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
-		var current types.Aria2TaskRecord
-		if err := json.Unmarshal(data, &current); err != nil {
+		current, err := DecodeAria2Record(data, lease.GID)
+		if err != nil {
 			return nil, stamp, err
 		}
 		if current.Revision != lease.Revision || current.TaskID != lease.TaskID {

@@ -9,17 +9,16 @@ import (
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 
-	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/interfaces/ports"
-	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 type tdlUpdateController struct {
 	updater       ports.Updater
-	requestUpdate func(updater.Plan)
+	requestUpdate func(types.UpdatePlan)
 }
 
-func newTDLUpdateController(requestUpdate func(updater.Plan)) *tdlUpdateController {
+func newTDLUpdateController(requestUpdate func(types.UpdatePlan)) *tdlUpdateController {
 	return &tdlUpdateController{requestUpdate: requestUpdate}
 }
 
@@ -63,18 +62,18 @@ func handleUpdateCommand(ctx *th.Context, msg *telego.Message, text string, cont
 	return true, nil
 }
 
-func (c *tdlUpdateController) check(ctx context.Context) (updater.Info, error) {
+func (c *tdlUpdateController) check(ctx context.Context) (types.UpdateInfo, error) {
 	if c != nil && c.updater != nil {
 		return c.updater.Check(ctx)
 	}
-	return updater.CheckLatest(ctx, config.EffectiveProxy(config.From(ctx)))
+	return types.UpdateInfo{}, errors.New("update service is unavailable")
 }
 
-func (c *tdlUpdateController) download(ctx context.Context) (updater.Plan, updater.Info, error) {
+func (c *tdlUpdateController) download(ctx context.Context) (types.UpdatePlan, types.UpdateInfo, error) {
 	if c != nil && c.updater != nil {
 		return c.updater.Download(ctx)
 	}
-	return updater.DownloadLatest(ctx, config.EffectiveProxy(config.From(ctx)))
+	return types.UpdatePlan{}, types.UpdateInfo{}, errors.New("update service is unavailable")
 }
 
 func updateCommandConfirmed(text string) bool {
@@ -86,7 +85,7 @@ func updateCommandConfirmed(text string) bool {
 	return arg == "confirm" || arg == "yes" || arg == "y" || arg == "确认"
 }
 
-func formatUpdateInfo(info updater.Info) string {
+func formatUpdateInfo(info types.UpdateInfo) string {
 	lines := []string{
 		"tdl 更新检查",
 		"当前版本：" + emptyDash(info.CurrentVersion),

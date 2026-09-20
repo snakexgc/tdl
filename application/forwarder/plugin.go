@@ -49,7 +49,7 @@ func (s *service) Init(ctx context.Context, k rte.Kernel) error {
 		return err
 	}
 	s.router = NewMessageRouter(ctx, k.Account, s.queue, s.routing)
-	s.command = NewCommand(ctx, k.Account, s.queue, s.validate, func() CommandSettings { return s.router.settings().command })
+	s.command = NewCommand(ctx, k.Account, s.queue, s.validate, func() CommandSettings { return s.queue.policy().command })
 	if err := k.Provide(ports.ForwardRoutingName, s.router); err != nil {
 		return err
 	}

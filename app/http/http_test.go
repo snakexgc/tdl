@@ -30,11 +30,10 @@ import (
 )
 
 const (
-	testTaskID     = "task-1"
-	testListenAddr = "127.0.0.1:0"
-	testPublicURL  = "http://127.0.0.1:8080"
-	testFileName   = "file.bin"
-	testFileNameA  = "a.bin"
+	testTaskID    = "task-1"
+	testPublicURL = "http://127.0.0.1:8080"
+	testFileName  = "file.bin"
+	testFileNameA = "a.bin"
 )
 
 func TestBuildDownloadURL(t *testing.T) {
@@ -84,7 +83,7 @@ func TestDownloadTaskIDStableForMedia(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        testListenAddr,
+		Address:       testHTTPAddress,
 		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 	media := &tmedia.Media{
@@ -454,7 +453,7 @@ func TestDownloadHandlerSuccessAndRange(t *testing.T) {
 
 	kvd := newMemoryTaskStorage()
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        testListenAddr,
+		Address:       testHTTPAddress,
 		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, kvd, nil)
 	proxy.pools.Set(testDownloadPool{})
@@ -745,7 +744,7 @@ func TestDownloadHandlerMissingTask(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        testListenAddr,
+		Address:       testHTTPAddress,
 		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
@@ -759,7 +758,7 @@ func TestDownloadHandlerInvalidRange(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        testListenAddr,
+		Address:       testHTTPAddress,
 		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
@@ -783,7 +782,7 @@ func TestDownloadHandlerHead(t *testing.T) {
 	t.Parallel()
 
 	proxy := newDownloadProxy(config.HTTPConfig{
-		Listen:        testListenAddr,
+		Address:       testHTTPAddress,
 		PublicBaseURL: testPublicURL,
 	}, 2, 4, &poolHolder{}, nil, nil)
 
@@ -1677,45 +1676,9 @@ func mustAcquireDownloadLease(t *testing.T, maxWorkers int) *transfer.TaskLease 
 	return lease
 }
 
-type memoryTaskStorage struct {
-	mu   sync.Mutex
-	data map[string][]byte
-}
+func newMemoryTaskStorage() *storage.Memory { return &storage.Memory{} }
 
-func newMemoryTaskStorage() *memoryTaskStorage {
-	return &memoryTaskStorage{
-		data: map[string][]byte{},
-	}
-}
-
-func (m *memoryTaskStorage) Get(ctx context.Context, key string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	value, ok := m.data[key]
-	if !ok {
-		return nil, storage.ErrNotFound
-	}
-	return append([]byte(nil), value...), nil
-}
-
-func (m *memoryTaskStorage) Set(ctx context.Context, key string, value []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.data[key] = append([]byte(nil), value...)
-	return nil
-}
-
-func (m *memoryTaskStorage) Delete(ctx context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.data, key)
-	return nil
-}
-
-// saveIndex seeds a deliberately stale legacy index for expiry regression tests.
+// saveIndex seeds a deliberately stale index for expiry regression tests.
 func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskIndex) error {
 	data, err := json.Marshal(index)
 	if err != nil {
@@ -1723,3 +1686,5 @@ func (s *taskStore) saveIndex(ctx context.Context, index persistentDownloadTaskI
 	}
 	return s.kv.Set(ctx, downloadTaskIndexKey, data)
 }
+
+const testHTTPAddress = "127.0.0.1"

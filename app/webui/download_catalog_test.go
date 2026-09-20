@@ -53,7 +53,8 @@ func TestCatalogDoesNotRepublishRejectedRemoteCompletion(t *testing.T) {
 	}))
 	defer remote.Close()
 	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode, cfg.Aria2.RPCURL = config.DownloaderModeAria2, remote.URL
+	cfg.Downloader.Executors, cfg.Aria2.RPCURL = []string{config.DownloadExecutorAria2}, remote.URL
+	indexCatalogFixtures(t, engine)
 	server := NewServer(Options{Context: config.WithSource(ctx, config.NewSource(cfg)), KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: store})
 	items, statusError, err := server.listDownloadLinks(ctx)
 	require.NoError(t, err)
@@ -88,13 +89,14 @@ func TestCatalogRemoteSubmissionUsesTypedClientAndPersistsOnce(t *testing.T) {
 	}))
 	defer remote.Close()
 	cfg := config.Get()
-	oldMode, oldRPC := cfg.Downloader.Mode, cfg.Aria2.RPCURL
-	t.Cleanup(func() { cfg.Downloader.Mode = oldMode; cfg.Aria2.RPCURL = oldRPC })
-	cfg.Downloader.Mode = config.DownloaderModeAria2
+	oldMode, oldRPC := cfg.Downloader.Executors, cfg.Aria2.RPCURL
+	t.Cleanup(func() { cfg.Downloader.Executors = oldMode; cfg.Aria2.RPCURL = oldRPC })
+	cfg.Downloader.Executors = []string{config.DownloadExecutorAria2}
 	cfg.Aria2.RPCURL = remote.URL
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{testQueueDefault: {downloadTaskKeyPrefix + testDocumentID: []byte(`{"file_name":"file.bin"}`)}}}
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{testQueueDefault: {downloadTaskKeyPrefix + testDocumentID: []byte(`{"id":"` + testDocumentID + `","file_name":"file.bin"}`)}}}
 	store, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
+	indexCatalogFixtures(t, engine)
 	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: store})
 	result := server.downloadLinks(context.Background(), []string{testDocumentID, testDocumentID})
 	require.True(t, result.OK, "%v", result.Errors)

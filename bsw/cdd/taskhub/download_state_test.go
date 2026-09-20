@@ -2,7 +2,6 @@ package taskhub_test
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +13,8 @@ import (
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/kv"
 )
+
+const testIncompleteTask = "incomplete"
 
 func TestDownloadStatePersistenceAndStaleObservations(t *testing.T) {
 	ctx := context.Background()
@@ -62,16 +63,19 @@ func TestDownloadStatePersistenceAndStaleObservations(t *testing.T) {
 	require.NoError(t, remote.Remove(ctx, "gid"))
 	_, err = remote.Report(ctx, finished, baseline.Revision)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	// Old data remains readable and gains revision/state on its next report.
-	legacy := []byte(`{"gid":"legacy","status":"waiting","future_field":true}`)
-	require.NoError(t, taskhub.Aria2(store).Put(ctx, "legacy", legacy, time.Now()))
-	applied, err = remote.Report(ctx, types.Aria2TaskRecord{GID: "legacy", Status: "paused"}, 0)
+	// Records without current concurrency metadata are rejected without writes.
+	incomplete := []byte(`{"gid":"incomplete","status":"waiting","future_field":true}`)
+	require.NoError(t, taskhub.Aria2(store).Put(ctx, testIncompleteTask, incomplete, time.Now()))
+	applied, err = remote.Report(ctx, types.Aria2TaskRecord{GID: testIncompleteTask, Status: "paused"}, 0)
+	require.ErrorContains(t, err, "invalid aria2 task record")
+	require.False(t, applied)
+	require.Error(t, remote.Add(ctx, types.Aria2TaskRecord{GID: testIncompleteTask}))
+	_, reserved, err := remote.ReserveControl(ctx, types.Aria2TaskRecord{GID: testIncompleteTask}, time.Now().Add(time.Minute))
+	require.Error(t, err)
+	require.False(t, reserved)
+	_, err = remote.Records(ctx)
+	require.Error(t, err)
+	raw, err := taskhub.Aria2(store).Get(ctx, testIncompleteTask)
 	require.NoError(t, err)
-	require.True(t, applied)
-	raw, err := taskhub.Aria2(store).Get(ctx, "legacy")
-	require.NoError(t, err)
-	var persisted map[string]any
-	require.NoError(t, json.Unmarshal(raw, &persisted))
-	require.Equal(t, true, persisted["future_field"])
-	require.Equal(t, "paused", persisted["state"])
+	require.Equal(t, incomplete, raw)
 }

@@ -32,15 +32,15 @@ func (observationClient) TellStopped(context.Context, int, int) ([]types.Aria2Do
 	}, nil
 }
 
-func TestAria2ObservationMaintainsLegacyLinkWithoutPanel(t *testing.T) {
+func TestAria2ObservationMaintainsIndexedLinkWithoutPanel(t *testing.T) {
 	ctx := context.Background()
 	engine, err := kv.New(kv.DriverBolt, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "store")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store, err := engine.Open(testIsolatedAccount)
 	require.NoError(t, err)
-	// Deliberately unindexed legacy link; no panel or watcher is instantiated.
-	require.NoError(t, store.Set(ctx, taskhub.LinkPrefix+testLinkSource, []byte(`{"id":"source","file_name":"movie.mp4"}`)))
+	// The source is persisted through the task index; no panel or watcher runs.
+	require.NoError(t, taskhub.Links(store).Put(ctx, testLinkSource, []byte(`{"id":"source","file_name":"movie.mp4"}`), time.Now()))
 	repo := taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: store, Engine: engine, Namespace: testIsolatedAccount}}
 	observer := aria2.Observer{Client: observationClient{}, Repository: repo, PublicBaseURL: "https://downloads.test/prefix", TTL: time.Hour}
 	require.NoError(t, observer.Sync(ctx))

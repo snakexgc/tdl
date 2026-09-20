@@ -16,8 +16,8 @@ const (
 	LinkIndex     = "watch.download.index"
 	Aria2Prefix   = "watch.aria2.task."
 	Aria2Index    = "watch.aria2.index"
-	LocalPrefix   = "watch.internal.task."
-	LocalIndex    = "watch.internal.index"
+	LocalPrefix   = "download.local.task."
+	LocalIndex    = "download.local.index"
 )
 
 func owned(store storage.Storage, selectCollection func(*Hub) *Collection) *Collection {
@@ -106,6 +106,11 @@ func (c *Collection) Merge(ctx context.Context, id string, data []byte, stamp ti
 		}
 		merged := make(map[string]json.RawMessage)
 		if err == nil {
+			if c.prefix == Aria2Prefix {
+				if _, err := DecodeAria2Record(old, id); err != nil {
+					return err
+				}
+			}
 			if err := json.Unmarshal(old, &merged); err != nil {
 				return err
 			}
@@ -200,8 +205,12 @@ func (c *Collection) MarkDownloaded(ctx context.Context, id string) error {
 			raw = make(map[string]json.RawMessage)
 		}
 		raw["downloaded"] = json.RawMessage("true")
-		if value, ok := raw["id"]; !ok || string(value) == `""` {
-			raw["id"], _ = json.Marshal(id)
+		var persistedID string
+		if err := json.Unmarshal(raw["id"], &persistedID); err != nil {
+			return nil, stamp, err
+		}
+		if persistedID != id {
+			return nil, stamp, errors.New("download source identity mismatch")
 		}
 		next, err := json.Marshal(raw)
 		return next, stamp, err

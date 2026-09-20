@@ -12,12 +12,14 @@ import (
 )
 
 type intentRecorder struct {
-	request types.DownloadIntent
-	err     error
+	request  types.DownloadIntent
+	requests []types.DownloadIntent
+	err      error
 }
 
 func (r *intentRecorder) Publish(_ context.Context, request types.DownloadIntent) error {
 	r.request = request
+	r.requests = append(r.requests, request)
 	return r.err
 }
 
@@ -26,10 +28,11 @@ func TestDownloadIntentPreservesPeerReferenceAndBackpressure(t *testing.T) {
 		require.Equal(t, peer, protocolPeer(plainPeer(peer)))
 	}
 	port := &intentRecorder{err: eventbus.ErrFull}
-	w := &Watcher{opts: Options{Account: "account"}, intents: port, jobCh: make(chan downloadJob, 1)}
+	w := &Watcher{opts: Options{Account: "account"}, intents: port}
 	job := downloadJob{peer: &tg.InputPeerChannel{ChannelID: 1, AccessHash: 2}, peerID: 1, msgID: 10, source: downloadJobSourceReaction}
 	require.ErrorIs(t, w.enqueueDownload(context.Background(), job), eventbus.ErrFull)
 	require.EqualValues(t, "account", port.request.Account)
 	require.Equal(t, job.peer, protocolPeer(port.request.Peer))
-	require.Empty(t, w.jobCh, "event rejection must not silently submit a second copy")
+	w.intents = nil
+	require.ErrorContains(t, w.enqueueDownload(context.Background(), job), "unavailable")
 }

@@ -15,7 +15,7 @@ import (
 
 func declaredCommandHandlers(commands []types.ConsoleCommand, resolve func(string, string) (any, error)) []ports.ConsoleContribution {
 	if resolve == nil {
-		return nil // Standalone adapters supply their own component capabilities.
+		return nil
 	}
 	contributions := []ports.ConsoleContribution{}
 	for _, command := range commands {
@@ -40,14 +40,14 @@ func declaredCommandHandlers(commands []types.ConsoleCommand, resolve func(strin
 	return contributions
 }
 
-// Only this composition table binds legacy Telegram formatting to business
+// Only this composition table binds Telegram formatting to business
 // ports. New components can supply a DTO handler through CommandContributions.
-func commandAdapters(ctx *th.Context, msg *telego.Message, login ports.BotLogin, reboot func(), update *tdlUpdateController, aria aria2ControllerFactory, local internalDownloadControllerFactory, maintenance ports.KVMaintenance, account types.AccountID, forward ports.ForwardTasks) map[string]ports.ConsoleCommandHandler {
+func commandAdapters(ctx *th.Context, msg *telego.Message, login ports.BotLogin, reboot func(), update *tdlUpdateController, aria aria2ControllerFactory, local localDownloadControllerFactory, maintenance ports.KVMaintenance, account types.AccountID) map[string]ports.ConsoleCommandHandler {
 	wrap := func(run func(string) (bool, error)) ports.ConsoleCommandHandler {
 		return ports.ConsoleCommandFunc(func(_ context.Context, request types.ConsoleRequest) (types.ConsoleResponse, error) {
 			handled, err := run(canonicalCommandText(request))
 			if !handled && err == nil {
-				err = fmt.Errorf("command %s has no compatible handler", request.Name)
+				err = fmt.Errorf("command %s has no handler", request.Name)
 			}
 			return types.ConsoleResponse{}, err
 		})
@@ -56,7 +56,6 @@ func commandAdapters(ctx *th.Context, msg *telego.Message, login ports.BotLogin,
 		"download.control":    wrap(func(text string) (bool, error) { return handleDownloadCommand(ctx, msg, text, aria, local) }),
 		"storage.maintenance": wrap(func(text string) (bool, error) { return handleKVCommand(ctx, msg, text, maintenance, account) }),
 		"update.self":         wrap(func(text string) (bool, error) { return handleUpdateCommand(ctx, msg, text, update) }),
-		"forwarder":           wrap(func(text string) (bool, error) { return handleForwardCommand(ctx, msg, text, forward, account) }),
 		"account.telegram":    wrap(func(text string) (bool, error) { return handleAccountCommand(ctx, msg, text, login) }),
 		"console.bot": ports.ConsoleCommandFunc(func(context.Context, types.ConsoleRequest) (types.ConsoleResponse, error) {
 			if err := sendMessage(ctx, msg.Chat.ID, "正在重启程序，稍后会收到新的启动状态。"); err != nil {

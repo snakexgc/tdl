@@ -86,7 +86,6 @@ function reconcileNavigation(data) {
           (page) =>
             component.enabled !== false ||
             page.keep_visible ||
-            page.redirect_to ||
             page.nav_hidden,
         )
         .map((page) => ({
@@ -113,7 +112,7 @@ function reconcileNavigation(data) {
       link.textContent = declaration.title;
       link.dataset.component = declaration.owner;
       page = { ...declaration, path, link };
-      if (page.view && !page.redirect_to) {
+      if (page.view) {
         if (!/^[a-z][a-z0-9_-]*$/.test(page.view))
           throw new Error("无效的组件页面声明。");
         const section = document.createElement("div");
@@ -129,7 +128,7 @@ function reconcileNavigation(data) {
         style.href = localURL(page.style).pathname;
         document.head.append(style);
       }
-      if (page.view || page.redirect_to) {
+      if (page.view) {
         link.dataset.view = page.view || "";
         link.addEventListener("click", (event) => {
           if (
@@ -153,28 +152,13 @@ function reconcileNavigation(data) {
 }
 function resolve(value) {
   let url = localURL(value);
-  // Preserve bookmarks from the former settings-based services/update pages.
-  if (url.pathname === "/config" && url.searchParams.get("tab") === "system") {
-    if (url.hash === "#services") url = localURL("/modules");
-    else if (url.hash === "#diagnostics") url = localURL("/logs?tab=health");
-    else if (url.hash === "#updates") url = localURL("/update");
-    else if (url.hash === "#setting-account.telegram-proxy")
-      url.searchParams.set("tab", "network");
-  }
-  if (url.pathname === "/modules" && url.hash === "#diagnostics")
-    url = localURL("/logs?tab=health");
   if (url.pathname === "/")
     url = localURL(
       [...pages.values()].find(
         (page) => page.enabled && !page.nav_hidden && page.view,
       )?.path || "/dashboard",
     );
-  for (let i = 0; i < 8; i++) {
-    const redirect = pages.get(url.pathname)?.redirect_to;
-    if (!redirect) return url;
-    url = localURL(redirect);
-  }
-  throw new Error("页面跳转形成循环。");
+  return url;
 }
 export function canLeavePage(nextPath) {
   return (

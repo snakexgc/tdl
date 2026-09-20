@@ -9,12 +9,12 @@ import (
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestRoutingConfigValidatesAndPersistsIndependentLocalRoot(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	registry := rte.NewRegistry()
 	require.NoError(t, Register(registry, nil))
 	host, err := registry.Build(types.DefaultAccount, nil, nil)
@@ -25,6 +25,9 @@ func TestRoutingConfigValidatesAndPersistsIndependentLocalRoot(t *testing.T) {
 	require.NoError(t, err)
 	routing := value.(ports.DownloadRouting)
 	for _, values := range []map[string]any{
+		{"mode": "internal"},
+		{"mode": "local"},
+		{executorsField: []string{}},
 		{executorsField: []string{localExecutor}},
 		{executorsField: []string{"other"}},
 		{executorsField: []string{aria2Executor, aria2Executor}},

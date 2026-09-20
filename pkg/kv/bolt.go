@@ -1,7 +1,6 @@
 package kv
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"sync"
@@ -54,61 +53,6 @@ func (b *bolt) Name() string {
 	return DriverBolt.String()
 }
 
-func (b *bolt) MigrateTo() (Meta, error) {
-	meta := make(Meta)
-
-	if err := b.walk(func(path string) (rerr error) {
-		ns := filepath.Base(path)
-		meta[ns] = make(map[string][]byte)
-
-		db, err := b.open(ns)
-		if err != nil {
-			return errors.Wrap(err, "open")
-		}
-
-		return db.db.View(func(tx *bbolt.Tx) error {
-			bucket := tx.Bucket(db.ns)
-			if bucket == nil {
-				return errors.New("namespace bucket is missing")
-			}
-			return bucket.ForEach(func(k, v []byte) error {
-				meta[ns][string(k)] = bytes.Clone(v)
-				return nil
-			})
-		})
-	}); err != nil {
-		return nil, errors.Wrap(err, "walk")
-	}
-
-	return meta, nil
-}
-
-func (b *bolt) MigrateFrom(meta Meta) error {
-	for ns, pairs := range meta {
-		db, err := b.open(ns)
-		if err != nil {
-			return errors.Wrap(err, "open")
-		}
-
-		if err = db.db.Update(func(tx *bbolt.Tx) error {
-			bk, err := tx.CreateBucketIfNotExists(db.ns)
-			if err != nil {
-				return errors.Wrap(err, "create bucket")
-			}
-			for key, value := range pairs {
-				if err = bk.Put([]byte(key), value); err != nil {
-					return errors.Wrap(err, "put")
-				}
-			}
-			return nil
-		}); err != nil {
-			return errors.Wrap(err, "update")
-		}
-	}
-
-	return nil
-}
-
 func (b *bolt) Namespaces() ([]string, error) {
 	namespaces := make([]string, 0)
 	if err := b.walk(func(path string) error {
@@ -138,7 +82,7 @@ func (b *bolt) Open(ns string) (storage.Storage, error) {
 	return b.open(ns)
 }
 
-func (b *bolt) open(ns string) (*legacyKV, error) {
+func (b *bolt) open(ns string) (*boltNamespace, error) {
 	if ns == "" {
 		return nil, errors.New("namespace is required")
 	}
@@ -146,7 +90,7 @@ func (b *bolt) open(ns string) (*legacyKV, error) {
 	defer b.mu.Unlock()
 
 	if db, ok := b.dbs[ns]; ok {
-		return &legacyKV{db: db, ns: []byte(ns)}, nil
+		return &boltNamespace{db: db, ns: []byte(ns)}, nil
 	}
 
 	db, err := bbolt.Open(filepath.Join(b.path, ns), os.ModePerm, boltOptions)
@@ -162,7 +106,7 @@ func (b *bolt) open(ns string) (*legacyKV, error) {
 
 	b.dbs[ns] = db
 
-	return &legacyKV{db: db, ns: []byte(ns)}, nil
+	return &boltNamespace{db: db, ns: []byte(ns)}, nil
 }
 
 func (b *bolt) Close() error {

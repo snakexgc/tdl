@@ -15,7 +15,7 @@ type Dataset struct {
 	Name   string
 	Writer string
 	Prefix string
-	// Keys grants exact legacy keys without also granting similarly named data.
+	// Keys grants exact protocol keys without also granting similarly named data.
 	// A dataset declares either Prefix or Keys.
 	Keys []string
 }

@@ -68,7 +68,7 @@ func TestComponentPagesDeclareTheirOwnLoaders(t *testing.T) {
 			require.Contains(t, string(data), "export const page =")
 		}
 	}
-	for _, path := range []string{"/user", "/downloads", "/forwards", "/config", "/modules", "/kv", "/update", "/dashboard"} {
+	for _, path := range []string{"/user", "/downloads", "/forwards", "/config", "/modules", "/update", "/dashboard"} {
 		require.True(t, seen[path], path)
 	}
 }

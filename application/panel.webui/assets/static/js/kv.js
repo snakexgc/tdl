@@ -2,7 +2,7 @@
 import { state } from "./state.js";
 import { api } from "./api.js";
 import { collator, escapeHTML, escapeAttr, formatBytes, formatTime } from "./utils.js";
-import { internalStatusClass, internalStatusLabel } from "./downloads.js";
+import { statusClass, statusLabel } from "./download-model.js";
 import { loadStatus } from "./status.js";
 import { element, openDrawer } from "./ui.js";
 export function initKV() {
@@ -208,7 +208,7 @@ function renderAria2Entries(item) {
 }
 
 function renderInternalEntries(item) {
-  const entries = item.internal || [];
+  const entries = item.local || [];
   if (!entries.length) {
     return `<span class="pill warn">尚未加入</span>`;
   }
@@ -218,7 +218,7 @@ function renderInternalEntries(item) {
     const error = entry.error ? `<div class="subtle bad-text">${escapeHTML(entry.error)}</div>` : "";
     return `
       <div class="aria2-entry">
-        <div class="mono">${escapeHTML(entry.id || "-")} <span class="pill ${internalStatusClass(status)}">${escapeHTML(internalStatusLabel(status))}</span></div>
+        <div class="mono">${escapeHTML(entry.id || "-")} <span class="pill ${statusClass(status)}">${escapeHTML(statusLabel(status))}</span></div>
         <div class="subtle">${escapeHTML(progress)}</div>
         ${error}
       </div>
@@ -347,7 +347,7 @@ async function runKVAction(action, ids, options = {}) {
     if (!confirm(`确认删除 ${uniqueIDs.length} 条链接记录？${suffix}`)) return;
   }
 
-  const pendingText = state.downloaderMode === "local" ? "正在加入内部下载队列..." : "正在将链接提交到 aria2...";
+  const pendingText = state.downloaderMode === "local" ? "正在加入本地下载队列..." : "正在将链接提交到 aria2...";
   setKVStatus(action === "download" ? pendingText : "正在删除链接记录...");
   try {
     const data = await api("/api/kv/links/actions", {
@@ -369,7 +369,7 @@ async function runKVAction(action, ids, options = {}) {
 function kvActionMessage(action, data) {
   const errors = data.errors && data.errors.length ? `；失败 ${data.errors.length} 项：${data.errors.join("；")}` : "";
   if (action === "download") {
-    const target = state.downloaderMode === "local" ? "内部下载队列" : "aria2 下载队列";
+    const target = state.downloaderMode === "local" ? "本地下载队列" : "aria2 下载队列";
     return `已将 ${data.added || 0} 条链接提交到 ${target}，跳过 ${data.skipped || 0} 条${errors}`;
   }
   return `已删除 ${data.deleted || 0} 条链接记录${errors}`;

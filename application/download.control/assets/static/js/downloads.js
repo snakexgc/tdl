@@ -21,13 +21,11 @@ import {
   taskKey,
   taskState,
   statusLabel,
+  statusClass,
   groupActions,
   eligible,
 } from "./download-model.js";
 
-export const internalStatusLabel = statusLabel;
-export const internalStatusClass = (status) =>
-  status === "error" ? "bad" : status === "complete" ? "" : "warn";
 let snapshots = {},
   errors = {},
   selected = new Set(),
@@ -252,7 +250,7 @@ function row(task) {
     : "";
   return `<tr><td><input type="checkbox" data-task-check="${key}" aria-label="选择 ${escapeAttr(task.file_name || task.id)}" ${selected.has(taskKey(task)) ? "checked" : ""}></td>
     <td class="task-name"><button class="text-button" data-task-key="${key}" data-task-action="details">${esc(task.file_name || task.id)}</button>${errors[task.executor] ? '<small class="bad-text">数据已过期</small>' : ""}</td>
-    <td>${executorLabel(task.executor)}</td><td><span class="pill ${internalStatusClass(value)}">${esc(statusLabel(value))}</span></td>
+    <td>${executorLabel(task.executor)}</td><td><span class="pill ${statusClass(value)}">${esc(statusLabel(value))}</span></td>
     <td class="task-progress"><div>${task.total > 0 ? `${formatBytes(task.completed || 0)} / ${formatBytes(task.total)}` : "—"}</div><progress max="100" value="${percent}" aria-label="${escapeAttr(statusLabel(value))}进度"></progress></td>
     <td class="time-cell">${task.download_speed != null ? `${formatBytes(task.download_speed)}/s` : "—"}</td><td class="time-cell">${time(task.created_at)}</td>
     <td><div class="row-actions">${controls}<button class="btn secondary compact" data-task-key="${key}" data-task-action="details">详情</button><button class="btn danger compact" data-task-key="${key}" data-task-action="delete" ${busy || errors[task.executor] ? "disabled" : ""}>删除</button></div></td></tr>`;
@@ -361,5 +359,4 @@ function stop() {
   linksPage?.stop?.();
   closeDrawer();
 }
-export const stopInternalDownloadPolling = stop;
 export const page = { init, load, stop };

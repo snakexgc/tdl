@@ -24,13 +24,14 @@ test("one websocket multiplexes views and HTTP fallback stops after recovery", a
   });
   const mod = new vm.SourceTextModule(await readFile(new URL("../../application/panel.webui/assets/static/js/events.js", import.meta.url), "utf8"), { context });
   await mod.link(() => {}); await mod.evaluate();
+  assert.throws(() => mod.namespace.observe("downloads", () => {}), /Unknown observation/);
   const received = [];
   mod.namespace.observe("status", data => received.push(data));
-  const leave = mod.namespace.observe("downloads", () => {});
+  const leave = mod.namespace.observe("download-tasks-local", () => {});
   mod.namespace.startRealtime(); mod.namespace.startRealtime();
   assert.equal(sockets.length, 1);
   sockets[0].open();
-  assert.deepEqual(Array.from(sockets[0].sent.at(-1).topics), ["status", "downloads"]);
+  assert.deepEqual(Array.from(sockets[0].sent.at(-1).topics), ["status", "download-tasks-local"]);
   const receivedTasks = [];
   const leaveTasks = mod.namespace.observe("download-tasks-aria2", (data, error) => receivedTasks.push({data, error}));
   assert(sockets[0].sent.at(-1).topics.includes("download-tasks-aria2"));

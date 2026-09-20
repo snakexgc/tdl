@@ -10,7 +10,7 @@ import (
 
 const protocolOwner = "tgauth.protocol"
 
-// ProtocolStore retains legacy key names and grants only protocol metadata.
+// ProtocolStore grants access only to the account protocol metadata keys.
 // Session credentials and task datasets are deliberately separate capabilities.
 func ProtocolStore(store storage.Storage) (storage.Storage, error) {
 	registry := nvm.New(store)

@@ -7,26 +7,26 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
-func shouldRunInternalDownload(status string) bool {
+func shouldRunLocalDownload(status string) bool {
 	switch status {
-	case "", types.InternalDownloadStatusQueued, types.InternalDownloadStatusError:
+	case types.LocalDownloadStatusQueued, types.LocalDownloadStatusError:
 		return true
 	default:
 		return false
 	}
 }
 
-func shouldPauseInternalDownloadForShutdown(status string) bool {
+func shouldPauseLocalDownloadForShutdown(status string) bool {
 	switch status {
-	case types.InternalDownloadStatusComplete, types.InternalDownloadStatusRemoved, types.InternalDownloadStatusPaused:
+	case types.LocalDownloadStatusComplete, types.LocalDownloadStatusRemoved, types.LocalDownloadStatusPaused:
 		return false
 	default:
 		return true
 	}
 }
 
-func internalDownloadInfo(record types.LocalDownloadRecord) types.InternalDownloadInfo {
-	info := types.InternalDownloadInfo{
+func localDownloadInfo(record types.LocalDownloadRecord) types.LocalDownloadInfo {
+	info := types.LocalDownloadInfo{
 		ID:            record.ID,
 		TaskID:        record.TaskID,
 		FileName:      record.FileName,
@@ -47,7 +47,7 @@ func internalDownloadInfo(record types.LocalDownloadRecord) types.InternalDownlo
 		info.EtaSeconds = (record.Total - record.Completed) / record.DownloadSpeed
 	}
 	if record.StartedAt != nil {
-		if record.Status == types.InternalDownloadStatusActive {
+		if record.Status == types.LocalDownloadStatusActive {
 			info.ElapsedSeconds = int64(time.Since(*record.StartedAt).Seconds())
 		} else {
 			if elapsed := record.UpdatedAt.Sub(*record.StartedAt); elapsed > 0 {
@@ -58,7 +58,7 @@ func internalDownloadInfo(record types.LocalDownloadRecord) types.InternalDownlo
 	return info
 }
 
-func uniqueInternalDownloadIDs(ids []string) []string {
+func uniqueLocalDownloadIDs(ids []string) []string {
 	out := make([]string, 0, len(ids))
 	seen := map[string]struct{}{}
 	for _, id := range ids {

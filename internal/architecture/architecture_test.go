@@ -1,5 +1,5 @@
 // Package architecture keeps the new component boundary enforceable while
-// legacy packages are migrated incrementally.
+// the application and transport layers evolve.
 package architecture
 
 import (
@@ -17,7 +17,7 @@ const (
 	interfacesLayer  = "interfaces"
 	runtimeLayer     = "rte"
 	applicationLayer = "application"
-	legacyLayer      = "app"
+	adapterLayer     = "app"
 )
 
 func TestComponentDependencyDirection(t *testing.T) {

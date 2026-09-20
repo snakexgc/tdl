@@ -11,7 +11,6 @@ const (
 	testArchAMD64     = "amd64"
 	testOSDarwin      = "darwin"
 	testChecksumsFile = "tdl_checksums.txt"
-	testDockerVersion = "v202609042_docker"
 )
 
 func TestNeedsUpdateDateVersionAndDev(t *testing.T) {
@@ -23,16 +22,12 @@ func TestNeedsUpdateDateVersionAndDev(t *testing.T) {
 	require.True(t, needsUpdate("v2026090410", "v202609051"))
 }
 
-func TestNeedsUpdateDockerOriginVersion(t *testing.T) {
-	require.Equal(t, "v202609042", releaseVersionForCompare("v202609042-origin-master"))
-	require.False(t, needsUpdate("v202609042-origin-master", "v202609042"))
-	require.True(t, needsUpdate("v202609042-origin-master", "v202609043"))
-}
-
-func TestNeedsUpdateDockerSuffixVersion(t *testing.T) {
-	require.Equal(t, "v202609042", releaseVersionForCompare(testDockerVersion))
-	require.False(t, needsUpdate(testDockerVersion, "v202609042"))
-	require.True(t, needsUpdate(testDockerVersion, "v202609043"))
+func TestNeedsUpdateRejectsUnsupportedVersions(t *testing.T) {
+	require.False(t, needsUpdate("v1.2.3", "v202609043"))
+	require.False(t, needsUpdate("v202609043", "v1.2.4"))
+	require.False(t, needsUpdate("v202609043-origin-abc", "v202609051"))
+	require.False(t, needsUpdate("dev", "unrecognized"))
+	require.True(t, needsUpdate("v20260904_dev_abc1234", "v202609051"))
 }
 
 func TestContainerRuntimeCanBeMarkedByEnvironment(t *testing.T) {
@@ -55,7 +50,7 @@ func TestDockerReleaseRequiresNewImage(t *testing.T) {
 	assetName := "tdl_" + osName + "_" + archName + ext
 
 	info := infoForRelease(Info{
-		CurrentVersion: "v202609042-origin-master",
+		CurrentVersion: "v202609042",
 		GOOS:           runtime.GOOS,
 		GOARCH:         runtime.GOARCH,
 		Docker:         true,

@@ -20,7 +20,6 @@ const (
 type ConfigField struct {
 	EmptyPreserves  bool              `json:"empty_preserves,omitempty"`
 	ChoiceLabels    map[string]string `json:"choice_labels,omitempty"`
-	ReplacedBy      string            `json:"replaced_by,omitempty"`
 	SettingsTab     string            `json:"settings_tab,omitempty"`
 	SettingsSection string            `json:"settings_section,omitempty"`
 	SettingsOrder   int               `json:"settings_order,omitempty"`
@@ -83,7 +82,6 @@ type Page struct {
 	NavHidden   bool     `json:"nav_hidden,omitempty"`
 	KeepVisible bool     `json:"keep_visible,omitempty"`
 	SettingsURL string   `json:"settings_url,omitempty"`
-	RedirectTo  string   `json:"redirect_to,omitempty"`
 	Settings    []string `json:"settings,omitempty"`
 	Path        string   `json:"path"`
 	Title       string   `json:"title"`

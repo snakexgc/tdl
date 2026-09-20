@@ -57,7 +57,7 @@ func (j ForwardJob) Terminal() bool {
 	return j.Status == StatusDone || j.Status == StatusError
 }
 
-// ActionResult mirrors watch.InternalDownloadActionResult so the WebUI can reuse
+// ActionResult mirrors LocalDownloadActionResult so the WebUI can reuse
 // the same bulk-action handling.
 type ForwardActionResult struct {
 	Matched int      `json:"matched"`

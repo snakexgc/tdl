@@ -9,10 +9,8 @@ import (
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/internal/migration"
 	legacyconfig "github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
 )
 
 func TestBotFeatureTogglesPreserveTransportAndConsole(t *testing.T) {
@@ -21,9 +19,9 @@ func TestBotFeatureTogglesPreserveTransportAndConsole(t *testing.T) {
 	cfg.Modules = legacyconfig.ModulesConfig{Bot: true}
 	cfg.Bot.Token = "test-token"
 	cfg.Bot.AllowedUsers = []int64{7}
-	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
-	require.NoError(t, err)
-	m := NewManager(legacyconfig.WithSource(ctx, legacyconfig.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: directory})
+	store := newStoppedComponentStore(t)
+	saveComponent(t, store, consoleComponentID, true, map[string]any{"token": cfg.Bot.Token, "allowed_users": []string{"7"}})
+	m := NewManager(legacyconfig.WithSource(ctx, legacyconfig.NewSource(cfg)), nil, nil, Options{ComponentStore: store})
 	t.Cleanup(m.Shutdown)
 	transport := &notificationRecorder{}
 	host, console, _, err := application.BotHost(m.parent, m.downloadAccount, transport, cfg.Bot.AllowedUsers, m.componentStore)
@@ -83,7 +81,7 @@ func (*notificationRecorder) Edit(context.Context, int64, int, string) error { r
 
 func TestBotComponentConfigurationPersistence(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := newComponentStore(t)
 	transport := &notificationRecorder{}
 	host, console, notifications, err := application.BotHost(ctx, "", transport, []int64{42}, store)
 	require.NoError(t, err)
@@ -95,7 +93,7 @@ func TestBotComponentConfigurationPersistence(t *testing.T) {
 	require.Len(t, configurations, 19)
 	// Missing documents use schema defaults, never the legacy permission list.
 	require.False(t, console.Allowed(types.DefaultAccount, 42))
-	const consoleID = "console.bot"
+	const consoleID = consoleComponentID
 	const notifyID = "notify.telegram"
 	require.NoError(t, manager.SaveComponentConfiguration(ctx, consoleID, map[string]any{testAllowedUsersField: []string{"7"}}))
 	require.True(t, console.Allowed(types.DefaultAccount, 7))
@@ -117,13 +115,13 @@ func TestDisabledNotificationsDoNotDisableConsole(t *testing.T) {
 	ctx := context.Background()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
-	store := config.NewStore(t.TempDir())
+	store := newComponentStore(t)
 	view, err := catalog.View(ctx, "notify.telegram", nil)
 	require.NoError(t, err)
 	require.NoError(t, store.Save(ctx, "notify.telegram", false, view))
-	view, err = catalog.View(ctx, "console.bot", map[string]any{testAllowedUsersField: []string{"7"}})
+	view, err = catalog.View(ctx, consoleComponentID, map[string]any{testAllowedUsersField: []string{"7"}})
 	require.NoError(t, err)
-	require.NoError(t, store.Save(ctx, "console.bot", true, view))
+	require.NoError(t, store.Save(ctx, consoleComponentID, true, view))
 	host, console, notifications, err := application.BotHost(ctx, types.DefaultAccount, &notificationRecorder{}, nil, store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, host.Stop(ctx)) }()

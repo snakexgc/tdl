@@ -2,17 +2,13 @@ package runtime
 
 import (
 	"context"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/interfaces/ports"
-	"github.com/snakexgc/tdl/internal/migration"
 	"github.com/snakexgc/tdl/pkg/config"
-	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 func TestProductionPolicyHostPreservesLastValidConfiguration(t *testing.T) {
@@ -45,11 +41,8 @@ func TestProductionPolicyHostPreservesLastValidConfiguration(t *testing.T) {
 
 func TestProductionStoredPoliciesSurviveRestart(t *testing.T) {
 	ctx := context.Background()
-	plan, err := migration.Prepare(strings.NewReader(`{"filename":"imported-F"}`))
-	require.NoError(t, err)
-	directory := filepath.Join(t.TempDir(), "components")
-	require.NoError(t, plan.Write(ctx, directory))
-	store := rteconfig.NewStore(directory)
+	store := newComponentStore(t)
+	saveComponent(t, store, "naming.rules", true, map[string]any{fieldFilename: "configured-F"})
 	cfg := config.DefaultConfig()
 	host, filter, naming, err := newPolicyHostStored(ctx, cfg, store)
 	require.NoError(t, err)
@@ -59,12 +52,12 @@ func TestProductionStoredPoliciesSurviveRestart(t *testing.T) {
 	input := ports.NamingInput{BaseDir: "/downloads", Data: ports.NamingData{FileName: "sample.mp4"}}
 	before, err := naming.Render(ctx, input)
 	require.NoError(t, err)
-	require.Contains(t, before.FileName, "imported-")
-	require.NoError(t, manager.SaveComponentConfiguration(ctx, "naming.rules", map[string]any{"filename": "saved-F"}))
+	require.Contains(t, before.FileName, "configured-")
+	require.NoError(t, manager.SaveComponentConfiguration(ctx, "naming.rules", map[string]any{fieldFilename: "saved-F"}))
 	after, err := naming.Render(ctx, input)
 	require.NoError(t, err)
 	require.Contains(t, after.FileName, "saved-")
-	require.Error(t, manager.SaveComponentConfiguration(ctx, "naming.rules", map[string]any{"filename": "{{"}))
+	require.Error(t, manager.SaveComponentConfiguration(ctx, "naming.rules", map[string]any{fieldFilename: "{{"}))
 	require.NoError(t, host.Stop(ctx))
 	restarted, _, reloaded, err := newPolicyHostStored(ctx, cfg, store)
 	require.NoError(t, err)

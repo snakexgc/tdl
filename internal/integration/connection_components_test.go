@@ -15,14 +15,14 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 const testStoragePath = "path"
 
 func TestIntentToggleRetainsSiblingAndRefreshesExistingFacade(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
 	view, err := catalog.View(ctx, "trigger.download", nil)
@@ -100,7 +100,7 @@ func TestForwarderCanBeEnabledTwiceWithoutReplacingConnectionHost(t *testing.T) 
 	storage, err := engine.Open(string(types.DefaultAccount))
 	require.NoError(t, err)
 	queue := application.NewForwardQueue(taskhub.NewForwardRepository(storage))
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
 	view, err := catalog.View(ctx, "forwarder", nil)

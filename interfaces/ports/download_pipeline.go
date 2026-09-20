@@ -43,9 +43,9 @@ type DownloadResources struct {
 }
 
 type DownloadDefaults struct {
-	Mode, LocalRoot, RemoteRoot, FallbackLocalRoot string
-	SkipSame                                       bool
-	Limit                                          int
+	RemoteRoot string
+	SkipSame   bool
+	Limit      int
 }
 
 type DownloadPipeline interface {

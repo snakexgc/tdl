@@ -2,18 +2,18 @@ package bot
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/internal/core/storage"
-	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {
 	ctx := context.Background()
 	engine := &fakeKVEngine{
-		meta: kv.Meta{
+		meta: map[string]map[string][]byte{
 			"default": {
 				"session":                  []byte("session"),
 				"app":                      []byte("desktop"),
@@ -52,30 +52,17 @@ func TestCleanCurrentNamespaceKVPreservesLoginAndStateKeys(t *testing.T) {
 }
 
 type fakeKVEngine struct {
-	meta kv.Meta
+	mu   sync.Mutex
+	meta map[string]map[string][]byte
 }
 
 func (f *fakeKVEngine) Name() string {
 	return "fake"
 }
 
-func (f *fakeKVEngine) MigrateTo() (kv.Meta, error) {
-	out := make(kv.Meta, len(f.meta))
-	for ns, pairs := range f.meta {
-		out[ns] = make(map[string][]byte, len(pairs))
-		for key, value := range pairs {
-			out[ns][key] = append([]byte(nil), value...)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeKVEngine) MigrateFrom(meta kv.Meta) error {
-	f.meta = meta
-	return nil
-}
-
 func (f *fakeKVEngine) Namespaces() ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]string, 0, len(f.meta))
 	for ns := range f.meta {
 		out = append(out, ns)
@@ -84,6 +71,8 @@ func (f *fakeKVEngine) Namespaces() ([]string, error) {
 }
 
 func (f *fakeKVEngine) Open(ns string) (storage.Storage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.meta[ns]; !ok {
 		f.meta[ns] = map[string][]byte{}
 	}
@@ -100,6 +89,8 @@ type fakeNamespaceKV struct {
 }
 
 func (f *fakeNamespaceKV) Get(ctx context.Context, key string) ([]byte, error) {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
 	value, ok := f.engine.meta[f.namespace][key]
 	if !ok {
 		return nil, storage.ErrNotFound
@@ -108,11 +99,46 @@ func (f *fakeNamespaceKV) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (f *fakeNamespaceKV) Set(ctx context.Context, key string, value []byte) error {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
 	f.engine.meta[f.namespace][key] = append([]byte(nil), value...)
 	return nil
 }
 
 func (f *fakeNamespaceKV) Delete(ctx context.Context, key string) error {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
 	delete(f.engine.meta[f.namespace], key)
+	return nil
+}
+
+func (f *fakeKVEngine) Snapshot(ctx context.Context, namespace string) (map[string][]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := map[string][]byte{}
+	for key, value := range f.meta[namespace] {
+		result[key] = append([]byte(nil), value...)
+	}
+	return result, ctx.Err()
+}
+
+func (f *fakeNamespaceKV) Update(ctx context.Context, fn func(storage.Storage) error) error {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	values := make(map[string][]byte)
+	for key, value := range f.engine.meta[f.namespace] {
+		values[key] = append([]byte(nil), value...)
+	}
+	next := &fakeKVEngine{meta: map[string]map[string][]byte{f.namespace: values}}
+	if err := fn(&fakeNamespaceKV{engine: next, namespace: f.namespace}); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.engine.meta[f.namespace] = next.meta[f.namespace]
 	return nil
 }

@@ -68,7 +68,7 @@ func TestComponentConfigurationAPIRequiresSession(t *testing.T) {
 	require.Empty(t, manager.savedID)
 }
 
-func TestLegacyConfigurationCannotOverrideStoredPolicies(t *testing.T) {
+func TestRuntimeSnapshotCannotOverrideStoredPolicies(t *testing.T) {
 	initWebUITestConfig(t)
 	server := NewServer(Options{ComponentManager: &componentTestManager{}})
 	request := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"values":{"filename":"wrong-F"}}`))
@@ -78,7 +78,7 @@ func TestLegacyConfigurationCannotOverrideStoredPolicies(t *testing.T) {
 	require.Contains(t, response.Body.String(), "component configuration page")
 }
 
-func TestLegacyConfigurationCannotOverrideStoredBotPermissions(t *testing.T) {
+func TestRuntimeSnapshotCannotOverrideStoredBotPermissions(t *testing.T) {
 	initWebUITestConfig(t)
 	server := NewServer(Options{ComponentManager: &componentTestManager{}})
 	for _, values := range []string{`{"bot.allowed_users":[123]}`, `{"bot":{"allowed_users":[123]}}`, `{"bot . allowed_users":[123]}`} {
@@ -90,7 +90,7 @@ func TestLegacyConfigurationCannotOverrideStoredBotPermissions(t *testing.T) {
 	}
 }
 
-func TestLegacyConfigurationCannotOverrideStoredAccountAndTriggers(t *testing.T) {
+func TestRuntimeSnapshotCannotOverrideStoredAccountAndTriggers(t *testing.T) {
 	initWebUITestConfig(t)
 	server := NewServer(Options{ComponentManager: &componentTestManager{}})
 	for _, values := range []string{`{"telegram.api_id":123}`, `{"telegram":{"api_id":123,"api_hash":"hidden"}}`, `{"trigger_reactions":["👍"]}`, `{"forward":{"trigger_reactions":["👍"]}}`, `{"forward . trigger_reactions":["👍"]}`} {

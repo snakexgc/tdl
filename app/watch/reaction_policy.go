@@ -2,10 +2,10 @@ package watch
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gotd/td/tg"
 
-	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
@@ -21,15 +21,7 @@ func (w *Watcher) reactionPolicy(ctx context.Context) (ports.ReactionTrigger, er
 	if w.opts.Reaction != nil {
 		return w.opts.Reaction, nil
 	}
-	w.triggerOnce.Do(func() {
-		download := make([]string, 0, len(w.triggerReactions))
-		for value := range w.triggerReactions {
-			download = append(download, value)
-		}
-		forward := w.opts.ForwardTriggerReactions
-		w.trigger, w.triggerStop, w.triggerErr = application.ReactionPolicy(ctx, w.reactionAccount(), download, forward)
-	})
-	return w.trigger, w.triggerErr
+	return nil, fmt.Errorf("reaction service is unavailable")
 }
 
 func (w *Watcher) reactionKey(peerID int64, messageID int) ports.ReactionKey {

@@ -42,7 +42,7 @@ func Manifest() manifest.Manifest {
 			manifest.Choice("mode", "默认转发模式", forwardModeDefault, []string{forwardModeDefault, forwardModeClone}, false).WithHelp("default 优先官方转发，失败时降级为复制；clone 始终复制发送。"),
 			manifest.Text("target", "默认目标", "", false, false).WithHelp("未指定目标时使用；留空表示收藏夹。已匹配规则的来源使用规则目标。"),
 			manifest.Flag("silent", "静默发送", false, false),
-			manifest.Number("dedupe_ttl_seconds", "去重有效期（秒）", 600, 0, 8640000, false),
+			manifest.Number("dedupe_ttl_seconds", "去重有效期（秒）", 600, 1, 8640000, false),
 
 			field("poll_interval_ms", "队列扫描间隔（毫秒）", 2000, 100, 3600000),
 			field(retryBaseField, "首次重试间隔（秒）", 5, 1, 86400),
@@ -85,7 +85,7 @@ func (s *service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		return nil, err
 	}
 	if dedupe <= 0 {
-		dedupe = 600 // Preserve the legacy zero-value default.
+		return nil, fmt.Errorf("dedupe_ttl_seconds must be positive")
 	}
 	p := policy{
 		time.Duration(poll) * time.Millisecond, time.Duration(base) * time.Second, time.Duration(maximum) * time.Second,

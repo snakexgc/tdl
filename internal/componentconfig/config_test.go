@@ -2,25 +2,26 @@ package componentconfig
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/application"
-	legacy "github.com/snakexgc/tdl/pkg/config"
+	manager "github.com/snakexgc/tdl/application/configuration.manager"
+	runtimeconfig "github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte/config"
 )
 
-func TestExportAndLoadOwnEveryAdapterSetting(t *testing.T) {
+func TestComponentConfigurationOwnsEveryAdapterSetting(t *testing.T) {
 	ctx := context.Background()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
-	original := legacy.DefaultConfig()
+	original := runtimeconfig.DefaultConfig()
 	original.Namespace = "alice"
 	original.Debug = true
 	original.Bot.Token = "bot-secret"
 	original.Proxy = "http://shared:secret@localhost:8888"
-	original.Bot.Proxy = original.Proxy
 	original.Bot.AllowedUsers = []int64{123}
 	original.Aria2.RPCURL = "http://localhost:7001/jsonrpc"
 	original.Aria2.Secret = "rpc-secret"
@@ -35,69 +36,86 @@ func TestExportAndLoadOwnEveryAdapterSetting(t *testing.T) {
 	original.PoolSize = 4
 	original.Limit = 2
 	original.NTP = "time.example.org"
-	documents, err := Export(original, catalog)
-	require.NoError(t, err)
-	store := config.NewStore(t.TempDir())
-	for id, document := range documents {
-		view, err := catalog.View(ctx, id, document.Values)
-		require.NoError(t, err, id)
-		require.NoError(t, store.Save(ctx, id, document.Enabled, view))
+	store := newComponentStore(t)
+	inputs := map[string]manager.Component{
+		accountComponentID: {Enabled: true, Values: map[string]any{"proxy": original.Proxy, "file_limit": 2, "dc_pool_size": 4, ntpField: "time.example.org"}},
+		consoleComponentID: {Enabled: false, Values: map[string]any{"token": "bot-secret", "allowed_users": []string{"123"}}},
+		"downloader.aria2": {Enabled: true, Values: map[string]any{"rpc_url": "http://localhost:7001/jsonrpc", "secret": "rpc-secret", directoryField: "/remote"}},
+		"proxy.range":      {Enabled: true, Values: map[string]any{portField: 31111}},
+		"panel.webui":      {Enabled: true, Values: map[string]any{portField: 31112, "password": "panel-secret"}},
+		"forwarder":        {Enabled: true, Values: map[string]any{"target": "123"}},
+		"trigger.forward":  {Enabled: true, Values: map[string]any{"listen": []string{"channel"}}},
 	}
-	bootstrap := legacy.DefaultConfig()
+	for id, input := range inputs {
+		view, err := catalog.View(ctx, id, input.Values)
+		require.NoError(t, err)
+		require.NoError(t, store.Save(ctx, id, input.Enabled, view))
+	}
+	bootstrap := runtimeconfig.DefaultConfig()
 	bootstrap.Namespace = original.Namespace
 	bootstrap.Debug = original.Debug
-	bootstrap.Bot.Token = legacyPoison
-	bootstrap.Aria2.Secret = legacyPoison
-	bootstrap.Forward.Target = legacyPoison
+	bootstrap.Bot.Token = staleValue
+	bootstrap.Aria2.Secret = staleValue
+	bootstrap.Forward.Target = staleValue
 	bootstrap.PoolSize = 99
 	loaded, enabled, err := Load(ctx, store, bootstrap)
 	require.NoError(t, err)
 	require.Equal(t, original, loaded)
-	require.False(t, enabled["console.bot"])
+	require.False(t, enabled[consoleComponentID])
 	require.True(t, enabled["trigger.forward"])
-	require.Equal(t, legacyPoison, bootstrap.Bot.Token, "loading cannot mutate the source")
+	require.Equal(t, staleValue, bootstrap.Bot.Token, "loading cannot mutate the source")
 }
 
 func TestMissingDocumentsUseDefaultsAndSnapshotsAreIsolated(t *testing.T) {
-	bootstrap := legacy.DefaultConfig()
+	bootstrap := runtimeconfig.DefaultConfig()
 	bootstrap.Aria2.Secret = "old-secret"
 	bootstrap.Bot.AllowedUsers = []int64{777}
-	loaded, _, err := Load(context.Background(), config.NewStore(t.TempDir()), bootstrap)
+	loaded, _, err := Load(context.Background(), newComponentStore(t), bootstrap)
 	require.NoError(t, err)
 	require.Empty(t, loaded.Aria2.Secret)
 	require.Empty(t, loaded.Bot.AllowedUsers)
-	source := legacy.NewSource(loaded)
-	ctx := legacy.WithSource(context.Background(), source)
-	first := legacy.From(ctx)
+	source := runtimeconfig.NewSource(loaded)
+	ctx := runtimeconfig.WithSource(context.Background(), source)
+	first := runtimeconfig.From(ctx)
 	first.Aria2.Secret = "mutated"
-	require.Empty(t, legacy.From(ctx).Aria2.Secret)
+	require.Empty(t, runtimeconfig.From(ctx).Aria2.Secret)
 	loaded.Aria2.Secret = "updated"
 	source.Replace(loaded)
-	require.Equal(t, "updated", legacy.From(ctx).Aria2.Secret)
+	require.Equal(t, "updated", runtimeconfig.From(ctx).Aria2.Secret)
 }
 
-const legacyPoison = "wrong"
+const staleValue = "wrong"
 
-func TestProxyOverridesRemainReadableButCannotOverrideSharedProxy(t *testing.T) {
+func TestPerServiceProxyOverridesAreRejected(t *testing.T) {
 	ctx := context.Background()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
-	store := config.NewStore(t.TempDir())
-	for id, proxy := range map[string]string{"account.telegram": "socks5://shared:secret@127.0.0.1:1080", "console.bot": "http://old-bot:secret@127.0.0.1:8000", "update.self": "http://old-update:secret@127.0.0.1:9000"} {
-		view, err := catalog.View(ctx, id, map[string]any{proxyField: proxy})
-		require.NoError(t, err)
-		require.NoError(t, store.Save(ctx, id, true, view))
+	for _, id := range []string{consoleComponentID, "update.self"} {
+		_, err := catalog.View(ctx, id, map[string]any{proxyField: "http://old:secret@127.0.0.1:8000"})
+		require.Error(t, err, id)
 	}
-	loaded, _, err := Load(ctx, store, legacy.DefaultConfig())
+	store := newComponentStore(t)
+	view, err := catalog.View(ctx, accountComponentID, map[string]any{proxyField: "socks5://shared:secret@127.0.0.1:1080"})
+	require.NoError(t, err)
+	require.NoError(t, store.Save(ctx, accountComponentID, true, view))
+	loaded, _, err := Load(ctx, store, runtimeconfig.DefaultConfig())
 	require.NoError(t, err)
 	require.Equal(t, "socks5://shared:secret@127.0.0.1:1080", loaded.Proxy)
-	require.Equal(t, loaded.Proxy, loaded.Bot.Proxy)
-	// Explicit direct connectivity must not revive an old per-service override.
-	view, err := catalog.View(ctx, "account.telegram", nil)
+	view, err = catalog.View(ctx, accountComponentID, nil)
 	require.NoError(t, err)
-	require.NoError(t, store.Save(ctx, "account.telegram", true, view))
+	require.NoError(t, store.Save(ctx, accountComponentID, true, view))
 	loaded, _, err = Load(ctx, store, loaded)
 	require.NoError(t, err)
 	require.Empty(t, loaded.Proxy)
-	require.Empty(t, loaded.Bot.Proxy)
+}
+
+func newComponentStore(t *testing.T) *config.Store {
+	t.Helper()
+	catalog, err := application.Catalog()
+	require.NoError(t, err)
+	service := manager.New(config.File{Path: filepath.Join(t.TempDir(), manager.Filename)}, catalog)
+	doc, err := service.Defaults(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, service.Create(context.Background(), doc))
+	return service.Store()
 }

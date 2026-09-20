@@ -76,7 +76,7 @@ func pipelineFixture(t *testing.T) (ports.DownloadPipeline, ports.DownloadResour
 	source := &batchSourceFixture{media: []ports.DownloadMedia{{Token: "task", Data: ports.NamingData{MessageID: 2, FileName: testVideoFile, FileSize: 4}}}}
 	r := ports.DownloadResources{
 		Source: source, Filter: w.opts.Filter, Naming: w.opts.Naming, Files: localfs.Downloads{},
-		Executors: map[string]ports.DownloadExecutor{}, Defaults: ports.DownloadDefaults{Limit: 1, RemoteRoot: filepath.Join(t.TempDir(), "remote-only"), FallbackLocalRoot: filepath.Join(t.TempDir(), "fallback")},
+		Executors: map[string]ports.DownloadExecutor{}, Defaults: ports.DownloadDefaults{Limit: 1, RemoteRoot: filepath.Join(t.TempDir(), "remote-only")},
 	}
 	return control.(ports.DownloadPipeline), r, types.DownloadIntent{Account: types.DefaultAccount, MessageID: 2}
 }
@@ -84,9 +84,9 @@ func pipelineFixture(t *testing.T) (ports.DownloadPipeline, ports.DownloadResour
 func TestModeSwitchDoesNotReroutePreparedLocalTask(t *testing.T) {
 	pipeline, resources, request := pipelineFixture(t)
 	root := t.TempDir()
-	route := &fixedDownloadRoute{ports.DownloadRoute{Mode: localExecutorName, LocalRoot: root}}
+	route := &fixedDownloadRoute{ports.DownloadRoute{Executors: []string{localExecutorName}, LocalRoot: root}}
 	resources.Routing = route
-	resources.Source.(*batchSourceFixture).register = func() { route.route.Mode = testAria2Executor }
+	resources.Source.(*batchSourceFixture).register = func() { route.route.Executors = []string{testAria2Executor} }
 	called := false
 	resources.Executors[localExecutorName] = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
 		called = true

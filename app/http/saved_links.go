@@ -30,9 +30,6 @@ func (s *taskStore) GetLink(ctx context.Context, id string) (ports.ObservedLink,
 	if err := json.Unmarshal(data, &saved); err != nil {
 		return ports.ObservedLink{}, false, err
 	}
-	if saved.ID == "" {
-		saved.ID = id
-	}
 	if saved.ID != id {
 		return ports.ObservedLink{}, false, fmt.Errorf("download source identity mismatch")
 	}

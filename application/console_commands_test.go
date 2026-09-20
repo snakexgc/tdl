@@ -6,10 +6,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
-func TestProductionCommandDeclarationsPreserveLegacyMenuAndDisabledOwners(t *testing.T) {
+func TestProductionCommandsExcludeRetiredAliasesAndDisabledOwners(t *testing.T) {
 	ctx := context.Background()
 	commands, err := ConsoleCommands(ctx, nil)
 	require.NoError(t, err)
@@ -23,13 +23,13 @@ func TestProductionCommandDeclarationsPreserveLegacyMenuAndDisabledOwners(t *tes
 		}
 	}
 	for _, alias := range []string{"downloads_help", "aria2_help", "internal", "internal_start_all"} {
-		require.True(t, seen[alias], alias)
+		require.False(t, seen[alias], alias)
 	}
 	catalog, err := Catalog()
 	require.NoError(t, err)
 	view, err := catalog.View(ctx, "download.control", nil)
 	require.NoError(t, err)
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	require.NoError(t, store.Save(ctx, "download.control", false, view))
 	commands, err = ConsoleCommands(ctx, store)
 	require.NoError(t, err)

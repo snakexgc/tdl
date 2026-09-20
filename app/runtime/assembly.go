@@ -98,12 +98,11 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 					return err
 				}
 				m.setNotifier(nil)
-				m.setBotStopped("stopped", nil)
 				return nil
 			}),
 		},
 		{
-			ID: "panel", Enabled: cfg.Modules.WebUI && m.componentEnabled("panel.webui"), Requires: []string{accountResource}, Revision: revision(cfg.WebUI), Running: m.panelProcess.Running,
+			ID: "panel", Enabled: cfg.Modules.WebUI && m.componentEnabled(panelComponentID), Requires: []string{accountResource}, Revision: revision(cfg.WebUI), Running: m.panelProcess.Running,
 			Start: func(context.Context) error {
 				if !m.StartWebUI(m.parent) {
 					return fmt.Errorf("panel did not start: verify address and credentials")

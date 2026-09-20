@@ -11,6 +11,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 type offlineAria2Client struct{ ports.Aria2Client }
@@ -23,7 +24,7 @@ type unusedAria2Repository struct{ ports.Aria2Repository }
 
 func TestAria2HostLoadsSavedGovernanceBeforeStarting(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	view, err := config.New(aria2.Manifest().Config, map[string]any{"error_threshold": 9})
 	require.NoError(t, err)
 	require.NoError(t, store.Save(ctx, aria2.ID, true, view))

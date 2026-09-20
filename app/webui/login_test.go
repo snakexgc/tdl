@@ -12,9 +12,9 @@ import (
 
 type testLoginCredentials struct{ account types.AccountID }
 
-func (c *testLoginCredentials) Resolve(_ context.Context, account types.AccountID, preset string) (types.TelegramCredentials, error) {
+func (c *testLoginCredentials) Resolve(_ context.Context, account types.AccountID) (types.TelegramCredentials, error) {
 	c.account = account
-	return types.TelegramCredentials{Preset: preset}, nil
+	return types.TelegramCredentials{Preset: "desktop"}, nil
 }
 
 func TestLoginKeepsInitialAccountWhileConfigurationChanges(t *testing.T) {
@@ -35,10 +35,10 @@ func TestLoginCredentialsBindSelectedNamespace(t *testing.T) {
 	defer func() { require.NoError(t, m.Stop(context.Background())) }()
 	opts := m.sessionOptions("bob", nil)
 	require.Equal(t, types.AccountID("bob"), opts.Account)
-	credentials, err := opts.Credentials.Resolve(context.Background(), opts.Account, "desktop")
+	credentials, err := opts.Credentials.Resolve(context.Background(), opts.Account)
 	require.NoError(t, err)
 	require.Equal(t, "desktop", credentials.Preset)
 	require.Equal(t, types.AccountID("alice"), profile.account)
-	_, err = opts.Credentials.Resolve(context.Background(), "eve", "desktop")
+	_, err = opts.Credentials.Resolve(context.Background(), "eve")
 	require.ErrorContains(t, err, "account mismatch")
 }

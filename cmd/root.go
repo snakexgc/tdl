@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/go-faster/errors"
@@ -22,7 +21,6 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	bootstrapconfig "github.com/snakexgc/tdl/internal/configuration"
 	"github.com/snakexgc/tdl/internal/core/logctx"
-	"github.com/snakexgc/tdl/internal/core/util/fsutil"
 	"github.com/snakexgc/tdl/internal/core/util/logutil"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
@@ -41,10 +39,6 @@ type (
 var (
 	defaultBoltPath = consts.DataDir
 
-	DefaultLegacyStorage = map[string]string{
-		kv.DriverTypeKey: kv.DriverLegacy.String(),
-		"path":           filepath.Join(consts.DataDir, "data.kv"),
-	}
 	DefaultBoltStorage = map[string]string{
 		kv.DriverTypeKey: kv.DriverBolt.String(),
 		"path":           defaultBoltPath,
@@ -101,17 +95,13 @@ func New() *cobra.Command {
 					runErr = multierr.Combine(runErr, cleanup())
 				}
 			}()
-			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand || cmd.Name() == configInitCommand {
+			if cmd.Name() == versionCommand || cmd.Name() == configInitCommand {
 				return nil
 			}
 			if err := consts.InitPaths(); err != nil {
 				return err
 			}
-			directory, err := cmd.Flags().GetString("component-config")
-			if err != nil {
-				return err
-			}
-			service, err := bootstrapconfig.Open(cmd.Context(), consts.HomeDir, directory)
+			service, err := bootstrapconfig.Open(cmd.Context(), consts.HomeDir)
 			if err != nil {
 				return err
 			}
@@ -139,13 +129,6 @@ func New() *cobra.Command {
 
 			logger.Info("TDL 正在启动", zap.Bool("debug_enabled", cfg.Debug))
 
-			// v0.14.0: default storage changed from legacy to bolt, so we need to auto migrate to keep compatibility.
-			if shouldMigrateLegacyToBolt() {
-				if err := migrateLegacyToBolt(); err != nil {
-					return errors.Wrap(err, "migrate legacy to bolt")
-				}
-			}
-
 			stg, err := kv.NewWithMap(DefaultBoltStorage)
 			if err != nil {
 				return errors.Wrap(err, "create kv storage")
@@ -157,7 +140,7 @@ func New() *cobra.Command {
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand || cmd.Name() == configInitCommand {
+			if cmd.Name() == versionCommand || cmd.Name() == configInitCommand {
 				return nil
 			}
 			return cleanup()
@@ -179,17 +162,12 @@ func New() *cobra.Command {
 		NoBottomNewline: true,
 	})
 
-	cmd.Flags().String("component-config", "", "legacy component directory to import when tdl_config.json does not exist")
-	cmd.AddCommand(NewVersion(), NewMigrateConfig(), NewConfigInit())
+	cmd.AddCommand(NewVersion(), NewConfigInit())
 
 	return cmd
 }
 
 func runBot(cmd *cobra.Command) error {
-	directory, err := cmd.Flags().GetString("component-config")
-	if err != nil {
-		return err
-	}
 	startup, ok := cmd.Context().Value(startupConfigurationKey{}).(startupConfiguration)
 	if !ok {
 		return errors.New("configuration manager is not initialized")
@@ -200,7 +178,7 @@ func runBot(cmd *cobra.Command) error {
 	}
 	defer host.Stop(context.Background())
 	logctx.From(cmd.Context()).Info("统一配置已加载", zap.String("component", configuration.ID), zap.String("file", filepath.Join(consts.HomeDir, configuration.Filename)))
-	plan := reset.New(consts.HomeDir, directory)
+	plan := reset.New(consts.HomeDir)
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
 		ComponentStore:    startup.store,
 		ConfigurationHost: host,
@@ -209,44 +187,4 @@ func runBot(cmd *cobra.Command) error {
 		RequestReboot:     bot.RequestReboot,
 		RequestUpdate:     bot.RequestUpdate,
 	})
-}
-
-func shouldMigrateLegacyToBolt() bool {
-	legacyPath := DefaultLegacyStorage["path"]
-	if legacyPath == "" || !fsutil.PathExists(legacyPath) {
-		return false
-	}
-
-	entries, err := os.ReadDir(defaultBoltPath)
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == filepath.Base(legacyPath) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func migrateLegacyToBolt() (rerr error) {
-	legacy, err := kv.NewWithMap(DefaultLegacyStorage)
-	if err != nil {
-		return errors.Wrap(err, "create legacy kv storage")
-	}
-	defer multierr.AppendInvoke(&rerr, multierr.Close(legacy))
-
-	bolt, err := kv.NewWithMap(DefaultBoltStorage)
-	if err != nil {
-		return errors.Wrap(err, "create bolt kv storage")
-	}
-	defer multierr.AppendInvoke(&rerr, multierr.Close(bolt))
-
-	meta, err := legacy.MigrateTo()
-	if err != nil {
-		return errors.Wrap(err, "migrate legacy to bolt")
-	}
-
-	return bolt.MigrateFrom(meta)
 }

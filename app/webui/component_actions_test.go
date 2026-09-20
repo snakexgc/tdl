@@ -18,6 +18,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 	rteconfig "github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 const (
@@ -87,7 +88,7 @@ func TestDeclaredFeatureUsesGenericAuthenticatedRoutesPagesAndConfiguration(t *t
 	require.NoError(t, err)
 	require.Equal(t, rte.Running, host.Start(ctx)[0].State)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
-	directory := exampleDirectory{rte.NewDirectory(catalog, rteconfig.NewStore(t.TempDir()))}
+	directory := exampleDirectory{rte.NewDirectory(catalog, configtest.NewStore())}
 	require.NoError(t, directory.Bind("features", func() *rte.Runtime { return host }))
 	server := NewServer(Options{Catalog: catalog, ComponentManager: directory})
 	server.sessions["example-session"] = time.Now().Add(time.Hour)

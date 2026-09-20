@@ -22,6 +22,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
 	rteconfig "github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 // Opt-in browser fixture. Uses disposable storage and simulated backends only.
@@ -37,7 +38,7 @@ func TestBrowserPreview(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
 	cfg.Modules.WebUI = true
-	cfg.Downloader.Mode = "local"
+	cfg.Downloader.Executors = []string{localDownloadExecutor}
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
 	for _, definition := range catalog.Definitions() {
@@ -47,13 +48,17 @@ func TestBrowserPreview(t *testing.T) {
 		require.NoError(t, logs.Write(logging.Entry{Component: logLocalComponent, Account: cfg.Namespace, Level: logInfoLevel, Kind: logRuntimeKind, Message: fmt.Sprintf("本地下载已完成 · 示例任务 %d", count)}))
 	}
 	require.NoError(t, logs.Write(logging.Entry{Component: logForwardComponent, Account: cfg.Namespace, Level: fieldError, Kind: logDiagnosticKind, Message: "转发任务需要重试", Details: `{"operation":"forward.queue","error":"fixture timeout"}`}))
-	store := rteconfig.NewStore(t.TempDir())
-	docs, err := componentconfig.Export(cfg, catalog)
-	require.NoError(t, err)
-	for id, doc := range docs {
-		view, err := catalog.View(ctx, id, doc.Values)
+	store := configtest.NewStore()
+	for _, definition := range catalog.Definitions() {
+		id := definition.Manifest.ID
+		var values map[string]any
+		if id == "download.control" {
+			values = map[string]any{"executors": []string{localDownloadExecutor}, "local_root": t.TempDir()}
+		}
+		view, err := catalog.View(ctx, id, values)
 		require.NoError(t, err)
-		require.NoError(t, store.Save(ctx, id, doc.Enabled, view))
+		enabled := id != "console.bot" && id != "trigger.download" && id != "trigger.forward" && id != "downloader.aria2" && id != "proxy.range"
+		require.NoError(t, store.Save(ctx, id, enabled, view))
 	}
 	source := config.NewSource(cfg)
 	manager := &previewComponents{Directory: rte.NewDirectory(catalog, store), store: store, source: source, cfg: cfg}

@@ -21,7 +21,6 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/shirou/gopsutil/v3/process"
-	"golang.org/x/mod/semver"
 
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte/platform"
@@ -36,8 +35,6 @@ const (
 	archAMD64              = "amd64"
 	runtimeBinary          = "binary"
 	runtimeDocker          = "docker"
-	dockerVersionMark      = "-origin-"
-	dockerVersionSuffix    = "_docker"
 	containerUpdateMessage = "请拉取新镜像并重启容器"
 	flagSource             = "--source"
 	flagTarget             = "--target"
@@ -422,23 +419,19 @@ func osAliases(goos string) []string {
 }
 
 func needsUpdate(current, latest string) bool {
-	current = releaseVersionForCompare(current)
-	latest = releaseVersionForCompare(latest)
-	if latest == "" {
+	current, latest = strings.TrimSpace(current), strings.TrimSpace(latest)
+	if _, _, valid := parseDateVersion(latest); !valid {
 		return false
 	}
-	if current == "" || strings.EqualFold(current, "dev") || strings.EqualFold(current, "unknown") {
+	if current == "dev" || current == "unknown" || current == "" {
 		return true
 	}
-	if result, ok := compareDateVersions(current, latest); ok {
-		return result < 0
+	if date, commit, preview := strings.Cut(strings.TrimPrefix(current, "v"), "_dev_"); preview && commit != "" {
+		_, err := time.Parse("20060102", date)
+		return err == nil
 	}
-	currentSemver := canonicalVersion(current)
-	latestSemver := canonicalVersion(latest)
-	if currentSemver != "" && latestSemver != "" {
-		return semver.Compare(currentSemver, latestSemver) < 0
-	}
-	return strings.TrimPrefix(current, "v") != strings.TrimPrefix(latest, "v")
+	result, valid := compareDateVersions(current, latest)
+	return valid && result < 0
 }
 
 func compareDateVersions(current, latest string) (int, bool) {
@@ -491,31 +484,6 @@ func isContainerRuntime() bool {
 		}
 	}
 	return strings.TrimSpace(os.Getenv("container")) != ""
-}
-
-func releaseVersionForCompare(version string) string {
-	// Read-only compatibility for versions published before image and binary
-	// version numbers were unified. This does not determine the runtime type.
-	version = strings.TrimSpace(version)
-	lower := strings.ToLower(version)
-	if idx := strings.Index(lower, dockerVersionMark); idx >= 0 {
-		return strings.TrimSpace(version[:idx])
-	}
-	if strings.HasSuffix(lower, dockerVersionSuffix) {
-		return strings.TrimSpace(version[:len(version)-len(dockerVersionSuffix)])
-	}
-	return version
-}
-
-func canonicalVersion(version string) string {
-	version = strings.TrimSpace(version)
-	if version == "" {
-		return ""
-	}
-	if !strings.HasPrefix(version, "v") {
-		version = "v" + version
-	}
-	return semver.Canonical(version)
 }
 
 func extractExecutable(assetPath, assetName, dir string) (string, error) {

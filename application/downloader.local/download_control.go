@@ -20,7 +20,7 @@ func (c *Controller) ListTasks(ctx context.Context) ([]types.DownloadTask, error
 }
 
 func (c *Controller) ChangeTasks(ctx context.Context, action string, ids []string) (types.DownloadActionResult, error) {
-	var result types.InternalDownloadActionResult
+	var result types.LocalDownloadActionResult
 	var err error
 	switch action {
 	case "pause":

@@ -14,6 +14,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestDirectoryOfflineValidationSecretsAndDisabledPersistence(t *testing.T) {
@@ -33,7 +34,7 @@ func TestDirectoryOfflineValidationSecretsAndDisabledPersistence(t *testing.T) {
 	}}
 	catalog, err := rte.NewCatalog(definition)
 	require.NoError(t, err)
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	view, err := catalog.View(ctx, "offline", map[string]any{directorySecretField: "keep-me"})
 	require.NoError(t, err)
 	require.NoError(t, store.Save(ctx, "offline", false, view))
@@ -86,7 +87,7 @@ func TestDirectoryHealthDoesNotWaitForConfigurationAndFollowsReplacement(t *test
 	require.NoError(t, registry.Register(m, func() rte.Component { return c }))
 	catalog, err := rte.NewCatalog(rte.Definition{Manifest: m, Scope: rte.ConnectionScope})
 	require.NoError(t, err)
-	directory := rte.NewDirectory(catalog, config.NewStore(t.TempDir()))
+	directory := rte.NewDirectory(catalog, configtest.NewStore())
 	host, err := registry.Build(types.DefaultAccount, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, rte.Running, host.Start(ctx)[0].State)
@@ -153,7 +154,7 @@ func TestDirectoryRejectsStaleSaveAndPreservesPendingRestartValues(t *testing.T)
 	require.NoError(t, registry.Register(m, func() rte.Component { return &component{} }))
 	catalog, err := rte.NewCatalog(rte.Definition{Manifest: m, Scope: rte.ProcessScope})
 	require.NoError(t, err)
-	directory := rte.NewDirectory(catalog, config.NewStore(t.TempDir()))
+	directory := rte.NewDirectory(catalog, configtest.NewStore())
 	host, err := registry.Build(types.DefaultAccount, nil, nil)
 	require.NoError(t, err)
 	host.Start(ctx)

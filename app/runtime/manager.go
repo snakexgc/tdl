@@ -21,7 +21,6 @@ import (
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/reset"
-	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/app/webui"
 	"github.com/snakexgc/tdl/application"
@@ -38,24 +37,19 @@ import (
 )
 
 const (
-	moduleStopTimeout      = 10 * time.Second
-	moduleStatusNotStarted = "未启动"
-	moduleStatusRunning    = "运行中"
-	moduleIDBot            = "bot"
-	moduleIDWatch          = "watch"
-	moduleIDHTTP           = "http"
-	moduleIDAria2          = "aria2"
-	moduleIDForward        = "forward"
+	moduleStopTimeout = 10 * time.Second
+	moduleIDBot       = "bot"
+	moduleIDWatch     = "watch"
+	moduleIDAria2     = "aria2"
 )
 
 type Options struct {
-	ComponentConfigDir string
-	ComponentStore     *rteconfig.Store
-	ConfigurationHost  *rte.Runtime
-	ResetPlan          *reset.Plan
-	RequestReset       func()
-	RequestReboot      func()
-	RequestUpdate      func(updater.Plan)
+	ComponentStore    *rteconfig.Store
+	ConfigurationHost *rte.Runtime
+	ResetPlan         *reset.Plan
+	RequestReset      func()
+	RequestReboot     func()
+	RequestUpdate     func(types.UpdatePlan)
 }
 
 type aria2ManagerConfig struct {
@@ -80,7 +74,7 @@ func watchAutoDownloadEnabled(cfg *config.Config) bool {
 		cfg.Modules.Watch &&
 		cfg.Modules.Aria2 &&
 		cfg.Aria2.AutoDownload &&
-		config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2
+		config.UsesDownloadExecutor(cfg, config.DownloadExecutorAria2)
 }
 
 type Manager struct {
@@ -127,16 +121,13 @@ type Manager struct {
 	requestReboot func()
 	resetPlan     *reset.Plan
 	requestReset  func()
-	requestUpdate func(updater.Plan)
+	requestUpdate func(types.UpdatePlan)
 
 	applyMu        sync.Mutex
 	transitionMu   sync.Mutex
 	applyVersion   atomic.Uint64
 	mu             sync.Mutex
 	notify         watch.NotifyFunc
-	botStatus      string
-	botErr         error
-	watchMode      string
 	watchEnabled   bool
 	forwardEnabled bool
 	aria2Enabled   bool
@@ -185,8 +176,8 @@ func wrapShutdown(cancel context.CancelFunc, fn func()) func() {
 	}
 }
 
-func wrapUpdateShutdown(cancel context.CancelFunc, fn func(updater.Plan)) func(updater.Plan) {
-	return func(plan updater.Plan) {
+func wrapUpdateShutdown(cancel context.CancelFunc, fn func(types.UpdatePlan)) func(types.UpdatePlan) {
+	return func(plan types.UpdatePlan) {
 		if fn != nil {
 			fn(plan)
 		}
@@ -200,9 +191,6 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		cfg = config.DefaultConfig()
 	}
 	componentStore := opts.ComponentStore
-	if componentStore == nil && opts.ComponentConfigDir != "" {
-		componentStore = rteconfig.NewStore(opts.ComponentConfigDir)
-	}
 	effective, enabled, configErr := componentconfig.Load(ctx, componentStore, cfg)
 	if configErr == nil {
 		cfg = effective
@@ -223,8 +211,6 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		resetPlan:         opts.ResetPlan,
 		requestReset:      opts.RequestReset,
 		requestUpdate:     opts.RequestUpdate,
-		botStatus:         moduleStatusNotStarted,
-		watchMode:         config.EffectiveDownloaderMode(cfg),
 		watchEnabled:      cfg.Modules.Watch,
 		forwardEnabled:    cfg.Modules.Forward,
 		aria2Enabled:      cfg.Modules.Aria2,
@@ -253,17 +239,17 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 }
 
 func (m *Manager) StartWebUI(ctx context.Context) bool {
-	if m.configurationErr != nil || !m.componentEnabled("panel.webui") {
+	if m.configurationErr != nil || !m.componentEnabled(panelComponentID) {
 		return false
 	}
 	cfg := config.From(m.parent)
 	if cfg == nil || !cfg.Modules.WebUI || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
-		logctx.From(ctx).Warn("Web 管理面板未启动：监听地址未配置", zap.String("component", "panel.webui"))
+		logctx.From(ctx).Warn("Web 管理面板未启动：监听地址未配置", zap.String("component", panelComponentID))
 		color.Yellow("Web 管理面板未启动：webui.address 或 webui.port 为空。")
 		return false
 	}
 	if strings.TrimSpace(cfg.WebUI.Username) == "" || cfg.WebUI.Password == "" {
-		logctx.From(ctx).Warn("Web 管理面板未启动：登录凭据未配置", zap.String("component", "panel.webui"))
+		logctx.From(ctx).Warn("Web 管理面板未启动：登录凭据未配置", zap.String("component", panelComponentID))
 		color.Yellow("Web 管理面板未启动：请设置 webui.username 和 webui.password。")
 		return false
 	}
@@ -289,17 +275,16 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 			RequestReset:     m.requestReset,
 			RequestUpdate:    m.requestUpdate,
 			WatchRunning:     m.watchCtrl.Running,
-			ModuleManager:    m,
 			ComponentManager: m,
 		})
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
-			logctx.From(ctx).Error("Web 管理面板异常停止", zap.String("component", "panel.webui"), zap.Error(err))
+			logctx.From(ctx).Error("Web 管理面板异常停止", zap.String("component", panelComponentID), zap.Error(err))
 		}
 		errCh <- err
 		return err
 	}, rte.Recovery{})
 	if startErr != nil {
-		logctx.From(ctx).Error("启动 Web 管理面板失败", zap.String("component", "panel.webui"), zap.Error(startErr))
+		logctx.From(ctx).Error("启动 Web 管理面板失败", zap.String("component", panelComponentID), zap.Error(startErr))
 		return false
 	}
 
@@ -310,7 +295,7 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 		}
 	case <-time.After(200 * time.Millisecond):
 	}
-	logctx.From(ctx).Info("Web 管理面板已启动", zap.String("component", "panel.webui"), zap.String("listen_addr", config.WebUIListenAddr(cfg)))
+	logctx.From(ctx).Info("Web 管理面板已启动", zap.String("component", panelComponentID), zap.String("listen_addr", config.WebUIListenAddr(cfg)))
 	color.Green("WebUI: http://%s", config.WebUIListenAddr(cfg))
 	return true
 }
@@ -352,7 +337,6 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 // module that a newer config has already enabled.
 func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bool) error {
 	m.mu.Lock()
-	m.watchMode = config.EffectiveDownloaderMode(cfg)
 	m.watchEnabled, m.forwardEnabled = cfg.Modules.Watch, cfg.Modules.Forward
 	m.aria2Enabled, m.aria2Auto = cfg.Modules.Aria2, watchAutoDownloadEnabled(cfg)
 	m.mu.Unlock()
@@ -421,11 +405,10 @@ func (m *Manager) StartBot() {
 		return
 	}
 	if strings.TrimSpace(cfg.Bot.Token) == "" {
-		m.setBotStopped("未启动：请先填写 Telegram Bot Token。", nil)
 		return
 	}
 
-	started, startErr := m.botProcess.Start(func(ctx context.Context) error {
+	_, _ = m.botProcess.Start(func(ctx context.Context) error {
 		err := bot.Run(ctx, bot.Options{
 			CommandResolver: m.ResolveComponentPort,
 			DownloadControl: m,
@@ -436,13 +419,11 @@ func (m *Manager) StartBot() {
 			SetComponentHost:      func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
 			SetComponentRefresh:   func(refresh func(context.Context) error) { m.mu.Lock(); m.botRefresh = refresh; m.mu.Unlock() },
 			Token:                 cfg.Bot.Token,
-			ForwardQueue:          m.forwardQueue,
 			AllowedUsers:          cfg.Bot.AllowedUsers,
 			Proxy:                 m.botProxy(cfg),
 			Namespace:             cfg.Namespace,
 			NTP:                   cfg.NTP,
 			ReconnectTimeout:      time.Duration(cfg.ReconnectTimeout) * time.Second,
-			Watch:                 m.watchOptions(cfg),
 			WatchControl:          m.watchCtrl,
 			DisableAutoStartWatch: true,
 			AfterConfigSave:       m.ApplyConfig,
@@ -454,14 +435,6 @@ func (m *Manager) StartBot() {
 
 		return err
 	}, rte.Recovery{MaxRestarts: 3, Delay: time.Second, Retryable: transientTransportError})
-	if startErr != nil {
-		m.setBotStopped(startErr.Error(), startErr)
-	} else if started {
-		m.mu.Lock()
-		m.botStatus = moduleStatusRunning
-		m.botErr = nil
-		m.mu.Unlock()
-	}
 }
 
 func transientTransportError(err error) bool {
@@ -473,14 +446,9 @@ func (m *Manager) StopBot() {
 	ctx, cancel := context.WithTimeout(context.Background(), moduleStopTimeout)
 	defer cancel()
 	if err := m.botProcess.Stop(ctx); err != nil {
-		m.mu.Lock()
-		m.botStatus = err.Error()
-		m.botErr = err
-		m.mu.Unlock()
 		return
 	}
 	m.setNotifier(nil)
-	m.setBotStopped("stopped", nil)
 }
 
 func (m *Manager) StartWatch(ctx context.Context) error {
@@ -610,160 +578,6 @@ func (m *Manager) onLoginSuccess(_ *tg.User) {
 	}
 }
 
-func (m *Manager) botState(cfg *config.Config) webui.ModuleState {
-	m.mu.Lock()
-	running := m.botProcess.Running()
-	status := m.botStatus
-	err := m.botErr
-	m.mu.Unlock()
-	if processErr := m.botProcess.LastError(); processErr != nil {
-		err = processErr
-	}
-	if !running && err == nil && status == moduleStatusRunning {
-		status = "stopped"
-	}
-	if cfg == nil {
-		cfg = config.From(m.parent)
-	}
-	if status == "" {
-		status = moduleStatusNotStarted
-	}
-	if cfg != nil && cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) == "" {
-		status = "已启用，等待填写 Bot Token。"
-	}
-	if err != nil {
-		status = err.Error()
-	}
-	return webui.ModuleState{
-		ID:          moduleIDBot,
-		Name:        "机器人控制",
-		Description: "接收 Telegram 私聊命令，用于登录、配置、更新和下载任务管理。",
-		Enabled:     cfg != nil && cfg.Modules.Bot,
-		Running:     running,
-		CanToggle:   true,
-		Status:      status,
-	}
-}
-
-func (m *Manager) watchState(cfg *config.Config) webui.ModuleState {
-	if cfg == nil {
-		cfg = config.From(m.parent)
-	}
-	running := m.watchCtrl.Running()
-	status := moduleStatusNotStarted
-	if running && cfg != nil && cfg.Modules.Watch {
-		status = moduleStatusRunning
-	} else if err := m.watchCtrl.LastError(); err != nil {
-		status = "已停止：" + err.Error()
-	} else if cfg != nil && cfg.Modules.Watch {
-		status = "已启用，等待 Telegram 用户登录或启动。"
-	}
-	m.mu.Lock()
-	policyErr := m.policyErr
-	m.mu.Unlock()
-	if policyErr != nil {
-		status = policyErr.Error()
-	}
-	return webui.ModuleState{
-		ID:          moduleIDWatch,
-		Name:        "监听下载",
-		Description: "监听 Telegram 表情触发并生成临时 HTTP 链接；是否自动提交给 aria2 由 aria2 模块的自动下载开关决定。",
-		Enabled:     cfg != nil && cfg.Modules.Watch,
-		Running:     running && cfg != nil && cfg.Modules.Watch,
-		CanToggle:   true,
-		Status:      status,
-	}
-}
-
-func (m *Manager) httpState(cfg *config.Config) webui.ModuleState {
-	if cfg == nil {
-		cfg = config.From(m.parent)
-	}
-	enabled := cfg != nil && cfg.Modules.HTTP
-	running := m.httpCtrl.Running()
-	var status string
-	if running {
-		status = moduleStatusRunning + "：" + config.HTTPListenAddr(cfg)
-	} else if !enabled {
-		status = "已关闭"
-	} else if err := m.httpCtrl.LastError(); err != nil {
-		status = "已停止：" + err.Error()
-	} else {
-		status = "已启用，等待启动。"
-	}
-	return webui.ModuleState{
-		ID:          moduleIDHTTP,
-		Name:        "HTTP 下载代理",
-		Description: "提供 /download 链接和按 DC、按文件 FIFO 调度的标准 Range 文件流；支持 aria2 及其他下载器。",
-		Enabled:     enabled,
-		Running:     running,
-		CanToggle:   true,
-		Status:      status,
-	}
-}
-
-func (m *Manager) aria2State(cfg *config.Config) webui.ModuleState {
-	if cfg == nil {
-		cfg = config.From(m.parent)
-	}
-	m.mu.Lock()
-	running := m.aria2Process.Running()
-	err := m.aria2Err
-	m.mu.Unlock()
-	if processErr := m.aria2Process.LastError(); processErr != nil {
-		err = processErr
-	}
-	enabled := cfg != nil && cfg.Modules.Aria2
-	var status string
-	switch {
-	case !enabled:
-		status = "已关闭"
-	case err != nil:
-		status = "已停止：" + err.Error()
-	case running && watchAutoDownloadEnabled(cfg):
-		status = "运行中；监听触发后自动提交到 aria2"
-	case running && cfg != nil && cfg.Aria2.AutoDownload:
-		status = "运行中；自动提交等待 watch 使用 aria2 模式"
-	case running:
-		status = "运行中；自动下载已关闭"
-	default:
-		status = "已启用，正在启动或连接 aria2 RPC。"
-	}
-	return webui.ModuleState{
-		ID:          moduleIDAria2,
-		Name:        "aria2 下载器管理",
-		Description: "独立维护 aria2 RPC、任务恢复和异常监控；是否把监听生成的临时 HTTP 链接自动提交给 aria2 由 aria2.auto_download 控制。",
-		Enabled:     enabled,
-		Running:     running,
-		CanToggle:   true,
-		Status:      status,
-	}
-}
-
-func (m *Manager) forwardState(cfg *config.Config) webui.ModuleState {
-	if cfg == nil {
-		cfg = config.From(m.parent)
-	}
-	running := m.watchCtrl.Running()
-	status := moduleStatusNotStarted
-	if running && cfg != nil && cfg.Modules.Forward {
-		status = moduleStatusRunning
-	} else if err := m.watchCtrl.LastError(); err != nil {
-		status = "已停止：" + err.Error()
-	} else if cfg != nil && cfg.Modules.Forward {
-		status = "已启用，等待 Telegram 用户登录或启动。"
-	}
-	return webui.ModuleState{
-		ID:          moduleIDForward,
-		Name:        "监听转发",
-		Description: "监听配置的 Telegram 对象，并按 forward.mode 转发到默认目标；频道会尝试自动监听关联评论区。",
-		Enabled:     cfg != nil && cfg.Modules.Forward,
-		Running:     running && cfg != nil && cfg.Modules.Forward,
-		CanToggle:   true,
-		Status:      status,
-	}
-}
-
 func (m *Manager) checkSession(ctx context.Context) error {
 	if m.namespaceKV == nil {
 		return errors.New("本地数据未准备好")
@@ -811,9 +625,6 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 		current := config.From(m.parent)
 		return current.Modules.Watch, current.Modules.Forward
 	}
-	opts.ForwardConfig = func() watch.ForwardSettings {
-		return watch.DefaultOptions(config.From(m.parent)).ForwardSettings()
-	}
 	opts.Credentials = m
 	opts.Reaction = reactionPort{m}
 	opts.MessageLinks = messageLinksPort{m}
@@ -824,13 +635,6 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts.ForwardRules = m
 	opts.DownloadSubmitter = aria2Submission{manager: m}
 	return opts
-}
-
-func (m *Manager) setBotStopped(status string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.botStatus = status
-	m.botErr = err
 }
 
 // The daemon owns policies independently of watcher reconnects and module toggles.

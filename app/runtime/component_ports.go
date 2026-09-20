@@ -45,9 +45,9 @@ func (p namingPort) Unique(ctx context.Context, in []ports.NamingResult) ([]port
 
 func daemonComponentValues(cfg *config.Config) map[string]map[string]any {
 	values := watch.PolicyValues(watch.DefaultOptions(cfg))
-	values["trigger.reaction"] = map[string]any{"download": append([]string{}, cfg.TriggerReactions...), "forward": append([]string{}, cfg.Forward.TriggerReactions...)}
+	values["trigger.reaction"] = map[string]any{fieldDownloadReaction: append([]string{}, cfg.TriggerReactions...), "forward": append([]string{}, cfg.Forward.TriggerReactions...)}
 	values["trigger.messagelink"] = map[string]any{}
-	values["account.telegram"] = map[string]any{apiIDField: cfg.Telegram.APIID, apiHashField: cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, "use_builtin": cfg.Telegram.UseBuiltin}
+	values["account.telegram"] = map[string]any{apiIDField: cfg.Telegram.APIID, apiHashField: cfg.Telegram.APIHash, "builtin_preset": cfg.Telegram.BuiltinPreset, fieldUseBuiltin: cfg.Telegram.UseBuiltin}
 	values["account.telegram"]["proxy"] = config.EffectiveProxy(cfg)
 	values["update.self"] = map[string]any{}
 	return values
@@ -65,7 +65,7 @@ func (m *Manager) componentPort(name string) (any, error) {
 	return host.Resolve(name)
 }
 
-func (m *Manager) Resolve(ctx context.Context, account types.AccountID, legacy string) (types.TelegramCredentials, error) {
+func (m *Manager) Resolve(ctx context.Context, account types.AccountID) (types.TelegramCredentials, error) {
 	value, err := m.componentPort(ports.TelegramCredentialsName)
 	if err != nil {
 		return types.TelegramCredentials{}, err
@@ -73,7 +73,7 @@ func (m *Manager) Resolve(ctx context.Context, account types.AccountID, legacy s
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	return value.(ports.TelegramCredentials).Resolve(ctx, account, legacy)
+	return value.(ports.TelegramCredentials).Resolve(ctx, account)
 }
 
 func (m *Manager) Check(ctx context.Context) (types.UpdateInfo, error) {
@@ -137,3 +137,16 @@ func (p messageLinksPort) Submit(ctx context.Context, account types.AccountID, l
 	}
 	return value.(ports.MessageLinks).Submit(ctx, account, link, source, downloads)
 }
+
+const (
+	consoleComponentID         = "console.bot"
+	panelComponentID           = "panel.webui"
+	downloadTriggerComponentID = "trigger.download"
+	forwardTriggerComponentID  = "trigger.forward"
+	aria2ComponentID           = "downloader.aria2"
+	rangeComponentID           = "proxy.range"
+	fieldDownloadReaction      = "download"
+	fieldUseBuiltin            = "use_builtin"
+	fieldDirectory             = "directory"
+	fieldFilename              = "filename"
+)

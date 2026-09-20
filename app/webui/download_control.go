@@ -7,18 +7,17 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/snakexgc/tdl/app/aria2"
-	"github.com/snakexgc/tdl/application"
-	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const fieldResult = "result"
 
 func (s *Server) downloadTasksSnapshot(executor string) func(context.Context) (any, error) {
 	return func(ctx context.Context) (any, error) {
-		items, err := s.downloadControl().Tasks(ctx, executor)
+		if s.opts.DownloadControl == nil {
+			return nil, fmt.Errorf("download control is unavailable")
+		}
+		items, err := s.opts.DownloadControl.Tasks(ctx, executor)
 		if err != nil {
 			return nil, err
 		}
@@ -34,22 +33,16 @@ func (s *Server) downloadAccount() types.AccountID {
 	return account
 }
 
-func (s *Server) downloadControl() ports.DownloadControl {
-	if s.opts.DownloadControl != nil {
-		return s.opts.DownloadControl
-	}
-	return application.DownloadControl(s.downloadAccount(), map[string]ports.DownloadBackend{
-		localDownloadExecutor:      s.internalDownloadController(),
-		config.DownloaderModeAria2: aria2.NewController(config.From(s.opts.Context), s.opts.NamespaceKV, nil),
-	})
-}
-
 func (s *Server) handleDownloadTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	items, err := s.downloadControl().Tasks(r.Context(), r.URL.Query().Get("executor"))
+	if s.opts.DownloadControl == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("download control is unavailable"))
+		return
+	}
+	items, err := s.opts.DownloadControl.Tasks(r.Context(), r.URL.Query().Get("executor"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -78,7 +71,11 @@ func (s *Server) handleDownloadTaskActions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	request.Account = s.downloadAccount()
-	result, err := s.downloadControl().Control(r.Context(), request)
+	if s.opts.DownloadControl == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("download control is unavailable"))
+		return
+	}
+	result, err := s.opts.DownloadControl.Control(r.Context(), request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

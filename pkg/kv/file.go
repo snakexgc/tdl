@@ -60,18 +60,6 @@ func (f *file) Name() string {
 	return DriverFile.String()
 }
 
-func (f *file) MigrateTo() (Meta, error) {
-	meta, err := f.read()
-	if err != nil {
-		return nil, errors.Wrap(err, "read")
-	}
-	return meta, nil
-}
-
-func (f *file) MigrateFrom(meta Meta) error {
-	return f.write(meta)
-}
-
 func (f *file) Namespaces() ([]string, error) {
 	pairs, err := f.read()
 	if err != nil {
@@ -126,13 +114,6 @@ func (f *file) readUnlocked() (map[string]map[string][]byte, error) {
 	}
 
 	return m, nil
-}
-
-func (f *file) write(m map[string]map[string][]byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	return f.writeUnlocked(m)
 }
 
 func (f *file) writeUnlocked(m map[string]map[string][]byte) error {
@@ -199,4 +180,15 @@ func (f *fileKV) Delete(_ context.Context, key string) error {
 		return errors.Wrap(err, "mutate")
 	}
 	return nil
+}
+
+func (f *file) Snapshot(ctx context.Context, namespace string) (map[string][]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	values, err := f.read()
+	if err != nil {
+		return nil, err
+	}
+	return values[namespace], ctx.Err()
 }

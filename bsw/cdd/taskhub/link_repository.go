@@ -16,69 +16,61 @@ type LinkRepository struct {
 	Namespace string
 }
 
-// Snapshot includes legacy unindexed records, but never exposes account
-// credentials or unrelated datasets to catalog consumers.
+func (r LinkRepository) store() (storage.Storage, error) {
+	if r.Store != nil {
+		return r.Store, nil
+	}
+	if r.Engine != nil {
+		return r.Engine.Open(r.Namespace)
+	}
+	return nil, errors.New("namespace storage is not configured")
+}
+
+// Snapshot returns indexed links and associations from one account transaction.
 func (r LinkRepository) Snapshot(ctx context.Context) (map[string][]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if r.Store == nil && r.Engine == nil {
-		return nil, errors.New("namespace storage is not configured")
-	}
-	if r.Engine == nil {
-		result := map[string][]byte{}
-		for _, collection := range []*Collection{Links(r.Store), Aria2(r.Store)} {
-			records, err := collection.Records(ctx)
-			if err != nil {
-				return nil, err
-			}
-			for id, data := range records {
-				result[collection.prefix+id] = append([]byte(nil), data...)
-			}
-		}
-		return result, ctx.Err()
-	}
-	meta, err := r.Engine.MigrateTo()
+	store, err := r.store()
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string][]byte)
-	for key, data := range meta[r.Namespace] {
-		if (strings.HasPrefix(key, LinkPrefix) && key != LinkIndex) || (strings.HasPrefix(key, Aria2Prefix) && key != Aria2Index) {
-			result[key] = append([]byte(nil), data...)
+	result := map[string][]byte{}
+	err = storage.Update(ctx, store, func(tx storage.Storage) error {
+		for _, collection := range []*Collection{Links(tx), Aria2(tx)} {
+			index, err := collection.index(ctx, tx)
+			if err != nil {
+				return err
+			}
+			for id := range index {
+				data, err := tx.Get(ctx, collection.prefix+id)
+				if errors.Is(err, storage.ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				result[collection.prefix+id] = data
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return result, ctx.Err()
+	return result, nil
 }
 
 // Remove atomically removes source metadata and its remote associations.
 // Active local execution must be stopped through the download control port first.
 func (r LinkRepository) Remove(ctx context.Context, id string) (int, error) {
-	if r.Store == nil && r.Engine == nil {
-		return 0, errors.New("namespace storage is not configured")
+	store, err := r.store()
+	if err != nil {
+		return 0, err
 	}
 	if id == "" || id == "index" || strings.ContainsAny(id, "/\\") {
 		return 0, errors.New("invalid download link id")
 	}
 	removed := 0
-	// Legacy records may predate the index. Discover candidates outside the
-	// transaction, then re-read their association under the write lock.
-	candidates := make(map[string]struct{})
-	if r.Engine != nil {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		snapshot, err := r.Engine.MigrateTo()
-		if err != nil {
-			return 0, err
-		}
-		for key := range snapshot[r.Namespace] {
-			if strings.HasPrefix(key, Aria2Prefix) && key != Aria2Index {
-				candidates[strings.TrimPrefix(key, Aria2Prefix)] = struct{}{}
-			}
-		}
-	}
-	err := storage.Update(ctx, r.Store, func(tx storage.Storage) error {
+
+	err = storage.Update(ctx, store, func(tx storage.Storage) error {
 		links, aria := Links(tx), Aria2(tx)
 		linkIndex, err := links.index(ctx, tx)
 		if err != nil {
@@ -89,9 +81,6 @@ func (r LinkRepository) Remove(ctx context.Context, id string) (int, error) {
 			return err
 		}
 		for gid := range ariaIndex {
-			candidates[gid] = struct{}{}
-		}
-		for gid := range candidates {
 			data, err := tx.Get(ctx, Aria2Prefix+gid)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue

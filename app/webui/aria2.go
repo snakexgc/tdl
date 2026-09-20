@@ -135,15 +135,12 @@ func (s *Server) parseAria2Records(pairs map[string][]byte) (map[string]aria2Tas
 		if !strings.HasPrefix(key, aria2TaskKeyPrefix) || key == aria2TaskIndexKey {
 			continue
 		}
-		var record aria2TaskRecord
-		if err := json.Unmarshal(data, &record); err != nil {
+		record, err := taskhub.DecodeAria2Record(data, strings.TrimPrefix(key, aria2TaskKeyPrefix))
+		if err != nil {
 			return nil, nil, errors.Wrapf(err, "decode %s", key)
 		}
 		if record.Deleted {
 			continue
-		}
-		if record.GID == "" {
-			record.GID = strings.TrimPrefix(key, aria2TaskKeyPrefix)
 		}
 		records[key] = record
 		if record.TaskID != "" {

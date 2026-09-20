@@ -2,11 +2,7 @@ export const executors = ["local", "aria2"];
 export const executorLabel = (value) => (value === "local" ? "本地" : "aria2");
 export const taskKey = (task) =>
   JSON.stringify([task.account, task.executor, task.id]);
-export const taskState = (task) =>
-  task.state ||
-  { waiting: "queued", downloading: "active", done: "complete" }[task.status] ||
-  task.status ||
-  "unknown";
+export const taskState = (task) => task.state || "unknown";
 export const statusLabel = (value) =>
   ({
     queued: "排队中",
@@ -46,3 +42,5 @@ export function groupActions(tasks, action) {
   }
   return [...groups.values()];
 }
+
+export const statusClass = (status) => status === "error" ? "bad" : status === "complete" ? "" : "warn";

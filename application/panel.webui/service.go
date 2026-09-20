@@ -60,10 +60,8 @@ func Manifest() manifest.Manifest {
 		Feature: manifest.Feature{ID: "panel", Title: "面板与数据维护", Order: 70, SettingsURL: "/config?tab=panel"}, ID: ID, Config: []manifest.ConfigField{manifest.Text("address", "监听地址", "0.0.0.0", false, true), manifest.Number("port", "监听端口", 22335, 1, 65535, true), manifest.FormattedText("username", "登录用户名", "admin", "nonempty", false, true), manifest.Text("password", "登录密码", "admin", true, true)}, Title: "Web 管理面板", Pages: []manifest.Page{
 			{Path: "/dashboard", Title: "总览", View: "dashboard", Module: "/static/js/dashboard.js", Style: "/static/css/dashboard.css", Order: 10},
 			{Path: "/config", Title: "设置", View: "config", Module: "/static/js/config.js", Style: "/static/css/config.css", Order: 60},
-			{Path: "/kv", Title: "KV 管理", View: "kv", Module: "/static/js/kv.js", Style: "/static/css/kv.css", Order: 60, NavHidden: true, RedirectTo: "/downloads?tab=links"},
 			{Path: "/modules", Title: "模块管理", View: "modules", Module: "/static/js/modules.js", Style: "/static/css/modules.css", Order: 50},
 			{Path: "/logs", Title: "日志管理", View: "logs", Module: "/static/js/logs.js", Style: "/static/css/logs.css", Order: 65},
-			{Path: "/components.html", Title: "组件配置", Order: 75, NavHidden: true, RedirectTo: "/config?tab=system#advanced"},
 		},
 	}, "panel", "面板访问")
 }

@@ -13,15 +13,14 @@ import (
 
 const configInitCommand = "config-init"
 
-// NewConfigInit supports offline migration without starting network services,
+// NewConfigInit initializes or validates configuration without starting network services,
 // touching sessions or printing any user configuration values.
 func NewConfigInit() *cobra.Command {
-	var home, components string
-	command := &cobra.Command{Use: configInitCommand, Short: "Create or validate tdl_config.json, importing existing settings once", Args: cobra.NoArgs}
-	command.Flags().StringVar(&home, "home", consts.HomeDir, "application directory containing tdl_config.json or legacy configuration")
-	command.Flags().StringVar(&components, "component-config", "", "legacy component directory for the selected account")
+	var home string
+	command := &cobra.Command{Use: configInitCommand, Short: "Create or validate tdl_config.json", Args: cobra.NoArgs}
+	command.Flags().StringVar(&home, "home", consts.HomeDir, "application directory containing tdl_config.json")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		if _, err := configuration.Open(cmd.Context(), home, components); err != nil {
+		if _, err := configuration.Open(cmd.Context(), home); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Configuration ready:", filepath.Join(home, manager.Filename))

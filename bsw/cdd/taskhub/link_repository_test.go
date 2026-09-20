@@ -13,8 +13,8 @@ import (
 	"github.com/snakexgc/tdl/pkg/kv"
 )
 
-func TestLinkRemovalIncludesLegacyAssociations(t *testing.T) {
-	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverLegacy, kv.DriverFile} {
+func TestLinkCatalogOnlyIncludesIndexedAssociations(t *testing.T) {
+	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverFile} {
 		t.Run(string(driver), func(t *testing.T) {
 			ctx := context.Background()
 			engine, err := kv.New(driver, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "links")})
@@ -30,7 +30,8 @@ func TestLinkRemovalIncludesLegacyAssociations(t *testing.T) {
 			require.NoError(t, store.Set(ctx, "session", []byte("private credentials")))
 			snapshot, err := repo.Snapshot(ctx)
 			require.NoError(t, err)
-			require.Len(t, snapshot, 4)
+			require.Len(t, snapshot, 2)
+			require.NotContains(t, snapshot, taskhub.Aria2Prefix+"legacy")
 			require.NotContains(t, snapshot, "session")
 			require.NotContains(t, snapshot, taskhub.LinkIndex)
 			require.NotContains(t, snapshot, taskhub.Aria2Index)
@@ -49,11 +50,13 @@ func TestLinkRemovalIncludesLegacyAssociations(t *testing.T) {
 			require.NoError(t, store.Set(ctx, taskhub.LinkIndex, savedIndex))
 			count, err := repo.Remove(ctx, "source")
 			require.NoError(t, err)
-			require.Equal(t, 3, count)
-			for _, key := range []string{taskhub.LinkPrefix + "source", taskhub.Aria2Prefix + "indexed", taskhub.Aria2Prefix + "legacy"} {
+			require.Equal(t, 2, count)
+			for _, key := range []string{taskhub.LinkPrefix + "source", taskhub.Aria2Prefix + "indexed"} {
 				_, err = store.Get(ctx, key)
 				require.ErrorIs(t, err, storage.ErrNotFound)
 			}
+			_, err = store.Get(ctx, taskhub.Aria2Prefix+"legacy")
+			require.NoError(t, err)
 			_, err = store.Get(ctx, taskhub.Aria2Prefix+"unrelated")
 			require.NoError(t, err)
 			records, err := taskhub.Aria2(store).Records(ctx)

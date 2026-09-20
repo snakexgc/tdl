@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/gotd/td/tg"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/consts"
 )
 
 type downloadJob struct {
@@ -56,8 +54,6 @@ func (w *Watcher) dispatcher(ctx context.Context) {
 			unlink()
 			cancel()
 			submission.reply <- messageLinkSubmissionResponse{result: result, err: err}
-		case job := <-w.jobCh:
-			_, _ = w.processDownloadIntent(ctx, types.DownloadIntent{Account: w.reactionAccount(), Peer: plainPeer(job.peer), PeerID: job.peerID, MessageID: job.msgID, Link: job.link, Source: job.source})
 		}
 	}
 }
@@ -117,10 +113,9 @@ func (w *Watcher) processDownloadIntent(ctx context.Context, request types.Downl
 	result, err := w.opts.DownloadPipeline.SubmitBatch(ctx, request, ports.DownloadResources{
 		Source: watchDownloadSource{watcher: w}, Filter: w.opts.Filter, Naming: w.opts.Naming,
 		Routing: w.opts.DownloadRouting, Files: localfs.Downloads{},
-		Executors: map[string]ports.DownloadExecutor{localExecutorName: w.runtime.local, config.DownloaderModeAria2: w.opts.DownloadSubmitter},
+		Executors: map[string]ports.DownloadExecutor{localExecutorName: w.runtime.local, config.DownloadExecutorAria2: w.opts.DownloadSubmitter},
 		Defaults: ports.DownloadDefaults{
-			Mode: config.EffectiveDownloaderMode(cfg), LocalRoot: cfg.Downloader.LocalRoot,
-			RemoteRoot: cfg.Aria2.Dir, FallbackLocalRoot: filepath.Join(consts.HomeDir, "downloads"), SkipSame: w.opts.SkipSame, Limit: effectiveWatchOptionLimit(w.opts.Limit, cfg),
+			RemoteRoot: cfg.Aria2.Dir, SkipSame: w.opts.SkipSame, Limit: effectiveWatchOptionLimit(w.opts.Limit, cfg),
 		},
 	})
 	for _, link := range result.Links {

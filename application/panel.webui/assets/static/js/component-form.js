@@ -53,7 +53,6 @@ export async function renderComponentForms(host, message, data, ids) {
     }
     const fields = [];
     for (const field of component.fields || []) {
-      if (field.replaced_by) continue;
       const label = document.createElement("label");
       label.className = "component-field";
       label.style.display = "block";

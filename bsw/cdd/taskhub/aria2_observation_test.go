@@ -16,7 +16,7 @@ import (
 )
 
 func TestObservationCannotResurrectDeletedOrOverwriteControlledTask(t *testing.T) {
-	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverLegacy, kv.DriverFile} {
+	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverFile} {
 		t.Run(string(driver), func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Now()

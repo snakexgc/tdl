@@ -31,7 +31,6 @@ type Runtime struct {
 	PoolSize       int
 	Account        types.AccountID
 	ComponentStore *rteconfig.Store
-	Defaults       func() types.ForwardDefaults
 	Rules          ports.ForwardRules
 	Listening      ports.ForwardListening
 	OnReady        func()
@@ -63,7 +62,7 @@ func (q *Queue) Serve(ctx context.Context, rt Runtime) error {
 		if host != nil && rt.OnReady != nil {
 			rt.OnReady()
 		}
-	}, application.ForwardOptions{Store: rt.ComponentStore, Defaults: rt.Defaults, Peers: rt, Rules: rt.Rules, Listening: rt.Listening})
+	}, application.ForwardOptions{Store: rt.ComponentStore, Peers: rt, Rules: rt.Rules, Listening: rt.Listening})
 }
 
 func (q *Queue) router() (ports.ForwardRouting, error) {

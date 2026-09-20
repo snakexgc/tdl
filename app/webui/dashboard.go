@@ -87,7 +87,7 @@ func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
 	telegramFileErrors := httpdl.TelegramFileErrorCount()
 	telegramFileErrors10s := httpdl.TelegramFileErrorCountSince(10 * time.Second)
 	var aria2Stat aria2DashboardStat
-	if cfg != nil && cfg.Modules.Aria2 && config.EffectiveDownloaderMode(cfg) != config.DownloaderModeLocal {
+	if cfg != nil && cfg.Modules.Aria2 && config.PrimaryDownloadExecutor(cfg) != config.DownloadExecutorLocal {
 		stat, err := fetchAria2DashboardStat(ctx, cfg.Aria2)
 		aria2Stat = stat
 		if err != nil {
@@ -177,7 +177,7 @@ func (s *Server) statusSnapshot() map[string]any {
 			"proxy":   "/aria2/jsonrpc",
 		},
 		"downloader": map[string]any{
-			"mode": config.EffectiveDownloaderMode(cfg),
+			"mode": config.PrimaryDownloadExecutor(cfg),
 		},
 		"http": map[string]any{
 			"listen":          config.HTTPListenAddr(cfg),

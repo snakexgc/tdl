@@ -2,8 +2,7 @@ package rte_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,6 +11,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 type persistedComponent struct {
@@ -41,8 +41,8 @@ func TestPersistedConfigurationFailureAndRestart(t *testing.T) {
 		current = &persistedComponent{}
 		return current
 	}))
-	directory := t.TempDir()
-	store := config.NewStore(filepath.Join(directory, "components"))
+	repository := &configtest.Repository{}
+	store := config.NewManaged(repository)
 	host, err := registry.BuildStored(ctx, types.DefaultAccount, store)
 	require.NoError(t, err)
 	require.Equal(t, rte.Running, host.Start(ctx)[0].State)
@@ -50,9 +50,9 @@ func TestPersistedConfigurationFailureAndRestart(t *testing.T) {
 	require.NoError(t, host.ReconfigureSaved(ctx, providerID, map[string]any{limitField: 2}, store))
 	require.Equal(t, 2, current.value)
 	require.Error(t, host.ReconfigureSaved(ctx, providerID, map[string]any{limitField: 0}, store))
-	file := filepath.Join(directory, "not-a-directory")
-	require.NoError(t, os.WriteFile(file, []byte("occupied"), 0o600))
-	require.Error(t, host.ReconfigureSaved(ctx, providerID, map[string]any{limitField: 3}, config.NewStore(file)))
+	repository.SaveError = errors.New("storage unavailable")
+	require.Error(t, host.ReconfigureSaved(ctx, providerID, map[string]any{limitField: 3}, store))
+	repository.SaveError = nil
 	require.Equal(t, 2, current.value)
 	require.NoError(t, host.Stop(ctx))
 	// Equal values must not bypass lifecycle checks and overwrite a disabled
@@ -78,5 +78,4 @@ func TestPersistedConfigurationFailureAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, disabled.Start(ctx))
 	require.NoError(t, disabled.Stop(ctx))
-	require.Error(t, store.Save(ctx, "../escape", true, view))
 }

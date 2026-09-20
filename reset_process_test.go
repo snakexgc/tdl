@@ -17,7 +17,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/internal/migration"
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/internal/configuration"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 )
@@ -44,9 +45,19 @@ func TestFullResetStopsProcessAndClearsItsDisposableHome(t *testing.T) {
 	cfg.Modules = config.ModulesConfig{}
 	cfg.Modules.WebUI = true
 	cfg.WebUI.Address, cfg.WebUI.Port = "127.0.0.1", port
-	require.NoError(t, config.Save(filepath.Join(home, "config.json"), cfg))
-	_, err = migration.EnsureComponents(context.Background(), home, cfg)
+	service, err := configuration.Open(context.Background(), home)
 	require.NoError(t, err)
+	catalog, err := application.Catalog()
+	require.NoError(t, err)
+	for _, id := range []string{"console.bot", "trigger.download", "trigger.forward", "downloader.aria2", "proxy.range", testPanelComponent} {
+		var values map[string]any
+		if id == testPanelComponent {
+			values = map[string]any{"address": cfg.WebUI.Address, "port": cfg.WebUI.Port}
+		}
+		view, err := catalog.View(context.Background(), id, values)
+		require.NoError(t, err)
+		require.NoError(t, service.Store().Save(context.Background(), id, id == testPanelComponent, view))
+	}
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".tdl"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".tdl", "another-account-fixture"), []byte("session fixture"), 0o600))
 	keep := filepath.Join(home, "keep.txt")
@@ -100,11 +111,13 @@ func TestFullResetStopsProcessAndClearsItsDisposableHome(t *testing.T) {
 		t.Fatal("reset did not stop the process")
 	}
 	require.Contains(t, output.String(), "Reset complete")
-	require.NoFileExists(t, filepath.Join(home, "config.json"))
-	for _, name := range []string{".tdl", "components"} {
+	require.NoFileExists(t, filepath.Join(home, "tdl_config.json"))
+	for _, name := range []string{".tdl"} {
 		entries, err := os.ReadDir(filepath.Join(home, name))
 		require.NoError(t, err)
 		require.Empty(t, entries, "no files may be recreated after cleanup")
 	}
 	require.FileExists(t, keep)
 }
+
+const testPanelComponent = "panel.webui"

@@ -61,14 +61,14 @@ func (d *Worker) scanInterval() time.Duration {
 	if value := d.pollInterval.Load(); value > 0 {
 		return time.Duration(value)
 	}
-	return internalDownloadPollInterval
+	return localDownloadPollInterval
 }
 
 func (d *Worker) pauseTimeout() time.Duration {
 	if value := d.shutdownTimeout.Load(); value > 0 {
 		return time.Duration(value)
 	}
-	return internalDownloadShutdownPauseTimeout
+	return localDownloadShutdownPauseTimeout
 }
 
 // ValidateConfiguration validates offline edits without acquiring resources.

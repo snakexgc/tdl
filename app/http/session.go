@@ -256,7 +256,7 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 	return nil
 }
 
-// streamTelegramMediaParallel preserves parallel internal downloads without
+// streamTelegramMediaParallel preserves parallel local downloads without
 // introducing a retained cache. A worker does not start another chunk until
 // its previous result has been written, bounding decoded chunk memory by the
 // worker count while DC permits remain scoped to actual Telegram RPCs.

@@ -38,8 +38,8 @@ func TestDeclaredCommandsResolveCurrentInstanceForEveryRequest(t *testing.T) {
 	require.ErrorContains(t, err, "disabled")
 }
 
-func TestLegacyCommandTextUsesCanonicalNameAndPreservesPayload(t *testing.T) {
-	for _, input := range []string{"/aria2_active", "/internal_active@mybot", " /downloads_active  two words\nnext "} {
+func TestCommandTextPreservesPayloadAndRemovesBotSuffix(t *testing.T) {
+	for _, input := range []string{"/downloads_active", "/downloads_active@mybot", " /downloads_active  two words\nnext "} {
 		request := types.ConsoleRequest{Name: "downloads_active", Text: input}
 		expected := "/downloads_active"
 		if input[0] == ' ' {
@@ -63,13 +63,12 @@ type factoryTasks struct {
 
 func (p *factoryTasks) PauseTask(context.Context, string) error { p.calls++; return nil }
 
-func TestLegacyAria2FactoryHonorsStoppedComponentsAndReenable(t *testing.T) {
+func TestAria2FactoryHonorsStoppedComponentsAndReenable(t *testing.T) {
 	ctx := context.Background()
 	console := &factoryConsole{enabled: true}
 	first, second := &factoryTasks{}, &factoryTasks{}
 	current := first
 	controlEnabled, executorEnabled := true, true
-	fallbackCalls := 0
 	factory := componentAria2Factory(console, func(owner, port string) (any, error) {
 		switch port {
 		case ports.DownloadControlName:
@@ -85,7 +84,7 @@ func TestLegacyAria2FactoryHonorsStoppedComponentsAndReenable(t *testing.T) {
 		default:
 			return nil, fmt.Errorf("unknown port %s/%s", owner, port)
 		}
-	}, func() ports.Aria2Tasks { fallbackCalls++; return first })
+	})
 	require.NoError(t, factory().PauseTask(ctx, downloadTestTask))
 	console.enabled = false
 	require.Error(t, factory().PauseTask(ctx, downloadTestTask))
@@ -97,5 +96,5 @@ func TestLegacyAria2FactoryHonorsStoppedComponentsAndReenable(t *testing.T) {
 	require.NoError(t, factory().PauseTask(ctx, downloadTestTask))
 	require.Equal(t, 1, first.calls)
 	require.Equal(t, 1, second.calls)
-	require.Zero(t, fallbackCalls)
+	require.Error(t, componentAria2Factory(console, nil)().PauseTask(ctx, downloadTestTask))
 }

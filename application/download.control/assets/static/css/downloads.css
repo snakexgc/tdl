@@ -1,4 +1,6 @@
-/* Downloads view: AriaNg iframe shell, aria2 connection guide, internal table. */
+@import url("/static/css/kv.css");
+
+/* Downloads view: AriaNg iframe shell, aria2 connection guide, local task table. */
 .frame-wrap {
   height: calc(100dvh - 260px);
   min-height: 440px;

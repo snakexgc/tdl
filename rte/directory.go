@@ -239,9 +239,6 @@ func (d *Directory) PatchWithRevision(ctx context.Context, id string, patch map[
 	for key, value := range patch {
 		keep := false
 		for _, field := range definition.Manifest.Config {
-			if field.Name == key && field.ReplacedBy != "" {
-				return fmt.Errorf("%s.%s has been replaced by %s", id, key, field.ReplacedBy)
-			}
 			if field.Name == key && (field.Secret || field.EmptyPreserves) {
 				if text, ok := value.(string); ok && text == "" {
 					keep = true

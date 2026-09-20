@@ -46,7 +46,7 @@ func TestEventsAuthenticationOriginSubscriptionAndModeSwitch(t *testing.T) {
 	require.Contains(t, string(packet.Data), `"mode":"aria2"`)
 	next, err := config.Clone(cfg)
 	require.NoError(t, err)
-	next.Downloader.Mode = "local"
+	next.Downloader.Executors = []string{localDownloadExecutor}
 	source.Replace(next)
 	for {
 		require.NoError(t, wsjson.Read(ctx, conn, &packet))

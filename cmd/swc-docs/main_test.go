@@ -23,7 +23,7 @@ func TestDefaultTemplateLoadsWithoutLegacyInputs(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "tdl_config.json")
 	require.NoError(t, writeDefaultConfig(path))
-	_, err := configuration.Open(context.Background(), home, "")
+	_, err := configuration.Open(context.Background(), home)
 	require.NoError(t, err)
 	actual, err := os.ReadFile(path)
 	require.NoError(t, err)

@@ -2,7 +2,6 @@ package watch
 
 import (
 	"context"
-	"time"
 
 	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
@@ -15,60 +14,38 @@ import (
 )
 
 type Options struct {
-	ForwardConfig           func() ForwardSettings
-	FeatureFlags            func() (download, forward bool)
-	ForwardRules            ports.ForwardRules
-	ForwardRouting          ports.ForwardRouting
-	Connections             *tgauth.Connections
-	ComponentStore          *rteconfig.Store
-	SetIntentHost           func(*rte.Runtime)
-	SetDownloadHost         func(*rte.Runtime)
-	ForwardQueue            *appforward.Queue
-	Account                 types.AccountID
-	Filter                  ports.FilterRules
-	Naming                  ports.NamingRules
-	Reaction                ports.ReactionTrigger
-	MessageLinks            ports.MessageLinks
-	Credentials             ports.TelegramCredentials
-	DownloadRouting         ports.DownloadRouting
-	DownloadPipeline        ports.DownloadPipeline
-	Dir                     string
-	Template                string
-	FilenameMaxLength       int
-	SkipSame                bool
-	PoolSize                int
-	Limit                   int
-	Download                bool
-	TriggerReactions        []string
-	Include                 []string
-	Exclude                 []string
-	FileSizeMinMB           int64
-	FileSizeMaxMB           int64
-	Forward                 bool
-	ForwardMode             string
-	ForwardTarget           string
-	ForwardListen           []string
-	ForwardListenComments   bool
-	ForwardSilent           bool
-	ForwardDedupeTTL        time.Duration
-	ForwardTriggerReactions []string
-	Notify                  NotifyFunc
-	HTTPService             *httpdl.Service
-	DownloadSubmitter       ports.DownloadExecutor
-	messageLinks            <-chan messageLinkSubmission
-}
-
-// ForwardSettings maps legacy configuration into component-owned defaults and
-// listening ports. Routing decisions belong to the forwarding component.
-type ForwardSettings struct {
-	Mode, Target           string
-	Listen                 []string
-	ListenComments, Silent bool
-	DedupeTTL              time.Duration
-}
-
-func (o Options) ForwardSettings() ForwardSettings {
-	return ForwardSettings{Mode: o.ForwardMode, Target: o.ForwardTarget, Listen: append([]string(nil), o.ForwardListen...), ListenComments: o.ForwardListenComments, Silent: o.ForwardSilent, DedupeTTL: o.ForwardDedupeTTL}
+	FeatureFlags      func() (download, forward bool)
+	ForwardRules      ports.ForwardRules
+	ForwardRouting    ports.ForwardRouting
+	Connections       *tgauth.Connections
+	ComponentStore    *rteconfig.Store
+	SetIntentHost     func(*rte.Runtime)
+	SetDownloadHost   func(*rte.Runtime)
+	ForwardQueue      *appforward.Queue
+	Account           types.AccountID
+	Filter            ports.FilterRules
+	Naming            ports.NamingRules
+	Reaction          ports.ReactionTrigger
+	MessageLinks      ports.MessageLinks
+	Credentials       ports.TelegramCredentials
+	DownloadRouting   ports.DownloadRouting
+	DownloadPipeline  ports.DownloadPipeline
+	Dir               string
+	Template          string
+	FilenameMaxLength int
+	SkipSame          bool
+	PoolSize          int
+	Limit             int
+	Download          bool
+	Include           []string
+	Exclude           []string
+	FileSizeMinMB     int64
+	FileSizeMaxMB     int64
+	Forward           bool
+	Notify            NotifyFunc
+	HTTPService       *httpdl.Service
+	DownloadSubmitter ports.DownloadExecutor
+	messageLinks      <-chan messageLinkSubmission
 }
 
 func (w *Watcher) downloadEnabled() bool {
@@ -95,26 +72,18 @@ func DefaultOptions(cfg *config.Config) Options {
 	}
 
 	return Options{
-		Account:                 types.AccountID(cfg.Namespace),
-		Dir:                     cfg.DownloadDir,
-		Template:                config.EffectiveFilename(cfg),
-		FilenameMaxLength:       config.EffectiveFilenameMax(cfg),
-		PoolSize:                config.EffectivePoolSize(cfg),
-		Limit:                   config.EffectiveLimit(cfg),
-		Download:                cfg.Modules.Watch,
-		TriggerReactions:        append([]string(nil), cfg.TriggerReactions...),
-		Include:                 append([]string(nil), cfg.Include...),
-		Exclude:                 append([]string(nil), cfg.Exclude...),
-		FileSizeMinMB:           cfg.FileSizeMinMB,
-		FileSizeMaxMB:           cfg.FileSizeMaxMB,
-		Forward:                 cfg.Modules.Forward,
-		ForwardMode:             config.EffectiveForwardMode(cfg),
-		ForwardTarget:           cfg.Forward.Target,
-		ForwardListen:           append([]string(nil), cfg.Forward.Listen...),
-		ForwardListenComments:   cfg.Forward.ListenComments,
-		ForwardSilent:           cfg.Forward.Silent,
-		ForwardDedupeTTL:        time.Duration(config.EffectiveForwardDedupeTTL(cfg)) * time.Second,
-		ForwardTriggerReactions: append([]string(nil), cfg.Forward.TriggerReactions...),
+		Account:           types.AccountID(cfg.Namespace),
+		Dir:               cfg.DownloadDir,
+		Template:          config.EffectiveFilename(cfg),
+		FilenameMaxLength: config.EffectiveFilenameMax(cfg),
+		PoolSize:          config.EffectivePoolSize(cfg),
+		Limit:             config.EffectiveLimit(cfg),
+		Download:          cfg.Modules.Watch,
+		Include:           append([]string(nil), cfg.Include...),
+		Exclude:           append([]string(nil), cfg.Exclude...),
+		FileSizeMinMB:     cfg.FileSizeMinMB,
+		FileSizeMaxMB:     cfg.FileSizeMaxMB,
+		Forward:           cfg.Modules.Forward,
 	}
 }
 

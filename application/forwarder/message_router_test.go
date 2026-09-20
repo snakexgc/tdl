@@ -66,7 +66,7 @@ func TestMessageRouterExplicitFanoutSurvivesPartialFailureAndMissingDefault(t *t
 		return []types.ForwardDestination{{Target: routingTargetFirst, Mode: forwardModeDefault}, {Target: routingTargetSecond, Mode: forwardModeClone, Silent: true}}
 	})
 	options.Peers = routingPeersFunc(func(context.Context, types.AccountID, string, bool) (types.ForwardPeer, error) {
-		t.Error("explicit routes must not resolve legacy peers")
+		t.Error("explicit routes must not resolve default-route peers")
 		return types.ForwardPeer{}, errors.New(routingMissingPeer)
 	})
 	router := NewMessageRouter(ctx, types.DefaultAccount, q, options)
@@ -90,7 +90,7 @@ func TestMessageRouterExplicitFanoutSurvivesPartialFailureAndMissingDefault(t *t
 	}
 }
 
-func TestMessageRouterOwnsTypedListeningLegacyDedupeAndLiveDefaults(t *testing.T) {
+func TestMessageRouterOwnsTypedListeningDefaultRouteDedupeAndLiveDefaults(t *testing.T) {
 	ctx := context.Background()
 	q := newTestQueue()
 	p := defaultPolicy()
@@ -186,7 +186,7 @@ func TestMessageRouterStopDrainsResolutionAndRejectsOldHandle(t *testing.T) {
 	require.Empty(t, jobs)
 }
 
-func TestMessageRouterFailedLegacyAdmissionCanBeRetriedAndTTLExpires(t *testing.T) {
+func TestMessageRouterFailedDefaultRouteAdmissionCanBeRetriedAndTTLExpires(t *testing.T) {
 	ctx := context.Background()
 	q := NewQueue(&partialCommandRepository{memoryRepository: memoryRepository{jobs: map[string]Job{}}})
 	p := defaultPolicy()
@@ -202,7 +202,7 @@ func TestMessageRouterFailedLegacyAdmissionCanBeRetriedAndTTLExpires(t *testing.
 	require.NoError(t, router.SubmitMessage(ctx, message))
 	require.Eventually(t, func() bool {
 		if err := router.SubmitMessage(ctx, message); err != nil {
-			t.Error(fmt.Errorf("retry legacy message: %w", err))
+			t.Error(fmt.Errorf("retry default-route message: %w", err))
 			return false
 		}
 		jobs, err := q.List(ctx)
@@ -234,17 +234,20 @@ func TestMessageRouterDiscussionFailureDoesNotDisableParentSource(t *testing.T) 
 	require.False(t, wanted)
 }
 
-func TestMessageRouterCompatibilityDefaultsAreReadForEachAdmission(t *testing.T) {
+func TestMessageRouterUsesCurrentPolicyForEachAdmission(t *testing.T) {
 	ctx := context.Background()
 	q := newTestQueue()
-	settings := types.ForwardDefaults{Target: routingTargetFirst, Mode: forwardModeDefault}
+	settings := defaultPolicy()
+	settings.command = CommandSettings{Target: routingTargetFirst, Mode: forwardModeDefault}
+	q.configuration.Store(&settings)
 	options := defaultRoutingOptions()
-	options.LegacyDefaults = func() types.ForwardDefaults { return settings }
 	router := NewMessageRouter(ctx, types.DefaultAccount, q, options)
 	t.Cleanup(func() { require.NoError(t, router.Stop(ctx)) })
 	message := routingMessage()
 	require.NoError(t, router.SubmitMessage(ctx, message))
-	settings.Target, settings.Mode, settings.Silent = routingTargetSecond, forwardModeClone, true
+	next := settings
+	next.command = CommandSettings{Target: routingTargetSecond, Mode: forwardModeClone, Silent: true}
+	q.configuration.Store(&next)
 	require.NoError(t, router.SubmitMessage(ctx, message))
 	jobs, err := q.List(ctx)
 	require.NoError(t, err)
@@ -256,7 +259,9 @@ func TestMessageRouterCompatibilityDefaultsAreReadForEachAdmission(t *testing.T)
 	require.False(t, seen[routingTargetFirst].Silent)
 	require.True(t, seen[routingTargetSecond].Silent)
 	require.Equal(t, forwardModeClone, seen[routingTargetSecond].Mode)
-	settings.Mode = "invalid"
+	invalid := next
+	invalid.command.Mode = "invalid"
+	q.configuration.Store(&invalid)
 	require.ErrorContains(t, router.SubmitMessage(ctx, message), "invalid forward mode")
 }
 
@@ -278,7 +283,7 @@ func (r *blockedRoutingRepository) Save(ctx context.Context, job Job) error {
 	return r.memoryRepository.Save(ctx, job)
 }
 
-func TestConcurrentLegacyDuplicateWaitsForDurableAdmission(t *testing.T) {
+func TestConcurrentDefaultRouteDuplicateWaitsForDurableAdmission(t *testing.T) {
 	ctx := context.Background()
 	store := &blockedRoutingRepository{memoryRepository: memoryRepository{jobs: map[string]Job{}}, entered: make(chan struct{}), release: make(chan struct{})}
 	q := NewQueue(store)

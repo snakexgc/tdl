@@ -44,14 +44,7 @@ type Watcher struct {
 	pool           dcpool.Pool
 	manager        *peers.Manager
 	runtime        *watchRuntime
-
-	triggerOnce      sync.Once
-	trigger          ports.ReactionTrigger
-	triggerErr       error
-	triggerStop      func()
-	jobCh            chan downloadJob
-	messageLinks     <-chan messageLinkSubmission
-	triggerReactions map[string]struct{}
+	messageLinks   <-chan messageLinkSubmission
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -61,37 +54,21 @@ func Run(ctx context.Context, opts Options) error {
 		account = types.DefaultAccount
 	}
 	ctx = logctx.With(ctx, logctx.From(ctx).With(zap.String("component", "account.telegram"), zap.String("account", string(account))))
-	var route ports.DownloadRoute
-	if opts.DownloadRouting != nil && opts.FeatureFlags == nil {
-		var err error
-		route, err = opts.DownloadRouting.Route(ctx, account)
-		if err != nil {
-			return err
-		}
-	}
-	if opts.FeatureFlags == nil && opts.Download && len(route.Executors) == 0 {
-		if err := validateWatchConfig(cfg); err != nil {
-			return err
-		}
+	if (opts.Download || opts.FeatureFlags != nil) && (opts.DownloadRouting == nil || opts.DownloadPipeline == nil) {
+		return errors.New("download routing and pipeline services are required")
 	}
 	if opts.FeatureFlags == nil && !opts.Download && !opts.Forward {
-		return errors.New("watch has no enabled work: enable modules.watch or modules.forward")
+		return errors.New("watch has no enabled work: enable trigger.download or trigger.forward")
 	}
-	if opts.Forward && strings.TrimSpace(opts.ForwardTarget) == "" {
+	if opts.Forward && strings.TrimSpace(cfg.Forward.Target) == "" {
 		logctx.From(ctx).Info("转发目标未设置，将使用收藏夹", zap.String("component", "trigger.forward"))
 	}
-	if opts.Forward && len(opts.ForwardListen) == 0 {
+	if opts.Forward && len(cfg.Forward.Listen) == 0 {
 		logctx.From(ctx).Warn("转发监听来源为空", zap.String("component", "trigger.forward"))
 	}
 	opts.FileSizeMinMB, opts.FileSizeMaxMB, _ = config.NormalizeFileSizeRange(opts.FileSizeMinMB, opts.FileSizeMaxMB)
-	if opts.Filter == nil || opts.Naming == nil {
-		policies, filter, naming, err := startPolicies(ctx, cfg.Namespace, opts)
-		if err != nil {
-			return errors.Wrap(err, "start policy components")
-		}
-		defer func() { _ = policies.Stop(context.Background()) }()
-		opts.Filter = filter
-		opts.Naming = naming
+	if opts.Filter == nil || opts.Naming == nil || opts.ForwardQueue == nil || opts.HTTPService == nil {
+		return errors.New("watch requires runtime policy, forward and HTTP services")
 	}
 	opts.Account = types.AccountID(cfg.Namespace)
 	if opts.Account == "" {
@@ -99,25 +76,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	opts.Limit = effectiveWatchOptionLimit(opts.Limit, cfg)
 	opts.PoolSize = effectiveWatchOptionPoolSize(opts.PoolSize, cfg)
-	if opts.DownloadPipeline == nil && (opts.Download || opts.FeatureFlags != nil) {
-		host, control, err := application.DownloadControlHost(ctx, opts.Account, nil)
-		if err != nil {
-			return errors.Wrap(err, "start download pipeline component")
-		}
-		defer func() { _ = host.Stop(context.Background()) }()
-		opts.DownloadPipeline = control.(ports.DownloadPipeline)
-	}
-	downloaderMode := config.EffectiveDownloaderMode(cfg)
 
 	kvd, err := kv.From(ctx).Open(cfg.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "open kv storage")
 	}
 
-	if opts.ForwardQueue == nil {
-		opts.ForwardQueue = appforward.NewQueue(kvd)
-		opts.ForwardQueue.SetNotifier(opts.Notify)
-	}
 	parentCtx := ctx
 	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(parentCtx))
 	defer cancelRun()
@@ -125,14 +89,14 @@ func Run(ctx context.Context, opts Options) error {
 	signalCtx, stopSignalNotify := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignalNotify()
 
-	runtime := newWatchRuntime(cfg, opts, kvd, logctx.From(runCtx))
+	runtime := newWatchRuntime(opts, kvd, logctx.From(runCtx))
 	var pauseOnShutdownOnce sync.Once
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
 			logctx.From(runCtx).Info("正在停止 Telegram 监听", zap.String("component", "account.telegram"))
 			color.Yellow("⏹ Stopping watcher...")
-			if (opts.Download || opts.FeatureFlags != nil) && runtime.internal != nil {
-				paused, err := runtime.internal.PauseForShutdown(runCtx)
+			if (opts.Download || opts.FeatureFlags != nil) && runtime.worker != nil {
+				paused, err := runtime.worker.PauseForShutdown(runCtx)
 				if err != nil {
 					logctx.From(runCtx).Warn("停止前暂停本地下载失败", zap.String("component", "downloader.local"), zap.Error(err))
 					return
@@ -165,11 +129,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	logctx.From(runCtx).Info("Telegram 监听已启动",
 		zap.Bool("download_enabled", opts.Download), zap.Bool("forward_enabled", opts.Forward),
-		zap.String("downloader_mode", downloaderMode))
+		zap.Strings("download_executors", cfg.Downloader.Executors))
 	logctx.From(runCtx).Debug("Telegram 下载并发设置",
 		zap.Int("dc_pool_size", opts.PoolSize), zap.Int("max_concurrent_downloads", opts.Limit))
 
-	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
+	if opts.Download && (config.UsesDownloadExecutor(cfg, config.DownloadExecutorAria2) || config.UsesDownloadExecutor(cfg, config.DownloadExecutorHTTP)) {
 		warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 	}
 
@@ -212,18 +176,13 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 
 	d := tg.NewUpdateDispatcher()
 	w := &Watcher{
-		opts:             opts,
-		runtime:          runtime,
-		jobCh:            make(chan downloadJob, 100),
-		messageLinks:     opts.messageLinks,
-		triggerReactions: newTriggerReactionSet(opts.TriggerReactions),
+		opts:         opts,
+		runtime:      runtime,
+		messageLinks: opts.messageLinks,
 	}
 
 	if _, err := w.reactionPolicy(ctx); err != nil {
 		return err
-	}
-	if w.triggerStop != nil {
-		defer w.triggerStop()
 	}
 
 	// Register reaction handlers whenever download or forward is enabled. Forward
@@ -290,8 +249,8 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		if err != nil {
 			return errors.Wrap(err, "get self user")
 		}
-		if (opts.Download || opts.FeatureFlags != nil) && runtime.internal != nil {
-			host, executor, err := application.LocalDownloadHost(ctx, opts.Account, runtime.internal.component(), opts.ComponentStore)
+		if (opts.Download || opts.FeatureFlags != nil) && runtime.worker != nil {
+			host, executor, err := application.LocalDownloadHost(ctx, opts.Account, runtime.worker, opts.ComponentStore)
 			if err != nil {
 				return errors.Wrap(err, "start local downloader component")
 			}
@@ -341,13 +300,6 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 			forwardErr = opts.ForwardQueue.Serve(forwardCtx, appforward.Runtime{
 				Pool: pool, Manager: w.manager, PoolSize: opts.PoolSize, Account: opts.Account,
 				ComponentStore: opts.ComponentStore, Rules: opts.ForwardRules, Listening: watchForwardListening{w},
-				Defaults: func() types.ForwardDefaults {
-					settings := opts.ForwardSettings()
-					if opts.ForwardConfig != nil {
-						settings = opts.ForwardConfig()
-					}
-					return types.ForwardDefaults{Target: settings.Target, Mode: settings.Mode, Silent: settings.Silent, DedupeTTL: settings.DedupeTTL}
-				},
 				OnReady: func() { close(forwardReady) },
 			})
 			if forwardErr != nil && !errors.Is(forwardErr, context.Canceled) {
@@ -400,19 +352,6 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		return nil
 	})
 	return err
-}
-
-func validateWatchConfig(cfg *config.Config) error {
-	switch config.EffectiveDownloaderMode(cfg) {
-	case config.DownloaderModeAria2:
-		if cfg.HTTP.PublicBaseURL == "" {
-			return errors.New("HTTP public URL is empty, please set proxy.range values.public_base_url for the selected account in tdl_config.json")
-		}
-	case config.DownloaderModeInternal:
-	default:
-		return fmt.Errorf("unsupported downloader mode %q", cfg.Downloader.Mode)
-	}
-	return nil
 }
 
 func warnPublicBaseURL(base string) {

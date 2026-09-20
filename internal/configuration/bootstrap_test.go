@@ -15,10 +15,8 @@ import (
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/configuration"
-	"github.com/snakexgc/tdl/internal/migration"
-	legacy "github.com/snakexgc/tdl/pkg/config"
+	runtimeconfig "github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
 )
 
 const (
@@ -36,7 +34,7 @@ func readFile(t *testing.T, home string) []byte {
 
 func TestFirstStartupCreatesCompleteConfigurationAndLiveSWC(t *testing.T) {
 	ctx, home := context.Background(), t.TempDir()
-	service, err := configuration.Open(ctx, home, "")
+	service, err := configuration.Open(ctx, home)
 	require.NoError(t, err)
 	require.NoFileExists(t, filepath.Join(home, "config.json"))
 	require.NoDirExists(t, filepath.Join(home, "components"))
@@ -51,9 +49,7 @@ func TestFirstStartupCreatesCompleteConfigurationAndLiveSWC(t *testing.T) {
 		}
 		component := doc.Components[definition.Manifest.ID]
 		for _, field := range definition.Manifest.Config {
-			if field.ReplacedBy == "" {
-				require.Contains(t, component.Values, field.Name, definition.Manifest.ID)
-			}
+			require.Contains(t, component.Values, field.Name, definition.Manifest.ID)
 		}
 	}
 	require.False(t, doc.Components["trigger.forward"].Enabled)
@@ -72,60 +68,33 @@ func TestFirstStartupCreatesCompleteConfigurationAndLiveSWC(t *testing.T) {
 	}
 }
 
-func TestImportsSelectedSessionSettingsAndSecretsOnceWithoutChangingSources(t *testing.T) {
-	ctx, home := context.Background(), t.TempDir()
-	bootstrap := legacy.DefaultConfig()
-	bootstrap.Namespace = otherAccount
-	bootstrap.Debug = true
-	bootstrap.Bot.Token = "legacy-token"
-	require.NoError(t, legacy.Save(filepath.Join(home, "config.json"), bootstrap))
-	old, err := os.ReadFile(filepath.Join(home, "config.json"))
-	require.NoError(t, err)
-	for _, account := range []string{"default", otherAccount} {
-		cfg := legacy.DefaultConfig()
-		cfg.Namespace, cfg.Bot.Token = account, "component-token-"+account
-		dir, err := migration.EnsureComponents(ctx, home, cfg)
-		require.NoError(t, err)
-		catalog, err := application.Catalog()
-		require.NoError(t, err)
-		view, err := catalog.View(ctx, "downloader.aria2", map[string]any{"monitor_stall_seconds": 321})
-		require.NoError(t, err)
-		require.NoError(t, config.NewStore(dir).Save(ctx, "downloader.aria2", false, view))
-		if account != bootstrap.Namespace {
-			// Inactive settings must neither be imported nor block startup.
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "swc-downloader.aria2.json"), []byte("invalid JSON"), 0o600))
-		}
+func TestStartupIgnoresObsoleteConfigurationFiles(t *testing.T) {
+	for _, input := range []string{`{"namespace":"Other","debug":true,"bot":{"token":"old-token"}}`, "invalid JSON"} {
+		t.Run(input, func(t *testing.T) {
+			ctx, home := context.Background(), t.TempDir()
+			oldPath := filepath.Join(home, "config.json")
+			require.NoError(t, os.WriteFile(oldPath, []byte(input), 0o600))
+			directory := filepath.Join(home, "components", "ZGVmYXVsdA")
+			require.NoError(t, os.MkdirAll(directory, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(directory, "swc-console.bot.json"), []byte("invalid JSON"), 0o600))
+			service, err := configuration.Open(ctx, home)
+			require.NoError(t, err)
+			system, err := service.System(ctx)
+			require.NoError(t, err)
+			require.Equal(t, ports.SystemConfiguration{Namespace: "default"}, system)
+			document, err := service.Store().Load(ctx, "console.bot")
+			require.NoError(t, err)
+			require.JSONEq(t, `""`, string(document.Values[tokenField].(json.RawMessage)))
+			unchanged, err := os.ReadFile(oldPath)
+			require.NoError(t, err)
+			require.Equal(t, []byte(input), unchanged)
+		})
 	}
-	require.NoError(t, os.Mkdir(filepath.Join(home, "components", "invalid-directory-name!"), 0o700))
-	service, err := configuration.Open(ctx, home, "")
-	require.NoError(t, err)
-	{
-		store := service.Store()
-		token, err := store.Load(ctx, "console.bot")
-		require.NoError(t, err)
-		var value string
-		data, err := json.Marshal(token.Values[tokenField])
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal(data, &value))
-		require.Equal(t, "component-token-"+bootstrap.Namespace, value)
-		aria, err := store.Load(ctx, "downloader.aria2")
-		require.NoError(t, err)
-		require.False(t, aria.Enabled)
-		require.JSONEq(t, `321`, string(aria.Values["monitor_stall_seconds"].(json.RawMessage)))
-	}
-	after, err := os.ReadFile(filepath.Join(home, "config.json"))
-	require.NoError(t, err)
-	require.Equal(t, old, after)
-	saved := readFile(t, home)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.json"), []byte("invalid legacy JSON"), 0o600))
-	_, err = configuration.Open(ctx, home, "missing-and-ignored-after-migration")
-	require.NoError(t, err)
-	require.Equal(t, saved, readFile(t, home))
 }
 
 func TestConcurrentComponentEditsAreAtomicAndSurviveSessionSwitch(t *testing.T) {
 	ctx, home := context.Background(), t.TempDir()
-	service, err := configuration.Open(ctx, home, "")
+	service, err := configuration.Open(ctx, home)
 	require.NoError(t, err)
 	initial, err := service.System(ctx)
 	require.NoError(t, err)
@@ -156,7 +125,7 @@ func TestConcurrentComponentEditsAreAtomicAndSurviveSessionSwitch(t *testing.T) 
 	aria, err := store.Load(ctx, "downloader.aria2")
 	require.NoError(t, err)
 	require.JSONEq(t, `456`, string(aria.Values["monitor_stall_seconds"].(json.RawMessage)))
-	reopened, err := configuration.Open(ctx, home, "")
+	reopened, err := configuration.Open(ctx, home)
 	require.NoError(t, err)
 	afterSwitch, err := reopened.Store().Load(ctx, "console.bot")
 	require.NoError(t, err)
@@ -197,7 +166,7 @@ func TestMalformedUnifiedConfigurationNeverFallsBackToLegacy(t *testing.T) {
 		t.Run(data, func(t *testing.T) {
 			home := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(home, manager.Filename), []byte(data), 0o600))
-			_, err := configuration.Open(context.Background(), home, "")
+			_, err := configuration.Open(context.Background(), home)
 			require.Error(t, err)
 			require.Equal(t, []byte(data), readFile(t, home))
 			require.NoFileExists(t, filepath.Join(home, "config.json"))
@@ -207,7 +176,7 @@ func TestMalformedUnifiedConfigurationNeverFallsBackToLegacy(t *testing.T) {
 
 func TestSystemSettingsAndAccountSelectionUseUnifiedFile(t *testing.T) {
 	ctx, home := context.Background(), t.TempDir()
-	service, err := configuration.Open(ctx, home, "")
+	service, err := configuration.Open(ctx, home)
 	require.NoError(t, err)
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
@@ -216,12 +185,12 @@ func TestSystemSettingsAndAccountSelectionUseUnifiedFile(t *testing.T) {
 	require.NoError(t, service.Store().Save(ctx, "panel.webui", true, view))
 	_, err = configuration.Install(ctx, service)
 	require.NoError(t, err)
-	before := legacy.Get()
-	next, err := legacy.Clone(before)
+	before := runtimeconfig.Get()
+	next, err := runtimeconfig.Clone(before)
 	require.NoError(t, err)
 	next.Debug = true
-	require.NoError(t, legacy.CompareAndSet(ctx, before, next))
-	changed, err := legacy.SelectNamespace(ctx, "default", "Second")
+	require.NoError(t, runtimeconfig.CompareAndSet(ctx, before, next))
+	changed, err := runtimeconfig.SelectNamespace(ctx, "default", "Second")
 	require.NoError(t, err)
 	require.True(t, changed)
 	system, err := service.System(ctx)

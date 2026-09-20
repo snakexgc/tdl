@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 )
 
-// Source is an explicitly scoped compatibility snapshot for protocol adapters.
-// SWCs use their own ConfigView; saving a snapshot never writes legacy config.
+// Source is an explicitly scoped runtime snapshot for protocol adapters.
+// SWCs use their own ConfigView; snapshots persist through the installed configuration repository.
 type (
 	Source           struct{ value atomic.Pointer[Config] }
 	sourceContextKey struct{}

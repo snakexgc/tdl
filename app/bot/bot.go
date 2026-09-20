@@ -21,10 +21,7 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/snakexgc/tdl/app/aria2"
-	appforward "github.com/snakexgc/tdl/app/forward"
 	"github.com/snakexgc/tdl/app/login"
-	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
@@ -44,7 +41,7 @@ import (
 var processRebootRequested atomic.Bool
 var (
 	processUpdateMu   sync.Mutex
-	processUpdatePlan *updater.Plan
+	processUpdatePlan *types.UpdatePlan
 )
 
 type Options struct {
@@ -58,21 +55,19 @@ type Options struct {
 	ComponentStore        *rteconfig.Store
 	SetComponentHost      func(*rte.Runtime)
 	SetComponentRefresh   func(func(context.Context) error)
-	ForwardQueue          *appforward.Queue
 	Token                 string
 	AllowedUsers          []int64
 	Proxy                 string
 	Namespace             string
 	NTP                   string
 	ReconnectTimeout      time.Duration
-	Watch                 watch.Options
 	WatchControl          watchControl
 	DisableAutoStartWatch bool
 	AfterConfigSave       func(*config.Config)
 	OnLoginSuccess        func(*tg.User)
 	SetNotifier           func(watch.NotifyFunc)
 	RequestReboot         func()
-	RequestUpdate         func(updater.Plan)
+	RequestUpdate         func(types.UpdatePlan)
 }
 
 type watchControl interface {
@@ -94,16 +89,16 @@ func RequestReboot() {
 	processUpdateMu.Unlock()
 }
 
-func UpdateRequested() (updater.Plan, bool) {
+func UpdateRequested() (types.UpdatePlan, bool) {
 	processUpdateMu.Lock()
 	defer processUpdateMu.Unlock()
 	if processUpdatePlan == nil {
-		return updater.Plan{}, false
+		return types.UpdatePlan{}, false
 	}
 	return *processUpdatePlan, true
 }
 
-func RequestUpdate(plan updater.Plan) {
+func RequestUpdate(plan types.UpdatePlan) {
 	processRebootRequested.Store(false)
 	processUpdateMu.Lock()
 	processUpdatePlan = &plan
@@ -115,6 +110,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return errors.New("bot token is empty, please set console.bot values.token for the selected account in tdl_config.json")
 	}
 
+	if opts.CommandResolver == nil || opts.DownloadControl == nil || opts.WatchControl == nil {
+		return errors.New("bot requires runtime component ports")
+	}
 	// create telego bot with proxy
 	bot, botLogger, err := newBot(opts.Token, opts.Proxy)
 	if err != nil {
@@ -219,19 +217,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			ReconnectTimeout: opts.ReconnectTimeout,
 		}
 	}
-	if opts.ForwardQueue == nil {
-		opts.ForwardQueue = appforward.NewQueue(kvd)
-		opts.ForwardQueue.SetNotifier(notifier.Notify)
-	}
-	opts.Watch.ForwardQueue = opts.ForwardQueue
 	sessionOpts := sessionOptionsForKV(kvd)
 	sessionOpts.Checker = opts.SessionChecker
 	watchCtrl := opts.WatchControl
-	ownsWatch := false
-	if watchCtrl == nil {
-		watchCtrl = watch.NewController(ctx, opts.Watch, notifier.Notify)
-		ownsWatch = true
-	}
 	loginMgr := newLoginManagerWithFactory(ctx, bot, func(namespace string) (loginRunner, error) {
 		namespace, err := config.NormalizeNamespace(namespace)
 		if err != nil {
@@ -245,21 +233,9 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		targetOptions.Account = types.AccountID(namespace)
 		return gotdLoginRunner{opts: targetOptions}, nil
 	})
-	aria2Factory := componentAria2Factory(console, opts.CommandResolver, func() ports.Aria2Tasks {
-		return aria2.NewController(config.From(ctx), kvd, nil)
-	})
+	aria2Factory := componentAria2Factory(console, opts.CommandResolver)
 	downloadControl := opts.DownloadControl
-	if downloadControl == nil {
-		downloadHost, control, err := application.DownloadControlHost(ctx, account, map[string]ports.DownloadBackend{
-			config.DownloaderModeLocal: watch.NewInternalDownloadController(kvd),
-		})
-		if err != nil {
-			return errors.Wrap(err, "start bot download control")
-		}
-		defer downloadHost.Stop(context.Background())
-		downloadControl = control
-	}
-	internalFactory := func() *localDownloadControl {
+	localFactory := func() *localDownloadControl {
 		return &localDownloadControl{port: downloadControl, account: account}
 	}
 	if err := background.Run("aria2.events", 0, 0, func(ctx context.Context) error {
@@ -354,9 +330,6 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			botLogger.SetShuttingDown()
-			if ownsWatch {
-				watchCtrl.Stop()
-			}
 
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -392,7 +365,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		}
 		requestShutdown()
 	}
-	requestUpdate := func(plan updater.Plan) {
+	requestUpdate := func(plan types.UpdatePlan) {
 		rebootRequested.Store(false)
 		if opts.RequestUpdate != nil {
 			opts.RequestUpdate(plan)
@@ -410,7 +383,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
 			return nil
 		}
-		return handleDownloadCallback(ctx, query, aria2Factory, internalFactory)
+		return handleDownloadCallback(ctx, query, aria2Factory, localFactory)
 	}, th.AnyCallbackQuery())
 
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
@@ -425,7 +398,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		// check if user is allowed
 		if console.Allowed(account, fromID) {
 			contributions := append(append([]ports.ConsoleContribution{}, opts.CommandContributions...), declaredCommandHandlers(console.Commands(), opts.CommandResolver)...)
-			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, maintenancePort, account, opts.ForwardQueue, console, contributions...)
+			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, localFactory, maintenancePort, account, console, contributions...)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
@@ -564,10 +537,9 @@ func handleAllowedMessage(
 	updateController *tdlUpdateController,
 	watchCtrl watchControl,
 	aria2Factory aria2ControllerFactory,
-	internalFactory internalDownloadControllerFactory,
+	localFactory localDownloadControllerFactory,
 	maintenance ports.KVMaintenance,
 	account types.AccountID,
-	forwardQueue ports.ForwardTasks,
 	console ports.Console,
 	extras ...ports.ConsoleContribution,
 ) error {
@@ -586,7 +558,7 @@ func handleAllowedMessage(
 	}
 
 	if commandName(text) != "" && console != nil {
-		response, handled, err := dispatchConsoleCommand(ctx, msg, console, account, commandAdapters(ctx, msg, loginMgr, requestReboot, updateController, aria2Factory, internalFactory, maintenance, account, forwardQueue), extras)
+		response, handled, err := dispatchConsoleCommand(ctx, msg, console, account, commandAdapters(ctx, msg, loginMgr, requestReboot, updateController, aria2Factory, localFactory, maintenance, account), extras)
 		if err != nil {
 			return err
 		}
@@ -599,7 +571,7 @@ func handleAllowedMessage(
 	}
 	// Reply keyboards and login input are transport conversations, not slash commands.
 	if commandName(text) == "" {
-		if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
+		if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, localFactory); handled || err != nil {
 			return err
 		}
 	}

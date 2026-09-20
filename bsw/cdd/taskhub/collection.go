@@ -1,5 +1,5 @@
-// Package taskhub owns compatible indexed task persistence. Storage namespaces
-// remain the account boundary; record schemas and legacy keys are unchanged.
+// Package taskhub owns indexed task persistence. Storage namespaces
+// define the account boundary; each repository validates its record schema.
 package taskhub
 
 import (

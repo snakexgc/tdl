@@ -91,7 +91,7 @@ func TestCatalogSubmissionDeduplicatesAndReportsAcceptedWork(t *testing.T) {
 	repository := &catalogRepositoryStub{err: errors.New("disk unavailable")}
 	source := &catalogSourceStub{resources: ports.LinkSubmissionResources{
 		Mode: aria2Executor, Remote: remote, Repository: repository, Limit: 2, Connections: 4,
-		Records: map[string][]byte{catalogFirst: []byte(`{"file_name":"file.bin"}`), "mismatch": []byte(`{"id":"another"}`)},
+		Records: map[string][]byte{catalogFirst: []byte(`{"id":"` + catalogFirst + `","file_name":"file.bin"}`), "mismatch": []byte(`{"id":"another"}`)},
 	}}
 	result := NewCatalog(catalogAccount, source).Submit(context.Background(), catalogAccount, []string{catalogFirst, catalogFirst, "index", "mismatch"})
 	require.False(t, result.OK)
@@ -108,7 +108,7 @@ func TestCatalogCancellationStopsFurtherSubmissions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	remote := &catalogRemoteStub{cancel: cancel}
-	source := &catalogSourceStub{resources: ports.LinkSubmissionResources{Mode: aria2Executor, Remote: remote, Repository: &catalogRepositoryStub{}, Records: map[string][]byte{catalogFirst: []byte(`{}`), catalogSecond: []byte(`{}`)}}}
+	source := &catalogSourceStub{resources: ports.LinkSubmissionResources{Mode: aria2Executor, Remote: remote, Repository: &catalogRepositoryStub{}, Records: map[string][]byte{catalogFirst: []byte(`{"id":"` + catalogFirst + `"}`), catalogSecond: []byte(`{"id":"` + catalogSecond + `"}`)}}}
 	result := NewCatalog(catalogAccount, source).Submit(ctx, catalogAccount, []string{catalogFirst, catalogSecond})
 	require.False(t, result.OK)
 	require.Equal(t, 1, remote.added)

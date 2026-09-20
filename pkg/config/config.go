@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/url"
-	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,10 +33,9 @@ const (
 )
 
 const (
-	DownloaderModeAria2 = "aria2"
-	DownloaderModeLocal = "local"
-	// DownloaderModeInternal is kept as a source-compatible name during migration.
-	DownloaderModeInternal = DownloaderModeLocal
+	DownloadExecutorAria2 = "aria2"
+	DownloadExecutorLocal = "local"
+	DownloadExecutorHTTP  = "http"
 )
 
 const (
@@ -96,7 +94,7 @@ func DefaultConfig() *Config {
 			Forward: false,
 		},
 		Downloader: DownloaderConfig{
-			Mode: DownloaderModeAria2,
+			Executors: []string{DownloadExecutorAria2, DownloadExecutorHTTP},
 		},
 		Aria2: Aria2Config{
 			RPCURL:         "http://127.0.0.1:6800/jsonrpc",
@@ -128,10 +126,6 @@ func DefaultConfig() *Config {
 		},
 	}
 }
-
-// UnmarshalJSON keeps configurations written before the file-size range was
-// introduced compatible. The former file_size_mb value becomes the lower
-// bound unless the new lower-bound field is present explicitly.
 
 func NormalizeNamespace(namespace string) (string, error) {
 	namespace = strings.TrimSpace(namespace)
@@ -165,22 +159,7 @@ func EffectiveProxy(cfg *Config) string {
 	if cfg == nil {
 		return ""
 	}
-	proxyURL := strings.TrimSpace(cfg.Proxy)
-	username := strings.TrimSpace(cfg.ProxyUsername)
-	if proxyURL == "" || username == "" {
-		return proxyURL
-	}
-
-	u, err := url.Parse(proxyURL)
-	if err != nil || u.User != nil {
-		return proxyURL
-	}
-	if cfg.ProxyPassword == "" {
-		u.User = url.User(username)
-	} else {
-		u.User = url.UserPassword(username, cfg.ProxyPassword)
-	}
-	return u.String()
+	return strings.TrimSpace(cfg.Proxy)
 }
 
 func EffectiveFilename(cfg *Config) string {
@@ -201,35 +180,40 @@ func EffectiveFilenameMax(cfg *Config) int {
 	return cfg.FilenameMax
 }
 
-func NormalizeDownloaderMode(mode string) (string, error) {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		return DownloaderModeAria2, nil
+func PrimaryDownloadExecutor(cfg *Config) string {
+	if cfg == nil || len(cfg.Downloader.Executors) == 0 {
+		return ""
 	}
-	switch mode {
-	case "internal": // Existing config files remain readable.
-		return DownloaderModeLocal, nil
-	case DownloaderModeAria2, DownloaderModeInternal:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("downloader.mode must be %q or %q", DownloaderModeAria2, DownloaderModeInternal)
-	}
+	return cfg.Downloader.Executors[0]
 }
 
-func EffectiveDownloaderMode(cfg *Config) string {
-	if cfg == nil {
-		return DownloaderModeAria2
+func UsesDownloadExecutor(cfg *Config, executor string) bool {
+	return cfg != nil && slices.Contains(cfg.Downloader.Executors, executor)
+}
+
+func validateDownloaders(cfg DownloaderConfig) error {
+	if len(cfg.Executors) == 0 {
+		return errors.New("downloader.executors cannot be empty")
 	}
-	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
-	if err != nil {
-		return DownloaderModeAria2
+	seen := map[string]bool{}
+	for index, name := range cfg.Executors {
+		if !slices.Contains([]string{DownloadExecutorLocal, DownloadExecutorAria2, DownloadExecutorHTTP}, name) || seen[name] {
+			return fmt.Errorf("invalid or duplicate download executor %q", name)
+		}
+		if name == DownloadExecutorHTTP && index != len(cfg.Executors)-1 {
+			return errors.New("http must be the final executor")
+		}
+		seen[name] = true
 	}
-	return mode
+	if (seen[DownloadExecutorLocal] || cfg.LocalRoot != "") && !filepath.IsAbs(cfg.LocalRoot) {
+		return errors.New("local_root must be an absolute local path when local is selected")
+	}
+	return nil
 }
 
 func NormalizeForwardMode(mode string) (string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" || mode == "direct" {
+	if mode == "" {
 		return ForwardModeDefault, nil
 	}
 	switch mode {
@@ -314,15 +298,7 @@ func normalizeHTTPConfig(cfg *Config) error {
 	}
 	httpCfg := &cfg.HTTP
 	httpCfg.Address = strings.TrimSpace(httpCfg.Address)
-	if strings.TrimSpace(httpCfg.Listen) != "" {
-		address, port, err := splitLegacyListen("http.listen", httpCfg.Listen, DefaultHTTPAddress)
-		if err != nil {
-			return err
-		}
-		httpCfg.Address = address
-		httpCfg.Port = port
-		httpCfg.Listen = ""
-	}
+
 	if httpCfg.Address == "" {
 		httpCfg.Address = DefaultHTTPAddress
 	}
@@ -341,15 +317,7 @@ func normalizeWebUIConfig(cfg *Config) error {
 	}
 	web := &cfg.WebUI
 	web.Address = strings.TrimSpace(web.Address)
-	if strings.TrimSpace(web.Listen) != "" {
-		address, port, err := splitLegacyListen("webui.listen", web.Listen, DefaultWebUIAddress)
-		if err != nil {
-			return err
-		}
-		web.Address = address
-		web.Port = port
-		web.Listen = ""
-	}
+
 	if web.Address == "" {
 		web.Address = DefaultWebUIAddress
 	}
@@ -361,23 +329,6 @@ func normalizeWebUIConfig(cfg *Config) error {
 	}
 	web.Username = strings.TrimSpace(web.Username)
 	return nil
-}
-
-func splitLegacyListen(field, listen, defaultAddress string) (string, int, error) {
-	listen = strings.TrimSpace(listen)
-	host, portText, err := net.SplitHostPort(listen)
-	if err != nil {
-		return "", 0, fmt.Errorf("%s must be host:port: %w", field, err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		return "", 0, fmt.Errorf("%s has invalid port %q", field, portText)
-	}
-	host = strings.TrimSpace(host)
-	if host == "" {
-		host = defaultAddress
-	}
-	return host, port, nil
 }
 
 func Validate(cfg *Config) error {
@@ -395,18 +346,15 @@ func Validate(cfg *Config) error {
 	}
 	cfg.Namespace = namespace
 	cfg.Proxy = strings.TrimSpace(cfg.Proxy)
-	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
 	cfg.NTP = strings.TrimSpace(cfg.NTP)
 	cfg.Limit = EffectiveLimit(cfg)
 	cfg.PoolSize = EffectivePoolSize(cfg)
 	cfg.Filename = EffectiveFilename(cfg)
 	cfg.FilenameMax = EffectiveFilenameMax(cfg)
 	cfg.FileSizeMinMB, cfg.FileSizeMaxMB, _ = NormalizeFileSizeRange(cfg.FileSizeMinMB, cfg.FileSizeMaxMB)
-	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
-	if err != nil {
+	if err := validateDownloaders(cfg.Downloader); err != nil {
 		return err
 	}
-	cfg.Downloader.Mode = mode
 	forwardMode, err := NormalizeForwardMode(cfg.Forward.Mode)
 	if err != nil {
 		return err
@@ -451,15 +399,12 @@ func normalizeStringList(values []string) []string {
 }
 
 var (
-	instance   *Config
-	once       sync.Once
-	configPath string
-	mu         sync.RWMutex
-	persist    func(context.Context, *Config, *Config) error
+	instance *Config
+	mu       sync.RWMutex
+	persist  func(context.Context, *Config, *Config) error
 )
 
-// Install binds compatibility DTOs to the configuration SWC. Normal startup
-// uses this instead of opening the historical config.json singleton.
+// Install binds the runtime snapshot to the configuration service.
 func Install(cfg *Config, save func(context.Context, *Config, *Config) error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -468,108 +413,10 @@ func Install(cfg *Config, save func(context.Context, *Config, *Config) error) {
 }
 
 func persistConfig(ctx context.Context, next *Config) error {
-	if persist != nil {
-		return persist(ctx, instance, next)
+	if persist == nil {
+		return errors.New("configuration persistence is not installed")
 	}
-	return Save(configPath, next)
-}
-
-// Init 初始化配置，从 JSON 文件加载
-func Init(execDir string) error {
-	var err error
-	once.Do(func() {
-		configPath = filepath.Join(execDir, "config.json")
-		instance, err = Load(configPath)
-	})
-	return err
-}
-
-// Load 从文件加载配置
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// 文件不存在，创建默认配置
-			cfg := DefaultConfig()
-			if err := Save(path, cfg); err != nil {
-				return nil, errors.Wrap(err, "save default config")
-			}
-			return cfg, nil
-		}
-		return nil, errors.Wrap(err, "read config file")
-	}
-
-	cfg := DefaultConfig()
-	// Existing files retain historical automatic selection when credential
-	// switches are omitted; only newly created configurations use new defaults.
-	cfg.Telegram = types.TelegramCredentialsConfig{}
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, errors.Wrap(err, "unmarshal config")
-	}
-	if err := Validate(cfg); err != nil {
-		return nil, errors.Wrap(err, "validate config")
-	}
-
-	return cfg, nil
-}
-
-// Save 保存配置到文件
-func Save(path string, cfg *Config) error {
-	if err := Validate(cfg); err != nil {
-		return errors.Wrap(err, "validate config")
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "marshal config")
-	}
-
-	if err := writeFileAtomic(path, data, 0o600); err != nil {
-		return errors.Wrap(err, "write config file")
-	}
-
-	return nil
-}
-
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if dir == "" {
-		dir = "."
-	}
-	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer func() {
-		_ = temp.Close()
-		_ = os.Remove(tempPath)
-	}()
-
-	if err := temp.Chmod(perm); err != nil {
-		return err
-	}
-	if _, err := temp.Write(data); err != nil {
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-
-	// Persist the directory entry where the platform supports syncing a
-	// directory. The rename itself is still atomic if this best-effort sync is
-	// unavailable (for example on Windows).
-	if parent, err := os.Open(dir); err == nil {
-		_ = parent.Sync()
-		_ = parent.Close()
-	}
-	return nil
+	return persist(ctx, instance, next)
 }
 
 // Get 获取配置实例

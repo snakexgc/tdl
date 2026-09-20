@@ -37,17 +37,16 @@ func TestForwardStoresShareAtomicIndex(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrNotFound)
 }
 
-func TestForwardLegacyRecordsAndMaintenance(t *testing.T) {
+func TestForwardRejectsIncompleteRecordsAndAllowsMaintenance(t *testing.T) {
 	ctx := context.Background()
 	kv := newMemStorage()
 	repo := taskhub.Forward(kv)
 	data := []byte(`{"source_link":"https://t.me/c/1/2"}`)
 	require.NoError(t, repo.Put(ctx, "legacy", data, time.Now()))
 	job, ok, err := newJobStore(kv).Get(ctx, "legacy")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "legacy", job.ID)
-	require.Equal(t, StatusQueued, job.Status)
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Empty(t, job.ID)
 	deleted, err := taskhub.DeleteSnapshotKey(ctx, kv, taskhub.ForwardPrefix+"legacy", data)
 	require.NoError(t, err)
 	require.True(t, deleted)

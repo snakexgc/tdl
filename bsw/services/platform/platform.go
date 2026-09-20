@@ -1,5 +1,5 @@
-// Package platform adapts process build metadata and network facilities during
-// migration. Linker variables keep their historical paths for release builds.
+// Package platform adapts process build metadata and network facilities.
+// Release linker variables are owned by pkg/consts.
 package platform
 
 import (

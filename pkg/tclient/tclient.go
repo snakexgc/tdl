@@ -9,21 +9,18 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram"
 
-	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/internal/core/tclient"
-	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/key"
 )
 
 type Options struct {
 	Connections      *tgauth.Connections
 	Credentials      ports.TelegramCredentials
 	Account          types.AccountID
-	AppOverride      *App
+	AppOverride      *types.TelegramApp
 	KV               storage.Storage
 	Proxy            string
 	NTP              string
@@ -31,58 +28,23 @@ type Options struct {
 	UpdateHandler    telegram.UpdateHandler
 }
 
-func ResolveApp(ctx context.Context, kv storage.Storage) (types.TelegramCredentials, error) {
-	return ResolveAppUsing(ctx, kv, "", nil)
-}
-
-// ResolveAppUsing uses the production account port when supplied. Standalone
-// commands retain legacy configuration until their composition root supplies it.
-func ResolveAppUsing(ctx context.Context, kv storage.Storage, account types.AccountID, credentials ports.TelegramCredentials) (types.TelegramCredentials, error) {
-	mode, err := kv.Get(ctx, key.App())
-	if errors.Is(err, storage.ErrNotFound) {
-		mode = []byte(AppBuiltin)
-	} else if err != nil {
+func ResolveApp(ctx context.Context, account types.AccountID, credentials ports.TelegramCredentials) (types.TelegramCredentials, error) {
+	if err := ctx.Err(); err != nil {
 		return types.TelegramCredentials{}, err
 	}
-	var settings types.TelegramCredentialsConfig
-	if account == "" {
-		account = types.DefaultAccount
+	if credentials == nil {
+		return types.TelegramCredentials{}, errors.New("account credential service is unavailable")
 	}
-	if cfg := config.Get(); cfg != nil {
-		settings = cfg.Telegram
-		if credentials == nil && cfg.Namespace != "" {
-			account = types.AccountID(cfg.Namespace)
-		}
-	}
-	if credentials != nil {
-		return credentials.Resolve(ctx, account, string(mode))
-	}
-	return application.ResolveTelegramCredentials(ctx, account, string(mode), settings)
+	return credentials.Resolve(ctx, account)
 }
 
-func GetApp(ctx context.Context, kv storage.Storage) (App, error) {
-	return getAppUsing(ctx, kv, "", nil)
-}
-
-func getAppUsing(ctx context.Context, kv storage.Storage, account types.AccountID, credentials ports.TelegramCredentials) (App, error) {
-	selected, err := ResolveAppUsing(ctx, kv, account, credentials)
+func getAppUsing(ctx context.Context, kv storage.Storage, account types.AccountID, credentials ports.TelegramCredentials) (types.TelegramApp, error) {
+	selected, err := ResolveApp(ctx, account, credentials)
 	if err != nil {
-		return App{}, err
+		return types.TelegramApp{}, err
 	}
-	// The saved app marker describes the existing session, not a new preset
-	// selected in configuration. Read it separately for legacy fingerprinting.
-	mode, err := kv.Get(ctx, key.App())
-	if errors.Is(err, storage.ErrNotFound) {
-		mode = []byte(AppBuiltin)
-	} else if err != nil {
-		return App{}, err
-	}
-	legacy, err := application.TelegramPreset(string(mode))
-	if err != nil {
-		return App{}, err
-	}
-	if err := tgauth.ValidateCredentials(ctx, kv, selected.App, legacy); err != nil {
-		return App{}, err
+	if err := tgauth.ValidateCredentials(ctx, kv, selected.App); err != nil {
+		return types.TelegramApp{}, err
 	}
 	return selected.App, nil
 }
@@ -104,7 +66,7 @@ func New(ctx context.Context, o Options, login bool, middlewares ...telegram.Mid
 	if o.ReconnectTimeout <= 0 {
 		o.ReconnectTimeout = 5 * time.Second
 	}
-	var app App
+	var app types.TelegramApp
 	var err error
 	if o.AppOverride != nil {
 		app = *o.AppOverride

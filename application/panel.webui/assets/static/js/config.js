@@ -3,7 +3,6 @@ import { navigate } from "./router.js";
 import {
   element,
   button,
-  fragment,
   tabKeyboard,
   activateTabs,
   closeDrawer,
@@ -18,12 +17,7 @@ import { renderSystem } from "./settings-system.js";
 
 let store,
   data,
-  managed,
-  legacy,
-  legacyReady,
-  legacyDirty = false,
   runtimeDraft,
-  legacyBaseline,
   configData,
   activeTab = settingsTabs[0][0],
   mounted = new Map(),
@@ -32,7 +26,7 @@ let store,
   reloadOnEntry = false;
 const $ = (id) => document.getElementById(id);
 const dirty = () =>
-  Boolean(store?.dirty || legacyDirty || runtimeDraft !== undefined);
+  Boolean(store?.dirty || runtimeDraft !== undefined);
 const message = (text, kind = "") => {
   $("settings-message").textContent = text;
   $("settings-message").className = `notice ${kind}`;
@@ -42,9 +36,6 @@ async function init() {
   mounted = new Map();
   blocks = [];
   busy = new Set();
-  legacy = null;
-  legacyReady = null;
-  legacyDirty = false;
   runtimeDraft = undefined;
   reloadOnEntry = false;
   const tabs = $("settings-tabs");
@@ -78,25 +69,12 @@ async function readData() {
     api("/api/components"),
     api("/api/config"),
   ]);
-  managed = configData.component_managed === true;
-  $("settings-reload").textContent = managed
-    ? "重新读取 · 保留草稿"
-    : "重新读取旧版配置";
-  document.querySelector("#view-config > .page-head p").textContent = managed
-    ? "按业务调整参数。每个区块独立保存，高级参数按需展开。"
-    : "当前为旧版配置模式，参数按业务分类，统一保存；敏感项留空保留原值。";
 }
 async function reload() {
   if (busy.size) {
     message("正在保存，请稍后重新读取。");
     return;
   }
-  if (
-    !managed &&
-    legacyDirty &&
-    !confirm("重新读取旧版配置将撤销未保存修改，是否继续？")
-  )
-    return;
   busy.add("reload");
   try {
     await Promise.allSettled([...mounted.values()]);
@@ -106,10 +84,6 @@ async function reload() {
     for (const block of blocks) block.dispose?.();
     blocks = [];
     mounted.clear();
-    legacy = null;
-    legacyReady = null;
-    legacyDirty = false;
-    $("legacy-settings")?.remove();
     $("settings-panels")
       .querySelectorAll(".settings-panel")
       .forEach((panel) => panel.replaceChildren());
@@ -147,7 +121,7 @@ async function display(tab) {
   activateTabs($("settings-tabs"), tab);
   for (const [id] of settingsTabs) $(`settings-${id}`).hidden = id !== tab;
   if (!mounted.has(tab)) {
-    const promise = managed ? mountTab(tab) : mountLegacy(tab);
+    const promise = mountTab(tab);
     mounted.set(tab, promise);
     try {
       await promise;
@@ -156,16 +130,13 @@ async function display(tab) {
       throw error;
     }
   } else await mounted.get(tab);
-  if (!managed && legacy) legacy.showTab(activeTab);
   updateDraft();
 }
 function updateDraft() {
   const count = (store?.count || 0) + Number(runtimeDraft !== undefined);
   $("settings-draft-status").textContent = count
     ? `${count} 个字段尚未保存。切换设置标签会保留草稿。`
-    : legacyDirty
-      ? "旧版配置尚未保存。"
-      : "";
+    : "";
   for (const block of blocks) block.sync();
 }
 async function mountTab(tab) {
@@ -249,55 +220,8 @@ async function saveBlock(group, report, redraw) {
     updateDraft();
   }
 }
-async function mountLegacy() {
-  legacyReady ||= (async () => {
-    // Keep the legacy schema and save API, but present it through the same tabs.
-    const host = element("div");
-    host.id = "legacy-settings";
-    $("settings-panels").append(host);
-    await fragment(host, "legacy-config");
-    legacy = await import("./legacy-config.js");
-    legacy.initConfig();
-    await legacy.loadConfig();
-    legacyBaseline = legacy.snapshot();
-    host.addEventListener("input", () => {
-      legacyDirty = legacy.snapshot() !== legacyBaseline;
-      updateDraft();
-    });
-    host.addEventListener("change", () => {
-      legacyDirty = legacy.snapshot() !== legacyBaseline;
-      updateDraft();
-    });
-    host.addEventListener("legacy-config-saved", () => {
-      legacyBaseline = legacy.snapshot();
-      legacyDirty = false;
-      updateDraft();
-    });
-    const system = $("settings-system");
-    await renderSystem(system, {
-      store,
-      data,
-      configData,
-      legacy: true,
-      onResetAccepted: discardDrafts,
-      setBusy: (value) => {
-        if (value) busy.add("runtime");
-        else busy.delete("runtime");
-        updateDraft();
-      },
-      onChanged: () => {},
-      markDirty: (value) => {
-        legacyDirty = value;
-        updateDraft();
-      },
-    });
-  })();
-  await legacyReady;
-  legacy.showTab(activeTab);
-}
 function discardDrafts() {
   store?.drafts.clear();
-  legacyDirty = false;
   runtimeDraft = undefined;
   updateDraft();
 }
@@ -310,8 +234,7 @@ function beforeLeave() {
     return false;
   if (dirty()) {
     store.drafts.clear();
-    legacyDirty = false;
-    runtimeDraft = undefined;
+      runtimeDraft = undefined;
   }
   reloadOnEntry = true;
   return true;

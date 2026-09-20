@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	internalDownloadQueueSize            = 100
-	internalDownloadPollInterval         = 5 * time.Second
-	internalDownloadShutdownPauseTimeout = 5 * time.Second
+	localDownloadQueueSize            = 100
+	localDownloadPollInterval         = 5 * time.Second
+	localDownloadShutdownPauseTimeout = 5 * time.Second
 )
 
 type Worker struct {
@@ -65,7 +65,7 @@ func (d *Worker) Start(ctx context.Context) error {
 	d.running = true
 	d.cancel = cancel
 	d.done = done
-	d.queue = make(chan string, internalDownloadQueueSize)
+	d.queue = make(chan string, localDownloadQueueSize)
 	d.queued = map[string]struct{}{}
 	d.active = map[string]struct{}{}
 	d.mu.Unlock()
@@ -131,10 +131,10 @@ func (d *Worker) PauseForShutdown(ctx context.Context) ([]string, error) {
 	paused := make([]string, 0, len(records))
 	for _, record := range records {
 		changed, err := d.store.Update(shutdownCtx, record.ID, func(current *types.LocalDownloadRecord) bool {
-			if !shouldPauseInternalDownloadForShutdown(current.Status) {
+			if !shouldPauseLocalDownloadForShutdown(current.Status) {
 				return false
 			}
-			current.Status = types.InternalDownloadStatusPaused
+			current.Status = types.LocalDownloadStatusPaused
 			current.Error = ""
 			current.DownloadSpeed = 0
 			return true
@@ -150,9 +150,9 @@ func (d *Worker) PauseForShutdown(ctx context.Context) ([]string, error) {
 	return paused, nil
 }
 
-func (d *Worker) Add(ctx context.Context, task types.LocalDownloadSource, prepared types.DownloadSubmission) (types.InternalDownloadInfo, error) {
+func (d *Worker) Add(ctx context.Context, task types.LocalDownloadSource, prepared types.DownloadSubmission) (types.LocalDownloadInfo, error) {
 	if d == nil || task.ID == "" {
-		return types.InternalDownloadInfo{}, errors.New("internal downloader is not initialized")
+		return types.LocalDownloadInfo{}, errors.New("local downloader is not initialized")
 	}
 	record := types.LocalDownloadRecord{
 		ID:        task.ID,
@@ -162,19 +162,19 @@ func (d *Worker) Add(ctx context.Context, task types.LocalDownloadSource, prepar
 		Out:       prepared.Out,
 		Path:      prepared.FullPath,
 		Total:     task.FileSize,
-		Status:    types.InternalDownloadStatusQueued,
+		Status:    types.LocalDownloadStatusQueued,
 		CreatedAt: time.Now(),
 	}
 	var err error
 	record, err = d.store.Create(ctx, record)
 	if err != nil {
-		return types.InternalDownloadInfo{}, err
+		return types.LocalDownloadInfo{}, err
 	}
 	// The durable record is accepted even when the in-memory wake-up queue is
 	// full; the periodic scanner will pick it up without duplicate submission.
 	d.queueID(record.ID)
 
-	return internalDownloadInfo(record), nil
+	return localDownloadInfo(record), nil
 }
 
 func (d *Worker) loop(ctx context.Context) {
@@ -191,7 +191,7 @@ func (d *Worker) loop(ctx context.Context) {
 			ticker.Reset(d.scanInterval())
 		case <-ticker.C:
 			if err := d.enqueuePending(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				d.logger.Warn("Failed to enqueue pending internal downloads", zap.Error(err))
+				d.logger.Warn("Failed to enqueue pending local downloads", zap.Error(err))
 			}
 		case id := <-d.queue:
 			if !d.markRunning(id) {
@@ -213,7 +213,7 @@ func (d *Worker) enqueuePending(ctx context.Context) error {
 		return err
 	}
 	for _, record := range records {
-		if shouldRunInternalDownload(record.Status) {
+		if shouldRunLocalDownload(record.Status) {
 			d.queueID(record.ID)
 		}
 	}
@@ -227,10 +227,10 @@ func (d *Worker) Recover(ctx context.Context) error {
 	}
 	for _, record := range records {
 		_, err := d.store.Update(ctx, record.ID, func(current *types.LocalDownloadRecord) bool {
-			if current.Status != types.InternalDownloadStatusActive {
+			if current.Status != types.LocalDownloadStatusActive {
 				return false
 			}
-			current.Status = types.InternalDownloadStatusQueued
+			current.Status = types.LocalDownloadStatusQueued
 			current.Error = ""
 			return true
 		})
@@ -294,10 +294,10 @@ func (d *Worker) markStopped(id string) {
 func (d *Worker) Execute(ctx context.Context, id string) {
 	record, ok, err := d.store.Get(ctx, id)
 	if err != nil {
-		d.logger.Warn("Failed to load internal download", zap.String("id", id), zap.Error(err))
+		d.logger.Warn("Failed to load local download", zap.String("id", id), zap.Error(err))
 		return
 	}
-	if !ok || !shouldRunInternalDownload(record.Status) {
+	if !ok || !shouldRunLocalDownload(record.Status) {
 		return
 	}
 
@@ -363,10 +363,10 @@ func (d *Worker) Execute(ctx context.Context, id string) {
 
 	now := time.Now()
 	claimed, err := d.store.Update(ctx, record.ID, func(current *types.LocalDownloadRecord) bool {
-		if !sameExecution(*current, record) || !shouldRunInternalDownload(current.Status) {
+		if !sameExecution(*current, record) || !shouldRunLocalDownload(current.Status) {
 			return false
 		}
-		current.Status = types.InternalDownloadStatusActive
+		current.Status = types.LocalDownloadStatusActive
 		current.Error = ""
 		current.StartedAt = &now
 		current.DownloadSpeed = 0
@@ -441,10 +441,10 @@ func (d *Worker) markComplete(ctx context.Context, record types.LocalDownloadRec
 		if !sameExecution(*current, record) {
 			return false
 		}
-		if current.Status != types.InternalDownloadStatusActive && !shouldRunInternalDownload(current.Status) {
+		if current.Status != types.LocalDownloadStatusActive && !shouldRunLocalDownload(current.Status) {
 			return false
 		}
-		current.Status = types.InternalDownloadStatusComplete
+		current.Status = types.LocalDownloadStatusComplete
 		current.Completed = record.Total
 		current.Total = record.Total
 		current.Error = ""
@@ -469,10 +469,10 @@ func (d *Worker) markError(ctx context.Context, record types.LocalDownloadRecord
 		if !sameExecution(*current, record) {
 			return false
 		}
-		if current.Status != types.InternalDownloadStatusActive && !shouldRunInternalDownload(current.Status) {
+		if current.Status != types.LocalDownloadStatusActive && !shouldRunLocalDownload(current.Status) {
 			return false
 		}
-		current.Status = types.InternalDownloadStatusError
+		current.Status = types.LocalDownloadStatusError
 		current.Error = cause.Error()
 		current.DownloadSpeed = 0
 		return true
@@ -485,8 +485,7 @@ func (d *Worker) markError(ctx context.Context, record types.LocalDownloadRecord
 	}
 }
 
-// Persisted timestamps distinguish a recreated task and a restarted attempt
-// without changing the legacy record format.
+// Persisted timestamps distinguish a recreated task from a restarted attempt.
 func sameExecution(current, previous types.LocalDownloadRecord) bool {
 	if !current.CreatedAt.Equal(previous.CreatedAt) {
 		return false

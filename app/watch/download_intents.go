@@ -2,11 +2,11 @@ package watch
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/rte/eventbus"
 )
 
 const (
@@ -25,13 +25,7 @@ func (w *Watcher) enqueueDownload(ctx context.Context, job downloadJob) error {
 	if port != nil {
 		return port.Publish(ctx, types.DownloadIntent{Account: w.reactionAccount(), Peer: plainPeer(job.peer), PeerID: job.peerID, MessageID: job.msgID, Link: job.link, Source: job.source})
 	}
-	// Pre-connection and standalone adapters retain their bounded local queue.
-	select {
-	case w.jobCh <- job:
-		return nil
-	default:
-		return eventbus.ErrFull
-	}
+	return fmt.Errorf("download intent service is unavailable")
 }
 
 func plainPeer(peer tg.InputPeerClass) types.MessagePeer {

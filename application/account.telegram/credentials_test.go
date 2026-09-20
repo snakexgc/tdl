@@ -28,38 +28,39 @@ func TestCredentialOverrideAndRestore(t *testing.T) {
 	value, err := host.Resolve(ports.TelegramCredentialsName)
 	require.NoError(t, err)
 	service := value.(ports.TelegramCredentials)
-	// New accounts always start with desktop, regardless of a legacy marker.
-	initial, err := service.Resolve(ctx, types.DefaultAccount, testBuiltin)
+	// Credential selection is explicit and independent of stored session markers.
+	initial, err := service.Resolve(ctx, types.DefaultAccount)
 	require.NoError(t, err)
 	desktop, err := Preset(presetDesktop)
 	require.NoError(t, err)
 	require.Equal(t, desktop, initial.App)
-	require.NoError(t, host.Reconfigure(ctx, ID, map[string]any{fieldBuiltinPreset: "", fieldUseBuiltin: false}))
-	for _, legacy := range []string{testBuiltin, "desktop"} {
-		resolved, err := service.Resolve(ctx, types.DefaultAccount, legacy)
+	require.Error(t, host.Reconfigure(ctx, ID, map[string]any{fieldBuiltinPreset: ""}))
+	for _, preset := range []string{testBuiltin, presetDesktop} {
+		require.NoError(t, host.Reconfigure(ctx, ID, map[string]any{fieldBuiltinPreset: preset}))
+		resolved, err := service.Resolve(ctx, types.DefaultAccount)
 		require.NoError(t, err)
-		expected, err := Preset(legacy)
+		expected, err := Preset(preset)
 		require.NoError(t, err)
 		require.Equal(t, expected, resolved.App)
 	}
 	settings := map[string]any{testAPIID: 12345, testAPIHash: "private-hash", fieldUseBuiltin: false}
 	require.NoError(t, host.Reconfigure(ctx, ID, settings))
-	resolved, err := service.Resolve(ctx, types.DefaultAccount, "desktop")
+	resolved, err := service.Resolve(ctx, types.DefaultAccount)
 	require.NoError(t, err)
 	require.Equal(t, 12345, resolved.App.AppID)
 	require.Equal(t, "private-hash", resolved.App.AppHash)
 	require.Error(t, host.Reconfigure(ctx, ID, map[string]any{testAPIID: 54321}))
-	unchanged, err := service.Resolve(ctx, types.DefaultAccount, "desktop")
+	unchanged, err := service.Resolve(ctx, types.DefaultAccount)
 	require.NoError(t, err)
 	require.Equal(t, resolved, unchanged)
 	settings[fieldUseBuiltin] = true
 	require.NoError(t, host.Reconfigure(ctx, ID, settings))
-	resolved, err = service.Resolve(ctx, types.DefaultAccount, "desktop")
+	resolved, err = service.Resolve(ctx, types.DefaultAccount)
 	require.NoError(t, err)
 	expected, err := Preset("desktop")
 	require.NoError(t, err)
 	require.Equal(t, expected, resolved.App)
-	_, err = service.Resolve(ctx, "other", "desktop")
+	_, err = service.Resolve(ctx, "other")
 	require.Error(t, err)
 }
 
@@ -88,5 +89,6 @@ func TestCredentialValidation(t *testing.T) {
 	} {
 		require.Error(t, Validate(settings))
 	}
-	require.NoError(t, Validate(types.TelegramCredentialsConfig{}))
+	require.Error(t, Validate(types.TelegramCredentialsConfig{}))
+	require.NoError(t, Validate(types.TelegramCredentialsConfig{BuiltinPreset: presetDesktop}))
 }

@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	testPrefix = "watch.internal.task."
-	testIndex  = "watch.internal.index"
+	testPrefix = "download.local.task."
+	testIndex  = "download.local.index"
 	testRecord = `{"status":"paused","completed":42,"future_field":true}`
 )
 
 func TestCollectionDrivers(t *testing.T) {
-	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverLegacy, kv.DriverFile} {
+	for _, driver := range []kv.Driver{kv.DriverBolt, kv.DriverFile} {
 		t.Run(string(driver), func(t *testing.T) {
 			ctx := context.Background()
 			engine, err := kv.New(driver, map[string]any{testStoragePath: filepath.Join(t.TempDir(), "tasks")})
@@ -59,7 +59,7 @@ func TestCollectionDrivers(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, isolated)
 
-			// Existing legacy records are readable without a data migration.
+			// Dangling index entries do not appear as records.
 			require.NoError(t, first.Delete(ctx, testPrefix+"0"))
 			records, err = collections[1].Records(ctx)
 			require.NoError(t, err)

@@ -25,13 +25,13 @@ func (s *LocalRepository) Save(ctx context.Context, record types.LocalDownloadRe
 		return nil
 	}
 	if strings.TrimSpace(record.ID) == "" {
-		return errors.New("internal download id is empty")
+		return errors.New("local download id is empty")
 	}
 	if record.TaskID == "" {
 		record.TaskID = record.ID
 	}
 	if record.Status == "" {
-		record.Status = types.InternalDownloadStatusQueued
+		record.Status = types.LocalDownloadStatusQueued
 	}
 	now := time.Now()
 	if record.CreatedAt.IsZero() {
@@ -45,7 +45,7 @@ func (s *LocalRepository) Save(ctx context.Context, record types.LocalDownloadRe
 
 	data, err := json.Marshal(record)
 	if err != nil {
-		return errors.Wrap(err, "marshal internal download record")
+		return errors.Wrap(err, "marshal local download record")
 	}
 	return s.collection().Put(ctx, record.ID, data, record.CreatedAt)
 }
@@ -69,7 +69,7 @@ func (s *LocalRepository) Records(ctx context.Context) (map[string]types.LocalDo
 		return nil, err
 	}
 	for id, data := range records {
-		record, err := decodeInternalRecord(id, data)
+		record, err := decodeLocalRecord(id, data)
 		if err != nil {
 			return nil, err
 		}
@@ -93,28 +93,21 @@ func (s *LocalRepository) get(ctx context.Context, id string) (types.LocalDownlo
 		if errors.Is(err, storage.ErrNotFound) {
 			return types.LocalDownloadRecord{}, false, nil
 		}
-		return types.LocalDownloadRecord{}, false, errors.Wrap(err, "load internal download record")
+		return types.LocalDownloadRecord{}, false, errors.Wrap(err, "load local download record")
 	}
 
-	record, err := decodeInternalRecord(id, data)
+	record, err := decodeLocalRecord(id, data)
 	return record, err == nil, err
 }
 
-func decodeInternalRecord(id string, data []byte) (types.LocalDownloadRecord, error) {
+func decodeLocalRecord(id string, data []byte) (types.LocalDownloadRecord, error) {
 	var record types.LocalDownloadRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return types.LocalDownloadRecord{}, errors.Wrap(err, "decode internal download record")
+		return types.LocalDownloadRecord{}, errors.Wrap(err, "decode local download record")
 	}
-	if record.ID == "" {
-		record.ID = id
+	if record.ID != id || record.TaskID == "" || record.Revision == 0 || types.NormalizeDownloadState(record.Status) == types.DownloadUnknown || record.Status != string(record.State) {
+		return types.LocalDownloadRecord{}, errors.New("invalid local download record identity or state")
 	}
-	if record.TaskID == "" {
-		record.TaskID = record.ID
-	}
-	if record.Status == "" {
-		record.Status = types.InternalDownloadStatusQueued
-	}
-	record.State = types.NormalizeDownloadState(record.Status)
 	return record, nil
 }
 

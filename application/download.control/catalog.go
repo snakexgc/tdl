@@ -33,8 +33,8 @@ func (s *Catalog) List(ctx context.Context, account types.AccountID) ([]types.Do
 		}
 		task := record.Task
 		record.Aria2 = slices.Clone(record.Aria2)
-		record.Internal = slices.Clone(record.Internal)
-		item := types.DownloadLinkItem{ID: task.ID, Key: record.Key, URL: DownloadURL(snapshot.PublicBaseURL, task.ID), FileName: task.FileName, FileSize: task.FileSize, PeerID: task.PeerID, MessageID: task.MessageID, CreatedAt: task.CreatedAt, Downloaded: task.Downloaded || record.HTTPCompleted, HTTPDownloaded: record.HTTPCompleted, HTTPDeliveredBytes: record.HTTPDeliveredBytes, Status: "not_submitted", Aria2: record.Aria2, Internal: record.Internal}
+		record.Local = slices.Clone(record.Local)
+		item := types.DownloadLinkItem{ID: task.ID, Key: record.Key, URL: DownloadURL(snapshot.PublicBaseURL, task.ID), FileName: task.FileName, FileSize: task.FileSize, PeerID: task.PeerID, MessageID: task.MessageID, CreatedAt: task.CreatedAt, Downloaded: task.Downloaded || record.HTTPCompleted, HTTPDownloaded: record.HTTPCompleted, HTTPDeliveredBytes: record.HTTPDeliveredBytes, Status: "not_submitted", Aria2: record.Aria2, Local: record.Local}
 		if record.HTTPCompleted {
 			stamp := record.HTTPCompletedAt
 			item.HTTPDownloadedAt = &stamp
@@ -56,7 +56,7 @@ func (s *Catalog) List(ctx context.Context, account types.AccountID) ([]types.Do
 			item.Downloaded = item.Downloaded || entry.Downloaded
 			item.Status = entry.Status
 		}
-		for _, entry := range item.Internal {
+		for _, entry := range item.Local {
 			if entry.Status == statusComplete && (entry.Total == 0 || entry.Completed >= entry.Total) {
 				item.Downloaded = true
 			}
@@ -154,16 +154,15 @@ func (s *Catalog) Submit(ctx context.Context, account types.AccountID, ids []str
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", id, err))
 			continue
 		}
-		if task.ID != "" && task.ID != id {
+		if task.ID != id {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: record id mismatch", id))
 			continue
 		}
-		task.ID = id
 		if resources.Mode == localExecutor {
 			if _, err := resources.Local.Submit(ctx, types.DownloadSubmission{Account: account, TaskID: task.ID}); err != nil {
 				result.Skipped++
-				result.Errors = appendInternalDownloadError(result.Errors, id, data, err)
+				result.Errors = appendLocalDownloadError(result.Errors, id, data, err)
 				continue
 			}
 			result.Added++
@@ -218,17 +217,17 @@ func hasPersistentDownloadMedia(data []byte) bool {
 	return strings.TrimSpace(raw.Media.Location.Kind) != ""
 }
 
-func internalDownloadMetadataError(id string) string {
-	return fmt.Sprintf("%s: 下载链接缺少媒体定位信息，无法加入内部下载队列；请删除该 KV 记录后重新触发表情生成下载链接", id)
+func localDownloadMetadataError(id string) string {
+	return fmt.Sprintf("%s: 下载链接缺少媒体定位信息，无法加入本地下载队列；请删除该 KV 记录后重新触发表情生成下载链接", id)
 }
 
 func isRestorePersistentDownloadTaskError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "restore persistent download task")
 }
 
-func appendInternalDownloadError(errorsList []string, id string, data []byte, err error) []string {
+func appendLocalDownloadError(errorsList []string, id string, data []byte, err error) []string {
 	if isRestorePersistentDownloadTaskError(err) && !hasPersistentDownloadMedia(data) {
-		return append(errorsList, internalDownloadMetadataError(id))
+		return append(errorsList, localDownloadMetadataError(id))
 	}
 	return append(errorsList, fmt.Sprintf("%s: %v", id, err))
 }

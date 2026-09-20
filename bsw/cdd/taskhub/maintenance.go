@@ -9,7 +9,7 @@ import (
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
-// DeleteSnapshotKey supports the legacy administrative cleanup action without
+// DeleteSnapshotKey supports the administrative cleanup action without
 // deleting a record changed since the maintenance snapshot was taken. Task
 // indexes are repaired in the same transaction as their records.
 func DeleteSnapshotKey(ctx context.Context, s storage.Storage, key string, expected []byte) (bool, error) {

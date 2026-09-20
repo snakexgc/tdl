@@ -30,9 +30,11 @@
     "download.control": {
       "enabled": true,
       "values": {
-        "executors": [],
-        "local_root": "",
-        "mode": "aria2"
+        "executors": [
+          "aria2",
+          "http"
+        ],
+        "local_root": ""
       }
     },
     "downloader.aria2": {

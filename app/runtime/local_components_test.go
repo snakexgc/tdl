@@ -14,10 +14,8 @@ import (
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/internal/migration"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
-	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 const testStoragePath = "path"
@@ -35,9 +33,10 @@ func TestSavedLocalLinksHonorLiveComponentState(t *testing.T) {
 	require.NoError(t, err)
 	const source = `{"id":"document_42","peer_id":12345,"file_name":"video.mp4","file_size":100,"media":{"name":"video.mp4","size":100,"dc":2,"location":{"kind":"document","id":42,"access_hash":99}}}`
 	require.NoError(t, storage.Set(ctx, taskhub.LinkPrefix+"document_42", []byte(source)))
-	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
-	require.NoError(t, err)
-	m := NewManager(config.WithSource(ctx, config.NewSource(cfg)), engine, storage, Options{ComponentConfigDir: directory})
+	store := newStoppedComponentStore(t)
+	saveComponent(t, store, "download.control", true, map[string]any{"local_root": cfg.Downloader.LocalRoot})
+	saveComponent(t, store, "naming.rules", true, map[string]any{fieldDirectory: cfg.DownloadDir})
+	m := NewManager(config.WithSource(ctx, config.NewSource(cfg)), engine, storage, Options{ComponentStore: store})
 	t.Cleanup(m.Shutdown)
 	require.NoError(t, m.configurationErr)
 	executor := savedLocalLinks{manager: m}
@@ -53,7 +52,7 @@ func TestSavedLocalLinksHonorLiveComponentState(t *testing.T) {
 		require.NoError(t, m.SetComponentEnabled(ctx, id, true, ""))
 		m.transitionWG.Wait()
 	}
-	require.NoError(t, m.SaveComponentConfiguration(ctx, ports.NamingRulesName, map[string]any{"directory": "saved/P"}))
+	require.NoError(t, m.SaveComponentConfiguration(ctx, ports.NamingRulesName, map[string]any{fieldDirectory: "saved/P"}))
 	m.transitionWG.Wait()
 	_, err = executor.Submit(ctx, request)
 	require.NoError(t, err)
@@ -84,7 +83,7 @@ func TestLocalComponentProductionConfigurationSurvivesRestart(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	storage, err := engine.Open("default")
 	require.NoError(t, err)
-	store := rteconfig.NewStore(t.TempDir())
+	store := newComponentStore(t)
 	worker := local.New(unavailableLocalSource{}, taskhub.NewLocalRepository(storage), nil)
 	host, _, err := application.LocalDownloadHost(ctx, types.DefaultAccount, worker, store)
 	require.NoError(t, err)

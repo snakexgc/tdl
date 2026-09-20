@@ -131,13 +131,6 @@ func (p watchForwardListening) Listening(ctx context.Context, account types.Acco
 	if account != w.reactionAccount() {
 		return types.ForwardListening{}, fmt.Errorf("forward listening account mismatch")
 	}
-	if w.opts.ComponentStore == nil {
-		settings := w.opts.ForwardSettings()
-		if w.opts.ForwardConfig != nil {
-			settings = w.opts.ForwardConfig()
-		}
-		return types.ForwardListening{Sources: settings.Listen, Comments: settings.ListenComments}, ctx.Err()
-	}
 	w.intentMu.RLock()
 	port, ok := w.forwardIntents.(ports.ForwardListening)
 	w.intentMu.RUnlock()

@@ -12,6 +12,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestConfigurationChangesLiveScannerAndPersists(t *testing.T) {
@@ -29,14 +30,14 @@ func TestConfigurationChangesLiveScannerAndPersists(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, rte.Running, host.Start(ctx)[0].State)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{pollIntervalField: 100, shutdownTimeoutField: 9}, store))
 	require.Equal(t, 100*time.Millisecond, worker.scanInterval())
 	require.Equal(t, 9*time.Second, worker.pauseTimeout())
 	require.Error(t, host.PatchSaved(ctx, ID, map[string]any{pollIntervalField: 0}, store))
 	require.Equal(t, 100*time.Millisecond, worker.scanInterval())
 	path := filepath.Join(t.TempDir(), "pending.bin")
-	require.NoError(t, repo.Save(ctx, types.LocalDownloadRecord{ID: testTask, TaskID: testTask, Dir: filepath.Dir(path), Path: path, Status: types.InternalDownloadStatusQueued, Total: 4}))
+	require.NoError(t, repo.Save(ctx, types.LocalDownloadRecord{ID: testTask, TaskID: testTask, Dir: filepath.Dir(path), Path: path, Status: types.LocalDownloadStatusQueued, Total: 4}))
 	select {
 	case <-streamed:
 	case <-time.After(2 * time.Second):

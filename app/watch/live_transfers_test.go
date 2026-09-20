@@ -23,9 +23,12 @@ import (
 	apparia2 "github.com/snakexgc/tdl/app/aria2"
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/application"
+	local "github.com/snakexgc/tdl/application/downloader.local"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
@@ -41,7 +44,7 @@ type liveFixtureReceipt struct {
 	MessageID int     `json:"message_id"`
 }
 
-func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.Config, store *memoryTaskStorage, client *pkgtclient.Client) error {
+func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.Config, store *storage.Memory, client *pkgtclient.Client) error {
 	t.Helper()
 	directory := filepath.Join(root, ".tdl", "live-validation")
 	require.NoError(t, os.MkdirAll(directory, 0o700))
@@ -162,8 +165,8 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	if os.Getenv("TDL_LIVE_STAGE") == liveHTTPHotStage {
 		return nil
 	}
-	worker := newInternalDownloader(service.Proxy(), store, zap.NewNop(), cfg)
-	host, executor, err := application.LocalDownloadHost(ctx, types.AccountID(cfg.Namespace), worker.component())
+	worker := local.New(localSource{proxy: service.Proxy(), scheduler: service.Proxy().Scheduler()}, taskhub.NewLocalRepository(store), zap.NewNop())
+	host, executor, err := application.LocalDownloadHost(ctx, types.AccountID(cfg.Namespace), worker)
 	require.NoError(t, err)
 	defer host.Stop(context.Background())
 	opts := Options{Account: types.AccountID(cfg.Namespace), Download: true, Template: "F", FilenameMaxLength: 255, Limit: 1, PoolSize: 1}
@@ -177,7 +180,7 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	localProbe := &liveSubmissionProbe{executor: executor}
 	route := &fixedDownloadRoute{route: ports.DownloadRoute{Executors: []string{localExecutorName}, LocalRoot: t.TempDir()}}
 	opts.DownloadRouting = route
-	w := &Watcher{opts: opts, manager: manager, pool: pool, runtime: &watchRuntime{proxy: service.Proxy(), internal: worker, local: localProbe, pools: service.Pools()}}
+	w := &Watcher{opts: opts, manager: manager, pool: pool, runtime: &watchRuntime{proxy: service.Proxy(), worker: worker, local: localProbe, pools: service.Pools()}}
 	pipelineSource := config.NewSource(cfg)
 	pipelineCtx := config.WithSource(ctx, pipelineSource)
 	intentHost, intents, _, err := application.IntentHost(pipelineCtx, opts.Account, func(context.Context, types.DownloadIntent) error { return nil }, nil, w.processDownloadIntent)
@@ -192,14 +195,14 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	localPath := localProbe.request.FullPath
 	require.Equal(t, filepath.Join(route.route.LocalRoot, liveFixtureName), localPath)
 	require.NoError(t, liveWait(ctx, func() (bool, error) {
-		record, found, err := worker.store.Get(ctx, localProbe.request.TaskID)
+		record, found, err := taskhub.NewLocalRepository(store).Get(ctx, localProbe.request.TaskID)
 		if err != nil {
 			return false, err
 		}
-		if record.Status == types.InternalDownloadStatusError {
+		if record.Status == types.LocalDownloadStatusError {
 			return false, fmt.Errorf("local download: %s", record.Error)
 		}
-		return found && record.Status == types.InternalDownloadStatusComplete, nil
+		return found && record.Status == types.LocalDownloadStatusComplete, nil
 	}))
 	localData, err := os.ReadFile(localPath)
 	require.NoError(t, err)
@@ -211,7 +214,7 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 	ariaController := apparia2.NewController(&config.Config{Namespace: cfg.Namespace, Aria2: ariaCfg, HTTP: cfg.HTTP, Limit: 1, PoolSize: 1}, store, zap.NewNop())
 	ariaProbe := &liveSubmissionProbe{executor: ariaController}
 	w.opts.DownloadSubmitter = ariaProbe
-	route.route = ports.DownloadRoute{Executors: []string{config.DownloaderModeAria2}}
+	route.route = ports.DownloadRoute{Executors: []string{config.DownloadExecutorAria2}}
 	ariaRoot := t.TempDir()
 	pipelineConfig, err := config.Clone(cfg)
 	require.NoError(t, err)
@@ -232,7 +235,7 @@ func liveTransfers(t *testing.T, ctx context.Context, root string, cfg *config.C
 		if status.Status == "error" {
 			return false, fmt.Errorf("aria2 download: %s", status.ErrorMessage)
 		}
-		return status.Status == types.InternalDownloadStatusComplete, nil
+		return status.Status == types.LocalDownloadStatusComplete, nil
 	}))
 	ariaData, err := os.ReadFile(ariaPath)
 	require.NoError(t, err)

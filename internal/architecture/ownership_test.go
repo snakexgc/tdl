@@ -18,7 +18,7 @@ func TestTaskKeyOwnershipAndBSWDirection(t *testing.T) {
 		t.Fatal("source location unavailable")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
-	for _, layer := range []string{legacyLayer, applicationLayer, "bsw", runtimeLayer} {
+	for _, layer := range []string{adapterLayer, applicationLayer, "bsw", runtimeLayer} {
 		err := filepath.WalkDir(filepath.Join(root, layer), func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
@@ -56,7 +56,7 @@ func TestTaskKeyOwnershipAndBSWDirection(t *testing.T) {
 					if err != nil {
 						return true
 					}
-					for _, prefix := range []string{"watch.download.", "watch.aria2.", "watch.internal.", "forward.job.", "forward.index"} {
+					for _, prefix := range []string{"watch.download.", "watch.aria2.", "download.local.", "forward.job.", "forward.index"} {
 						if strings.HasPrefix(value, prefix) {
 							t.Errorf("%s duplicates taskhub storage key %q", rel, value)
 						}
@@ -73,7 +73,7 @@ func TestTaskKeyOwnershipAndBSWDirection(t *testing.T) {
 }
 
 func forbiddenBSWImport(target string) bool {
-	for _, layer := range []string{legacyLayer, applicationLayer, runtimeLayer} {
+	for _, layer := range []string{adapterLayer, applicationLayer, runtimeLayer} {
 		prefix := "github.com/snakexgc/tdl/" + layer
 		if target == prefix || strings.HasPrefix(target, prefix+"/") {
 			return true
@@ -84,7 +84,7 @@ func forbiddenBSWImport(target string) bool {
 
 func TestBSWImportBoundary(t *testing.T) {
 	const module = "github.com/snakexgc/tdl/"
-	for _, target := range []string{legacyLayer, "app/runtime", applicationLayer, "application/filter.rules", runtimeLayer, "rte/config"} {
+	for _, target := range []string{adapterLayer, "app/runtime", applicationLayer, "application/filter.rules", runtimeLayer, "rte/config"} {
 		if !forbiddenBSWImport(module + target) {
 			t.Errorf("BSW boundary permits upper layer %s", target)
 		}

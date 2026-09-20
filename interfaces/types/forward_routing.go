@@ -1,16 +1,8 @@
 package types
 
-import "time"
-
 type ForwardListening struct {
 	Sources  []string
 	Comments bool
-}
-
-type ForwardDefaults struct {
-	Target, Mode string
-	Silent       bool
-	DedupeTTL    time.Duration
 }
 
 type ForwardPeer struct {

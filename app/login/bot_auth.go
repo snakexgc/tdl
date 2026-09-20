@@ -361,11 +361,7 @@ func runWithTemporarySession(
 	defer release()
 
 	tmp := newMemoryStorage()
-	if err := tmp.Set(ctx, key.App(), []byte(tclient.AppDesktop)); err != nil {
-		return nil, errors.Wrap(err, "set temporary app")
-	}
-
-	credentials, err := tclient.ResolveAppUsing(ctx, tmp, opts.Account, opts.Credentials)
+	credentials, err := tclient.ResolveApp(ctx, opts.Account, opts.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -438,19 +434,11 @@ func commitTemporarySession(ctx context.Context, tmp storage.Storage, dst storag
 		return errors.Wrap(err, "load temporary session")
 	}
 	mode, err := tmp.Get(ctx, key.App())
-	if errors.Is(err, storage.ErrNotFound) {
-		mode = []byte(tclient.AppDesktop)
-	} else if err != nil {
+	if err != nil {
 		return err
 	}
 	fingerprint, err := tmp.Get(ctx, tgauth.FingerprintKey)
-	if errors.Is(err, storage.ErrNotFound) {
-		app, ok := tclient.Apps[string(mode)]
-		if !ok {
-			return errors.New("unknown temporary application preset")
-		}
-		fingerprint = []byte(tgauth.Fingerprint(app))
-	} else if err != nil {
+	if err != nil {
 		return err
 	}
 	return tgauth.CommitSession(ctx, dst, session, string(mode), string(fingerprint))

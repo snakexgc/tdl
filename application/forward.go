@@ -18,7 +18,6 @@ func NewForwardQueue(store ports.ForwardRepository) *ForwardQueue { return forwa
 
 type ForwardOptions struct {
 	Store     *config.Store
-	Defaults  func() types.ForwardDefaults
 	Peers     ports.ForwardPeers
 	Rules     ports.ForwardRules
 	Listening ports.ForwardListening
@@ -34,9 +33,7 @@ func ServeForwardQueue(ctx context.Context, account types.AccountID, queue *Forw
 	registry := rte.NewRegistry()
 	completed := make(chan error, 1)
 	routing := forwarder.RoutingOptions{Peers: opts.Peers, Rules: opts.Rules, Listening: opts.Listening}
-	if opts.Store == nil {
-		routing.LegacyDefaults = opts.Defaults
-	}
+
 	if err := forwarder.Register(registry, queue, transport, completed, forwarder.Options{Validate: ValidateMessageLink, Routing: routing}); err != nil {
 		return err
 	}
@@ -45,13 +42,7 @@ func ServeForwardQueue(ctx context.Context, account types.AccountID, queue *Forw
 	}
 	values := map[string]map[string]any{}
 	enabled := map[string]bool{forwarder.ID: true}
-	if opts.Store == nil && opts.Defaults != nil {
-		defaults := opts.Defaults()
-		values[forwarder.ID] = map[string]any{"target": defaults.Target, "silent": defaults.Silent, "dedupe_ttl_seconds": int64(defaults.DedupeTTL.Seconds())}
-		if defaults.Mode != "" {
-			values[forwarder.ID]["mode"] = defaults.Mode
-		}
-	}
+
 	if opts.Store != nil {
 		document, err := opts.Store.Load(ctx, forwarder.ID)
 		if err != nil {

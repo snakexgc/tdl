@@ -9,5 +9,5 @@ import (
 const TelegramCredentialsName = "account.telegram.credentials"
 
 type TelegramCredentials interface {
-	Resolve(context.Context, types.AccountID, string) (types.TelegramCredentials, error)
+	Resolve(context.Context, types.AccountID) (types.TelegramCredentials, error)
 }

@@ -52,7 +52,7 @@ func (s *LocalRepository) create(ctx context.Context, record types.LocalDownload
 		tx = Local(tx).store
 		data, err := tx.Get(ctx, c.prefix+record.ID)
 		if err == nil {
-			record, err = decodeInternalRecord(record.ID, data)
+			record, err = decodeLocalRecord(record.ID, data)
 			return err
 		}
 		if !errors.Is(err, storage.ErrNotFound) {
@@ -66,7 +66,7 @@ func (s *LocalRepository) create(ctx context.Context, record types.LocalDownload
 			record.TaskID = record.ID
 		}
 		if record.Status == "" {
-			record.Status = types.InternalDownloadStatusQueued
+			record.Status = types.LocalDownloadStatusQueued
 		}
 		if record.CreatedAt.IsZero() {
 			record.CreatedAt = time.Now()
@@ -93,7 +93,7 @@ func (s *LocalRepository) Update(ctx context.Context, id string, change func(*ty
 	}
 	changed := false
 	err := s.collection().Mutate(ctx, id, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
-		record, err := decodeInternalRecord(id, data)
+		record, err := decodeLocalRecord(id, data)
 		if err != nil {
 			return nil, stamp, err
 		}

@@ -27,7 +27,7 @@ func TestWatchDownloadProtocolFeedsOwnedPipelineAndBoltQueue(t *testing.T) {
 	for _, skipSame := range []bool{false, true} {
 		t.Run(fmt.Sprint("skip_same_", skipSame), func(t *testing.T) {
 			cfg := config.DefaultConfig()
-			cfg.Downloader.Mode, cfg.Downloader.LocalRoot = localExecutorName, t.TempDir()
+			cfg.Downloader.Executors, cfg.Downloader.LocalRoot = []string{localExecutorName}, t.TempDir()
 			cfg.Aria2.Dir = filepath.Join(t.TempDir(), "remote-only")
 			ctx := config.WithSource(context.Background(), config.NewSource(cfg))
 			engine, err := kv.New(kv.DriverBolt, map[string]any{"path": filepath.Join(t.TempDir(), "state")})
@@ -37,7 +37,16 @@ func TestWatchDownloadProtocolFeedsOwnedPipelineAndBoltQueue(t *testing.T) {
 			require.NoError(t, err)
 			w := namingWatcher(t, "F", 255)
 			w.opts.Account, w.opts.Download, w.opts.SkipSame = types.DefaultAccount, true, skipSame
-			w.runtime = newWatchRuntime(cfg, w.opts, storage, nil)
+			w.opts.DownloadRouting = &fixedDownloadRoute{ports.DownloadRoute{Executors: cfg.Downloader.Executors, LocalRoot: cfg.Downloader.LocalRoot}}
+			w.runtime = newTestWatchRuntime(cfg, w.opts, storage, nil)
+			lease, err := w.runtime.proxy.Scheduler().Acquire(ctx, "hold-transfer", 2)
+			require.NoError(t, err)
+			t.Cleanup(lease.Release)
+			localHost, executor, err := application.LocalDownloadHost(ctx, types.DefaultAccount, w.runtime.worker)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, localHost.Stop(context.Background())) })
+			w.runtime.local = executor
+
 			host, control, err := application.DownloadControlHost(ctx, types.DefaultAccount, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
@@ -99,7 +108,7 @@ func TestWatchDownloadProtocolFeedsOwnedPipelineAndBoltQueue(t *testing.T) {
 			names := map[string]bool{}
 			for _, record := range records {
 				names[record.Out] = true
-				require.Equal(t, types.InternalDownloadStatusQueued, record.Status)
+				require.Equal(t, types.LocalDownloadStatusQueued, record.Status)
 				require.Equal(t, filepath.Join(cfg.Downloader.LocalRoot, record.Out), record.Path)
 			}
 			require.True(t, names["video (2).mp4"], "collision handling must precede skip-same checks")

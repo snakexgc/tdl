@@ -40,7 +40,7 @@ type logItem struct {
 	ComponentTitle string `json:"component_title"`
 }
 
-// Compatibility adapter names are normalized at the composition boundary.
+// Process and transport logger names are normalized at the composition boundary.
 func logComponentID(id, caller, logger string) string {
 	aliases := map[string]string{"host.bot": logBotComponent, "host.panel": "panel.webui", "host.aria2": logAria2Component, logHTTPAdapter: logHTTPComponent, "watch": logAccountComponent, logBotAdapter: logBotComponent, logAria2Adapter: logAria2Component}
 	if mapped := aliases[id]; mapped != "" {
@@ -113,7 +113,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	level := query.Get("level")
-	if level != "" && level != "debug" && level != logInfoLevel && level != "warn" && level != fieldError {
+	if level != "" && level != logDebugLevel && level != logInfoLevel && level != "warn" && level != fieldError {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("无效的日志级别"))
 		return
 	}
@@ -207,7 +207,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if cfg := config.From(s.opts.Context); cfg != nil {
 		debug = cfg.Debug
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "components": components, "total": total, "has_more": more, "retained": retained, "capacity": logging.Capacity, "warning": logging.Redact(warning), "debug": debug})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "components": components, "total": total, "has_more": more, "retained": retained, "capacity": logging.Capacity, "warning": logging.Redact(warning), logDebugLevel: debug})
 }
 
 func defaultString(value, fallback string) string {
@@ -216,3 +216,5 @@ func defaultString(value, fallback string) string {
 	}
 	return value
 }
+
+const logDebugLevel = "debug"

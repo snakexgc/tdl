@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
@@ -199,22 +198,6 @@ func (w *Watcher) shouldTriggerForwardReaction(ctx context.Context, reactions *t
 	}
 	policy, err := w.reactionPolicy(ctx)
 	return err == nil && policy.Matches(ctx, w.reactionInput(reactions, true))
-}
-
-func newTriggerReactionSet(values []string) map[string]struct{} {
-	m := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = normalizeTriggerReaction(value)
-		if value == "" {
-			continue
-		}
-		m[value] = struct{}{}
-	}
-	return m
-}
-
-func normalizeTriggerReaction(value string) string {
-	return strings.TrimSpace(value)
 }
 
 func reactionEmoji(r tg.ReactionClass) string {

@@ -12,82 +12,9 @@ import (
 	"github.com/go-faster/errors"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
-
-func (s *Server) handleInternalDownloads(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, "GET")
-		return
-	}
-	data, err := s.internalDownloadsSnapshot(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, data)
-}
-
-func (s *Server) internalDownloadsSnapshot(ctx context.Context) (any, error) {
-	items, err := s.downloadControl().Tasks(ctx, localDownloadExecutor)
-	if err != nil {
-		return nil, err
-	}
-	overview := watch.InternalDownloadOverview{Total: len(items)}
-	for _, item := range items {
-		switch item.Status {
-		case watch.InternalDownloadStatusActive:
-			overview.Active++
-		case watch.InternalDownloadStatusQueued:
-			overview.Queued++
-		case watch.InternalDownloadStatusPaused:
-			overview.Paused++
-		case watch.InternalDownloadStatusComplete:
-			overview.Complete++
-		case watch.InternalDownloadStatusError:
-			overview.Error++
-		}
-	}
-
-	return map[string]any{
-		fieldItems: items,
-		"overview": overview,
-	}, nil
-}
-
-func (s *Server) handleInternalDownloadActions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, "POST")
-		return
-	}
-	var req struct {
-		Action   string   `json:"action"`
-		IDs      []string `json:"ids"`
-		Statuses []string `json:"statuses"` // used by delete_all to filter by status
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
-		return
-	}
-	action := strings.ToLower(strings.TrimSpace(req.Action))
-	switch action {
-	case "pause", "start", "delete", "pause_all", "start_all", "delete_all":
-	default:
-		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported action %q", req.Action))
-		return
-	}
-	result, err := s.downloadControl().Control(r.Context(), types.DownloadAction{Account: s.downloadAccount(), Executor: localDownloadExecutor, Action: action, IDs: req.IDs, Statuses: req.Statuses})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        len(result.Errors) == 0,
-		fieldResult: result,
-	})
-}
 
 func (s *Server) handleKVLinks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

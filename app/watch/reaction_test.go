@@ -9,7 +9,7 @@ import (
 )
 
 func TestIsMyMessageReactionsRequiresExplicitCurrentUser(t *testing.T) {
-	w := &Watcher{}
+	w := reactionTestWatcher(t, &Watcher{})
 	ctx := context.Background()
 
 	require.False(t, w.isMyMessageReactions(ctx, &tg.MessageReactions{
@@ -37,7 +37,7 @@ func TestIsMyMessageReactionsRequiresExplicitCurrentUser(t *testing.T) {
 }
 
 func TestIsMyMessageReactionsRequiresConfiguredTrigger(t *testing.T) {
-	w := &Watcher{triggerReactions: newTriggerReactionSet([]string{"🔥"})}
+	w := reactionTestWatcher(t, &Watcher{opts: Options{Reaction: testReactionPolicy(t, []string{"🔥"}, nil)}})
 	ctx := context.Background()
 
 	require.False(t, w.isMyMessageReactions(ctx, &tg.MessageReactions{
@@ -50,7 +50,7 @@ func TestIsMyMessageReactionsRequiresConfiguredTrigger(t *testing.T) {
 }
 
 func TestIsMyRecentMessageReactionRequiresConfiguredTrigger(t *testing.T) {
-	w := &Watcher{triggerReactions: newTriggerReactionSet([]string{"🔥"})}
+	w := reactionTestWatcher(t, &Watcher{opts: Options{Reaction: testReactionPolicy(t, []string{"🔥"}, nil)}})
 	ctx := context.Background()
 
 	reactions := tg.MessageReactions{
@@ -72,7 +72,7 @@ func TestIsMyRecentMessageReactionRequiresConfiguredTrigger(t *testing.T) {
 }
 
 func TestEditMessageReactionSkipsWhenNotMine(t *testing.T) {
-	w := &Watcher{jobCh: make(chan downloadJob, 1)}
+	w := reactionTestWatcher(t, &Watcher{intents: &intentRecorder{}})
 	msg := &tg.Message{
 		ID:     116103,
 		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
@@ -82,11 +82,11 @@ func TestEditMessageReactionSkipsWhenNotMine(t *testing.T) {
 	}
 
 	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
-	require.Empty(t, w.jobCh)
+	require.Empty(t, w.intents.(*intentRecorder).requests)
 }
 
 func TestEditMessageReactionQueuesWhenMine(t *testing.T) {
-	w := &Watcher{jobCh: make(chan downloadJob, 1), opts: Options{Download: true}}
+	w := reactionTestWatcher(t, &Watcher{intents: &intentRecorder{}, opts: Options{Download: true}})
 	msg := &tg.Message{
 		ID:     116103,
 		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
@@ -96,14 +96,14 @@ func TestEditMessageReactionQueuesWhenMine(t *testing.T) {
 	}
 
 	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
-	require.Len(t, w.jobCh, 1)
+	require.Len(t, w.intents.(*intentRecorder).requests, 1)
 }
 
 func TestEditMessageReactionSkipsWhenTriggerNotConfigured(t *testing.T) {
-	w := &Watcher{
-		jobCh:            make(chan downloadJob, 1),
-		triggerReactions: newTriggerReactionSet([]string{"🔥"}),
-	}
+	w := reactionTestWatcher(t, &Watcher{
+		intents: &intentRecorder{},
+		opts:    Options{Reaction: testReactionPolicy(t, []string{"🔥"}, nil)},
+	})
 	msg := &tg.Message{
 		ID:     116103,
 		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
@@ -113,14 +113,14 @@ func TestEditMessageReactionSkipsWhenTriggerNotConfigured(t *testing.T) {
 	}
 
 	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
-	require.Empty(t, w.jobCh)
+	require.Empty(t, w.intents.(*intentRecorder).requests)
 }
 
 func TestEditMessageReactionSkipsQueueWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	w := &Watcher{jobCh: make(chan downloadJob, 1)}
+	w := reactionTestWatcher(t, &Watcher{intents: &intentRecorder{}})
 	msg := &tg.Message{
 		ID:     116103,
 		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
@@ -130,11 +130,11 @@ func TestEditMessageReactionSkipsQueueWhenContextCanceled(t *testing.T) {
 	}
 
 	require.NoError(t, w.onEditMessageReaction(ctx, tg.Entities{}, msg))
-	require.Empty(t, w.jobCh)
+	require.Empty(t, w.intents.(*intentRecorder).requests)
 }
 
 func TestEditMessageReactionRemovalClearsDedup(t *testing.T) {
-	w := &Watcher{jobCh: make(chan downloadJob, 2), opts: Options{Download: true}}
+	w := reactionTestWatcher(t, &Watcher{intents: &intentRecorder{}, opts: Options{Download: true}})
 	msg := &tg.Message{
 		ID:     116103,
 		PeerID: &tg.PeerChannel{ChannelID: 2578606138},
@@ -144,20 +144,20 @@ func TestEditMessageReactionRemovalClearsDedup(t *testing.T) {
 	}
 
 	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
-	require.Len(t, w.jobCh, 1)
+	require.Len(t, w.intents.(*intentRecorder).requests, 1)
 
 	msg.Reactions = tg.MessageReactions{}
 	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
 
 	msg.Reactions.Results = []tg.ReactionCount{testReactionCount(true)}
 	require.NoError(t, w.onEditMessageReaction(context.Background(), tg.Entities{}, msg))
-	require.Len(t, w.jobCh, 2)
+	require.Len(t, w.intents.(*intentRecorder).requests, 2)
 }
 
 func TestShouldTriggerForwardReactionIgnoresListenSet(t *testing.T) {
 	// Empty listen set with a configured trigger reaction is a valid
 	// "react to forward" setup: reacting must still trigger a forward.
-	w := &Watcher{opts: Options{Forward: true, ForwardTriggerReactions: []string{"🔥"}}}
+	w := reactionTestWatcher(t, &Watcher{opts: Options{Forward: true, Reaction: testReactionPolicy(t, nil, []string{"🔥"})}})
 
 	myTrigger := &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
@@ -183,17 +183,17 @@ func TestShouldTriggerForwardReactionRequiresEnabledForward(t *testing.T) {
 	}
 
 	// No forward runtime configured.
-	require.False(t, (&Watcher{}).shouldTriggerForwardReaction(context.Background(), reactions))
+	require.False(t, (reactionTestWatcher(t, &Watcher{})).shouldTriggerForwardReaction(context.Background(), reactions))
 
 	// Forward configured but not enabled.
-	disabled := &Watcher{opts: Options{ForwardTriggerReactions: []string{"🔥"}}}
+	disabled := reactionTestWatcher(t, &Watcher{opts: Options{Reaction: testReactionPolicy(t, nil, []string{"🔥"})}})
 	require.False(t, disabled.shouldTriggerForwardReaction(context.Background(), reactions))
 }
 
 func TestShouldTriggerForwardReactionEmptyTriggerMatchesAnyEmoji(t *testing.T) {
 	// An empty forward trigger set means any of the current user's reactions
 	// forwards, mirroring the download trigger behaviour.
-	w := &Watcher{opts: Options{Forward: true}}
+	w := reactionTestWatcher(t, &Watcher{opts: Options{Forward: true}})
 
 	require.True(t, w.shouldTriggerForwardReaction(context.Background(), &tg.MessageReactions{
 		Results: []tg.ReactionCount{testReactionCountWithEmoji("🔥", true)},
@@ -208,7 +208,7 @@ func TestShouldTriggerForwardReactionEmptyTriggerMatchesAnyEmoji(t *testing.T) {
 }
 
 func TestGenerateMessageLinkForPrivateChatUsesTelegramDeepLink(t *testing.T) {
-	w := &Watcher{}
+	w := reactionTestWatcher(t, &Watcher{})
 
 	link := w.generateMessageLink(&tg.PeerUser{UserID: 8789880052}, 2247)
 

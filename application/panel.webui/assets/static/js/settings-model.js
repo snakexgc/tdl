@@ -93,7 +93,7 @@ export function settingsGroups(components, tab) {
   for (const component of components) {
     const sections = new Map();
     for (const field of component.fields || []) {
-      if (field.replaced_by || fieldTab(field) !== tab) continue;
+      if (fieldTab(field) !== tab) continue;
       const title = field.settings_section || "高级组件配置";
       if (!sections.has(title)) sections.set(title, []);
       sections.get(title).push(field);

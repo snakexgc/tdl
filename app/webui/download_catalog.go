@@ -8,7 +8,6 @@ import (
 	"time"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/bsw/ecual/aria2rpc"
 	"github.com/snakexgc/tdl/interfaces/ports"
@@ -42,9 +41,9 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 	}
 
 	cfg := config.From(s.opts.Context)
-	downloaderMode := config.EffectiveDownloaderMode(cfg)
+	downloaderMode := config.PrimaryDownloadExecutor(cfg)
 	var statusErrText string
-	if downloaderMode == config.DownloaderModeAria2 && strings.TrimSpace(cfg.Aria2.RPCURL) != "" {
+	if downloaderMode == config.DownloadExecutorAria2 && strings.TrimSpace(cfg.Aria2.RPCURL) != "" {
 		_, statusErr := s.aria2Observer().Observe(ctx)
 		if statusErr != nil {
 			statusErrText = statusErr.Error()
@@ -59,20 +58,17 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 			}
 		}
 	}
-	internalByTask := map[string][]watch.InternalDownloadInfo{}
+	localByTask := map[string][]types.LocalDownloadInfo{}
 	if s.opts.NamespaceKV != nil {
-		internalItems, err := s.internalDownloadController().List(ctx)
+		localItems, err := s.localDownloadController().List(ctx)
 		if err != nil {
 			if statusErrText == "" {
 				statusErrText = err.Error()
 			}
 		} else {
-			for _, item := range internalItems {
+			for _, item := range localItems {
 				taskID := item.TaskID
-				if taskID == "" {
-					taskID = item.ID
-				}
-				internalByTask[taskID] = append(internalByTask[taskID], item)
+				localByTask[taskID] = append(localByTask[taskID], item)
 			}
 		}
 	}
@@ -87,10 +83,9 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 			continue
 		}
 		id := strings.TrimPrefix(key, downloadTaskKeyPrefix)
-		if task.ID != "" && task.ID != id {
+		if task.ID != id {
 			continue
 		}
-		task.ID = id
 		status, _ := httpdl.ParseDownloadTaskHTTPStatus(data)
 		observation := types.LinkCatalogRecord{Key: key, Task: task, HTTPCompleted: status.Completed, HTTPCompletedAt: status.CompletedAt, HTTPDeliveredBytes: status.DeliveredBytes}
 		for _, record := range recordsByTask[task.ID] {
@@ -112,18 +107,18 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 			// may have lost a race with pause/delete or source replacement.
 			observation.Aria2 = append(observation.Aria2, entry)
 		}
-		for _, internal := range internalByTask[task.ID] {
-			entry := types.InternalLinkEntry{
-				ID:        internal.ID,
-				Status:    internal.Status,
-				Path:      internal.Path,
-				Total:     internal.Total,
-				Completed: internal.Completed,
-				Error:     internal.Error,
-				CreatedAt: internal.CreatedAt,
-				UpdatedAt: internal.UpdatedAt,
+		for _, localTask := range localByTask[task.ID] {
+			entry := types.LocalLinkEntry{
+				ID:        localTask.ID,
+				Status:    localTask.Status,
+				Path:      localTask.Path,
+				Total:     localTask.Total,
+				Completed: localTask.Completed,
+				Error:     localTask.Error,
+				CreatedAt: localTask.CreatedAt,
+				UpdatedAt: localTask.UpdatedAt,
 			}
-			observation.Internal = append(observation.Internal, entry)
+			observation.Local = append(observation.Local, entry)
 		}
 
 		snapshot.Records = append(snapshot.Records, observation)
@@ -149,5 +144,5 @@ func (a catalogAdapter) Submission(ctx context.Context) (ports.LinkSubmissionRes
 	}
 	// Catalog submission must not expire unrelated associations as a side
 	// effect. The existing status maintenance runnable owns their cleanup.
-	return ports.LinkSubmissionResources{Records: records, Mode: config.EffectiveDownloaderMode(&cfg), PublicBaseURL: cfg.HTTP.PublicBaseURL, RemoteDir: cfg.Aria2.Dir, Limit: config.EffectiveLimit(&cfg), Connections: config.EffectivePoolSize(&cfg), Local: a.server.opts.LocalLinks, Remote: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.NewAria2Repository(a.repository.Store, 0)}, nil
+	return ports.LinkSubmissionResources{Records: records, Mode: config.PrimaryDownloadExecutor(&cfg), PublicBaseURL: cfg.HTTP.PublicBaseURL, RemoteDir: cfg.Aria2.Dir, Limit: config.EffectiveLimit(&cfg), Connections: config.EffectivePoolSize(&cfg), Local: a.server.opts.LocalLinks, Remote: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.NewAria2Repository(a.repository.Store, 0)}, nil
 }

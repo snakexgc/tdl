@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,11 +18,18 @@ import (
 	"go.etcd.io/bbolt"
 	"go.uber.org/zap"
 
+	"github.com/snakexgc/tdl/application"
+	accounttelegram "github.com/snakexgc/tdl/application/account.telegram"
+	configurationmanager "github.com/snakexgc/tdl/application/configuration.manager"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/componentconfig"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	pkgtclient "github.com/snakexgc/tdl/pkg/tclient"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 const liveHTTPHotStage = "http-hot"
@@ -38,11 +44,18 @@ func TestLiveAccountSerialSmoke(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	cfg := config.DefaultConfig()
-	raw, err := os.ReadFile(filepath.Join(root, "config.json"))
+	raw, err := os.ReadFile(filepath.Join(root, configurationmanager.Filename))
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(raw, cfg))
+	catalog, err := application.Catalog()
+	require.NoError(t, err)
+	configuration := configurationmanager.New(rteconfig.File{Path: filepath.Join(root, configurationmanager.Filename)}, catalog)
+	system, err := configuration.System(context.Background())
+	require.NoError(t, err)
+	cfg.Namespace, cfg.Debug = system.Namespace, system.Debug
+	cfg, _, err = componentconfig.Load(context.Background(), configuration.Store(), cfg)
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		after, err := os.ReadFile(filepath.Join(root, "config.json"))
+		after, err := os.ReadFile(filepath.Join(root, configurationmanager.Filename))
 		require.NoError(t, err)
 		require.Equal(t, sha256.Sum256(raw), sha256.Sum256(after), "original configuration must stay unchanged")
 	})
@@ -80,9 +93,17 @@ func TestLiveAccountSerialSmoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	ctx = config.WithSource(logctx.With(ctx, zap.NewNop()), config.NewSource(cfg))
+	registry := rte.NewRegistry()
+	require.NoError(t, accounttelegram.Register(registry))
+	host, err := registry.BuildStored(ctx, types.AccountID(cfg.Namespace), configuration.Store())
+	require.NoError(t, err)
+	host.Start(ctx)
+	defer func() { require.NoError(t, host.Stop(context.Background())) }()
+	credentials, err := host.Resolve(ports.TelegramCredentialsName)
+	require.NoError(t, err)
 	gate := &liveSerialGate{cancel: cancel}
 	client, err := pkgtclient.New(ctx, pkgtclient.Options{
-		KV: store, Account: types.AccountID(cfg.Namespace), Proxy: os.Getenv("TDL_LIVE_PROXY"), ReconnectTimeout: time.Second,
+		Credentials: credentials.(ports.TelegramCredentials), KV: store, Account: types.AccountID(cfg.Namespace), Proxy: os.Getenv("TDL_LIVE_PROXY"), ReconnectTimeout: time.Second,
 	}, false, gate)
 	require.NoError(t, err)
 	err = client.Run(ctx, func(ctx context.Context) error {

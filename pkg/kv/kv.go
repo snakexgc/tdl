@@ -12,17 +12,14 @@ import (
 //go:generate go-enum --values --names --flag --nocase
 
 // Driver
-// ENUM(legacy, bolt, file)
+// ENUM(bolt, file)
 type Driver string
 
 const DriverTypeKey = "type"
 
-type Meta map[string]map[string][]byte // namespace, key, value
-
 type Storage interface {
 	Name() string
-	MigrateTo() (Meta, error)
-	MigrateFrom(Meta) error
+	Snapshot(context.Context, string) (map[string][]byte, error)
 	Namespaces() ([]string, error)
 	Open(ns string) (storage.Storage, error)
 	io.Closer

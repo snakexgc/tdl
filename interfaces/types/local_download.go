@@ -7,17 +7,17 @@ import (
 )
 
 const (
-	InternalDownloadStatusQueued   = "queued"
-	InternalDownloadStatusActive   = "active"
-	InternalDownloadStatusPaused   = "paused"
-	InternalDownloadStatusComplete = "complete"
-	InternalDownloadStatusError    = "error"
-	InternalDownloadStatusRemoved  = "removed"
+	LocalDownloadStatusQueued   = "queued"
+	LocalDownloadStatusActive   = "active"
+	LocalDownloadStatusPaused   = "paused"
+	LocalDownloadStatusComplete = "complete"
+	LocalDownloadStatusError    = "error"
+	LocalDownloadStatusRemoved  = "removed"
 )
 
 var (
-	ErrLocalDownloadPaused  = errors.New("internal download paused")
-	ErrLocalDownloadRemoved = errors.New("internal download removed")
+	ErrLocalDownloadPaused  = errors.New("local download paused")
+	ErrLocalDownloadRemoved = errors.New("local download removed")
 )
 
 type LocalDownloadRecord struct {
@@ -39,10 +39,10 @@ type LocalDownloadRecord struct {
 	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
-// InternalDownloadInfo is the public view of a download record returned by the
+// LocalDownloadInfo is the public view of a download record returned by the
 // API. It extends the persisted record with computed fields (EtaSeconds,
 // ElapsedSeconds) that are derived at read time and never stored.
-type InternalDownloadInfo struct {
+type LocalDownloadInfo struct {
 	ID             string     `json:"id"`
 	TaskID         string     `json:"task_id"`
 	FileName       string     `json:"file_name"`
@@ -61,8 +61,8 @@ type InternalDownloadInfo struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// InternalDownloadOverview contains per-status counts for all tracked downloads.
-type InternalDownloadOverview struct {
+// LocalDownloadOverview contains per-status counts for all tracked downloads.
+type LocalDownloadOverview struct {
 	Total    int `json:"total"`
 	Active   int `json:"active"`
 	Queued   int `json:"queued"`
@@ -71,7 +71,7 @@ type InternalDownloadOverview struct {
 	Error    int `json:"error"`
 }
 
-type InternalDownloadActionResult struct {
+type LocalDownloadActionResult struct {
 	Matched int      `json:"matched"`
 	Changed int      `json:"changed"`
 	Skipped int      `json:"skipped"`

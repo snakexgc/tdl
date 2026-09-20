@@ -26,7 +26,7 @@ func Open(store storage.Storage) (*Hub, error) {
 		{"forward", "forward.", ForwardPrefix, ForwardIndex, &hub.Forward},
 		{"links", LinkPrefix, LinkPrefix, LinkIndex, &hub.Links},
 		{"aria2", "watch.aria2.", Aria2Prefix, Aria2Index, &hub.Aria2},
-		{"local", "watch.internal.", LocalPrefix, LocalIndex, &hub.Local},
+		{"local", "download.local.", LocalPrefix, LocalIndex, &hub.Local},
 	} {
 		if err := registry.Register(nvm.Dataset{Name: item.name, Writer: writerID, Prefix: item.scope}); err != nil {
 			return nil, err

@@ -54,14 +54,16 @@ func registerProxy(t *testing.T, registry *rte.Registry, proxy *proxyStub) {
 	require.NoError(t, registry.Register(manifest.Manifest{ID: "test.proxy", Provides: []manifest.Port{manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0)}}, func() rte.Component { return proxy }))
 }
 
-func TestUpdaterUsesSharedProxyAndDoesNotFallBackToLegacyOverride(t *testing.T) {
+func TestUpdaterRequiresSharedProxy(t *testing.T) {
 	ctx := context.Background()
 	registry := rte.NewRegistry()
 	want := errors.New("shared proxy unavailable")
 	proxy := &proxyStub{err: want}
 	registerProxy(t, registry, proxy)
 	require.NoError(t, Register(registry))
-	host, err := registry.Build(types.DefaultAccount, nil, map[string]map[string]any{ID: {"proxy": "http://obsolete:secret@127.0.0.1:1"}})
+	_, err := registry.Build(types.DefaultAccount, nil, map[string]map[string]any{ID: {"proxy": "http://obsolete:secret@127.0.0.1:1"}})
+	require.Error(t, err)
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
 	require.NoError(t, err)
 	host.Start(ctx)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })

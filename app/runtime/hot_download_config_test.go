@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
-	"github.com/snakexgc/tdl/internal/migration"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
 )
@@ -16,17 +15,16 @@ func TestCredentialSaveKeepsActiveAccountResources(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
-	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
-	require.NoError(t, err)
-	manager := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: directory})
+	store := newStoppedComponentStore(t)
+	manager := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentStore: store})
 	t.Cleanup(manager.Shutdown)
 	require.NoError(t, manager.configurationErr)
 	owner, connections := manager.accountHost, manager.connections
-	require.NoError(t, manager.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 12345, apiHashField: "0123456789abcdef0123456789abcdef", "use_builtin": false}))
+	require.NoError(t, manager.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 12345, apiHashField: "0123456789abcdef0123456789abcdef", fieldUseBuiltin: false}))
 	manager.transitionWG.Wait()
 	require.Same(t, owner, manager.accountHost, "credentials apply to future clients without disconnecting current transfers")
 	require.Same(t, connections, manager.connections)
-	credentials, err := manager.Resolve(ctx, manager.downloadAccount, "")
+	credentials, err := manager.Resolve(ctx, manager.downloadAccount)
 	require.NoError(t, err)
 	require.Equal(t, 12345, credentials.App.AppID)
 }
@@ -37,16 +35,15 @@ func TestComponentEditsKeepAccountBootConfiguration(t *testing.T) {
 	cfg.Namespace = "isolated"
 	cfg.Delay = 42
 	cfg.Modules = config.ModulesConfig{}
-	directory, err := migration.EnsureComponents(ctx, t.TempDir(), cfg)
-	require.NoError(t, err)
-	m := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: directory})
+	store := newStoppedComponentStore(t)
+	saveComponent(t, store, "account.telegram", true, map[string]any{"delay_seconds": cfg.Delay})
+	m := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentStore: store})
 	t.Cleanup(m.Shutdown)
 	require.NoError(t, m.configurationErr)
 	owner := m.accountHost
-	require.NoError(t, m.SaveComponentConfiguration(ctx, ports.NamingRulesName, map[string]any{"directory": "saved/P"}))
+	require.NoError(t, m.SaveComponentConfiguration(ctx, ports.NamingRulesName, map[string]any{fieldDirectory: "saved/P"}))
 	m.transitionWG.Wait()
-	_, err = m.SetModuleEnabled(ctx, moduleIDAria2, false)
-	require.NoError(t, err)
+	require.NoError(t, m.SetComponentEnabled(ctx, aria2ComponentID, false, ""))
 	m.transitionWG.Wait()
 	current := config.From(m.parent)
 	require.Equal(t, cfg.Namespace, current.Namespace)
@@ -75,10 +72,6 @@ func TestConnectionFeatureTogglesDoNotChangeTransportDependencies(t *testing.T) 
 	nextForward.Forward.Listen = []string{"channel:456"}
 	nextForward.Forward.Silent = true
 	require.Equal(t, original.Revision, watchUnit(&nextForward).Revision)
-	opts := m.watchOptions(cfg)
-	m.configSource.Replace(&nextForward)
-	require.Equal(t, nextForward.Forward.Target, opts.ForwardConfig().Target)
-	require.Equal(t, nextForward.Forward.Listen, opts.ForwardConfig().Listen)
 	for _, mode := range []config.ModulesConfig{{Watch: true}, {Forward: true}} {
 		next := *cfg
 		next.Modules = mode
@@ -120,7 +113,7 @@ func TestDownloadMetadataDoesNotRestartTransports(t *testing.T) {
 	next.Aria2.Dir = "/another/remote/directory"
 	next.HTTP.PublicBaseURL = "https://new.example"
 	next.HTTP.DownloadLinkTTLHours = 72
-	next.Downloader.Mode = config.DownloaderModeLocal
+	next.Downloader.Executors = []string{config.DownloadExecutorLocal}
 	after := manager.managedUnits(&next)
 	for _, id := range []string{"http", moduleIDAria2, "watch", downloadResource} {
 		require.Equal(t, find(before, id).Revision, find(after, id).Revision, id)

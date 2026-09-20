@@ -28,7 +28,7 @@ func TestDownloadControlDoesNotOwnTasksByURLAlone(t *testing.T) {
 	require.Equal(t, []string{ownedID}, client.paused)
 }
 
-func TestLegacyControlsRejectUnregisteredTasks(t *testing.T) {
+func TestTaskControlsRejectUnregisteredTasks(t *testing.T) {
 	ctx := context.Background()
 	client := &fakeAria2ControlClient{
 		active:  []DownloadStatus{{GID: "foreign-active", Status: aria2StatusActive, Files: filesWithURI(testDownloadURL1)}},

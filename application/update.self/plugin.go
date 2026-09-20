@@ -22,9 +22,7 @@ func Register(registry *rte.Registry) error {
 		// Disabling the configuration provider must not reject the whole policy
 		// host. Init fails this consumer only when the shared proxy is unavailable.
 		Requires: []manifest.Require{{Port: manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0), Optional: true}},
-		Config: []manifest.ConfigField{
-			{Name: "proxy", Title: "旧版更新代理（已停用）", Type: manifest.String, Default: "", Secret: true, ReplacedBy: "account.telegram.proxy", Help: "仅兼容读取旧配置；实际使用网络配置中的统一网络代理。"},
-		},
+		Config:   []manifest.ConfigField{},
 	}, "network", "网络代理"), func() rte.Component { return &Service{} })
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 const commandTestLink = "https://t.me/example/1"
@@ -54,7 +54,7 @@ func TestForwardCommandUsesLiveComponentPolicyAndRejectsStoppedHandle(t *testing
 	response, err := handler.Execute(ctx, request)
 	require.NoError(t, err)
 	require.Contains(t, response.Text, "1 条")
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{"target": "@second", "mode": forwardModeClone, "silent": true}, store))
 	request.ReplyText = "https://t.me/example/2"
 	_, err = handler.Execute(ctx, request)

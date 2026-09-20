@@ -3,25 +3,22 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/snakexgc/tdl/app/aria2"
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
 	local "github.com/snakexgc/tdl/application/downloader.local"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/consts"
 )
 
 const localExecutorID = "local"
 
 func (m *Manager) initDownloadControl(ctx context.Context) error {
 	host, port, err := application.DownloadControlHost(ctx, m.downloadAccount, map[string]ports.DownloadBackend{
-		localExecutorID: watch.NewInternalDownloadController(m.namespaceKV),
+		localExecutorID: local.NewController(taskhub.NewLocalRepository(m.namespaceKV)),
 		moduleIDAria2:   aria2ControlBackend{manager: m},
 	}, m.componentStore)
 	m.mu.Lock()
@@ -46,7 +43,7 @@ func (s savedLocalLinks) Submit(ctx context.Context, in types.DownloadSubmission
 	if err != nil {
 		return types.DownloadResult{}, err
 	}
-	return (local.SavedLinks{Account: m.downloadAccount, Root: route.LocalRoot, FallbackRoot: filepath.Join(consts.HomeDir, "downloads"), Naming: naming.(ports.NamingRules), Source: httpdl.NewTaskStore(m.namespaceKV, 0), Repository: taskhub.NewLocalRepository(m.namespaceKV)}).Submit(ctx, in)
+	return (local.SavedLinks{Account: m.downloadAccount, Root: route.LocalRoot, Naming: naming.(ports.NamingRules), Source: httpdl.NewTaskStore(m.namespaceKV, 0), Repository: taskhub.NewLocalRepository(m.namespaceKV)}).Submit(ctx, in)
 }
 
 func (m *Manager) Route(ctx context.Context, account types.AccountID) (ports.DownloadRoute, error) {
@@ -60,12 +57,7 @@ func (m *Manager) Route(ctx context.Context, account types.AccountID) (ports.Dow
 	if err != nil {
 		return ports.DownloadRoute{}, err
 	}
-	route, err := value.(ports.DownloadRouting).Route(ctx, account)
-	if m.componentStore == nil {
-		cfg := config.From(m.parent)
-		route.Mode, route.LocalRoot = config.EffectiveDownloaderMode(cfg), cfg.Downloader.LocalRoot
-	}
-	return route, err
+	return value.(ports.DownloadRouting).Route(ctx, account)
 }
 
 func (m *Manager) SubmitBatch(ctx context.Context, request types.DownloadIntent, resources ports.DownloadResources) (types.DownloadSubmissionSummary, error) {

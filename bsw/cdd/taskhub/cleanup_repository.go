@@ -37,11 +37,11 @@ func (r CleanupRepository) Snapshot(ctx context.Context) (ports.CleanupSnapshot,
 	if r.Engine == nil || r.Store == nil || r.Namespace == "" {
 		return result, errors.New("namespace storage is not configured")
 	}
-	meta, err := r.Engine.MigrateTo()
+	meta, err := r.Engine.Snapshot(ctx, r.Namespace)
 	if err != nil {
 		return result, err
 	}
-	for key, value := range meta[r.Namespace] {
+	for key, value := range meta {
 		if protectedCleanupKey(key) {
 			result.Protected++
 			continue

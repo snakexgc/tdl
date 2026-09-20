@@ -17,7 +17,7 @@ func (fixedForwardRules) Destinations(context.Context, types.ChatRef) []types.Fo
 	return []types.ForwardDestination{{Target: "channel:99", Mode: testForwardMode}}
 }
 
-func TestRuleForwardingWorksWithoutLegacyDefaultTarget(t *testing.T) {
+func TestRuleForwardingWorksWithoutDefaultTarget(t *testing.T) {
 	port := &rejectingForwardIntents{}
 	w := &Watcher{opts: Options{Account: forwardIntentAccount, Forward: true, ForwardRouting: interestedForwardRouter{}}, forwardIntents: port}
 	err := w.forwardUpdateMessage(context.Background(), tg.Entities{Channels: map[int64]*tg.Channel{12: {ID: 12, AccessHash: 34}}}, &tg.Message{PeerID: &tg.PeerChannel{ChannelID: 12}, ID: 56})
@@ -49,3 +49,11 @@ func (interestedForwardRouter) Interested(context.Context, types.AccountID, type
 	return true, nil
 }
 func (interestedForwardRouter) SubmitMessage(context.Context, types.ForwardMessage) error { return nil }
+
+func TestMissingReactionAndForwardComponentsRemainUnavailable(t *testing.T) {
+	w := &Watcher{opts: Options{Account: forwardIntentAccount}}
+	_, err := w.reactionPolicy(context.Background())
+	require.ErrorContains(t, err, "unavailable")
+	_, err = (watchForwardListening{w}).Listening(context.Background(), forwardIntentAccount)
+	require.ErrorContains(t, err, "unavailable")
+}

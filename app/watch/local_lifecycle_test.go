@@ -8,18 +8,20 @@ import (
 
 	"github.com/snakexgc/tdl/application"
 	local "github.com/snakexgc/tdl/application/downloader.local"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	rteconfig "github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestDisabledLocalExecutorCanStartWithoutRestartingConnection(t *testing.T) {
 	ctx := context.Background()
-	store := rteconfig.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	view, err := rteconfig.New(local.Manifest().Config, nil)
 	require.NoError(t, err)
 	require.NoError(t, store.Save(ctx, local.ID, false, view))
-	worker := local.New(localSource{}, newInternalTaskStore(newMemoryTaskStorage()), nil)
+	worker := local.New(localSource{}, taskhub.NewLocalRepository(newMemoryTaskStorage()), nil)
 	host, executor, err := application.LocalDownloadHost(ctx, types.DefaultAccount, worker, store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, host.Stop(ctx)) }()

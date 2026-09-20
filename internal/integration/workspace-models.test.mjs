@@ -47,11 +47,11 @@ test("each field has one settings location including disabled and unknown compon
   assert.equal(models.fieldTab(unknown.fields[0]), "system");
 });
 
-test("obsolete per-service proxies do not create additional editors", () => {
+test("shared proxy has a single settings editor", () => {
   const inputs = [
     { id: "account.telegram", fields: [{ name: "proxy", settings_tab: "network", settings_section: "网络代理" }] },
-    { id: "console.bot", fields: [{ name: "proxy", settings_tab: "bot", replaced_by: "account.telegram.proxy" }] },
-    { id: "update.self", fields: [{ name: "proxy", settings_tab: "system", replaced_by: "account.telegram.proxy" }] },
+    { id: "console.bot", fields: [] },
+    { id: "update.self", fields: [] },
   ];
   const groups = models.settingsTabs.flatMap(([tab]) => models.settingsGroups(inputs, tab));
   assert.deepEqual(plain(groups.map(group => group.id)), ["account.telegram"]);

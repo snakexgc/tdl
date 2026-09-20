@@ -15,13 +15,14 @@ import (
 	forwardrules "github.com/snakexgc/tdl/application/forward.rules"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	pkgtclient "github.com/snakexgc/tdl/pkg/tclient"
 	"github.com/snakexgc/tdl/rte"
-	rteconfig "github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
-func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, store *memoryTaskStorage, client *pkgtclient.Client, manager *peers.Manager, groups []peers.Channel) error {
+func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, store *storage.Memory, client *pkgtclient.Client, manager *peers.Manager, groups []peers.Channel) error {
 	t.Helper()
 	ref := func(group peers.Channel) types.ChatRef { return types.ChatRef(fmt.Sprintf("channel:%d", group.ID())) }
 	rules := []types.ForwardRule{
@@ -39,7 +40,7 @@ func liveForwardRules(t *testing.T, ctx context.Context, cfg *config.Config, sto
 	policy := port.(ports.ForwardRules)
 	destinations := policy.Destinations(ctx, ref(groups[0]))
 	require.Len(t, destinations, 2)
-	componentStore := rteconfig.NewStore(t.TempDir())
+	componentStore := configtest.NewStore()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
 	view, err := catalog.View(ctx, "forwarder", map[string]any{"max_attempts": 1})

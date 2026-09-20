@@ -93,27 +93,27 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取 aria2 设置失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2GlobalOptions(options))
-	case botCmdAria2Active, botCmdDownloadsActive:
+	case botCmdDownloadsActive:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在下载的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.ActiveTasks(ctx)
 		})
-	case botCmdAria2Waiting, botCmdDownloadsWaiting:
+	case botCmdDownloadsWaiting:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "正在等待/暂停的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.WaitingTasks(ctx)
 		})
-	case botCmdAria2Stopped, botCmdDownloadsStopped:
+	case botCmdDownloadsStopped:
 		return true, sendAria2TaskList(ctx, msg.Chat.ID, "已完成/停止的 aria2 任务：", factory, func(ctx context.Context, c ports.Aria2Tasks) ([]aria2.DownloadStatus, error) {
 			return c.StoppedTasks(ctx)
 		})
-	case botCmdAria2, botCmdAria2Help, botCmdDownloads, botCmdDownloadsHelp:
+	case botCmdDownloads:
 		return true, sendMessage(ctx, msg.Chat.ID, aria2HelpMessage())
-	case botCmdAria2Overview, botCmdDownloadsOverview:
+	case botCmdDownloadsOverview:
 		overview, err := runAria2Overview(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取 aria2 任务总览失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2Overview(overview))
-	case botCmdAria2PauseAll, botCmdDownloadsPauseAll:
+	case botCmdDownloadsPauseAll:
 		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller ports.Aria2Tasks) (aria2.ActionResult, error) {
 			return controller.PauseAll(ctx)
 		})
@@ -121,7 +121,7 @@ func handleAria2Command(ctx *th.Context, msg *telego.Message, text string, facto
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("暂停 TDL aria2 任务失败：%v", err))
 		}
 		return true, sendMessage(ctx, msg.Chat.ID, formatAria2ActionResult("暂停全部", result))
-	case botCmdAria2StartAll, botCmdDownloadsStartAll:
+	case botCmdDownloadsStartAll:
 		result, err := runAria2Action(ctx, factory, func(ctx context.Context, controller ports.Aria2Tasks) (aria2.ActionResult, error) {
 			return controller.StartAll(ctx)
 		})

@@ -35,7 +35,7 @@ func NewService(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Se
 	pools := &PoolHolder{}
 	proxy := NewProxy(cfg.HTTP, config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg), pools, kvd, logger)
 	proxy.account = types.AccountID(cfg.Namespace)
-	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
+	if config.UsesDownloadExecutor(cfg, config.DownloadExecutorLocal) {
 		proxy.SetTaskTTL(0)
 	}
 	return &Service{proxy: proxy, pools: pools}
@@ -65,7 +65,7 @@ func (s *Service) UpdateConfig(cfg *config.Config) bool {
 	restart := s.proxy.updateConfig(cfg.HTTP)
 	s.proxy.Scheduler().Reconfigure(config.EffectiveLimit(cfg), config.EffectivePoolSize(cfg))
 	s.pools.Resize(int64(config.EffectivePoolSize(cfg)))
-	if config.EffectiveDownloaderMode(cfg) == config.DownloaderModeInternal {
+	if config.UsesDownloadExecutor(cfg, config.DownloadExecutorLocal) {
 		s.proxy.SetTaskTTL(0)
 	} else {
 		s.proxy.SetTaskTTL(LinkTTL(cfg.HTTP))

@@ -14,7 +14,7 @@ import (
 func TestControllerCanRestartHTTPService(t *testing.T) {
 	port := reserveTCPPort(t)
 	cfg := config.DefaultConfig()
-	cfg.HTTP.Address = "127.0.0.1"
+	cfg.HTTP.Address = testHTTPAddress
 	cfg.HTTP.Port = port
 
 	service := NewService(cfg, nil, nil)
@@ -45,7 +45,7 @@ func TestControllerReportsListenFailure(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	cfg := config.DefaultConfig()
-	cfg.HTTP.Address = "127.0.0.1"
+	cfg.HTTP.Address = testHTTPAddress
 	cfg.HTTP.Port = port
 	controller := NewController(context.Background(), NewService(cfg, nil, nil))
 

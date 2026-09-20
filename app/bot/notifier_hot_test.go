@@ -8,12 +8,12 @@ import (
 
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/types"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestNotifierResolvesReenabledComponent(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	catalog, err := application.Catalog()
 	require.NoError(t, err)
 	view, err := catalog.View(ctx, "notify.telegram", map[string]any{"recipients": []string{"7"}})

@@ -17,11 +17,10 @@ import (
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/reset"
-	"github.com/snakexgc/tdl/app/updater"
-	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
 	accounttelegram "github.com/snakexgc/tdl/application/account.telegram"
 	downloadcontrol "github.com/snakexgc/tdl/application/download.control"
+	local "github.com/snakexgc/tdl/application/downloader.local"
 	panel "github.com/snakexgc/tdl/application/panel.webui"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
@@ -102,9 +101,8 @@ type Options struct {
 	RequestReboot    func()
 	ResetPlan        *reset.Plan
 	RequestReset     func()
-	RequestUpdate    func(updater.Plan)
+	RequestUpdate    func(types.UpdatePlan)
 	WatchRunning     func() bool
-	ModuleManager    ModuleManager
 }
 
 type ComponentManager interface {
@@ -114,22 +112,6 @@ type ComponentManager interface {
 
 type ComponentDiagnostics interface {
 	ComponentHealth() []rte.Health
-}
-
-type ModuleManager interface {
-	ModuleStates() []ModuleState
-	SetModuleEnabled(ctx context.Context, id string, enabled bool) (ModuleState, error)
-}
-
-type ModuleState struct {
-	ComponentID string `json:"component_id,omitempty"`
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	Running     bool   `json:"running"`
-	CanToggle   bool   `json:"can_toggle"`
-	Status      string `json:"status"`
 }
 
 type Server struct {
@@ -209,26 +191,20 @@ func NewServer(opts Options) *Server {
 		opts.ForwardQueue = appforward.NewQueue(opts.NamespaceKV)
 	}
 	server := &Server{
-		samples: telemetry.New(time.Second),
-		assets:  application.WebAssets(opts.Catalog),
-		configuration: panel.NewConfiguration(configurationStore{saved: opts.AfterConfigSave}, func() bool {
-			if opts.ComponentManager == nil {
-				return false
-			}
-			_, enabled := opts.ComponentManager.ComponentConfigurations()
-			return enabled
-		}),
-		opts:     opts,
-		login:    newWebLoginManager(opts),
-		sessions: map[string]time.Time{},
-		logins:   map[string]loginFailure{},
+		samples:       telemetry.New(time.Second),
+		assets:        application.WebAssets(opts.Catalog),
+		configuration: panel.NewConfiguration(configurationStore{saved: opts.AfterConfigSave}),
+		opts:          opts,
+		login:         newWebLoginManager(opts),
+		sessions:      map[string]time.Time{},
+		logins:        map[string]loginFailure{},
 	}
 	server.dialogs = opts.Dialogs
 	if server.dialogs == nil {
 		server.dialogs = accounttelegram.NewDialogs(login.DialogTransport{Options: func() login.SessionOptions { return server.login.sessionOptions(server.namespace(), opts.NamespaceKV) }})
 	}
 	server.sessionCatalog = accounttelegram.NewSessions(server.namespace(), tgauth.SessionRepository{Engine: opts.KVEngine, Connections: opts.Connections})
-	server.downloadLinksPort = downloadcontrol.NewLinkControl(types.AccountID(server.namespace()), taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}, server.internalDownloadController())
+	server.downloadLinksPort = downloadcontrol.NewLinkControl(types.AccountID(server.namespace()), taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}, server.localDownloadController())
 	server.downloadCatalogPort = downloadcontrol.NewCatalog(types.AccountID(server.namespace()), catalogAdapter{server: server, repository: taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}})
 	server.accountActions = accounttelegram.NewActions(opts.Context, types.AccountID(server.namespace()), server.sessionCatalog, accountSelection{}, login.SpamProbe{Options: func() login.SessionOptions { return server.login.sessionOptions(server.namespace(), opts.NamespaceKV) }})
 	return server
@@ -240,48 +216,44 @@ func (s *Server) routes() http.Handler {
 	staticFS, _ := fs.Sub(s.assets, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	handlers := map[string]http.HandlerFunc{
-		"/login":                          s.handleLoginPage,
-		"/api/auth/session":               s.handleAuthSession,
-		"/api/auth/login":                 s.handleAuthLogin,
-		"/api/auth/logout":                s.handleAuthLogout,
-		"/views/":                         s.handleViewAsset,
-		"/components.html":                s.handleAsset("components.html", "text/html; charset=utf-8"),
-		"/aria2ng.html":                   s.handleAsset("aria2ng.html", "text/html; charset=utf-8"),
-		"/aria2/jsonrpc":                  s.handleAria2Proxy,
-		"/api/heartbeat":                  s.handleHeartbeat,
-		"/api/events":                     s.handleEvents,
-		"/api/dashboard":                  s.handleDashboard,
-		"/api/status":                     s.handleStatus,
-		"/api/aria2/check":                s.handleAria2Check,
-		"/api/internal-downloads":         s.handleInternalDownloads,
-		"/api/download-tasks":             s.handleDownloadTasks,
-		"/api/download-tasks/actions":     s.handleDownloadTaskActions,
-		"/api/internal-downloads/actions": s.handleInternalDownloadActions,
-		"/api/forwards":                   s.handleForwards,
-		"/api/forwards/actions":           s.handleForwardActions,
-		"/api/kv/links":                   s.handleKVLinks,
-		"/api/kv/links/actions":           s.handleKVActions,
-		"/api/kv/links/":                  s.handleKVLink,
-		"/api/user":                       s.handleUser,
-		"/api/dialogs":                    s.handleDialogs,
-		"/api/user/switch":                s.handleUserSwitch,
-		"/api/user/delete":                s.handleUserDelete,
-		"/api/user/spam-check":            s.handleSpamCheck,
-		"/api/login/status":               s.handleLoginStatus,
-		"/api/login/phone/start":          s.handleLoginPhoneStart,
-		"/api/login/code":                 s.handleLoginCode,
-		"/api/login/password":             s.handleLoginPassword,
-		"/api/login/cancel":               s.handleLoginCancel,
-		"/api/modules":                    s.handleModules,
-		"/api/components":                 s.handleComponents,
-		"/api/components/health":          s.handleComponentHealth,
-		"/api/logs":                       s.handleLogs,
-		"/api/config":                     s.handleConfig,
-		"/api/update/check":               s.handleUpdateCheck,
-		"/api/update/apply":               s.handleUpdateApply,
-		"/api/system/reboot":              s.handleReboot,
-		"/api/system/reset":               s.handleReset,
-		"/":                               s.handleAppShell,
+		"/login":                      s.handleLoginPage,
+		"/api/auth/session":           s.handleAuthSession,
+		"/api/auth/login":             s.handleAuthLogin,
+		"/api/auth/logout":            s.handleAuthLogout,
+		"/views/":                     s.handleViewAsset,
+		"/aria2ng.html":               s.handleAsset("aria2ng.html", "text/html; charset=utf-8"),
+		"/aria2/jsonrpc":              s.handleAria2Proxy,
+		"/api/heartbeat":              s.handleHeartbeat,
+		"/api/events":                 s.handleEvents,
+		"/api/dashboard":              s.handleDashboard,
+		"/api/status":                 s.handleStatus,
+		"/api/aria2/check":            s.handleAria2Check,
+		"/api/download-tasks":         s.handleDownloadTasks,
+		"/api/download-tasks/actions": s.handleDownloadTaskActions,
+		"/api/forwards":               s.handleForwards,
+		"/api/forwards/actions":       s.handleForwardActions,
+		"/api/kv/links":               s.handleKVLinks,
+		"/api/kv/links/actions":       s.handleKVActions,
+		"/api/kv/links/":              s.handleKVLink,
+		"/api/user":                   s.handleUser,
+		"/api/dialogs":                s.handleDialogs,
+		"/api/user/switch":            s.handleUserSwitch,
+		"/api/user/delete":            s.handleUserDelete,
+		"/api/user/spam-check":        s.handleSpamCheck,
+		"/api/login/status":           s.handleLoginStatus,
+		"/api/login/phone/start":      s.handleLoginPhoneStart,
+		"/api/login/code":             s.handleLoginCode,
+		"/api/login/password":         s.handleLoginPassword,
+		"/api/login/cancel":           s.handleLoginCancel,
+		"/api/components":             s.handleComponents,
+		"/api/components/health":      s.handleComponentHealth,
+		"/api/logs":                   s.handleLogs,
+		"/api/config":                 s.handleConfig,
+		"/api/update/check":           s.handleUpdateCheck,
+		"/api/update/apply":           s.handleUpdateApply,
+		"/api/system/reboot":          s.handleReboot,
+		"/api/system/reset":           s.handleReset,
+		"/":                           s.handleAppShell,
 	}
 	for _, route := range application.WebRoutes(s.opts.Catalog) {
 		handler := handlers[route.Path]
@@ -335,8 +307,8 @@ func (s *Server) namespace() string {
 	return fieldDefault
 }
 
-func (s *Server) internalDownloadController() *watch.InternalDownloadController {
-	return watch.NewInternalDownloadController(s.opts.NamespaceKV)
+func (s *Server) localDownloadController() *local.Controller {
+	return local.NewController(taskhub.NewLocalRepository(s.opts.NamespaceKV))
 }
 
 func (s *Server) watchRunning() bool {

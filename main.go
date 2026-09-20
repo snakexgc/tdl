@@ -11,13 +11,14 @@ import (
 
 	"github.com/snakexgc/tdl/app/bot"
 	"github.com/snakexgc/tdl/app/reset"
-	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/cmd"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "__apply-update" {
-		if err := updater.RunApply(os.Args[2:]); err != nil {
+		if err := application.RunUpdateApply(os.Args[2:]); err != nil {
 			os.Exit(1)
 		}
 		return
@@ -75,13 +76,13 @@ func restartCurrentProcess() error {
 		return errors.Wrap(err, "get working directory")
 	}
 
-	return updater.StartAttached(exe, os.Args[1:], cwd)
+	return application.StartAttached(exe, os.Args[1:], cwd)
 }
 
-func startUpdate(plan updater.Plan) error {
+func startUpdate(plan types.UpdatePlan) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return errors.Wrap(err, "get executable path")
 	}
-	return updater.StartApply(plan, exe, os.Args[1:])
+	return application.StartUpdateApply(plan, exe, os.Args[1:])
 }

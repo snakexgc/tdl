@@ -119,7 +119,7 @@ type loginCredentials struct {
 	target types.AccountID
 }
 
-func (c loginCredentials) Resolve(ctx context.Context, account types.AccountID, preset string) (types.TelegramCredentials, error) {
+func (c loginCredentials) Resolve(ctx context.Context, account types.AccountID) (types.TelegramCredentials, error) {
 	if account != c.target {
 		return types.TelegramCredentials{}, errors.New("login credential account mismatch")
 	}
@@ -127,7 +127,7 @@ func (c loginCredentials) Resolve(ctx context.Context, account types.AccountID, 
 	if owner == "" {
 		owner = types.DefaultAccount
 	}
-	return c.source.Resolve(ctx, owner, preset)
+	return c.source.Resolve(ctx, owner)
 }
 
 type webCodeAuthenticator struct {

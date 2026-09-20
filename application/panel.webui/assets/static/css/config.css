@@ -54,10 +54,6 @@
   gap: 24px;
 }
 
-.legacy-network-advanced > summary {
-  padding: 8px 24px;
-}
-
 .config-section {
   overflow: hidden;
 }

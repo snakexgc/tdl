@@ -24,45 +24,45 @@ const (
 	localStatusRemoved  = "removed"
 )
 
-const internalCommandTimeout = 30 * time.Second
+const localCommandTimeout = 30 * time.Second
 
-type internalDownloadControllerFactory func() *localDownloadControl
+type localDownloadControllerFactory func() *localDownloadControl
 
-func handleInternalDownloadCommand(
+func handleLocalDownloadCommand(
 	ctx *th.Context,
 	msg *telego.Message,
 	text string,
-	factory internalDownloadControllerFactory,
+	factory localDownloadControllerFactory,
 ) (bool, error) {
 	switch text {
 	case aria2MenuActive:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterInternalDownloads(localStatusActive))
+		return true, sendLocalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterLocalDownloads(localStatusActive))
 	case aria2MenuWaiting:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterInternalDownloads(localStatusQueued, localStatusPaused))
+		return true, sendLocalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterLocalDownloads(localStatusQueued, localStatusPaused))
 	case aria2MenuStopped:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterInternalDownloads(localStatusComplete, localStatusError, localStatusRemoved))
+		return true, sendLocalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterLocalDownloads(localStatusComplete, localStatusError, localStatusRemoved))
 	case aria2MenuPauseTask:
-		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要暂停的本地下载任务：", "pause", factory, filterInternalDownloads(localStatusActive, localStatusQueued, localStatusError))
+		return true, sendLocalDownloadButtons(ctx, msg.Chat.ID, "请选择要暂停的本地下载任务：", "pause", factory, filterLocalDownloads(localStatusActive, localStatusQueued, localStatusError))
 	case aria2MenuUnpauseTask:
-		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要恢复的本地下载任务：", "start", factory, filterInternalDownloads(localStatusPaused, localStatusError))
+		return true, sendLocalDownloadButtons(ctx, msg.Chat.ID, "请选择要恢复的本地下载任务：", "start", factory, filterLocalDownloads(localStatusPaused, localStatusError))
 	case aria2MenuRemoveTask:
-		return true, sendInternalDownloadButtons(ctx, msg.Chat.ID, "请选择要删除的本地下载任务：", "delete", factory, filterInternalDownloads(localStatusActive, localStatusQueued, localStatusPaused, localStatusError))
+		return true, sendLocalDownloadButtons(ctx, msg.Chat.ID, "请选择要删除的本地下载任务：", "delete", factory, filterLocalDownloads(localStatusActive, localStatusQueued, localStatusPaused, localStatusError))
 	case aria2MenuClearStopped:
-		items, err := runInternalDownloadList(ctx, factory)
+		items, err := runLocalDownloadList(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取本地下载任务失败：%v", err))
 		}
-		ids := internalDownloadIDs(filterInternalDownloads(localStatusComplete, localStatusError, localStatusRemoved)(items))
+		ids := localDownloadIDs(filterLocalDownloads(localStatusComplete, localStatusError, localStatusRemoved)(items))
 		if len(ids) == 0 {
 			return true, sendMessage(ctx, msg.Chat.ID, "当前没有已完成/停止的本地下载任务。")
 		}
-		result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
+		result, err := runLocalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
 			return controller.Delete(ctx, ids)
 		})
 		if err != nil {
-			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("清空内部下载已完成/停止任务失败：%v", err))
+			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("清空本地下载已完成/停止任务失败：%v", err))
 		}
-		return true, sendMessage(ctx, msg.Chat.ID, formatInternalDownloadActionResult("清空已完成/停止任务", result))
+		return true, sendMessage(ctx, msg.Chat.ID, formatLocalDownloadActionResult("清空已完成/停止任务", result))
 	case aria2MenuClose:
 		_, err := ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(msg.Chat.ID), "键盘已关闭，发送 /menu 可重新打开。").WithReplyMarkup(tu.ReplyKeyboardRemove()))
 		return true, err
@@ -71,39 +71,39 @@ func handleInternalDownloadCommand(
 	cmd, _, _ := tu.ParseCommandPayload(text)
 	switch "/" + cmd {
 	case botCmdStart, botCmdMenu:
-		return true, sendInternalDownloadMenu(ctx, msg.Chat.ID, msg.From.ID)
+		return true, sendLocalDownloadMenu(ctx, msg.Chat.ID, msg.From.ID)
 	case botCmdHelp:
-		return true, sendMessage(ctx, msg.Chat.ID, internalDownloadBotHelpMessage(msg.From.ID))
-	case botCmdInfo, botCmdDownloadsOverview, botCmdInternalOverview:
-		items, err := runInternalDownloadList(ctx, factory)
+		return true, sendMessage(ctx, msg.Chat.ID, localDownloadBotHelpMessage(msg.From.ID))
+	case botCmdInfo, botCmdDownloadsOverview:
+		items, err := runLocalDownloadList(ctx, factory)
 		if err != nil {
 			return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("获取本地下载任务总览失败：%v", err))
 		}
-		return true, sendMessage(ctx, msg.Chat.ID, formatInternalDownloadOverview(items))
-	case botCmdDownloads, botCmdDownloadsHelp, botCmdInternal, botCmdInternalHelp:
-		return true, sendMessage(ctx, msg.Chat.ID, internalDownloadHelpMessage())
-	case botCmdDownloadsActive, botCmdInternalActive:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterInternalDownloads(localStatusActive))
-	case botCmdDownloadsWaiting, botCmdInternalWaiting:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterInternalDownloads(localStatusQueued, localStatusPaused))
-	case botCmdDownloadsStopped, botCmdInternalStopped:
-		return true, sendInternalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterInternalDownloads(localStatusComplete, localStatusError, localStatusRemoved))
-	case botCmdDownloadsPauseAll, botCmdInternalPauseAll:
-		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "暂停全部", factory, filterInternalDownloads(localStatusActive, localStatusQueued, localStatusError), func(ctx context.Context, controller *localDownloadControl, ids []string) (types.DownloadActionResult, error) {
+		return true, sendMessage(ctx, msg.Chat.ID, formatLocalDownloadOverview(items))
+	case botCmdDownloads:
+		return true, sendMessage(ctx, msg.Chat.ID, localDownloadHelpMessage())
+	case botCmdDownloadsActive:
+		return true, sendLocalDownloadList(ctx, msg.Chat.ID, "本地下载器正在下载的任务：", factory, filterLocalDownloads(localStatusActive))
+	case botCmdDownloadsWaiting:
+		return true, sendLocalDownloadList(ctx, msg.Chat.ID, "本地下载器正在等待/暂停的任务：", factory, filterLocalDownloads(localStatusQueued, localStatusPaused))
+	case botCmdDownloadsStopped:
+		return true, sendLocalDownloadList(ctx, msg.Chat.ID, "本地下载器已完成/停止的任务：", factory, filterLocalDownloads(localStatusComplete, localStatusError, localStatusRemoved))
+	case botCmdDownloadsPauseAll:
+		return true, runLocalDownloadBulkCommand(ctx, msg.Chat.ID, "暂停全部", factory, filterLocalDownloads(localStatusActive, localStatusQueued, localStatusError), func(ctx context.Context, controller *localDownloadControl, ids []string) (types.DownloadActionResult, error) {
 			return controller.Pause(ctx, ids)
 		})
-	case botCmdDownloadsStartAll, botCmdInternalStartAll:
-		return true, runInternalDownloadBulkCommand(ctx, msg.Chat.ID, "开始全部", factory, filterInternalDownloads(localStatusPaused, localStatusError), func(ctx context.Context, controller *localDownloadControl, ids []string) (types.DownloadActionResult, error) {
+	case botCmdDownloadsStartAll:
+		return true, runLocalDownloadBulkCommand(ctx, msg.Chat.ID, "开始全部", factory, filterLocalDownloads(localStatusPaused, localStatusError), func(ctx context.Context, controller *localDownloadControl, ids []string) (types.DownloadActionResult, error) {
 			return controller.Start(ctx, ids)
 		})
-	case botCmdAria2, botCmdAria2Help, botCmdAria2Active, botCmdAria2Waiting, botCmdAria2Stopped, botCmdAria2Overview, botCmdAria2PauseAll, botCmdAria2StartAll, botCmdAria2Retry:
-		return true, sendMessage(ctx, msg.Chat.ID, "当前 downloader.mode=local，请使用 /downloads 或 /menu 管理本地下载器。")
+	case botCmdAria2Retry:
+		return true, sendMessage(ctx, msg.Chat.ID, "当前使用本地下载器，请使用 /downloads 或 /menu 管理本地下载器。")
 	default:
 		return false, nil
 	}
 }
 
-func sendInternalDownloadMenu(ctx *th.Context, chatID int64, userID int64) error {
+func sendLocalDownloadMenu(ctx *th.Context, chatID int64, userID int64) error {
 	_, err := ctx.Bot().SendMessage(ctx, tu.Message(
 		tu.ID(chatID),
 		fmt.Sprintf("本地下载器控制面板已就绪。\n您的用户 ID：%d\n\n这里可查看、暂停、恢复和删除 watch 创建的本地下载任务；发送 Telegram 消息链接可直接按 watch 流程提交下载。", userID),
@@ -111,7 +111,7 @@ func sendInternalDownloadMenu(ctx *th.Context, chatID int64, userID int64) error
 	return err
 }
 
-func internalDownloadHelpMessage() string {
+func localDownloadHelpMessage() string {
 	return strings.Join([]string{
 		"本地下载器管理命令：",
 		"/start 或 /menu 打开控制键盘",
@@ -125,40 +125,40 @@ func internalDownloadHelpMessage() string {
 	}, "\n")
 }
 
-func internalDownloadBotHelpMessage(userID int64) string {
+func localDownloadBotHelpMessage(userID int64) string {
 	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n任务总览：/info\n提交下载：发送 Telegram 消息链接\n当前下载器：local\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
-func runInternalDownloadList(ctx context.Context, factory internalDownloadControllerFactory) ([]types.DownloadTask, error) {
+func runLocalDownloadList(ctx context.Context, factory localDownloadControllerFactory) ([]types.DownloadTask, error) {
 	if factory == nil {
-		return nil, fmt.Errorf("internal download controller is not configured")
+		return nil, fmt.Errorf("local download controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(ctx, internalCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, localCommandTimeout)
 	defer cancel()
 	return factory().List(cmdCtx)
 }
 
-func runInternalDownloadAction(
+func runLocalDownloadAction(
 	ctx context.Context,
-	factory internalDownloadControllerFactory,
+	factory localDownloadControllerFactory,
 	action func(context.Context, *localDownloadControl) (types.DownloadActionResult, error),
 ) (types.DownloadActionResult, error) {
 	if factory == nil {
-		return types.DownloadActionResult{}, fmt.Errorf("internal download controller is not configured")
+		return types.DownloadActionResult{}, fmt.Errorf("local download controller is not configured")
 	}
-	cmdCtx, cancel := context.WithTimeout(ctx, internalCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, localCommandTimeout)
 	defer cancel()
 	return action(cmdCtx, factory())
 }
 
-func sendInternalDownloadList(
+func sendLocalDownloadList(
 	ctx *th.Context,
 	chatID int64,
 	title string,
-	factory internalDownloadControllerFactory,
+	factory localDownloadControllerFactory,
 	filter func([]types.DownloadTask) []types.DownloadTask,
 ) error {
-	items, err := runInternalDownloadList(ctx, factory)
+	items, err := runLocalDownloadList(ctx, factory)
 	if err != nil {
 		return sendMessage(ctx, chatID, fmt.Sprintf("获取本地下载任务失败：%v", err))
 	}
@@ -166,18 +166,18 @@ func sendInternalDownloadList(
 	if len(items) == 0 {
 		return sendMessage(ctx, chatID, strings.TrimSuffix(title, "：")+"为空。")
 	}
-	return sendMessage(ctx, chatID, formatInternalDownloads(title, items))
+	return sendMessage(ctx, chatID, formatLocalDownloads(title, items))
 }
 
-func sendInternalDownloadButtons(
+func sendLocalDownloadButtons(
 	ctx *th.Context,
 	chatID int64,
 	title string,
 	action string,
-	factory internalDownloadControllerFactory,
+	factory localDownloadControllerFactory,
 	filter func([]types.DownloadTask) []types.DownloadTask,
 ) error {
-	items, err := runInternalDownloadList(ctx, factory)
+	items, err := runLocalDownloadList(ctx, factory)
 	if err != nil {
 		return sendMessage(ctx, chatID, fmt.Sprintf("获取本地下载任务失败：%v", err))
 	}
@@ -192,8 +192,8 @@ func sendInternalDownloadButtons(
 			continue
 		}
 		rows = append(rows, tu.InlineKeyboardRow(telego.InlineKeyboardButton{
-			Text:         truncateRunes(internalDownloadName(item), 56),
-			CallbackData: fmt.Sprintf("internal:%s:%s", action, item.ID),
+			Text:         truncateRunes(localDownloadName(item), 56),
+			CallbackData: fmt.Sprintf("local:%s:%s", action, item.ID),
 		}))
 	}
 	if len(rows) == 0 {
@@ -204,33 +204,33 @@ func sendInternalDownloadButtons(
 	return err
 }
 
-func runInternalDownloadBulkCommand(
+func runLocalDownloadBulkCommand(
 	ctx *th.Context,
 	chatID int64,
 	actionName string,
-	factory internalDownloadControllerFactory,
+	factory localDownloadControllerFactory,
 	filter func([]types.DownloadTask) []types.DownloadTask,
 	action func(context.Context, *localDownloadControl, []string) (types.DownloadActionResult, error),
 ) error {
-	items, err := runInternalDownloadList(ctx, factory)
+	items, err := runLocalDownloadList(ctx, factory)
 	if err != nil {
 		return sendMessage(ctx, chatID, fmt.Sprintf("获取本地下载任务失败：%v", err))
 	}
-	ids := internalDownloadIDs(filter(items))
+	ids := localDownloadIDs(filter(items))
 	if len(ids) == 0 {
 		return sendMessage(ctx, chatID, "当前没有可操作的本地下载任务。")
 	}
-	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
+	result, err := runLocalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
 		return action(ctx, controller, ids)
 	})
 	if err != nil {
 		return sendMessage(ctx, chatID, fmt.Sprintf("%s本地下载任务失败：%v", actionName, err))
 	}
-	return sendMessage(ctx, chatID, formatInternalDownloadActionResult(actionName, result))
+	return sendMessage(ctx, chatID, formatLocalDownloadActionResult(actionName, result))
 }
 
-func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery, factory internalDownloadControllerFactory) error {
-	if !strings.HasPrefix(query.Data, "internal:") {
+func handleLocalDownloadCallback(ctx *th.Context, query telego.CallbackQuery, factory localDownloadControllerFactory) error {
+	if !strings.HasPrefix(query.Data, "local:") {
 		return nil
 	}
 	parts := strings.SplitN(query.Data, ":", 3)
@@ -244,12 +244,12 @@ func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery,
 	}
 	if factory == nil {
 		_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("本地下载器未配置。"))
-		return sendMessage(ctx, chatID, "internal download controller is not configured")
+		return sendMessage(ctx, chatID, "local download controller is not configured")
 	}
 
 	action, id := parts[1], parts[2]
 	var done string
-	result, err := runInternalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
+	result, err := runLocalDownloadAction(ctx, factory, func(ctx context.Context, controller *localDownloadControl) (types.DownloadActionResult, error) {
 		switch action {
 		case actionPause:
 			done = "暂停成功"
@@ -273,10 +273,10 @@ func handleInternalDownloadCallback(ctx *th.Context, query telego.CallbackQuery,
 	}
 
 	_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText(done))
-	return sendMessage(ctx, chatID, fmt.Sprintf("%s：%s\n%s", done, id, formatInternalDownloadActionResult("操作结果", result)))
+	return sendMessage(ctx, chatID, fmt.Sprintf("%s：%s\n%s", done, id, formatLocalDownloadActionResult("操作结果", result)))
 }
 
-func filterInternalDownloads(statuses ...string) func([]types.DownloadTask) []types.DownloadTask {
+func filterLocalDownloads(statuses ...string) func([]types.DownloadTask) []types.DownloadTask {
 	allowed := make(map[string]struct{}, len(statuses))
 	for _, status := range statuses {
 		allowed[status] = struct{}{}
@@ -296,7 +296,7 @@ func filterInternalDownloads(statuses ...string) func([]types.DownloadTask) []ty
 	}
 }
 
-func internalDownloadIDs(items []types.DownloadTask) []string {
+func localDownloadIDs(items []types.DownloadTask) []string {
 	ids := make([]string, 0, len(items))
 	for _, item := range items {
 		if item.ID != "" {
@@ -306,7 +306,7 @@ func internalDownloadIDs(items []types.DownloadTask) []string {
 	return ids
 }
 
-func formatInternalDownloads(title string, items []types.DownloadTask) string {
+func formatLocalDownloads(title string, items []types.DownloadTask) string {
 	const limit = 20
 
 	parts := []string{title}
@@ -316,8 +316,8 @@ func formatInternalDownloads(title string, items []types.DownloadTask) string {
 			break
 		}
 		lines := []string{
-			fmt.Sprintf("任务名称: %s", internalDownloadName(item)),
-			fmt.Sprintf("状态: %s", formatInternalDownloadStatus(item.Status)),
+			fmt.Sprintf("任务名称: %s", localDownloadName(item)),
+			fmt.Sprintf("状态: %s", formatLocalDownloadStatus(item.Status)),
 			fmt.Sprintf("进度: %s", formatAria2Progress(item.Total, item.Completed)),
 			fmt.Sprintf("大小: %s", formatAria2Size(item.Total)),
 			fmt.Sprintf("路径: %s", valueOrUnknown(item.Path)),
@@ -330,7 +330,7 @@ func formatInternalDownloads(title string, items []types.DownloadTask) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func formatInternalDownloadOverview(items []types.DownloadTask) string {
+func formatLocalDownloadOverview(items []types.DownloadTask) string {
 	counts := map[string]int{}
 	var remainingBytes int64
 	for _, item := range items {
@@ -351,11 +351,11 @@ func formatInternalDownloadOverview(items []types.DownloadTask) string {
 		"本地下载器任务总览：",
 		fmt.Sprintf("任务总数：%d", len(items)),
 		fmt.Sprintf("剩余下载量：%s", utils.Byte.FormatBinaryBytes(remainingBytes)),
-		"状态分布：" + formatInternalDownloadStatusCounts(counts),
+		"状态分布：" + formatLocalDownloadStatusCounts(counts),
 	}, "\n")
 }
 
-func formatInternalDownloadActionResult(action string, result types.DownloadActionResult) string {
+func formatLocalDownloadActionResult(action string, result types.DownloadActionResult) string {
 	parts := []string{
 		action + "完成。",
 		fmt.Sprintf("匹配任务：%d", result.Matched),
@@ -371,7 +371,7 @@ func formatInternalDownloadActionResult(action string, result types.DownloadActi
 	return strings.Join(parts, "\n")
 }
 
-func formatInternalDownloadStatusCounts(counts map[string]int) string {
+func formatLocalDownloadStatusCounts(counts map[string]int) string {
 	if len(counts) == 0 {
 		return "(无)"
 	}
@@ -383,12 +383,12 @@ func formatInternalDownloadStatusCounts(counts map[string]int) string {
 
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%d", formatInternalDownloadStatus(key), counts[key]))
+		parts = append(parts, fmt.Sprintf("%s=%d", formatLocalDownloadStatus(key), counts[key]))
 	}
 	return strings.Join(parts, ", ")
 }
 
-func formatInternalDownloadStatus(status string) string {
+func formatLocalDownloadStatus(status string) string {
 	switch status {
 	case "", localStatusQueued:
 		return "等待中"
@@ -407,7 +407,7 @@ func formatInternalDownloadStatus(status string) string {
 	}
 }
 
-func internalDownloadName(item types.DownloadTask) string {
+func localDownloadName(item types.DownloadTask) string {
 	switch {
 	case strings.TrimSpace(item.FileName) != "":
 		return strings.TrimSpace(item.FileName)

@@ -8,13 +8,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/ports"
-	"github.com/snakexgc/tdl/internal/componentconfig"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 	"github.com/snakexgc/tdl/rte"
-	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 const (
@@ -91,18 +88,8 @@ func TestProductionComponentToggleRetainsIndependentInstances(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
-	catalog, err := application.Catalog()
-	require.NoError(t, err)
-	documents, err := componentconfig.Export(cfg, catalog)
-	require.NoError(t, err)
-	path := t.TempDir()
-	store := rteconfig.NewStore(path)
-	for id, document := range documents {
-		view, err := catalog.View(ctx, id, document.Values)
-		require.NoError(t, err)
-		require.NoError(t, store.Save(ctx, id, document.Enabled, view))
-	}
-	manager := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentConfigDir: path})
+	store := newStoppedComponentStore(t)
+	manager := NewManager(config.WithSource(ctx, config.NewSource(cfg)), nil, nil, Options{ComponentStore: store})
 	t.Cleanup(manager.Shutdown)
 	require.NoError(t, manager.configurationErr)
 	accountOwner, policyOwner := manager.accountHost, manager.policies

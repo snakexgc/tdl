@@ -47,21 +47,16 @@ func (r Aria2Observations) Snapshot(ctx context.Context) (ports.Aria2Observation
 			if err := json.Unmarshal(data, &task); err != nil {
 				return snapshot, err
 			}
-			if task.ID != "" && task.ID != id {
+			if task.ID != id {
 				continue
 			}
-			task.ID = id
 			snapshot.Links[id] = ports.ObservedLink{Task: task, Version: linkVersion(data)}
 		case strings.HasPrefix(key, Aria2Prefix) && key != Aria2Index:
 			gid := strings.TrimPrefix(key, Aria2Prefix)
-			var record types.Aria2TaskRecord
-			if err := json.Unmarshal(data, &record); err != nil {
+			record, err := DecodeAria2Record(data, gid)
+			if err != nil {
 				return snapshot, err
 			}
-			if record.GID != "" && record.GID != gid {
-				continue
-			}
-			record.GID = gid
 			snapshot.Records[gid] = record
 		}
 	}
@@ -106,8 +101,8 @@ func (r Aria2Observations) Apply(ctx context.Context, source ports.ObservedLink,
 		}
 		raw := map[string]json.RawMessage{}
 		if !create {
-			var current types.Aria2TaskRecord
-			if err := json.Unmarshal(data, &current); err != nil {
+			current, err := DecodeAria2Record(data, observed.GID)
+			if err != nil {
 				return err
 			}
 			if current.Deleted || current.Revision != observed.Revision || current.ControlUntil.After(now) || current.TaskID != observed.TaskID || !types.DownloadTransition(types.NormalizeDownloadState(current.Status), types.NormalizeDownloadState(observed.Status)) {

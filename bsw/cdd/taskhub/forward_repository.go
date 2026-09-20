@@ -138,11 +138,8 @@ func decodeForwardJob(id string, data []byte) (types.ForwardJob, error) {
 	if err := json.Unmarshal(data, &job); err != nil {
 		return types.ForwardJob{}, errors.Wrap(err, "decode forward job")
 	}
-	if job.ID == "" {
-		job.ID = id
-	}
-	if job.Status == "" {
-		job.Status = types.StatusQueued
+	if job.ID != id || job.Status == "" {
+		return types.ForwardJob{}, errors.New("invalid forward job identity or status")
 	}
 	return job, nil
 }

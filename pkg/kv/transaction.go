@@ -9,7 +9,7 @@ import (
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
-func (l *legacyKV) Update(ctx context.Context, fn func(storage.Storage) error) error {
+func (l *boltNamespace) Update(ctx context.Context, fn func(storage.Storage) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

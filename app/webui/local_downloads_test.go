@@ -3,7 +3,6 @@ package webui
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/kv"
 )
 
 const testQueueDefault = "default"
@@ -33,22 +31,22 @@ func savedLinksForTest(t *testing.T, store storage.Storage, cfg *config.Config) 
 	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
 	value, err := host.Resolve(ports.NamingRulesName)
 	require.NoError(t, err)
-	return local.SavedLinks{Account: types.DefaultAccount, Root: cfg.Downloader.LocalRoot, FallbackRoot: filepath.Join(t.TempDir(), "downloads"), Naming: value.(ports.NamingRules), Source: httpdl.NewTaskStore(store, 0), Repository: taskhub.NewLocalRepository(store)}
+	return local.SavedLinks{Account: types.DefaultAccount, Root: t.TempDir(), Naming: value.(ports.NamingRules), Source: httpdl.NewTaskStore(store, 0), Repository: taskhub.NewLocalRepository(store)}
 }
 
-func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
+func TestDownloadLinksUsesLocalDownloaderMode(t *testing.T) {
 	initWebUITestConfig(t)
 
 	cfg := config.Get()
-	oldMode := cfg.Downloader.Mode
+	oldMode := cfg.Downloader.Executors
 	oldDir := cfg.Aria2.Dir
 	oldDownloadDir := cfg.DownloadDir
 	defer func() {
-		cfg.Downloader.Mode = oldMode
+		cfg.Downloader.Executors = oldMode
 		cfg.Aria2.Dir = oldDir
 		cfg.DownloadDir = oldDownloadDir
 	}()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
 	cfg.Aria2.Dir = t.TempDir()
 	cfg.DownloadDir = "P"
 
@@ -70,13 +68,14 @@ func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 		"created_at":"` + createdAt.Format(time.RFC3339Nano) + `"
 	}`)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskKeyPrefix + "document_42": taskData,
 		},
 	}}
 	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
+	indexCatalogFixtures(t, engine)
 	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV, LocalLinks: savedLinksForTest(t, namespaceKV, cfg)})
 
 	result := server.downloadLinks(context.Background(), []string{"document_42"})
@@ -87,12 +86,12 @@ func TestDownloadLinksUsesInternalDownloaderMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, statusErr)
 	require.Len(t, items, 1)
-	require.Len(t, items[0].Internal, 1)
-	require.Equal(t, watch.InternalDownloadStatusQueued, items[0].Internal[0].Status)
-	require.Contains(t, items[0].Internal[0].Path, "12345")
+	require.Len(t, items[0].Local, 1)
+	require.Equal(t, types.LocalDownloadStatusQueued, items[0].Local[0].Status)
+	require.Contains(t, items[0].Local[0].Path, "12345")
 }
 
-func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.T) {
+func TestMarkDownloadTaskDownloadedPreservesLocalDownloadMetadata(t *testing.T) {
 	initWebUITestConfig(t)
 
 	cfg := config.Get()
@@ -122,7 +121,7 @@ func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.
 		"created_at":"2026-05-01T08:00:00Z"
 	}`)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskKeyPrefix + "document_42": taskData,
 		},
@@ -149,19 +148,19 @@ func TestMarkDownloadTaskDownloadedPreservesInternalDownloadMetadata(t *testing.
 
 	_, err = savedLinksForTest(t, namespaceKV, cfg).Submit(context.Background(), types.DownloadSubmission{Account: types.DefaultAccount, TaskID: "document_42"})
 	require.NoError(t, err)
-	items, err := watch.NewInternalDownloadController(namespaceKV).List(context.Background())
+	items, err := local.NewController(taskhub.NewLocalRepository(namespaceKV)).List(context.Background())
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, watch.InternalDownloadStatusQueued, items[0].Status)
+	require.Equal(t, types.LocalDownloadStatusQueued, items[0].Status)
 }
 
 func TestDownloadLinksUsesCompletedHTTPDeliveryStatus(t *testing.T) {
 	initWebUITestConfig(t)
 
 	cfg := config.Get()
-	oldMode := cfg.Downloader.Mode
-	defer func() { cfg.Downloader.Mode = oldMode }()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
+	oldMode := cfg.Downloader.Executors
+	defer func() { cfg.Downloader.Executors = oldMode }()
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
 
 	completedAt := time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC)
 	taskData := []byte(`{
@@ -175,13 +174,14 @@ func TestDownloadLinksUsesCompletedHTTPDeliveryStatus(t *testing.T) {
 		"http_delivery":{"file_size":100,"completed_at":"` + completedAt.Format(time.RFC3339Nano) + `"}
 	}`)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskKeyPrefix + "document_42": taskData,
 		},
 	}}
 	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
+	indexCatalogFixtures(t, engine)
 	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
 
 	items, statusErr, err := server.listDownloadLinks(context.Background())

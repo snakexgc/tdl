@@ -1,4 +1,4 @@
-// swc-check validates the component composition without opening legacy config,
+// swc-check validates the component composition without opening configuration,
 // databases, Telegram connections, or HTTP listeners.
 package main
 
@@ -11,12 +11,10 @@ import (
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
 )
 
 func main() {
 	empty := flag.Bool("empty", false, "validate an empty component registry")
-	configDir := flag.String("config-dir", "", "load versioned per-component configuration")
 	flag.Parse()
 	registry := rte.NewRegistry()
 	if !*empty {
@@ -27,20 +25,14 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if err := check(registry, *configDir); err != nil {
+	if err := check(registry); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func check(registry *rte.Registry, configDir string) error {
-	var run *rte.Runtime
-	var err error
-	if configDir == "" {
-		run, err = registry.Build(types.DefaultAccount, nil, nil)
-	} else {
-		run, err = registry.BuildStored(context.Background(), types.DefaultAccount, config.NewStore(configDir))
-	}
+func check(registry *rte.Registry) error {
+	run, err := registry.Build(types.DefaultAccount, nil, nil)
 	if err != nil {
 		return err
 	}

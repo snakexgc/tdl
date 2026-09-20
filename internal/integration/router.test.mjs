@@ -6,7 +6,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 // Exercise the generic loader without a browser, a build step or third-party DOM.
-test("declared pages mount lazily, redirect aliases, preserve query and guide disabled features", async () => {
+test("declared pages mount lazily, preserve query and guide disabled features", async () => {
   class Element {
     constructor() {
       this.children = [];
@@ -30,7 +30,6 @@ test("declared pages mount lazily, redirect aliases, preserve query and guide di
       { path: "/example", title: "Example", view: "example", module: "/static/js/example.js" },
       { path: "/other", title: "Other", view: "other", module: "/static/js/other.js" },
       { path: "/logs", title: "Logs", view: "logs", module: "/static/js/logs.js" },
-      { path: "/old", title: "Old", nav_hidden: true, redirect_to: "/other?tab=links#details" },
     ] },
     { id: "disabled", enabled: false, pages: [{ path: "/disabled", title: "Disabled", view: "disabled" }] },
     { id: "sleeping", enabled: false, pages: [{ path: "/sleeping", title: "Sleeping", view: "sleeping", keep_visible: true, settings_url: "/example?tab=settings" }] },
@@ -88,7 +87,7 @@ test("declared pages mount lazily, redirect aliases, preserve query and guide di
   await router.namespace.navigate("disabled");
   assert.equal(find(host, "page-unavailable").hidden, false);
   assert(!fetched.includes("/views/disabled.html"));
-  await router.namespace.navigate("/old");
+  await router.namespace.navigate("/other?tab=links#details");
   assert(calls.some(([module, action, query, hash]) => module.endsWith("other.js") && action === "load" && query === "?tab=links" && hash === "#details"));
   assert(!fetched.includes("/views/old.html"));
   await router.namespace.navigate("/sleeping");
@@ -96,7 +95,7 @@ test("declared pages mount lazily, redirect aliases, preserve query and guide di
   assert(!fetched.includes("/views/sleeping.html"));
   for (const alias of ["/modules#diagnostics", "/config?tab=system#diagnostics"]) {
     await router.namespace.navigate(alias);
-    assert.deepEqual(calls.at(-1), ["/static/js/logs.js", "load", "?tab=health", ""]);
+    assert.equal(find(host, "page-unavailable").hidden, false);
   }
   await router.namespace.navigate("/logs?component=downloader.local&level=warn");
   assert.equal(calls.at(-1)[2], "?component=downloader.local&level=warn");

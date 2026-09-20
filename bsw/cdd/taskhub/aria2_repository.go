@@ -3,6 +3,7 @@ package taskhub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -83,17 +84,13 @@ func (s *Aria2Repository) Records(ctx context.Context) (map[string]Aria2Record, 
 		return nil, err
 	}
 	for gid, data := range records {
-		var record Aria2Record
-		if err := json.Unmarshal(data, &record); err != nil {
+		record, err := DecodeAria2Record(data, gid)
+		if err != nil {
 			return nil, err
 		}
 		if record.Deleted {
 			continue
 		}
-		if record.GID == "" {
-			record.GID = gid
-		}
-		record.State = types.NormalizeDownloadState(record.Status)
 		result[record.GID] = record
 	}
 	return result, nil
@@ -127,4 +124,16 @@ func (s *Aria2Repository) cleanup(ctx context.Context) error {
 func Aria2StorageKey(gid string) string { return aria2TaskKeyPrefix + gid }
 func isAria2TaskExpired(createdAt, now time.Time, ttl time.Duration) bool {
 	return ttl > 0 && !createdAt.IsZero() && now.Sub(createdAt) > ttl
+}
+
+// DecodeAria2Record reads the current persisted schema without upgrading records.
+func DecodeAria2Record(data []byte, gid string) (Aria2Record, error) {
+	var record Aria2Record
+	if err := json.Unmarshal(data, &record); err != nil {
+		return record, err
+	}
+	if record.GID == "" || record.GID != gid || record.Revision == 0 || types.NormalizeDownloadState(record.Status) == types.DownloadUnknown || record.State != types.NormalizeDownloadState(record.Status) {
+		return record, fmt.Errorf("invalid aria2 task record %q", gid)
+	}
+	return record, nil
 }

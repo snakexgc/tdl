@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const sharedProxyField = "proxy"
+
 func TestCatalogValidatesUnavailableResources(t *testing.T) {
 	catalog, err := Catalog()
 	require.NoError(t, err)
@@ -51,7 +53,7 @@ func TestWebUISettingsCoverageAndNavigation(t *testing.T) {
 		require.NotEmpty(t, m.Feature.ID, "%s has no feature group", m.ID)
 		require.NotEmpty(t, m.Feature.Title, m.ID)
 		for _, field := range m.Config {
-			if field.Name == sharedProxyField && field.ReplacedBy == "" {
+			if field.Name == sharedProxyField {
 				proxyEditors = append(proxyEditors, m.ID+"."+field.Name)
 				require.Equal(t, "network", field.SettingsTab)
 			}

@@ -1,5 +1,7 @@
 # AUTOSAR 重构检查与修复记录
 
+> 本文是当时的检查记录，其中兼容层和迁移状态不代表当前实现。当前配置行为见 [统一配置参考](configuration.md)。
+
 本次检查基于 `9e4c2d7`，日期为 2026-09-19。检查范围包括分层依赖、组件装配、资源生命周期、端口归属、配置与文档生成，以及现有 Go / WebUI 测试和 CI。
 
 项目采用了 AUTOSAR 的应用组件、RTE、BSW 分层思想。审查依据是 [AUTOSAR Classic Platform 官方架构说明](https://www.autosar.org/standards/classic-platform)中关于三层划分与组件端口通信的原则。本项目是 Go 服务，以下结论是代码架构与行为检查，不代表完整 AUTOSAR Classic / Adaptive 规范符合性认证。

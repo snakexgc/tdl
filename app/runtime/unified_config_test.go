@@ -21,9 +21,11 @@ func TestUnifiedConfigSavesHotSettingsWithoutRestartingAccount(t *testing.T) {
 	ctx, home := context.Background(), t.TempDir()
 	cfg := config.DefaultConfig()
 	cfg.Modules = config.ModulesConfig{}
-	require.NoError(t, config.Save(filepath.Join(home, "config.json"), cfg))
-	service, err := configuration.Open(ctx, home, "")
+	service, err := configuration.Open(ctx, home)
 	require.NoError(t, err)
+	for _, id := range []string{consoleComponentID, downloadTriggerComponentID, forwardTriggerComponentID, aria2ComponentID, rangeComponentID, panelComponentID} {
+		saveComponent(t, service.Store(), id, false, nil)
+	}
 	host, err := application.ConfigurationHost(ctx, types.DefaultAccount, service)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
@@ -36,15 +38,14 @@ func TestUnifiedConfigSavesHotSettingsWithoutRestartingAccount(t *testing.T) {
 	require.Equal(t, 3, config.From(m.parent).Limit)
 	require.Equal(t, 16, config.From(m.parent).PoolSize)
 	require.Same(t, owner, m.accountHost)
-	_, err = m.SetModuleEnabled(ctx, moduleIDAria2, false)
-	require.NoError(t, err)
+	require.NoError(t, m.SetComponentEnabled(ctx, aria2ComponentID, false, ""))
 	m.transitionWG.Wait()
 	data, err := os.ReadFile(filepath.Join(home, configurationmanager.Filename))
 	require.NoError(t, err)
 	var doc configurationmanager.Document
 	require.NoError(t, json.Unmarshal(data, &doc))
 	require.EqualValues(t, 3, doc.Components["account.telegram"].Values["file_limit"])
-	require.False(t, doc.Components["downloader.aria2"].Enabled)
+	require.False(t, doc.Components[aria2ComponentID].Enabled)
 	entries, enabled := m.ComponentConfigurations()
 	require.True(t, enabled)
 	found := false

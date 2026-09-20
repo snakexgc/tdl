@@ -10,7 +10,7 @@ import (
 	"github.com/snakexgc/tdl/interfaces/manifest"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 const passwordField = "password"
@@ -50,7 +50,7 @@ func TestConfigurationInspectionAndSecretPatch(t *testing.T) {
 	require.NotContains(t, string(data), "private-value")
 	entries[0].Values[limitField] = 99
 	*entries[0].Fields[0].Min = -100
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	require.NoError(t, host.PatchSaved(ctx, providerID, map[string]any{limitField: 3, passwordField: ""}, store))
 	document, err := store.Load(ctx, providerID)
 	require.NoError(t, err)

@@ -40,7 +40,7 @@ func Manifest() manifest.Manifest {
 
 			{Name: fieldAPIID, Title: "API ID", Type: manifest.Int, Default: 0, Min: &zero, EmptyPreserves: true, Help: "留空保持不变。自定义 API ID 和 API Hash 需成对填写，并取消勾选「强制使用内部预设」后使用。"},
 			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true, Help: "留空保持不变。填写自定义 API ID 时需同时提供对应的 API Hash。"},
-			{Name: fieldBuiltinPreset, Title: "内置预设", Type: manifest.String, Default: presetDesktop, Choices: []string{presetDesktop, presetBuiltin, ""}, ChoiceLabels: map[string]string{presetDesktop: "desktop（推荐）", presetBuiltin: presetBuiltin, "": "自动（沿用已有账号）"}, Help: "默认 desktop，不建议修改。更换预设可能需要重新登录；旧配置的自动选项保留原有账号预设。"},
+			{Name: fieldBuiltinPreset, Title: "内置预设", Type: manifest.String, Default: presetDesktop, Choices: []string{presetDesktop, presetBuiltin}, ChoiceLabels: map[string]string{presetDesktop: "desktop（推荐）", presetBuiltin: presetBuiltin}, Help: "默认 desktop，不建议修改。更换预设可能需要重新登录。"},
 			manifest.Flag(fieldUseBuiltin, "强制使用内部预设", true, false).WithHelp("默认勾选。开启后使用上方内置预设；取消勾选后才会优先使用已保存的自定义 API ID 和 API Hash。"),
 		},
 	}, "account", "Telegram 连接与凭据", "ntp", "reconnect_timeout_seconds", fieldBuiltinPreset, fieldUseBuiltin)
@@ -122,15 +122,13 @@ func Validate(settings types.TelegramCredentialsConfig) error {
 	if settings.APIID < 0 || (settings.APIID == 0) != (strings.TrimSpace(settings.APIHash) == "") {
 		return fmt.Errorf("api_id and api_hash must both be provided, or both left empty")
 	}
-	if settings.BuiltinPreset != "" {
-		if _, err := Preset(settings.BuiltinPreset); err != nil {
-			return err
-		}
+	if _, err := Preset(settings.BuiltinPreset); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (c *Credentials) Resolve(ctx context.Context, account types.AccountID, legacy string) (types.TelegramCredentials, error) {
+func (c *Credentials) Resolve(ctx context.Context, account types.AccountID) (types.TelegramCredentials, error) {
 	if err := ctx.Err(); err != nil {
 		return types.TelegramCredentials{}, err
 	}
@@ -142,12 +140,6 @@ func (c *Credentials) Resolve(ctx context.Context, account types.AccountID, lega
 		return types.TelegramCredentials{}, fmt.Errorf("credential component is not initialized")
 	}
 	preset := settings.BuiltinPreset
-	if preset == "" {
-		preset = legacy
-	}
-	if preset == "" {
-		preset = presetBuiltin
-	}
 	app, err := Preset(preset)
 	if err != nil {
 		return types.TelegramCredentials{}, err

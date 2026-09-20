@@ -22,9 +22,6 @@ type RoutingOptions struct {
 	Rules     ports.ForwardRules
 	Peers     ports.ForwardPeers
 	Listening ports.ForwardListening
-	// LegacyDefaults is supplied only by the compatibility composition root.
-	// Component-configured hosts always use their own ConfigView instead.
-	LegacyDefaults func() types.ForwardDefaults
 }
 
 type peerLookup struct {
@@ -38,7 +35,7 @@ type forwardClaim struct {
 	done    chan struct{}
 }
 
-// MessageRouter owns automatic/default route selection and legacy TTL dedupe.
+// MessageRouter owns automatic/default route selection and default-route TTL dedupe.
 // The queue retains durable explicit-rule identities; each connection owns one
 // router handle, and stopping it drains source resolution and admissions.
 type MessageRouter struct {
@@ -146,7 +143,7 @@ func (r *MessageRouter) destinations(ctx context.Context, source types.ChatRef, 
 	if r.queue == nil {
 		return nil, true, 0, errors.New("forward queue is unavailable")
 	}
-	settings := r.settings()
+	settings := r.queue.policy()
 	if settings.command.Mode != forwardModeDefault && settings.command.Mode != forwardModeClone {
 		return nil, true, 0, fmt.Errorf("invalid forward mode %q", settings.command.Mode)
 	}
@@ -155,22 +152,6 @@ func (r *MessageRouter) destinations(ctx context.Context, source types.ChatRef, 
 		return nil, true, 0, fmt.Errorf("resolve default forward target: %w", err)
 	}
 	return []types.ForwardDestination{{Target: target.Reference, Name: target.Name, Mode: settings.command.Mode, Silent: settings.command.Silent}}, true, settings.dedupe, nil
-}
-
-func (r *MessageRouter) settings() policy {
-	settings := r.queue.policy()
-	if r.options.LegacyDefaults != nil {
-		value := r.options.LegacyDefaults()
-		if value.Mode == "" {
-			value.Mode = forwardModeDefault
-		}
-		settings.command = CommandSettings{Target: value.Target, Mode: value.Mode, Silent: value.Silent}
-		settings.dedupe = value.DedupeTTL
-		if settings.dedupe <= 0 {
-			settings.dedupe = defaultPolicy().dedupe
-		}
-	}
-	return settings
 }
 
 func (r *MessageRouter) listens(ctx context.Context, source types.ChatRef) (bool, error) {
@@ -253,7 +234,7 @@ func (r *MessageRouter) SubmitMessage(ctx context.Context, message types.Forward
 	if message.MessageID <= 0 || r.queue == nil {
 		return errors.New("forward routing requires a message and queue")
 	}
-	destinations, legacy, ttl, err := r.destinations(ctx, source, message.Automatic)
+	destinations, defaultRoute, ttl, err := r.destinations(ctx, source, message.Automatic)
 	if err != nil {
 		return err
 	}
@@ -262,8 +243,8 @@ func (r *MessageRouter) SubmitMessage(ctx context.Context, message types.Forward
 		if err := ctx.Err(); err != nil {
 			return errors.Join(result, err)
 		}
-		if legacy {
-			result = errors.Join(result, r.enqueueLegacy(ctx, message, destination, ttl))
+		if defaultRoute {
+			result = errors.Join(result, r.enqueueDefault(ctx, message, destination, ttl))
 		} else {
 			_, err := r.queue.EnqueueRouted(ctx, message.Peer, message.MessageID, message.GroupedID, message.Origin, destination)
 			result = errors.Join(result, err)
@@ -272,7 +253,7 @@ func (r *MessageRouter) SubmitMessage(ctx context.Context, message types.Forward
 	return result
 }
 
-func (r *MessageRouter) enqueueLegacy(ctx context.Context, message types.ForwardMessage, destination types.ForwardDestination, ttl time.Duration) error {
+func (r *MessageRouter) enqueueDefault(ctx context.Context, message types.ForwardMessage, destination types.ForwardDestination, ttl time.Duration) error {
 	identity := fmt.Sprintf("m:%d", message.MessageID)
 	if message.GroupedID != 0 {
 		identity = fmt.Sprintf("g:%d", message.GroupedID)

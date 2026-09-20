@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestRangeConfigurationPersistsAndAppliesToHandler(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	build := func(values map[string]any) (*rte.Runtime, *Handler) {
 		handler := New(testSource{}, nil, 0)
 		registry := rte.NewRegistry()

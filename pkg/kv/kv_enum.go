@@ -12,8 +12,6 @@ import (
 )
 
 const (
-	// DriverLegacy is a Driver of type legacy.
-	DriverLegacy Driver = "legacy"
 	// DriverBolt is a Driver of type bolt.
 	DriverBolt Driver = "bolt"
 	// DriverFile is a Driver of type file.
@@ -23,7 +21,6 @@ const (
 var ErrInvalidDriver = fmt.Errorf("not a valid Driver, try [%s]", strings.Join(_DriverNames, ", "))
 
 var _DriverNames = []string{
-	string(DriverLegacy),
 	string(DriverBolt),
 	string(DriverFile),
 }
@@ -38,7 +35,6 @@ func DriverNames() []string {
 // DriverValues returns a list of the values for Driver
 func DriverValues() []Driver {
 	return []Driver{
-		DriverLegacy,
 		DriverBolt,
 		DriverFile,
 	}
@@ -57,9 +53,8 @@ func (x Driver) IsValid() bool {
 }
 
 var _DriverValue = map[string]Driver{
-	"legacy": DriverLegacy,
-	"bolt":   DriverBolt,
-	"file":   DriverFile,
+	"bolt": DriverBolt,
+	"file": DriverFile,
 }
 
 // ParseDriver attempts to convert a string to a Driver.

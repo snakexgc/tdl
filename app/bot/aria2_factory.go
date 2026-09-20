@@ -5,19 +5,16 @@ import (
 	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
-// Legacy keyboards and delayed callbacks must resolve the same live component
+// Keyboards and delayed callbacks must resolve the same live component
 // as slash commands. A saved keyboard never grants access to a stopped owner.
-func componentAria2Factory(console ports.Console, resolve func(string, string) (any, error), fallback aria2ControllerFactory) aria2ControllerFactory {
+func componentAria2Factory(console ports.Console, resolve func(string, string) (any, error)) aria2ControllerFactory {
 	return func() ports.Aria2Tasks {
 		unavailable := func() ports.Aria2Tasks { return aria2component.NewController(aria2component.Options{}, nil) }
 		if console != nil && !console.PrivateCommand("downloads") {
 			return unavailable()
 		}
 		if resolve == nil {
-			if fallback == nil {
-				return unavailable()
-			}
-			return fallback()
+			return unavailable()
 		}
 		if _, err := resolve("download.control", ports.DownloadControlName); err != nil {
 			return unavailable()

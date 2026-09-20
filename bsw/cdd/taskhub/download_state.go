@@ -40,8 +40,8 @@ func mergeAria2State(previous, updates map[string]json.RawMessage) error {
 func (s *Aria2Repository) Report(ctx context.Context, observation types.Aria2TaskRecord, revision uint64) (bool, error) {
 	changed := false
 	err := Aria2(s.kv).Mutate(ctx, observation.GID, func(data []byte, stamp time.Time) ([]byte, time.Time, error) {
-		var current types.Aria2TaskRecord
-		if err := json.Unmarshal(data, &current); err != nil {
+		current, err := DecodeAria2Record(data, observation.GID)
+		if err != nil {
 			return nil, stamp, err
 		}
 		if current.Deleted || current.TaskID != observation.TaskID || current.Revision != revision || current.ControlUntil.After(time.Now()) {

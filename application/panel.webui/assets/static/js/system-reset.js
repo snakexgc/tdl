@@ -19,7 +19,7 @@ export async function confirmReset(context) {
   warning.id = "reset-warning";
   const explanation = element(
     "p",
-    "tdl_config.json、旧 config.json 和 components 配置目录位于 .tdl 外，也会一并清理。完成后 TDL 将退出，下次启动需要重新配置并登录。",
+    "tdl_config.json 位于 .tdl 外，也会一并清理。完成后 TDL 将退出，下次启动需要重新配置并登录。",
     "subtle",
   );
   const targets = element("ul", null, "reset-targets");

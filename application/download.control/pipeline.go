@@ -121,47 +121,16 @@ func (s *Service) batchRoute(ctx context.Context, r ports.DownloadResources) (po
 		route, err = r.Routing.Route(ctx, s.account)
 	} else {
 		route, err = s.Route(ctx, s.account)
-		// Standalone compatibility hosts receive bootstrap defaults from their
-		// composition root. Managed hosts always inject the live routing port.
-		if r.Defaults.Mode != "" {
-			route.Mode, route.LocalRoot = r.Defaults.Mode, r.Defaults.LocalRoot
-		}
 	}
 	if err != nil {
 		return route, err
 	}
 	route.Executors = slices.Clone(route.Executors)
-	legacy := len(route.Executors) == 0
-	if legacy {
-		switch route.Mode {
-		case localExecutor, legacyInternalMode:
-			route.Executors = []string{localExecutor}
-		case "", aria2Executor:
-			route.Executors = []string{aria2Executor, httpExecutor}
-		default:
-			return route, fmt.Errorf("unsupported downloader mode %q", route.Mode)
-		}
+	if len(route.Executors) == 0 {
+		return route, fmt.Errorf("download executor list is empty")
 	}
-	if slices.Contains(route.Executors, localExecutor) {
-		if route.LocalRoot == "" {
-			route.LocalRoot = r.Defaults.FallbackLocalRoot
-		}
-		if !filepath.IsAbs(route.LocalRoot) {
-			return route, fmt.Errorf("local download root must be absolute")
-		}
-		if legacy {
-			// Preserve legacy writable-root fallback. Explicit executor chains
-			// must not touch local paths until local is actually selected.
-			if err := r.Files.EnsureWritable(ctx, route.LocalRoot); err != nil {
-				if ctx.Err() != nil || r.Defaults.FallbackLocalRoot == "" || route.LocalRoot == r.Defaults.FallbackLocalRoot {
-					return route, err
-				}
-				route.LocalRoot = r.Defaults.FallbackLocalRoot
-				if err := r.Files.EnsureWritable(ctx, route.LocalRoot); err != nil {
-					return route, err
-				}
-			}
-		}
+	if slices.Contains(route.Executors, localExecutor) && !filepath.IsAbs(route.LocalRoot) {
+		return route, fmt.Errorf("local download root must be absolute")
 	}
 	return route, nil
 }

@@ -92,12 +92,6 @@ func (s *Service) Complete(ctx context.Context, input Document) (Document, error
 			return Document{}, fmt.Errorf("components: %w", err)
 		}
 		component.Values = view.Values()
-		// Obsolete overrides are readable for migration but have no effect.
-		for _, field := range definition.Manifest.Config {
-			if field.ReplacedBy != "" {
-				delete(component.Values, field.Name)
-			}
-		}
 		result.Components[id] = component
 	}
 	for id := range input.Components {

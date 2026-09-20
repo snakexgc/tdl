@@ -3,26 +3,31 @@ package panel
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
-	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 type testConfigurationStore struct {
-	value *types.RuntimeConfig
-	saves int
+	value   ports.SystemConfiguration
+	saves   int
+	failure error
 }
 
-func (s *testConfigurationStore) Read(context.Context) (*types.RuntimeConfig, error) {
-	return cloneConfiguration(s.value)
+func (s *testConfigurationStore) Read(ctx context.Context) (ports.SystemConfiguration, error) {
+	return s.value, ctx.Err()
 }
-func (*testConfigurationStore) Validate(*types.RuntimeConfig) error { return nil }
-func (s *testConfigurationStore) Save(_ context.Context, before, next *types.RuntimeConfig) error {
-	if !reflect.DeepEqual(s.value, before) {
+
+func (s *testConfigurationStore) Save(ctx context.Context, before, next ports.SystemConfiguration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.failure != nil {
+		return s.failure
+	}
+	if s.value != before {
 		return ports.ErrConfigurationConflict
 	}
 	s.value = next
@@ -30,34 +35,38 @@ func (s *testConfigurationStore) Save(_ context.Context, before, next *types.Run
 	return nil
 }
 
-func TestConfigurationPortProtectsOwnedFieldsAndSecrets(t *testing.T) {
+func TestSystemConfigurationRejectsNonSystemFieldsWithoutSaving(t *testing.T) {
 	ctx := context.Background()
-	store := &testConfigurationStore{value: &types.RuntimeConfig{Namespace: "default", WebUI: types.WebUIConfig{Username: "admin", Password: "private"}, Bot: types.BotConfig{Token: "secret"}}}
-	service := NewConfiguration(store, func() bool { return true })
-	for path, raw := range map[string]string{"FileSizeMinMB": "9", ".namespace": `"other"`, "telegram": `{"api_id":7}`, "unknown": "1", "webui": `{"username":""}`} {
-		_, err := service.Patch(ctx, map[string]json.RawMessage{path: json.RawMessage(raw)})
-		require.Error(t, err, path)
+	store := &testConfigurationStore{value: ports.SystemConfiguration{Namespace: "default"}}
+	service := NewConfiguration(store)
+	for key, raw := range map[string]string{"FileSizeMinMB": "9", ".namespace": `"other"`, "namespace": `"other"`, "telegram": `{"api_id":7}`, "unknown": "1", "webui": `{"username":""}`, "Debug": "true", " debug ": "true"} {
+		_, err := service.Patch(ctx, map[string]json.RawMessage{key: json.RawMessage(raw), debugSetting: json.RawMessage("true")})
+		require.Error(t, err, key)
+		require.False(t, store.value.Debug)
+	}
+	for _, raw := range []string{"null", `"true"`, "1", "{}"} {
+		_, err := service.Patch(ctx, map[string]json.RawMessage{debugSetting: json.RawMessage(raw)})
+		require.Error(t, err, raw)
 	}
 	require.Zero(t, store.saves)
-	result, err := service.Patch(ctx, map[string]json.RawMessage{"debug": json.RawMessage("true")})
+	result, err := service.Patch(ctx, map[string]json.RawMessage{debugSetting: json.RawMessage("true")})
 	require.NoError(t, err)
 	require.True(t, result.Debug)
-	require.Empty(t, result.Bot.Token)
-	require.Empty(t, result.WebUI.Password)
-	require.Equal(t, "secret", store.value.Bot.Token)
-	require.Equal(t, "private", store.value.WebUI.Password)
+	require.Equal(t, "default", result.Namespace)
+	require.Equal(t, 1, store.saves)
 	result.Debug = false
 	require.True(t, store.value.Debug)
 }
 
-func TestConfigurationRedactsCredentialBearingConnectionURLs(t *testing.T) {
-	cfg := &types.RuntimeConfig{Proxy: "socks5://user:private@localhost:1080", Aria2: types.Aria2Config{RPCURL: "https://user:private@localhost/rpc?token=private"}}
-	public := PublicConfig(cfg)
-	encoded, err := json.Marshal(public)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "private")
-	require.NotEmpty(t, cfg.Proxy)
-	require.NotEmpty(t, cfg.Aria2.RPCURL)
-	require.True(t, IsBlankSensitivePatch("proxy", json.RawMessage(`""`)))
-	require.True(t, IsBlankSensitivePatch("aria2.rpc_url", json.RawMessage(`""`)))
+func TestSystemConfigurationPreservesStoreOnConflictAndCancellation(t *testing.T) {
+	store := &testConfigurationStore{value: ports.SystemConfiguration{Namespace: "default"}, failure: ports.ErrConfigurationConflict}
+	service := NewConfiguration(store)
+	_, err := service.Patch(context.Background(), map[string]json.RawMessage{debugSetting: json.RawMessage("true")})
+	require.ErrorIs(t, err, ports.ErrConfigurationConflict)
+	require.False(t, store.value.Debug)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = service.Patch(ctx, map[string]json.RawMessage{debugSetting: json.RawMessage("true")})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, store.saves)
 }

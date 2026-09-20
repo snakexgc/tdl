@@ -6,124 +6,67 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync/atomic"
 )
 
 const (
-	dataDirectory      = ".tdl"
-	componentDirectory = "components"
-	configFile         = "config.json"
-	unifiedConfigFile  = "tdl_config.json"
+	dataDirectory     = ".tdl"
+	unifiedConfigFile = "tdl_config.json"
 )
 
-var (
-	pending       atomic.Pointer[Plan]
-	componentFile = regexp.MustCompile(`^swc-[a-z][a-z0-9._-]*\.json$`)
-)
+var pending atomic.Pointer[Plan]
 
 // Plan is server-owned. HTTP clients cannot select deletion paths.
-type Plan struct{ home, extra string }
+type Plan struct{ home string }
 
-func New(home, components string) *Plan { return &Plan{home: home, extra: components} }
-func Request(plan *Plan)                { pending.Store(plan) }
-func Requested() *Plan                  { return pending.Load() }
+func New(home string) *Plan { return &Plan{home: home} }
+func Request(plan *Plan)    { pending.Store(plan) }
+func Requested() *Plan      { return pending.Load() }
 
-// Targets also preflights every root before a reset can be confirmed.
+// Targets preflights the current storage and configuration before confirmation.
 func (p *Plan) Targets() ([]string, error) {
-	home, extra, err := p.open()
+	home, err := p.open()
 	if err != nil {
 		return nil, err
 	}
 	defer home.Close()
-	targets := []string{filepath.Join(home.Name(), dataDirectory), filepath.Join(home.Name(), configFile), filepath.Join(home.Name(), unifiedConfigFile), filepath.Join(home.Name(), componentDirectory)}
-	if extra != nil {
-		defer extra.Close()
-		targets = append(targets, extra.Name()+"（仅 swc-*.json、secrets 中的组件密钥及迁移记录）")
-	}
-	return targets, nil
+	return []string{filepath.Join(home.Name(), dataDirectory), filepath.Join(home.Name(), unifiedConfigFile)}, nil
 }
 
-// Execute must be called after runtime shutdown, database close and logger close.
-// Keep directories themselves, so bind-mounted data directories work in Docker.
+// Execute runs after services and files close; the data mount itself is retained.
 func (p *Plan) Execute() error {
-	home, extra, err := p.open()
+	home, err := p.open()
 	if err != nil {
 		return err
 	}
 	defer home.Close()
-	if extra != nil {
-		defer extra.Close()
-		if err := clearComponents(extra); err != nil {
-			return err
-		}
-	}
-	for _, name := range []string{dataDirectory, componentDirectory} {
-		if err := clearDirectory(home, name); err != nil {
-			return err
-		}
-	}
-	for _, name := range []string{configFile, unifiedConfigFile} {
-		if err := home.Remove(name); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	if err := removeEntries(home, func(name string) bool {
-		return strings.HasPrefix(name, ".config.json.tmp-") || strings.HasPrefix(name, ".tdl_config.json.tmp-")
-	}, true); err != nil {
+	if err := clearDirectory(home, dataDirectory); err != nil {
 		return err
 	}
-	return nil
+	if err := home.Remove(unifiedConfigFile); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return removeEntries(home, func(name string) bool {
+		return strings.HasPrefix(name, ".tdl_config.json.tmp-")
+	}, true)
 }
 
-func (p *Plan) open() (*os.Root, *os.Root, error) {
+func (p *Plan) open() (*os.Root, error) {
 	if p == nil || !filepath.IsAbs(p.home) || filepath.Dir(filepath.Clean(p.home)) == filepath.Clean(p.home) {
-		return nil, nil, errors.New("invalid application home for reset")
+		return nil, errors.New("invalid application home for reset")
 	}
 	home, err := os.OpenRoot(p.home)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	fail := func(err error) (*os.Root, *os.Root, error) { _ = home.Close(); return nil, nil, err }
-	for _, name := range []string{dataDirectory, componentDirectory, configFile, unifiedConfigFile} {
-		if err := checkEntry(home, name, name == dataDirectory || name == componentDirectory); err != nil {
-			return fail(err)
+	for _, name := range []string{dataDirectory, unifiedConfigFile} {
+		if err := checkEntry(home, name, name == dataDirectory); err != nil {
+			_ = home.Close()
+			return nil, err
 		}
 	}
-	if p.extra == "" {
-		return home, nil, nil
-	}
-	extraPath, err := filepath.Abs(p.extra)
-	if err != nil {
-		return fail(err)
-	}
-	// All default account directories are already covered by components/.
-	for _, directory := range []string{componentDirectory, dataDirectory} {
-		rel, err := filepath.Rel(filepath.Join(p.home, directory), extraPath)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return home, nil, nil
-		}
-	}
-	info, err := os.Lstat(extraPath)
-	if os.IsNotExist(err) {
-		return home, nil, nil
-	}
-	if err != nil {
-		return fail(err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fail(errors.New("component configuration directory must not be a link"))
-	}
-	extra, err := os.OpenRoot(extraPath)
-	if err != nil {
-		return fail(err)
-	}
-	if err := checkEntry(extra, "secrets", true); err != nil {
-		_ = extra.Close()
-		return fail(err)
-	}
-	return home, extra, nil
+	return home, nil
 }
 
 func checkEntry(root *os.Root, name string, directory bool) error {
@@ -170,23 +113,4 @@ func removeEntries(root *os.Root, matches func(string) bool, filesOnly bool) err
 		}
 	}
 	return nil
-}
-
-// Custom configuration directories may contain unrelated files. Remove only
-// TDL-owned documents and every immutable secret generation, not the whole root.
-func clearComponents(root *os.Root) error {
-	if err := removeEntries(root, func(name string) bool {
-		return componentFile.MatchString(name) || name == "migration.json" || strings.HasPrefix(name, ".config-")
-	}, true); err != nil {
-		return err
-	}
-	secrets, err := root.OpenRoot("secrets")
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer secrets.Close()
-	return removeEntries(secrets, componentFile.MatchString, true)
 }

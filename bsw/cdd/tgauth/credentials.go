@@ -1,4 +1,4 @@
-// Package tgauth owns session identity metadata and compatible session commits.
+// Package tgauth owns session identity metadata and atomic session commits.
 package tgauth
 
 import (
@@ -22,9 +22,8 @@ func Fingerprint(app types.TelegramApp) string {
 }
 
 // ValidateCredentials is read-only: changing configuration never deletes or
-// rewrites an existing session. Legacy sessions derive identity from their app
-// marker until their next successful login commits explicit metadata.
-func ValidateCredentials(ctx context.Context, store storage.Storage, selected, legacy types.TelegramApp) error {
+// rewrites an existing session. Existing sessions must include credential identity.
+func ValidateCredentials(ctx context.Context, store storage.Storage, selected types.TelegramApp) error {
 	if _, err := store.Get(ctx, SessionKey); errors.Is(err, storage.ErrNotFound) {
 		return nil
 	} else if err != nil {
@@ -32,7 +31,7 @@ func ValidateCredentials(ctx context.Context, store storage.Storage, selected, l
 	}
 	identity, err := store.Get(ctx, FingerprintKey)
 	if errors.Is(err, storage.ErrNotFound) {
-		identity = []byte(Fingerprint(legacy))
+		return ErrNeedsRelogin
 	} else if err != nil {
 		return err
 	}

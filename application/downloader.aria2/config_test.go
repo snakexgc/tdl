@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 const testGovernanceBaseURL = "http://localhost:8080"
@@ -62,7 +62,7 @@ func TestMonitorAdoptsHotIntervalWithoutRestart(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("manager did not connect")
 	}
-	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{monitorPollField: 100}, config.NewStore(t.TempDir())))
+	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{monitorPollField: 100}, configtest.NewStore()))
 	select {
 	case <-client.monitorQueries:
 	case <-time.After(time.Second):
@@ -85,7 +85,7 @@ func TestGovernanceConfigPersistsAndWakesActiveSchedules(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("connection attempt did not start")
 	}
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	before := manager.policy()
 	require.Error(t, host.PatchSaved(ctx, ID, map[string]any{"connect_retry_ms": 70000}, store))
 	require.Equal(t, before, manager.policy())

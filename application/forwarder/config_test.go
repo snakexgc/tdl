@@ -10,12 +10,12 @@ import (
 
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
-	"github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/configtest"
 )
 
 func TestQueueConfigurationChangesRetryBudgetAndSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
-	store := config.NewStore(t.TempDir())
+	store := configtest.NewStore()
 	q := newTestQueue()
 	build := func(values map[string]any) *rte.Runtime {
 		registry := rte.NewRegistry()

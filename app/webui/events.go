@@ -134,12 +134,10 @@ func (s *Server) snapshotSource(topic string) telemetry.Source {
 		return func(context.Context) (any, error) { return s.statusSnapshot(), nil }
 	case "dashboard":
 		return s.dashboardSnapshot
-	case "downloads":
-		return s.internalDownloadsSnapshot
 	case "download-tasks-local":
 		return s.downloadTasksSnapshot(localDownloadExecutor)
 	case "download-tasks-aria2":
-		return s.downloadTasksSnapshot(config.DownloaderModeAria2)
+		return s.downloadTasksSnapshot(config.DownloadExecutorAria2)
 	case "forwards":
 		return s.forwardsSnapshot
 	default:

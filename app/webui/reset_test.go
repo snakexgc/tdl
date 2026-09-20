@@ -26,7 +26,7 @@ func resetRequest(body string) *http.Request {
 
 func TestResetRequiresExplicitConfirmationAndCannotChoosePaths(t *testing.T) {
 	calls := 0
-	s := NewServer(Options{ResetPlan: reset.New(t.TempDir(), ""), RequestReset: func() { calls++ }})
+	s := NewServer(Options{ResetPlan: reset.New(t.TempDir()), RequestReset: func() { calls++ }})
 	for _, body := range []string{"", "{}", `{"confirmation":"wrong"}`, `{"confirmation":"RESET_TDL","path":"/"}`, resetConfirmation + ` {}`} {
 		response := httptest.NewRecorder()
 		s.handleReset(response, resetRequest(body))
@@ -48,11 +48,11 @@ func TestResetRequiresExplicitConfirmationAndCannotChoosePaths(t *testing.T) {
 
 func TestResetFlushesAcceptanceAndDefersDeletionUntilAfterShutdown(t *testing.T) {
 	home := t.TempDir()
-	file := filepath.Join(home, "config.json")
+	file := filepath.Join(home, "tdl_config.json")
 	require.NoError(t, os.WriteFile(file, []byte("fixture"), 0o600))
 	response := httptest.NewRecorder()
 	calls := 0
-	s := NewServer(Options{ResetPlan: reset.New(home, ""), RequestReset: func() {
+	s := NewServer(Options{ResetPlan: reset.New(home), RequestReset: func() {
 		calls++
 		require.True(t, response.Flushed)
 		require.Equal(t, http.StatusAccepted, response.Code)

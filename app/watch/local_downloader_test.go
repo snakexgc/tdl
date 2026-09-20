@@ -15,11 +15,11 @@ import (
 
 	httpdl "github.com/snakexgc/tdl/app/http"
 	local "github.com/snakexgc/tdl/application/downloader.local"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 	"github.com/snakexgc/tdl/pkg/config"
-	"github.com/snakexgc/tdl/pkg/consts"
 )
 
 const (
@@ -28,113 +28,80 @@ const (
 	testQueued    = "queued"
 )
 
-func TestValidateWatchConfigAllowsInternalModeWithoutAria2(t *testing.T) {
+func TestLocalModeUsesConfiguredPoolSize(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.HTTP.PublicBaseURL = ""
-	cfg.Aria2.RPCURL = ""
-
-	require.NoError(t, validateWatchConfig(cfg))
-}
-
-func TestValidateWatchConfigDoesNotOwnHTTPServerLifecycle(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeAria2
-	cfg.Modules.HTTP = false
-	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
-	cfg.Aria2.RPCURL = ""
-
-	require.NoError(t, validateWatchConfig(cfg))
-}
-
-func TestInternalModeUsesConfiguredPoolSize(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
 	cfg.PoolSize = 3
 	cfg.Limit = 2
 	opts := DefaultOptions(cfg)
 
 	require.Equal(t, 3, config.EffectivePoolSize(cfg))
-	require.Equal(t, 2, effectiveDownloadLimit(cfg))
+	require.Equal(t, 2, config.EffectiveLimit(cfg))
 
-	runtime := newWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
-	require.True(t, runtime.proxy.Scheduler() == runtime.internal.scheduler)
+	runtime := newTestWatchRuntime(cfg, opts, newMemoryTaskStorage(), nil)
 
-	lease, err := runtime.internal.scheduler.Acquire(context.Background(), testDocument1, 2)
+	lease, err := runtime.proxy.Scheduler().Acquire(context.Background(), testDocument1, 2)
 	require.NoError(t, err)
 	require.Equal(t, 3, lease.Capacity())
 	lease.Release()
 }
 
-func TestInternalRuntimeKeepsDownloadTasksWithoutTTL(t *testing.T) {
+func TestLocalRuntimeKeepsDownloadTasksWithoutTTL(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
 	cfg.HTTP.DownloadLinkTTLHours = 1
 
-	runtime := newWatchRuntime(cfg, DefaultOptions(cfg), newMemoryTaskStorage(), nil)
+	runtime := newTestWatchRuntime(cfg, DefaultOptions(cfg), newMemoryTaskStorage(), nil)
 
 	require.Zero(t, runtime.proxy.Tasks().TTL())
 }
 
-func TestPrepareInternalOutputRootUsesConfiguredWritableDir(t *testing.T) {
+func TestPrepareLocalOutputRootUsesConfiguredWritableDir(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join(t.TempDir(), "downloads")
 	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
 	cfg.Downloader.LocalRoot = root
 
-	got, fallback, err := prepareInternalOutputRoot(cfg)
+	got, err := local.PrepareRoot(cfg.Downloader.LocalRoot)
 	require.NoError(t, err)
-	require.False(t, fallback)
 	require.Equal(t, filepath.Clean(root), got)
 	require.DirExists(t, root)
 }
 
-func TestPrepareInternalOutputRootFallsBackWhenDirIsAFile(t *testing.T) {
-	oldHome := consts.HomeDir
-	consts.HomeDir = t.TempDir()
-	defer func() { consts.HomeDir = oldHome }()
-
+func TestPrepareLocalOutputRootRejectsInvalidDirectory(t *testing.T) {
+	t.Parallel()
 	blocked := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(blocked, []byte("x"), 0o644))
-
-	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
-	cfg.Downloader.LocalRoot = blocked
-
-	got, fallback, err := prepareInternalOutputRoot(cfg)
-	require.NoError(t, err)
-	require.True(t, fallback)
-	require.Equal(t, filepath.Join(consts.HomeDir, internalDownloadFallbackDirName), got)
-	require.DirExists(t, got)
+	for _, root := range []string{blocked, "", "relative"} {
+		actual, err := local.PrepareRoot(root)
+		require.Error(t, err)
+		require.Empty(t, actual)
+	}
 }
 
-func TestInternalDownloadControllerActions(t *testing.T) {
+func TestLocalDownloadControllerActions(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
-	store := newInternalTaskStore(kvd)
+	store := taskhub.NewLocalRepository(kvd)
 	createdAt := time.Now()
-	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+	require.NoError(t, store.Save(ctx, types.LocalDownloadRecord{
 		ID:        testDocument1,
 		TaskID:    testDocument1,
 		FileName:  testVideoFile,
 		Total:     100,
-		Status:    InternalDownloadStatusQueued,
+		Status:    types.LocalDownloadStatusQueued,
 		CreatedAt: createdAt,
 	}))
 
-	controller := NewInternalDownloadController(kvd)
+	controller := local.NewController(taskhub.NewLocalRepository(kvd))
 	paused, err := controller.Pause(ctx, []string{testDocument1})
 	require.NoError(t, err)
 	require.Equal(t, 1, paused.Changed)
@@ -142,7 +109,7 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	items, err := controller.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, InternalDownloadStatusPaused, items[0].Status)
+	require.Equal(t, types.LocalDownloadStatusPaused, items[0].Status)
 
 	started, err := controller.Start(ctx, []string{testDocument1})
 	require.NoError(t, err)
@@ -151,7 +118,7 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	record, ok, err := store.Get(ctx, testDocument1)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusQueued, record.Status)
+	require.Equal(t, types.LocalDownloadStatusQueued, record.Status)
 
 	deleted, err := controller.Delete(ctx, []string{testDocument1})
 	require.NoError(t, err)
@@ -161,23 +128,23 @@ func TestInternalDownloadControllerActions(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestInternalDownloadControllerKeepsRecordWhenFileDeleteFails(t *testing.T) {
+func TestLocalDownloadControllerKeepsRecordWhenFileDeleteFails(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
-	store := newInternalTaskStore(kvd)
+	store := taskhub.NewLocalRepository(kvd)
 	nonEmptyDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(nonEmptyDir, "child"), []byte("x"), 0o644))
-	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+	require.NoError(t, store.Save(ctx, types.LocalDownloadRecord{
 		ID:        testDocument1,
 		TaskID:    testDocument1,
 		Path:      nonEmptyDir,
-		Status:    InternalDownloadStatusQueued,
+		Status:    types.LocalDownloadStatusQueued,
 		CreatedAt: time.Now(),
 	}))
 
-	result, err := NewInternalDownloadController(kvd).Delete(ctx, []string{testDocument1})
+	result, err := local.NewController(taskhub.NewLocalRepository(kvd)).Delete(ctx, []string{testDocument1})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Errors)
 	require.Zero(t, result.Changed)
@@ -186,21 +153,21 @@ func TestInternalDownloadControllerKeepsRecordWhenFileDeleteFails(t *testing.T) 
 	require.True(t, ok)
 }
 
-func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) {
+func TestLocalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
-	store := newInternalTaskStore(kvd)
+	store := taskhub.NewLocalRepository(kvd)
 	createdAt := time.Now()
-	records := []internalDownloadRecord{
+	records := []types.LocalDownloadRecord{
 		{
 			ID:        testActive,
 			TaskID:    testActive,
 			FileName:  "active.mp4",
 			Total:     100,
 			Completed: 40,
-			Status:    InternalDownloadStatusActive,
+			Status:    types.LocalDownloadStatusActive,
 			CreatedAt: createdAt,
 		},
 		{
@@ -208,7 +175,7 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 			TaskID:    testQueued,
 			FileName:  "queued.mp4",
 			Total:     100,
-			Status:    InternalDownloadStatusQueued,
+			Status:    types.LocalDownloadStatusQueued,
 			CreatedAt: createdAt,
 		},
 		{
@@ -217,7 +184,7 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 			FileName:  "complete.mp4",
 			Total:     100,
 			Completed: 100,
-			Status:    InternalDownloadStatusComplete,
+			Status:    types.LocalDownloadStatusComplete,
 			CreatedAt: createdAt,
 		},
 	}
@@ -227,52 +194,52 @@ func TestInternalDownloaderPauseForShutdownUsesNonCanceledContext(t *testing.T) 
 
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	paused, err := (&internalDownloader{store: store}).PauseForShutdown(canceledCtx)
+	paused, err := local.New(nil, store, nil).PauseForShutdown(canceledCtx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{testActive, testQueued}, paused)
 
 	active, ok, err := store.Get(ctx, testActive)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusPaused, active.Status)
+	require.Equal(t, types.LocalDownloadStatusPaused, active.Status)
 	require.Equal(t, int64(40), active.Completed)
 
 	queued, ok, err := store.Get(ctx, testQueued)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusPaused, queued.Status)
+	require.Equal(t, types.LocalDownloadStatusPaused, queued.Status)
 
 	complete, ok, err := store.Get(ctx, "complete")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusComplete, complete.Status)
+	require.Equal(t, types.LocalDownloadStatusComplete, complete.Status)
 }
 
-func TestInternalDownloaderRequeuesInterruptedActiveTasks(t *testing.T) {
+func TestLocalDownloaderRequeuesInterruptedActiveTasks(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
-	store := newInternalTaskStore(kvd)
-	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+	store := taskhub.NewLocalRepository(kvd)
+	require.NoError(t, store.Save(ctx, types.LocalDownloadRecord{
 		ID:        testDocument1,
 		TaskID:    testDocument1,
 		FileName:  testVideoFile,
 		Total:     100,
-		Status:    InternalDownloadStatusActive,
+		Status:    types.LocalDownloadStatusActive,
 		CreatedAt: time.Now(),
 	}))
 
-	downloader := &internalDownloader{store: store}
-	require.NoError(t, downloader.requeueInterrupted(ctx))
+	downloader := local.New(nil, store, nil)
+	require.NoError(t, downloader.Recover(ctx))
 
 	record, ok, err := store.Get(ctx, testDocument1)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusQueued, record.Status)
+	require.Equal(t, types.LocalDownloadStatusQueued, record.Status)
 }
 
-func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) {
+func TestLocalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -301,9 +268,9 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 	tasks := httpdl.NewTaskStore(kvd, 0)
 	require.NoError(t, tasks.Add(ctx, task))
 
-	store := newInternalTaskStore(kvd)
+	store := taskhub.NewLocalRepository(kvd)
 	target := filepath.Join(t.TempDir(), task.FileName)
-	require.NoError(t, store.Save(ctx, internalDownloadRecord{
+	require.NoError(t, store.Save(ctx, types.LocalDownloadRecord{
 		ID:        task.ID,
 		TaskID:    task.ID,
 		FileName:  task.FileName,
@@ -311,7 +278,7 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 		Out:       filepath.Base(target),
 		Path:      target,
 		Total:     task.FileSize,
-		Status:    InternalDownloadStatusQueued,
+		Status:    types.LocalDownloadStatusQueued,
 		CreatedAt: time.Now(),
 	}))
 
@@ -325,15 +292,10 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 		_, err := w.Write(bytes.Repeat([]byte("x"), int(end-start+1)))
 		return err
 	})
-	downloader := &internalDownloader{
-		proxy:     proxy,
-		store:     store,
-		scheduler: proxy.Scheduler(),
-		logger:    zap.NewNop(),
-	}
+	downloader := local.New(localSource{proxy: proxy, scheduler: proxy.Scheduler()}, store, zap.NewNop())
 
 	go func() {
-		downloader.runTask(ctx, task.ID)
+		downloader.Execute(ctx, task.ID)
 		close(done)
 	}()
 
@@ -341,7 +303,7 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 	record, ok, err := store.Get(ctx, task.ID)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusQueued, record.Status)
+	require.Equal(t, types.LocalDownloadStatusQueued, record.Status)
 	select {
 	case <-streamCalled:
 		t.Fatal("stream should wait until a file slot is available")
@@ -353,18 +315,16 @@ func TestInternalDownloaderKeepsTaskQueuedWhileWaitingForFileSlot(t *testing.T) 
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("internal download did not finish after releasing file slot")
+		t.Fatal("local download did not finish after releasing file slot")
 	}
 	record, ok, err = store.Get(ctx, task.ID)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, InternalDownloadStatusComplete, record.Status)
+	require.Equal(t, types.LocalDownloadStatusComplete, record.Status)
 }
 
-func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) {
-	oldHome := consts.HomeDir
-	consts.HomeDir = t.TempDir()
-	defer func() { consts.HomeDir = oldHome }()
+func TestLocalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) {
+	t.Parallel()
 
 	ctx := context.Background()
 	kvd := newMemoryTaskStorage()
@@ -390,21 +350,22 @@ func TestInternalDownloadControllerAddLinkUsesDownloadDirTemplate(t *testing.T) 
 	require.NoError(t, httpdl.NewTaskStore(kvd, 0).Add(ctx, task))
 
 	cfg := config.DefaultConfig()
-	cfg.Downloader.Mode = config.DownloaderModeInternal
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
+	cfg.Downloader.LocalRoot = filepath.Join(t.TempDir(), "downloads")
 	cfg.Aria2.Dir = ""
 	cfg.DownloadDir = "P/Y&M"
 
 	policies, _, naming, err := startPolicies(ctx, cfg.Namespace, DefaultOptions(cfg))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, policies.Stop(ctx)) })
-	_, err = (local.SavedLinks{Account: types.AccountID(cfg.Namespace), Root: cfg.Downloader.LocalRoot, FallbackRoot: filepath.Join(consts.HomeDir, internalDownloadFallbackDirName), Naming: naming, Source: httpdl.NewTaskStore(kvd, 0), Repository: newInternalTaskStore(kvd)}).Submit(ctx, types.DownloadSubmission{Account: types.AccountID(cfg.Namespace), TaskID: task.ID})
+	_, err = (local.SavedLinks{Account: types.AccountID(cfg.Namespace), Root: cfg.Downloader.LocalRoot, Naming: naming, Source: httpdl.NewTaskStore(kvd, 0), Repository: taskhub.NewLocalRepository(kvd)}).Submit(ctx, types.DownloadSubmission{Account: types.AccountID(cfg.Namespace), TaskID: task.ID})
 	require.NoError(t, err)
-	items, err := NewInternalDownloadController(kvd).List(ctx)
+	items, err := local.NewController(taskhub.NewLocalRepository(kvd)).List(ctx)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	info := items[0]
 	require.Equal(t, task.ID, info.ID)
-	require.Equal(t, InternalDownloadStatusQueued, info.Status)
+	require.Equal(t, types.LocalDownloadStatusQueued, info.Status)
 	require.Equal(t, testVideoFile, filepath.Base(info.Path))
-	require.Contains(t, info.Path, filepath.Join(internalDownloadFallbackDirName, "12345", time.Now().Format("200601")))
+	require.Contains(t, info.Path, filepath.Join("downloads", "12345", time.Now().Format("200601")))
 }
