@@ -18,23 +18,25 @@ const (
 )
 
 type ConfigField struct {
-	ReplacedBy      string    `json:"replaced_by,omitempty"`
-	SettingsTab     string    `json:"settings_tab,omitempty"`
-	SettingsSection string    `json:"settings_section,omitempty"`
-	SettingsOrder   int       `json:"settings_order,omitempty"`
-	Advanced        bool      `json:"advanced,omitempty"`
-	Help            string    `json:"help,omitempty"`
-	Editor          string    `json:"editor,omitempty"`
-	Choices         []string  `json:"choices,omitempty"`
-	Format          string    `json:"format,omitempty"`
-	RestartRequired bool      `json:"restart_required,omitempty"`
-	Name            string    `json:"name"`
-	Title           string    `json:"title"`
-	Type            FieldType `json:"type"`
-	Default         any       `json:"default"`
-	Min             *int64    `json:"min,omitempty"`
-	Max             *int64    `json:"max,omitempty"`
-	Secret          bool      `json:"secret,omitempty"`
+	EmptyPreserves  bool              `json:"empty_preserves,omitempty"`
+	ChoiceLabels    map[string]string `json:"choice_labels,omitempty"`
+	ReplacedBy      string            `json:"replaced_by,omitempty"`
+	SettingsTab     string            `json:"settings_tab,omitempty"`
+	SettingsSection string            `json:"settings_section,omitempty"`
+	SettingsOrder   int               `json:"settings_order,omitempty"`
+	Advanced        bool              `json:"advanced,omitempty"`
+	Help            string            `json:"help,omitempty"`
+	Editor          string            `json:"editor,omitempty"`
+	Choices         []string          `json:"choices,omitempty"`
+	Format          string            `json:"format,omitempty"`
+	RestartRequired bool              `json:"restart_required,omitempty"`
+	Name            string            `json:"name"`
+	Title           string            `json:"title"`
+	Type            FieldType         `json:"type"`
+	Default         any               `json:"default"`
+	Min             *int64            `json:"min,omitempty"`
+	Max             *int64            `json:"max,omitempty"`
+	Secret          bool              `json:"secret,omitempty"`
 }
 
 // Port versions use a compatible major version and a minimum minor version.

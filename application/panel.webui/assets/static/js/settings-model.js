@@ -28,7 +28,9 @@ export class ConfigurationDrafts {
     const fields = this.drafts.get(id);
     if (
       equal(value, this.baseline(id, name)) ||
-      (this.field(id, name)?.secret && value === "")
+      ((this.field(id, name)?.secret ||
+        this.field(id, name)?.empty_preserves) &&
+        value === "")
     )
       fields.delete(name);
     else fields.set(name, structuredClone(value));

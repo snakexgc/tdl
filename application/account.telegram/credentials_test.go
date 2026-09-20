@@ -28,6 +28,13 @@ func TestCredentialOverrideAndRestore(t *testing.T) {
 	value, err := host.Resolve(ports.TelegramCredentialsName)
 	require.NoError(t, err)
 	service := value.(ports.TelegramCredentials)
+	// New accounts always start with desktop, regardless of a legacy marker.
+	initial, err := service.Resolve(ctx, types.DefaultAccount, testBuiltin)
+	require.NoError(t, err)
+	desktop, err := Preset(presetDesktop)
+	require.NoError(t, err)
+	require.Equal(t, desktop, initial.App)
+	require.NoError(t, host.Reconfigure(ctx, ID, map[string]any{fieldBuiltinPreset: "", fieldUseBuiltin: false}))
 	for _, legacy := range []string{testBuiltin, "desktop"} {
 		resolved, err := service.Resolve(ctx, types.DefaultAccount, legacy)
 		require.NoError(t, err)
@@ -35,7 +42,7 @@ func TestCredentialOverrideAndRestore(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expected, resolved.App)
 	}
-	settings := map[string]any{testAPIID: 12345, testAPIHash: "private-hash"}
+	settings := map[string]any{testAPIID: 12345, testAPIHash: "private-hash", fieldUseBuiltin: false}
 	require.NoError(t, host.Reconfigure(ctx, ID, settings))
 	resolved, err := service.Resolve(ctx, types.DefaultAccount, "desktop")
 	require.NoError(t, err)
@@ -45,7 +52,7 @@ func TestCredentialOverrideAndRestore(t *testing.T) {
 	unchanged, err := service.Resolve(ctx, types.DefaultAccount, "desktop")
 	require.NoError(t, err)
 	require.Equal(t, resolved, unchanged)
-	settings["use_builtin"] = true
+	settings[fieldUseBuiltin] = true
 	require.NoError(t, host.Reconfigure(ctx, ID, settings))
 	resolved, err = service.Resolve(ctx, types.DefaultAccount, "desktop")
 	require.NoError(t, err)

@@ -39,6 +39,7 @@ func run(path string) error {
 	fmt.Fprint(&buffer, "`download.control.executors` 可设置为 `[\"aria2\",\"local\",\"http\"]`，选择本地执行器时必须同时提供本机绝对路径 `local_root`。只有明确未接受任务的错误允许降级；超时、响应丢失或已有任务 ID 时停止提交。aria2 仍需启用对应模块和自动下载。空列表沿用旧 downloader.mode；更改仅影响新提交，不迁移既有任务。\n\n")
 	fmt.Fprint(&buffer, "下载模式、本地根目录、并发文件数、DC 连接数、过滤/命名、表情触发、HTTP 公网地址/TTL 和分组转发规则支持热更新。表中“需要重启”指自动协调对应服务及必要依赖，不等于整个进程重启。账号命名空间、存储位置和程序升级需要进程重启。\n\n")
 	fmt.Fprint(&buffer, "WebUI 的“系统设置 → 一键完全重置”须再次确认后执行。重置会停止服务、关闭数据库与日志，再清空应用目录内 `.tdl/`、`components/` 的内容，删除 `config.json` 及其写入临时文件，包含所有账号的登录凭据、配置和历史密钥。自定义组件目录仅清理 TDL 的组件配置文件、密钥和迁移记录。目录本身保留以兼容挂载；完成后程序退出，下次启动需重新配置与登录，容器遵循自身重启策略。清理结果显示在程序控制台。\n\n")
+	fmt.Fprint(&buffer, "新配置的 Telegram 内置预设默认为 `desktop`，WebUI 提供下拉选择并提示不建议修改；“强制使用内部预设”默认勾选。已有配置保留其预设及自定义凭据选择，旧版 `config.json` 省略开关时仍沿用历史自动选择。API ID 未设置时显示空输入框，API Hash 不回显，两者留空均保留原值。断线重试参数位于“网络配置 → 高级选项”，默认折叠；原有重试行为保持不变。\n\n")
 	components := []rte.Configuration{}
 	for _, definition := range catalog.Definitions() {
 		m := definition.Manifest

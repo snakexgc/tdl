@@ -44,7 +44,11 @@ test("forward rules can be added and copied over HTTP, and searched by @username
   const checkbox = results.children[0].children[0];
   checkbox.checked = true; checkbox.events.get("change")();
   close();
-  cards.children[0].children[1].children[4].click();
+  const descendants = element => [element, ...element.children.flatMap(descendants)];
+  const summary = descendants(cards.children[0]);
+  assert(summary.some(element => element.textContent === "Project"), "selected chat names appear in the rule summary");
+  assert(summary.some(element => element.textContent === "@projectteam"), "usernames distinguish chats in the summary");
+  summary.find(element => element.tag === "button" && element.textContent === "复制").click();
   const rules = editor.value();
   assert.equal(rules.length, 2);
   assert.notEqual(rules[0].id, rules[1].id);

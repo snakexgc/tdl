@@ -61,6 +61,26 @@ func TestLoadMergesDefaults(t *testing.T) {
 	require.Zero(t, cfg.FileSizeMaxMB)
 }
 
+func TestCredentialDefaultsForNewFilesAndCompatibilityForExistingFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	fresh, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "desktop", fresh.Telegram.BuiltinPreset)
+	require.True(t, fresh.Telegram.UseBuiltin)
+	require.Zero(t, fresh.Telegram.APIID)
+	require.Empty(t, fresh.Telegram.APIHash)
+	reloaded, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, fresh.Telegram, reloaded.Telegram)
+
+	for _, document := range []string{`{}`, `{"telegram":{"api_id":12345,"api_hash":"fixture"}}`, `{"telegram":{"builtin_preset":"builtin","use_builtin":false}}`} {
+		require.NoError(t, os.WriteFile(path, []byte(document), 0o600))
+		previous, err := Load(path)
+		require.NoError(t, err)
+		require.False(t, previous.Telegram.UseBuiltin, "existing automatic/custom selection must not become forced desktop")
+	}
+}
+
 func TestLoadAllowsDisablingAria2ModuleAndAutoDownload(t *testing.T) {
 	t.Parallel()
 

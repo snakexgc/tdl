@@ -22,7 +22,7 @@ func TestCredentialSaveKeepsActiveAccountResources(t *testing.T) {
 	t.Cleanup(manager.Shutdown)
 	require.NoError(t, manager.configurationErr)
 	owner, connections := manager.accountHost, manager.connections
-	require.NoError(t, manager.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 12345, apiHashField: "0123456789abcdef0123456789abcdef"}))
+	require.NoError(t, manager.SaveComponentConfiguration(ctx, "account.telegram", map[string]any{apiIDField: 12345, apiHashField: "0123456789abcdef0123456789abcdef", "use_builtin": false}))
 	manager.transitionWG.Wait()
 	require.Same(t, owner, manager.accountHost, "credentials apply to future clients without disconnecting current transfers")
 	require.Same(t, connections, manager.connections)

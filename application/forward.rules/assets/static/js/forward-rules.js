@@ -169,23 +169,37 @@ export async function createEditor(value, { editable }) {
 
   const changed = () =>
     root.dispatchEvent(new Event("input", { bubbles: true }));
+  function chatSummary(title, refs, byRef) {
+    const group = node("div", "", "rule-chat-group");
+    group.append(node("h4", `${title} · ${refs.length}`));
+    if (!refs.length) {
+      group.append(node("p", `尚未选择${title}`, "subtle"));
+      return group;
+    }
+    const list = node("ul", "", "rule-chat-list");
+    for (const ref of refs) {
+      const chat = byRef.get(ref);
+      const item = node("li", "", "rule-chat-item");
+      item.title = ref;
+      item.append(node("span", chat?.title || ref, "rule-chat-name"));
+      if (chat?.username) item.append(node("small", `@${chat.username}`));
+      list.append(item);
+    }
+    group.append(list);
+    return group;
+  }
   function render() {
     cards.replaceChildren();
+    const byRef = new Map(dialogs.map((chat) => [chat.ref, chat]));
+    byRef.set("self", { title: "收藏夹" });
     if (!rules.length)
       cards.append(
         node("p", "暂无规则。添加规则后选择来源和目标。", "rule-empty"),
       );
     rules.forEach((rule, index) => {
-      const card = node("section", "", "forward-rule-card rule-list-row");
-      const info = node("div");
-      info.append(
-        node("strong", rule.name || "未命名规则"),
-        node(
-          "p",
-          `${rule.sources.length} 个来源 → ${rule.targets.length} 个目标 · ${rule.mode === "clone" ? "复制发送" : "官方转发优先"}${rule.silent ? " · 静默" : ""}`,
-          "subtle",
-        ),
-      );
+      const card = node("section", "", "forward-rule-card");
+      const header = node("header", "", "rule-card-header");
+      header.append(node("h3", rule.name || "未命名规则"));
       const controls = node("div", "", "row-actions");
       const enabled = node("input");
       enabled.type = "checkbox";
@@ -194,10 +208,31 @@ export async function createEditor(value, { editable }) {
       enabled.setAttribute("aria-label", `启用 ${rule.name}`);
       enabled.addEventListener("change", () => {
         rule.enabled = enabled.checked;
+        enableText.textContent = rule.enabled ? "已启用" : "已停用";
         changed();
       });
-      const enableLabel = node("label", "启用 ");
-      enableLabel.append(enabled);
+      const enableLabel = node("label", "", "rule-enabled-option");
+      const enableText = node("span", rule.enabled ? "已启用" : "已停用");
+      enableLabel.append(enabled, enableText);
+      header.append(enableLabel);
+      const route = node("div", "", "rule-route-summary");
+      const arrow = node("span", "→", "rule-route-arrow");
+      arrow.setAttribute("aria-hidden", "true");
+      route.append(
+        chatSummary("来源", rule.sources, byRef),
+        arrow,
+        chatSummary("目标", rule.targets, byRef),
+      );
+      const footer = node("footer", "", "rule-card-footer");
+      const options = node("dl", "", "rule-options");
+      for (const [title, value] of [
+        ["转发模式", rule.mode === "clone" ? "复制发送" : "官方转发优先"],
+        ["静默发送", rule.silent ? "开启" : "关闭"],
+      ]) {
+        const option = node("div");
+        option.append(node("dt", title), node("dd", value));
+        options.append(option);
+      }
       const open = button("编辑", () => edit(index));
       const copy = button("复制", () => {
         rules.splice(index + 1, 0, {
@@ -223,8 +258,9 @@ export async function createEditor(value, { editable }) {
         render();
       });
       down.disabled = !editable || index === rules.length - 1;
-      controls.append(enableLabel, open, up, down, copy, remove);
-      card.append(info, controls);
+      controls.append(open, up, down, copy, remove);
+      footer.append(options, controls);
+      card.append(header, route, footer);
       cards.append(card);
     });
     changed();

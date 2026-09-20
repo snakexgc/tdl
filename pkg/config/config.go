@@ -60,6 +60,7 @@ type (
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
+		Telegram:         types.TelegramCredentialsConfig{BuiltinPreset: "desktop", UseBuiltin: true},
 		Namespace:        "default",
 		Debug:            false,
 		Limit:            DefaultLimit,
@@ -482,6 +483,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := DefaultConfig()
+	// Existing files retain historical automatic selection when credential
+	// switches are omitted; only newly created configurations use new defaults.
+	cfg.Telegram = types.TelegramCredentialsConfig{}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, errors.Wrap(err, "unmarshal config")
 	}

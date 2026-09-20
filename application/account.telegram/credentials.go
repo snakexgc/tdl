@@ -14,10 +14,13 @@ import (
 )
 
 const (
-	ID            = "account.telegram"
-	fieldAPIID    = "api_id"
-	fieldAPIHash  = "api_hash"
-	presetBuiltin = "builtin"
+	ID                 = "account.telegram"
+	fieldAPIID         = "api_id"
+	fieldAPIHash       = "api_hash"
+	fieldBuiltinPreset = "builtin_preset"
+	fieldUseBuiltin    = "use_builtin"
+	presetBuiltin      = "builtin"
+	presetDesktop      = "desktop"
 )
 
 func Manifest() manifest.Manifest {
@@ -33,14 +36,14 @@ func Manifest() manifest.Manifest {
 			manifest.Number("file_limit", "并发下载文件数", 1, 1, 10000, false).InSettings("download", "下载并发与节奏"),
 			manifest.Number("dc_pool_size", "每 DC 下载容量", 8, 1, 10000, false).InSettings("download", "下载并发与节奏"),
 			manifest.Number("delay_seconds", "任务间隔（秒）", 0, 0, 3600, true).InSettings("download", "下载并发与节奏"),
-			manifest.Number("reconnect_timeout_seconds", "重连等待（秒）", 3, 0, 86400, true),
+			manifest.Number("reconnect_timeout_seconds", "断线重试间隔（秒）", 3, 0, 86400, true).InSettings("network", "网络代理").WithHelp("Telegram 监听连接中断后，等待这些秒再重新连接。通常保持默认 3 秒；填 0 时使用 5 秒。"),
 
-			{Name: fieldAPIID, Title: "API ID", Type: manifest.Int, Default: 0, Min: &zero},
-			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true},
-			{Name: "builtin_preset", Title: "内置预设", Type: manifest.String, Default: ""},
-			{Name: "use_builtin", Title: "使用内置凭据", Type: manifest.Bool, Default: false},
+			{Name: fieldAPIID, Title: "API ID", Type: manifest.Int, Default: 0, Min: &zero, EmptyPreserves: true, Help: "留空保持不变。自定义 API ID 和 API Hash 需成对填写，并取消勾选「强制使用内部预设」后使用。"},
+			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true, Help: "留空保持不变。填写自定义 API ID 时需同时提供对应的 API Hash。"},
+			{Name: fieldBuiltinPreset, Title: "内置预设", Type: manifest.String, Default: presetDesktop, Choices: []string{presetDesktop, presetBuiltin, ""}, ChoiceLabels: map[string]string{presetDesktop: "desktop（推荐）", presetBuiltin: presetBuiltin, "": "自动（沿用已有账号）"}, Help: "默认 desktop，不建议修改。更换预设可能需要重新登录；旧配置的自动选项保留原有账号预设。"},
+			manifest.Flag(fieldUseBuiltin, "强制使用内部预设", true, false).WithHelp("默认勾选。开启后使用上方内置预设；取消勾选后才会优先使用已保存的自定义 API ID 和 API Hash。"),
 		},
-	}, "account", "Telegram 连接与凭据", "ntp", "reconnect_timeout_seconds", "builtin_preset", "use_builtin")
+	}, "account", "Telegram 连接与凭据", "ntp", "reconnect_timeout_seconds", fieldBuiltinPreset, fieldUseBuiltin)
 }
 
 func Register(registry *rte.Registry) error {
@@ -89,8 +92,8 @@ func (c *Credentials) PrepareConfig(ctx context.Context, view config.View) (func
 	}{
 		{fieldAPIID, &settings.APIID},
 		{fieldAPIHash, &settings.APIHash},
-		{"builtin_preset", &settings.BuiltinPreset},
-		{"use_builtin", &settings.UseBuiltin},
+		{fieldBuiltinPreset, &settings.BuiltinPreset},
+		{fieldUseBuiltin, &settings.UseBuiltin},
 	} {
 		if err := view.Get(field.name, field.target); err != nil {
 			return nil, err
@@ -159,7 +162,7 @@ func Preset(name string) (types.TelegramApp, error) {
 	switch name {
 	case presetBuiltin:
 		return types.TelegramApp{AppID: 15055931, AppHash: "021d433426cbb920eeb95164498fe3d3"}, nil
-	case "desktop":
+	case presetDesktop:
 		return types.TelegramApp{AppID: 2040, AppHash: "b18441a1ff607e10a989891a5462e627"}, nil
 	default:
 		return types.TelegramApp{}, fmt.Errorf("unknown Telegram application preset %q", name)

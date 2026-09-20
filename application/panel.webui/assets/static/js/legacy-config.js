@@ -15,10 +15,10 @@ const sections = [
   {
     title: "Telegram 应用凭据",
     fields: [
-      ["telegram.api_id", "API ID", "number", "与 API Hash 一起填写时使用自己的应用凭据；两项都留空则沿用内置凭据。可在 my.telegram.org 申请。"],
+      ["telegram.api_id", "API ID", "optionalNumber", "留空保持不变。自定义 API ID 和 API Hash 需成对填写，并取消勾选「强制使用内部预设」后使用。"],
       ["telegram.api_hash", "API Hash", "password", "与 API ID 成对填写；保存时留空表示保持已保存的值。凭据变化后可能需要重新登录，已有会话不会被删除。"],
-      ["telegram.builtin_preset", "内置预设", "select", "留空沿用当前会话的预设；新登录默认 desktop。内置预设属于第三方应用，建议使用自己申请的凭据。", ["", "builtin", "desktop"]],
-      ["telegram.use_builtin", "使用内置凭据", "bool", "开启后暂时停用自定义凭据，保留已填写的 API ID 和 Hash，方便恢复原设置。"],
+      ["telegram.builtin_preset", "内置预设", "select", "默认 desktop，不建议修改。更换预设可能需要重新登录；旧配置的自动选项保留原有账号预设。", ["desktop", "builtin", ""]],
+      ["telegram.use_builtin", "强制使用内部预设", "bool", "默认勾选。开启后使用内置预设；取消勾选后才会优先使用已保存的自定义 API ID 和 API Hash。"],
     ],
   },
   {
@@ -32,7 +32,7 @@ const sections = [
       ["pool_size", "每 DC 下载容量", "number", "同时限制每个 Telegram DC 的连接池和下载流，并作为 aria2 的 split 与 max-connection-per-server；默认 8，填 0 或负数会恢复为 8。"],
       ["delay", "任务间隔", "number", "两个下载任务之间等待的秒数，通常为 0。"],
       ["ntp", "时间校准服务器", "text", "留空时启动会自动选择最快的内置服务器；手动填写后会优先检测该服务器。"],
-      ["reconnect_timeout", "重连等待时间", "number", "网络断开后等待多久再重连，单位秒。"],
+      ["reconnect_timeout", "断线重试间隔（秒）", "number", "Telegram 监听连接中断后，等待这些秒再重新连接。通常保持默认 3 秒；填 0 时使用 5 秒。"],
       ["download_dir", "下载目录规则", "text", "目录模板；可用 G 名称、P 来源 ID、I 触发消息文字、F 原始文件名、S/R 消息 ID、A 相册 ID、Y/M/D 日期，例如 G\\Y&M；I 会仅保留中英文数字并自动截断。"],
       ["filename", "文件名规则", "text", "文件名模板；与 download_dir 使用同一组变量，例如 G-I-F。"],
       ["filename_max_length", "文件名字节上限", "number", "最终文件名的 UTF-8 字节数上限（含扩展名）；超长时优先缩短 I（保留头尾，中间用 ... 代替），默认 255。"],
@@ -152,7 +152,8 @@ function renderConfigForm() {
     <section class="config-section" data-legacy-tab="${section.tab}">
       <h2>${escapeHTML(section.title)}</h2>
       <div class="field-grid">
-        ${section.fields.map(renderField).join("")}
+        ${section.fields.filter(field => field[0] !== "reconnect_timeout").map(renderField).join("")}
+        ${section.fields.some(field => field[0] === "reconnect_timeout") ? `<details class="advanced-fields legacy-network-advanced"><summary>高级选项</summary>${section.fields.filter(field => field[0] === "reconnect_timeout").map(renderField).join("")}</details>` : ""}
       </div>
     </section>
   `).join("");
@@ -174,7 +175,7 @@ function renderField(field) {
   let control = "";
   if (type === "select") {
     control = `<select data-config-control data-path="${escapeAttr(path)}" data-type="${type}">
-      ${(options || []).map((option) => `<option value="${escapeAttr(option)}" ${String(value) === option ? "selected" : ""}>${escapeHTML(option)}</option>`).join("")}
+      ${(options || []).map((option) => `<option value="${escapeAttr(option)}" ${String(value) === option ? "selected" : ""}>${escapeHTML(path === "telegram.builtin_preset" ? ({ desktop: "desktop（推荐）", builtin: "builtin", "": "自动（沿用已有账号）" }[option]) : option)}</option>`).join("")}
     </select>`;
   } else if (type === "proxy") {
     control = renderProxyInput(path, value || "");
@@ -184,6 +185,8 @@ function renderField(field) {
     control = renderTagInput(path, type, value || []);
   } else if (type === "password") {
     control = `<input data-config-control type="password" data-path="${escapeAttr(path)}" data-type="${type}" value="" placeholder="留空保持不变">`;
+  } else if (type === "optionalNumber") {
+    control = `<input data-config-control type="number" min="1" step="1" data-path="${escapeAttr(path)}" data-type="${type}" value="${escapeAttr(value || "")}" placeholder="留空保持不变">`;
   } else if (type === "sizeRange") {
     control = renderFileSizeRangeInput(path, options, value, getPath(state.config, options));
   } else {
@@ -380,7 +383,7 @@ async function saveConfig(event) {
   document.querySelectorAll("#config-form [data-config-control]").forEach((input) => {
     const path = input.dataset.path;
     const type = input.dataset.type;
-    if (type === "password" && !input.value) return;
+    if ((type === "password" || type === "optionalNumber") && !input.value) return;
     values[path] = fieldValue(input, type);
   });
   try {
@@ -449,6 +452,7 @@ function fieldValue(input, type) {
   if (input.classList.contains("proxy-control")) return proxyFieldValue(input);
   if (type === "bool") return input.checked;
   if (type === "number") return Number(input.value || 0);
+  if (type === "optionalNumber") return input.value ? Number(input.value) : (getPath(state.config, input.dataset.path) || 0);
   if (type === "list") return splitList(input.value);
   if (type === "intList") return splitList(input.value).map((value) => Number(value)).filter((value) => Number.isFinite(value));
   return input.value;
@@ -484,9 +488,9 @@ function legacyTab(path) {
   if (path.startsWith("webui.")) return "panel";
   if (path.startsWith("http.")) return "links";
   if (path.startsWith("forward.")) return "forward";
-  if (["proxy", "proxy_username", "proxy_password"].includes(path)) return "network";
+  if (["proxy", "proxy_username", "proxy_password", "reconnect_timeout"].includes(path)) return "network";
   if (path === "debug" || path.startsWith("modules.")) return "system";
-  if (path.startsWith("telegram.") || ["ntp", "reconnect_timeout"].includes(path)) return "account";
+  if (path.startsWith("telegram.") || path === "ntp") return "account";
   return "download";
 }
 export function showTab(tab) {

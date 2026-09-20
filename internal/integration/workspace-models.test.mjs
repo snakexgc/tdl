@@ -57,6 +57,20 @@ test("obsolete per-service proxies do not create additional editors", () => {
   assert.deepEqual(plain(groups.map(group => group.id)), ["account.telegram"]);
 });
 
+test("blank optional numeric credentials preserve saved IDs while other fields remain scoped", () => {
+  for (const apiID of [0, 12345]) {
+    const store = new models.ConfigurationDrafts([{ id: "account.telegram", fields: [
+      { name: "api_id", type: "int", default: 0, empty_preserves: true },
+      { name: "use_builtin", type: "bool", default: true },
+    ], values: { api_id: apiID, use_builtin: true } }]);
+    store.set("account.telegram", "api_id", 67890);
+    store.set("account.telegram", "api_id", "");
+    store.set("account.telegram", "use_builtin", false);
+    assert.equal(store.value("account.telegram", "api_id"), apiID);
+    assert.deepEqual(plain(store.patch("account.telegram", ["api_id", "use_builtin"])), { use_builtin: false });
+  }
+});
+
 const modules = await load("../../application/panel.webui/assets/static/js/module-model.js");
 test("functional module groups preserve every component and distinguish enablement from health", () => {
   const items = [

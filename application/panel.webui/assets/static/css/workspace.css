@@ -363,21 +363,6 @@
 .settings-panel [id] {
   scroll-margin-top: 88px;
 }
-.forward-rules .rule-list-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 16px;
-}
-.rule-list-row > div:first-child {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.rule-list-row p {
-  margin: 6px 0 0;
-}
 .rule-editor {
   display: grid;
   gap: 24px;

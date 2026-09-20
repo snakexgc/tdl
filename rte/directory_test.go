@@ -19,7 +19,7 @@ import (
 func TestDirectoryOfflineValidationSecretsAndDisabledPersistence(t *testing.T) {
 	ctx := context.Background()
 	definition := rte.Definition{Scope: rte.AccountScope, Manifest: manifest.Manifest{ID: "offline", Config: []manifest.ConfigField{
-		{Name: directoryValueField, Type: manifest.Int, Default: 3},
+		{Name: directoryValueField, Type: manifest.Int, Default: 3, EmptyPreserves: true},
 		{Name: directorySecretField, Type: manifest.String, Default: "", Secret: true},
 	}}, Validate: func(_ context.Context, view config.View) error {
 		var value int
@@ -44,6 +44,10 @@ func TestDirectoryOfflineValidationSecretsAndDisabledPersistence(t *testing.T) {
 	require.False(t, document.Enabled)
 	require.Equal(t, "keep-me", document.Values[directorySecretField])
 	require.Equal(t, json.Number("7"), document.Values[directoryValueField])
+	require.NoError(t, directory.Patch(ctx, "offline", map[string]any{directoryValueField: "", directorySecretField: ""}))
+	document, err = store.Load(ctx, "offline")
+	require.NoError(t, err)
+	require.Equal(t, json.Number("7"), document.Values[directoryValueField], "empty input must preserve a saved numeric credential")
 	require.Error(t, directory.Patch(ctx, "offline", map[string]any{directoryValueField: 1}))
 	require.Error(t, directory.Patch(ctx, "offline", map[string]any{"unknown": 7}))
 	require.Error(t, directory.Patch(ctx, "missing", nil))

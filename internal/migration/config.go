@@ -47,6 +47,8 @@ func Prepare(reader io.Reader) (*Plan, error) {
 		return nil, fmt.Errorf("expected one legacy configuration object")
 	}
 	cfg := legacy.DefaultConfig()
+	// Omitted legacy switches must not override a user's custom API credentials.
+	cfg.Telegram = types.TelegramCredentialsConfig{}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}

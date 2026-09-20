@@ -16,6 +16,8 @@
 
 WebUI 的“系统设置 → 一键完全重置”须再次确认后执行。重置会停止服务、关闭数据库与日志，再清空应用目录内 `.tdl/`、`components/` 的内容，删除 `config.json` 及其写入临时文件，包含所有账号的登录凭据、配置和历史密钥。自定义组件目录仅清理 TDL 的组件配置文件、密钥和迁移记录。目录本身保留以兼容挂载；完成后程序退出，下次启动需重新配置与登录，容器遵循自身重启策略。清理结果显示在程序控制台。
 
+新配置的 Telegram 内置预设默认为 `desktop`，WebUI 提供下拉选择并提示不建议修改；“强制使用内部预设”默认勾选。已有配置保留其预设及自定义凭据选择，旧版 `config.json` 省略开关时仍沿用历史自动选择。API ID 未设置时显示空输入框，API Hash 不回显，两者留空均保留原值。断线重试参数位于“网络配置 → 高级选项”，默认折叠；原有重试行为保持不变。
+
 ## account.telegram — Telegram 账号
 
 运行作用域：`account`。
@@ -30,8 +32,8 @@ WebUI 的“系统设置 → 一键完全重置”须再次确认后执行。重
 | `reconnect_timeout_seconds` | `int` | `3` | ≥ 0，≤ 86400 | 否 | 是 |
 | `api_id` | `int` | `0` | ≥ 0 | 否 | 否 |
 | `api_hash` | `string` | `""` | — | 是 | 否 |
-| `builtin_preset` | `string` | `""` | — | 否 | 否 |
-| `use_builtin` | `bool` | `false` | — | 否 | 否 |
+| `builtin_preset` | `string` | `"desktop"` | desktop / builtin /  | 否 | 否 |
+| `use_builtin` | `bool` | `true` | — | 否 | 否 |
 
 ## console.bot — Bot 控制台
 

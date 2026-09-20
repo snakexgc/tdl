@@ -36,6 +36,8 @@ func TestMigrationPreviewExportAndRebuild(t *testing.T) {
 	doc, err := store.Load(ctx, "account.telegram")
 	require.NoError(t, err)
 	require.Equal(t, "secret-application-value", doc.Values["api_hash"])
+	require.Equal(t, false, doc.Values["use_builtin"], "migration must preserve custom credentials")
+	require.Equal(t, "", doc.Values["builtin_preset"])
 	registry, err := application.Registry()
 	require.NoError(t, err)
 	host, err := registry.BuildStored(ctx, plan.Account, store)

@@ -109,7 +109,10 @@ export async function renderSettingsBlock(host, group, context) {
         input.setAttribute("aria-describedby", help.id);
         if (field.choices?.length) {
           for (const choice of field.choices) {
-            const option = element("option", choice);
+            const option = element(
+              "option",
+              field.choice_labels?.[choice] ?? choice,
+            );
             option.value = choice;
             input.append(option);
           }
@@ -120,10 +123,12 @@ export async function renderSettingsBlock(host, group, context) {
         } else if (field.type === "int") {
           input.type = "number";
           input.step = "1";
-          input.required = true;
+          input.required = !field.empty_preserves;
           if (field.min != null) input.min = String(field.min);
           if (field.max != null) input.max = String(field.max);
-          input.value = String(current ?? 0);
+          input.value =
+            field.empty_preserves && !current ? "" : String(current ?? 0);
+          if (field.empty_preserves) input.placeholder = "留空保持不变";
         } else if (field.type === "strings") {
           input.value = Array.isArray(current) ? current.join("\n") : "";
           input.placeholder = "每行一项";
@@ -140,7 +145,9 @@ export async function renderSettingsBlock(host, group, context) {
             field.type === "bool"
               ? input.checked
               : field.type === "int"
-                ? Number(input.value)
+                ? field.empty_preserves && input.value === ""
+                  ? ""
+                  : Number(input.value)
                 : field.type === "strings"
                   ? input.value
                       .split(/\r?\n/)
