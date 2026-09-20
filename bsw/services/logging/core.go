@@ -1,89 +1,98 @@
 package logging
 
 import (
-	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
-	"unicode/utf8"
+	"sort"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-var (
-	credentialsURL   = regexp.MustCompile(`(?i)(https?|socks5h?)://[^\s/@]+:[^\s/@]+@`)
-	botToken         = regexp.MustCompile(`\b(?:bot)?[0-9]{5,}:[A-Za-z0-9_-]{20,}\b`)
-	secretAssignment = regexp.MustCompile(`(?i)(token|password|api_hash|secret|authorization)(["\s:=]+)[^\s,;"}]+`)
-)
+// fieldContext snapshots With fields immediately, and preserves open namespaces.
+// Using Zap's encoder also honors ObjectMarshaler, ArrayMarshaler and errors.
+type fieldContext struct{ encoder zapcore.Encoder }
 
-func Redact(value string) string {
-	value = credentialsURL.ReplaceAllString(value, "$1://[REDACTED]@")
-	value = botToken.ReplaceAllString(value, "[REDACTED]")
-	value = secretAssignment.ReplaceAllString(value, "$1$2[REDACTED]")
-	return bounded(value, 8192)
+func newFieldContext() fieldContext {
+	return fieldContext{encoder: zapcore.NewJSONEncoder(zapcore.EncoderConfig{
+		EncodeTime: zapcore.ISO8601TimeEncoder, EncodeDuration: zapcore.NanosDurationEncoder,
+	})}
 }
 
-func bounded(value string, limit int) string {
-	if len(value) <= limit {
-		return value
+func (c fieldContext) with(fields []zap.Field) fieldContext {
+	next := fieldContext{encoder: c.encoder.Clone()}
+	for _, field := range fields {
+		field.AddTo(next.encoder)
 	}
-	value = value[:limit]
-	for !utf8.ValidString(value) {
-		value = value[:len(value)-1]
-	}
-	return value + "…"
+	return next
 }
 
-func safeValue(key string, value any) any {
-	lower := strings.ToLower(key)
-	for _, secret := range []string{"password", "token", "secret", "api_hash", "app_hash", "authkey", "auth_key", "authorization", "session", "phone", "code", "payload", "body", "text", "request", "response"} {
-		if strings.Contains(lower, secret) {
-			return "[REDACTED]"
-		}
+func (c fieldContext) values(fields []zap.Field) (map[string]any, error) {
+	buffer, err := c.encoder.EncodeEntry(zapcore.Entry{}, fields)
+	if err != nil {
+		return nil, err
 	}
-	switch item := value.(type) {
-	case map[string]any:
-		result := map[string]any{}
-		for name, v := range item {
-			result[name] = safeValue(name, v)
-		}
-		return result
-	case []any:
-		result := make([]any, 0, len(item))
-		for _, v := range item {
-			result = append(result, safeValue("", v))
-		}
-		return result
-	case string:
-		return Redact(item)
-	case error:
-		return Redact(item.Error())
-	case nil, bool, float64:
-		return item
-	default:
-		data, err := json.Marshal(value)
-		var normalized any
-		if err == nil && json.Unmarshal(data, &normalized) == nil {
-			return safeValue("", normalized)
-		}
-		return Redact(fmt.Sprint(value))
+	defer buffer.Free()
+	var values map[string]any
+	err = decodeJSON(buffer.Bytes(), &values)
+	return values, err
+}
+
+// RedactingCore sanitizes before fan-out, so text and structured logs have the
+// same confidentiality guarantees. It does not sample away state transitions.
+type RedactingCore struct {
+	zapcore.Core
+	context fieldContext
+}
+
+func NewRedactingCore(core zapcore.Core) zapcore.Core {
+	return &RedactingCore{Core: core, context: newFieldContext()}
+}
+
+func (c *RedactingCore) With(fields []zap.Field) zapcore.Core {
+	return &RedactingCore{Core: c.Core, context: c.context.with(fields)}
+}
+
+func (c *RedactingCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return checked.AddCore(entry, c)
 	}
+	return checked
+}
+
+func (c *RedactingCore) Write(entry zapcore.Entry, fields []zap.Field) error {
+	values, err := c.context.values(fields)
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	safe := make([]zap.Field, 0, len(keys))
+	for _, key := range keys {
+		safe = append(safe, zap.Any(key, safeValue(key, values[key])))
+	}
+	entry.Message = Redact(entry.Message)
+	entry.LoggerName = Redact(entry.LoggerName)
+	entry.Stack = Redact(entry.Stack)
+	return c.Core.Write(entry, safe)
 }
 
 type Core struct {
-	store  *Store
-	level  zapcore.LevelEnabler
-	fields []zap.Field
+	store   *Store
+	level   zapcore.LevelEnabler
+	context fieldContext
 }
 
 func NewCore(store *Store, level zapcore.LevelEnabler) zapcore.Core {
-	return &Core{store: store, level: level}
+	return &Core{store: store, level: level, context: newFieldContext()}
 }
+
 func (c *Core) Enabled(level zapcore.Level) bool { return c.level.Enabled(level) }
 func (c *Core) With(fields []zap.Field) zapcore.Core {
 	next := *c
-	next.fields = append(append([]zap.Field{}, c.fields...), fields...)
+	next.context = c.context.with(fields)
 	return &next
 }
 
@@ -93,17 +102,15 @@ func (c *Core) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcor
 	}
 	return checked
 }
+
 func (c *Core) Sync() error { return nil }
 func (c *Core) Write(entry zapcore.Entry, fields []zap.Field) error {
-	encoder := zapcore.NewMapObjectEncoder()
-	for _, field := range c.fields {
-		field.AddTo(encoder)
-	}
-	for _, field := range fields {
-		field.AddTo(encoder)
+	values, err := c.context.values(fields)
+	if err != nil {
+		return err
 	}
 	str := func(key string) string {
-		value := encoder.Fields[key]
+		value := values[key]
 		if value == nil {
 			return ""
 		}
@@ -116,17 +123,11 @@ func (c *Core) Write(entry zapcore.Entry, fields []zap.Field) error {
 	if item.Component == "" {
 		item.Component = "system"
 	}
-	safe := map[string]any{}
-	for key, value := range encoder.Fields {
-		if key != "account" && key != "component" && key != "kind" {
-			safe[key] = safeValue(key, value)
-		}
-	}
-	if len(safe) > 0 {
-		data, err := json.Marshal(safe)
-		if err == nil {
-			item.Details = bounded(string(data), 16384)
-		}
+	delete(values, "account")
+	delete(values, "component")
+	delete(values, "kind")
+	if len(values) > 0 {
+		item.Details = safeDetails(values)
 	}
 	return c.store.Write(item)
 }

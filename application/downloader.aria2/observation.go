@@ -8,12 +8,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte/targetpath"
 )
 
 type Observer struct {
+	Logger        *zap.Logger
 	Client        ports.Aria2ControlClient
 	Repository    ports.Aria2Observations
 	PublicBaseURL string
@@ -80,12 +83,23 @@ func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadSt
 				record.Dir = strings.TrimRight(record.Dir, `/\`)
 			}
 		}
+		previousStatus := record.Status
 		record.Status = normalizedAria2Status(status.Status)
 		info := aria2TaskInfo(status)
 		record.Total, record.Completed = info.TotalLength, info.CompletedLength
 		record.Error = strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage)
-		_, applyErr := o.Repository.Apply(ctx, snapshot.Links[record.TaskID], record, !exists, time.Now(), o.TTL)
+		applied, applyErr := o.Repository.Apply(ctx, snapshot.Links[record.TaskID], record, !exists, time.Now(), o.TTL)
 		result = errors.Join(result, applyErr)
+		if applied && applyErr == nil && previousStatus != record.Status && o.Logger != nil {
+			level := zap.InfoLevel
+			if record.Status == aria2StatusError {
+				level = zap.ErrorLevel
+			}
+			o.Logger.Log(level, "Aria2 task state changed", zap.String("component", ID),
+				zap.String("gid", gid), zap.String("task_id", record.TaskID),
+				zap.String("from", previousStatus), zap.String("to", record.Status),
+				zap.Int64("total", record.Total), zap.Int64("completed", record.Completed), zap.String("error", record.Error))
+		}
 	}
 	return statuses, result
 }

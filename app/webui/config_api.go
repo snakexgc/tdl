@@ -90,11 +90,9 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := s.checkUpdate(r)
 	if err != nil {
-		slog.Warn("检查软件更新失败", "component", "update.self", "account", s.namespace(), "error", err)
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	slog.Info("软件更新检查已完成", "component", "update.self", "account", s.namespace())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "update": info})
 }
 

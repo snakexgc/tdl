@@ -3,6 +3,7 @@ package downloadcontrol
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -147,5 +148,15 @@ func (s *Service) Control(ctx context.Context, request types.DownloadAction) (ty
 	if len(unique) == 0 {
 		return result, nil
 	}
-	return backend.ChangeTasks(ctx, action, unique)
+	result, err = backend.ChangeTasks(ctx, action, unique)
+	level := slog.LevelInfo
+	if err != nil || len(result.Errors) > 0 {
+		level = slog.LevelError
+	}
+	if ctx.Err() != nil {
+		level = slog.LevelDebug
+	}
+	slog.Log(ctx, level, "下载任务控制已结束", "component", ID, "account", s.account, "executor", request.Executor,
+		"action", action, "matched", result.Matched, "changed", result.Changed, "skipped", result.Skipped, "errors", result.Errors, "error", err)
+	return result, err
 }

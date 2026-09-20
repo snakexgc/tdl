@@ -145,7 +145,17 @@ func (i *instance) setStatus(status Status) {
 	i.status = status
 	i.observation.Store(&observation{status: status, runnables: i.runnables})
 	if previous != status {
-		slog.Info("组件状态变化", "component", status.ID, "account", i.account, "from", previous.State, "to", status.State)
+		level := slog.LevelInfo
+		switch status.State {
+		case Starting, Stopping, Failed:
+			// Failures are reported with their cause by the diagnostic store.
+			level = slog.LevelDebug
+		case Blocked:
+			level = slog.LevelWarn
+		case Running, Stopped:
+			level = slog.LevelInfo
+		}
+		slog.Log(context.Background(), level, "组件状态变化", "component", status.ID, "account", i.account, "from", previous.State, "to", status.State)
 	}
 }
 

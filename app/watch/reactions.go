@@ -2,11 +2,9 @@ package watch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
@@ -35,14 +33,12 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 		peerType = peerKindChannel
 	}
 
-	reactionsJSON, _ := json.Marshal(update.Reactions)
-	logctx.From(ctx).Info("Reaction update received",
+	logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Reaction update received",
 		zap.String("peer_type", peerType),
 		zap.Int64("peer_id", peerID),
 		zap.Int("msg_id", update.MsgID),
 		zap.Bool("reactions_min", update.Reactions.Min),
 		zap.Int("results_count", len(update.Reactions.Results)),
-		zap.String("reactions_json", string(reactionsJSON)),
 		zap.Bool("entities_short", e.Short),
 		zap.Int("entities_users", len(e.Users)),
 		zap.Int("entities_chats", len(e.Chats)),
@@ -56,35 +52,32 @@ func (w *Watcher) onReaction(ctx context.Context, e tg.Entities, update *tg.Upda
 			if !update.Reactions.Min {
 				policy.Forget(key)
 			}
-			logctx.From(ctx).Info("Reaction is not mine, skipping",
+			logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Reaction is not mine, skipping",
 				zap.Int64("peer_id", peerID),
 				zap.Int("msg_id", update.MsgID))
 		} else {
 			inputPeer := w.peerToInputPeer(update.Peer, e)
 			if !policy.Claim(ctx, key) {
-				logctx.From(ctx).Info("Duplicate reaction, skipping",
+				logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Duplicate reaction, skipping",
 					zap.Int64("peer_id", peerID),
 					zap.Int("msg_id", update.MsgID))
 			} else {
 				msgLink := w.generateMessageLink(update.Peer, update.MsgID)
-				logctx.From(ctx).Info("My reaction detected, queuing submission",
+				logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Info("My reaction detected, queuing submission",
 					zap.Int64("peer_id", peerID),
 					zap.Int("msg_id", update.MsgID),
 					zap.Bool("input_peer_nil", inputPeer == nil),
 					zap.String("message_link", msgLink))
 
-				color.Cyan("📌 My reaction on %d/%d, queueing submission...", peerID, update.MsgID)
-				color.Green("🔗 Message link: %s", msgLink)
-
 				if err := ctx.Err(); err != nil {
-					logctx.From(ctx).Info("Watcher is stopping, skipping queued submission",
+					logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Watcher is stopping, skipping queued submission",
 						zap.Int64("peer_id", peerID),
 						zap.Int("msg_id", update.MsgID),
 						zap.Error(err))
 					policy.Forget(key)
 				} else {
 					if err := w.enqueueDownload(ctx, downloadJob{peer: inputPeer, msgID: update.MsgID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}); err != nil {
-						logctx.From(ctx).Warn("Submission queue full, dropping job",
+						logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Warn("Submission queue full, dropping job",
 							zap.Int64("peer_id", peerID),
 							zap.Int("msg_id", update.MsgID))
 						policy.Forget(key)
@@ -134,53 +127,48 @@ func (w *Watcher) onEditMessageReaction(ctx context.Context, e tg.Entities, msg 
 		if !msg.Reactions.Min {
 			policy.Forget(key)
 		}
-		logctx.From(ctx).Debug("EditMessage has no reactions, skipping",
+		logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("EditMessage has no reactions, skipping",
 			zap.Int("msg_id", msg.ID))
 		return nil
 	}
 
-	reactionsJSON, _ := json.Marshal(msg.Reactions)
-	logctx.From(ctx).Info("Reaction detected via EditMessage",
+	logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Reaction detected via EditMessage",
 		zap.Int64("peer_id", peerID),
 		zap.Int("msg_id", msg.ID),
 		zap.Bool("reactions_min", msg.Reactions.Min),
-		zap.Int("results_count", len(msg.Reactions.Results)),
-		zap.String("reactions_json", string(reactionsJSON)))
+		zap.Int("results_count", len(msg.Reactions.Results)))
 
 	if w.downloadEnabled() {
 		if !w.isMyMessageReactions(ctx, &msg.Reactions, peerID, msg.ID) {
 			if !msg.Reactions.Min {
 				policy.Forget(key)
 			}
-			logctx.From(ctx).Info("Reaction via EditMessage is not mine, skipping",
+			logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Reaction via EditMessage is not mine, skipping",
 				zap.Int64("peer_id", peerID),
 				zap.Int("msg_id", msg.ID))
 		} else {
 			inputPeer := w.peerToInputPeer(msg.PeerID, e)
 			if !policy.Claim(ctx, key) {
-				logctx.From(ctx).Info("Duplicate reaction (via EditMessage), skipping",
+				logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Duplicate reaction (via EditMessage), skipping",
 					zap.Int64("peer_id", peerID),
 					zap.Int("msg_id", msg.ID))
 			} else {
 				msgLink := w.generateMessageLink(msg.PeerID, msg.ID)
-				logctx.From(ctx).Info("My reaction detected via EditMessage, queuing submission",
+				logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Info("My reaction detected via EditMessage, queuing submission",
 					zap.Int64("peer_id", peerID),
 					zap.Int("msg_id", msg.ID),
 					zap.Bool("input_peer_nil", inputPeer == nil),
 					zap.String("message_link", msgLink))
 
-				color.Cyan("📌 My reaction on %d/%d (via edit), queueing submission...", peerID, msg.ID)
-				color.Green("🔗 Message link: %s", msgLink)
-
 				if err := ctx.Err(); err != nil {
-					logctx.From(ctx).Info("Watcher is stopping, skipping queued submission",
+					logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Debug("Watcher is stopping, skipping queued submission",
 						zap.Int64("peer_id", peerID),
 						zap.Int("msg_id", msg.ID),
 						zap.Error(err))
 					policy.Forget(key)
 				} else {
 					if err := w.enqueueDownload(ctx, downloadJob{peer: inputPeer, msgID: msg.ID, peerID: peerID, link: msgLink, source: downloadJobSourceReaction}); err != nil {
-						logctx.From(ctx).Warn("Submission queue full, dropping job",
+						logctx.From(ctx).With(zap.String("component", "trigger.reaction")).Warn("Submission queue full, dropping job",
 							zap.Int64("peer_id", peerID),
 							zap.Int("msg_id", msg.ID))
 						policy.Forget(key)

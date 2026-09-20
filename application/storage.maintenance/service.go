@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -63,8 +64,8 @@ func (s *Service) Stop(ctx context.Context) error {
 	}
 }
 
-func (s *Service) Clean(ctx context.Context, account types.AccountID) (ports.CleanupResult, error) {
-	result := ports.CleanupResult{Namespace: string(account)}
+func (s *Service) Clean(ctx context.Context, account types.AccountID) (result ports.CleanupResult, resultErr error) {
+	result = ports.CleanupResult{Namespace: string(account)}
 	if account != s.account {
 		return result, errors.New("cleanup account mismatch")
 	}
@@ -79,6 +80,16 @@ func (s *Service) Clean(ctx context.Context, account types.AccountID) (ports.Cle
 	s.active.Add(1)
 	s.mu.Unlock()
 	defer s.active.Done()
+	defer func() {
+		level := slog.LevelInfo
+		if resultErr != nil || len(result.Errors) > 0 {
+			level = slog.LevelError
+		}
+		if ctx.Err() != nil || errors.Is(resultErr, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "存储清理已结束", "component", ID, "account", account, "deleted", result.Deleted, "kept", result.Kept, "failed", len(result.Errors), "errors", result.Errors, "error", resultErr)
+	}()
 	call, cancel := context.WithCancel(ctx)
 	unlink := context.AfterFunc(s.ctx, cancel)
 	defer func() { unlink(); cancel() }()

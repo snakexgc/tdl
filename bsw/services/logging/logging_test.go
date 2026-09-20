@@ -3,6 +3,7 @@ package logging
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -71,8 +72,11 @@ func TestConcurrentLogsStayBoundedAndIndependent(t *testing.T) {
 	records[0].Message = "mutated"
 	unchanged, _ := store.Snapshot()
 	require.NotEqual(t, "mutated", unchanged[0].Message)
-	require.Contains(t, unchanged[0].Details, "transport.details.sequence")
-	require.NotContains(t, unchanged[0].Details, "transport.details.details")
+	var details map[string]any
+	require.NoError(t, json.Unmarshal([]byte(unchanged[0].Details), &details))
+	transport := details["transport"].(map[string]any)
+	require.Equal(t, true, transport["ready"])
+	require.Contains(t, transport["details"], "sequence")
 }
 
 type brokenWriter struct{}
@@ -85,4 +89,22 @@ func TestDiskFailureKeepsLiveLogs(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Less(t, len(entries[0].Message), 8200)
 	require.Contains(t, warning, "disk full")
+}
+
+func TestSinkWarningsRecoverIndependently(t *testing.T) {
+	var journal bytes.Buffer
+	store := New(&journal)
+	store.RecordSinkError("latest.log", errors.New("text unavailable"))
+	store.RecordSinkError("stderr", errors.New("console unavailable"))
+	require.NoError(t, store.Write(Entry{Message: "journal succeeds"}))
+	_, warning := store.Snapshot()
+	require.Contains(t, warning, "text unavailable")
+	require.Contains(t, warning, "console unavailable")
+	store.RecordSinkError("latest.log", nil)
+	_, warning = store.Snapshot()
+	require.NotContains(t, warning, "text unavailable")
+	require.Contains(t, warning, "console unavailable")
+	store.RecordSinkError("stderr", nil)
+	_, warning = store.Snapshot()
+	require.Empty(t, warning)
 }

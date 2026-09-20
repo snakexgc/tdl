@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
@@ -50,7 +49,7 @@ func SuspendTDLTasksForReconnect(ctx context.Context, client ReconnectClient, st
 		return nil, err
 	}
 	if len(candidates) == 0 {
-		logger.Info("No tdl aria2 tasks need pausing before reconnect")
+		logger.Debug("No tdl aria2 tasks need pausing before reconnect")
 		return nil, nil
 	}
 
@@ -127,7 +126,7 @@ func PauseTDLTasksForShutdown(ctx context.Context, client ReconnectClient, store
 		return nil, err
 	}
 	if len(candidates) == 0 {
-		logger.Info("No tdl aria2 tasks need pausing before shutdown")
+		logger.Debug("No tdl aria2 tasks need pausing before shutdown")
 		return nil, nil
 	}
 
@@ -202,7 +201,7 @@ func ResumeStartupPausedTasks(ctx context.Context, client ReconnectClient, store
 	}
 
 	if len(candidates) == 0 {
-		logger.Info("No paused tdl aria2 tasks to resume at startup")
+		logger.Debug("No paused tdl aria2 tasks to resume at startup")
 		return 0, nil
 	}
 
@@ -320,21 +319,29 @@ func RetryConnectionWithInterval(ctx context.Context, logger *zap.Logger, action
 	}
 
 	delay := min(retryInterval, maxConnectRetryInterval)
+	attempt := 0
 	for {
 		err := fn()
 		if err == nil {
+			if attempt > 0 {
+				logger.Info("Aria2 RPC connection recovered", zap.String("action", action), zap.Int("attempts", attempt))
+			}
 			return nil
 		}
 		if errors.Is(err, context.Canceled) || !IsConnectionError(err) {
 			return err
 		}
 
-		logger.Warn("Cannot connect to aria2 RPC, retrying",
+		attempt++
+		level := zap.DebugLevel
+		if attempt == 1 {
+			level = zap.WarnLevel
+		}
+		logger.Log(level, "Cannot connect to aria2 RPC, retrying",
+			zap.Int("attempt", attempt),
 			zap.String("action", action),
 			zap.Duration("retry_interval", delay),
 			zap.Error(err))
-		color.Yellow("⚠️ Cannot connect to aria2 RPC while trying to %s: %v", action, err)
-		color.Yellow("🔄 Retrying in %v...", delay)
 
 		timer := time.NewTimer(delay)
 		select {

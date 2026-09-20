@@ -2,9 +2,9 @@ package bot
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 
@@ -68,7 +68,7 @@ func (n *botNotifier) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := n.host.Stop(ctx); err != nil {
-		color.Yellow("Failed to stop notifications: %v", err)
+		slog.Error("停止通知服务失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }
 
@@ -87,7 +87,7 @@ func (n *botNotifier) Notify(ctx context.Context, text string) {
 		return
 	}
 	if err := service.Enqueue(notificationContext(ctx), n.account, text); err != nil {
-		color.Yellow("Failed to queue notification: %v", err)
+		slog.Warn("通知入队失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }
 
@@ -98,7 +98,7 @@ func (n *botNotifier) SendAndTrack(ctx context.Context, text string) []trackedMe
 	}
 	refs, err := service.Send(notificationContext(ctx), n.account, text)
 	if err != nil {
-		color.Yellow("Failed to send notification: %v", err)
+		slog.Error("发送通知失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 	return refs
 }
@@ -109,7 +109,7 @@ func (n *botNotifier) EditTracked(ctx context.Context, refs []trackedMessage, te
 		return
 	}
 	if err := service.Edit(notificationContext(ctx), n.account, refs, text); err != nil {
-		color.Yellow("Failed to edit notification: %v", err)
+		slog.Warn("更新通知失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }
 

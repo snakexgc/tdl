@@ -42,6 +42,7 @@ func New(source ports.RangeSource, logger *zap.Logger, timeout time.Duration) *H
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	logger = logger.With(zap.String("component", "proxy.range"))
 	return &Handler{
 		life: lifetime{ctx: context.Background()}, source: source, logger: logger, clientWaitTimeout: timeout,
 		taskChanged: make(chan struct{}, 1), sourceChanged: make(chan struct{}, 1),
@@ -75,7 +76,7 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.logger.Info("Download request received",
+	p.logger.Debug("Download request received",
 		zap.String("method", r.Method),
 		zap.String("task_id", taskID),
 		zap.String("range", r.Header.Get("Range")),
@@ -161,7 +162,7 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				zap.Error(waitErr),
 			}
 			if r.Context().Err() != nil {
-				p.logger.Warn("Download client disconnected while waiting for Telegram", fields...)
+				p.logger.Debug("Download client disconnected while waiting for Telegram", fields...)
 				return
 			}
 			p.logger.Warn("Telegram download backend is not ready", fields...)
@@ -183,7 +184,7 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				zap.Error(err),
 			}
 			if errors.Is(err, context.Canceled) {
-				p.logger.Warn("Download request canceled while waiting for slot", fields...)
+				p.logger.Debug("Download request canceled while waiting for slot", fields...)
 				return
 			}
 
@@ -195,7 +196,7 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		defer lease.Release()
 
 		if waited := time.Since(waitStart); waited >= 100*time.Millisecond {
-			p.logger.Info("Download request waited for slot",
+			p.logger.Debug("Download request waited for slot",
 				zap.String("task_id", task.ID),
 				zap.String("file_name", task.FileName),
 				zap.Duration("waited", waited))
@@ -228,7 +229,7 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(status)
 
-	p.logger.Info("Serving download task",
+	p.logger.Debug("Serving download task",
 		zap.String("task_id", task.ID),
 		zap.String("file_name", task.FileName),
 		zap.Int64("file_size", task.FileSize),
@@ -236,12 +237,12 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.Bool("partial", partial))
 
 	if r.Method == http.MethodHead {
-		p.logger.Info("HEAD request served without body",
+		p.logger.Debug("HEAD request served without body",
 			zap.String("task_id", task.ID))
 		return
 	}
 	if task.FileSize == 0 {
-		p.logger.Info("Empty download stream finished", zap.String("task_id", task.ID))
+		p.logger.Debug("Empty download stream finished", zap.String("task_id", task.ID))
 		p.recordHTTPDelivery(context.WithoutCancel(r.Context()), task, nil, transport)
 		return
 	}
@@ -254,8 +255,8 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			zap.Int("range_count", len(responseRanges)),
 			zap.Error(streamErr),
 		}
-		if errors.Is(streamErr, context.Canceled) {
-			p.logger.Warn("Download client disconnected", fields...)
+		if r.Context().Err() != nil || errors.Is(streamErr, context.Canceled) {
+			p.logger.Debug("Download client disconnected", fields...)
 			return
 		}
 
@@ -263,7 +264,7 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.logger.Info("Download stream finished",
+	p.logger.Debug("Download stream finished",
 		zap.String("task_id", task.ID),
 		zap.String("file_name", task.FileName),
 		zap.Int("range_count", len(responseRanges)))

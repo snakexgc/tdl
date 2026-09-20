@@ -523,6 +523,7 @@ func (q *Queue) runJob(ctx context.Context, rt ports.ForwardTransport, store por
 	if err != nil || !claimed {
 		return
 	}
+	slog.Info("转发任务已开始", "component", ID, "task_id", job.ID, "attempt", job.Attempts+1)
 
 	runErr := rt.Forward(jobCtx, &job, func(progress Job) {
 		q.dataMu.Lock()
@@ -597,8 +598,15 @@ func (q *Queue) runJob(ctx context.Context, rt ports.ForwardTransport, store por
 	})
 	if err != nil || !changed {
 		notification = ""
+		if err != nil {
+			slog.Error("保存转发任务结果失败", "component", ID, "task_id", job.ID, "error", err)
+		}
 	} else if runErr != nil && !errors.Is(runErr, context.Canceled) {
-		slog.Warn("转发任务执行失败", "component", ID, "task_id", job.ID, "status", job.Status, "attempts", job.Attempts, "error", runErr)
+		level := slog.LevelWarn
+		if job.Status == StatusError {
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "转发任务执行失败", "component", ID, "task_id", job.ID, "status", job.Status, "attempts", job.Attempts, "next_attempt_at", job.NextAttemptAt, "error", runErr)
 	} else {
 		slog.Info("转发任务状态已更新", "component", ID, "task_id", job.ID, "status", job.Status)
 	}

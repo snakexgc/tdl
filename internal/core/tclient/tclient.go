@@ -15,6 +15,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/dcs"
+	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 
 	"github.com/snakexgc/tdl/internal/core/logctx"
@@ -45,6 +46,7 @@ type Options struct {
 // New creates new telegram client with given options.
 // Default middlewares(retry, recovery, flood wait) always added.
 func New(ctx context.Context, o Options) (*telegram.Client, error) {
+	ctx = logctx.With(ctx, logctx.From(ctx).With(zap.String("component", "account.telegram")))
 	// process clock
 	tclock := tdclock.System
 	if ntp := o.NTP; ntp != "" {

@@ -50,7 +50,7 @@ func NewManager(opts Options, logger *zap.Logger) *Manager {
 	m.regulator = NewTelegramErrorRegulator(automaticClient{Aria2Client: opts.Client, controller: m.controller, owner: "telegram-errors"}, opts.Store, opts.PublicBaseURL, logger)
 	m.monitor = NewZeroSpeedMonitor(automaticClient{Aria2Client: opts.Client, controller: m.controller, owner: "zero-speed"}, opts.Store, opts.PublicBaseURL, logger)
 	if opts.Observations != nil {
-		m.observer = &Observer{Client: opts.Client, Repository: opts.Observations, PublicBaseURL: opts.PublicBaseURL, TTL: opts.LinkTTL, links: &m.links}
+		m.observer = &Observer{Logger: logger, Client: opts.Client, Repository: opts.Observations, PublicBaseURL: opts.PublicBaseURL, TTL: opts.LinkTTL, links: &m.links}
 	}
 	m.UpdateLinkPolicy(opts.PublicBaseURL, opts.LinkTTL)
 	m.controller.links, m.monitor.links, m.regulator.links = &m.links, &m.links, &m.links
@@ -164,15 +164,25 @@ func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duratio
 		retryInterval = m.policy().retry
 	}
 	delay := min(retryInterval, m.policy().maximum)
+	attempt := 0
 	for {
 		err := m.client.SetMaxConcurrentDownloads(ctx, m.fileLimit())
 		if err == nil {
+			if attempt > 0 {
+				m.logger.Info("Aria2 connection recovered", zap.Int("attempts", attempt))
+			}
 			return nil
 		}
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
-		m.logger.Warn("Aria2 manager is not ready, retrying",
+		attempt++
+		level := zap.DebugLevel
+		if attempt == 1 {
+			level = zap.WarnLevel
+		}
+		m.logger.Log(level, "Aria2 manager is not ready, retrying",
+			zap.Int("attempt", attempt),
 			zap.Duration("retry_interval", delay),
 			zap.Error(err))
 		timer := time.NewTimer(delay)
@@ -204,14 +214,24 @@ func (m *Manager) applyTransferLimits(ctx context.Context) error {
 			return nil
 		case <-m.limitChanged:
 		}
+		attempt := 0
 		for ctx.Err() == nil {
 			bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
 			err := m.client.SetMaxConcurrentDownloads(bounded, m.fileLimit())
 			cancel()
 			if err == nil {
+				m.logger.Info("Aria2 transfer limit applied", zap.Int("max_concurrent_downloads", m.fileLimit()), zap.Int("retries", attempt))
 				break
 			}
-			m.logger.Warn("Cannot apply aria2 transfer limit; retrying", zap.Error(err))
+			if ctx.Err() != nil {
+				return nil
+			}
+			attempt++
+			level := zap.DebugLevel
+			if attempt == 1 {
+				level = zap.WarnLevel
+			}
+			m.logger.Log(level, "Cannot apply aria2 transfer limit; retrying", zap.Int("attempt", attempt), zap.Error(err))
 			timer := time.NewTimer(5 * time.Second)
 			select {
 			case <-ctx.Done():

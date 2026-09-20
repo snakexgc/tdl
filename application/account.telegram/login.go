@@ -3,6 +3,7 @@ package accounttelegram
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 	"sync"
@@ -134,12 +135,14 @@ func (m *Login) start(
 	}
 	m.active = flow
 	m.mu.Unlock()
+	slog.Info("Telegram 登录已开始", "component", ID, "account", namespace, "login_method", kind)
 
 	go func() {
 		defer cancel()
 		defer close(flow.done)
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				slog.Error("Telegram 登录异常中断", "component", ID, "account", namespace)
 				flow.muSet(func() {
 					flow.stage = loginStageFailed
 					flow.status = "登录失败。"
@@ -152,6 +155,11 @@ func (m *Login) start(
 			err = ctx.Err()
 		}
 		if err != nil {
+			level := slog.LevelError
+			if errors.Is(err, context.Canceled) {
+				level = slog.LevelDebug
+			}
+			slog.Log(ctx, level, "Telegram 登录未完成", "component", ID, "account", namespace, "error", err)
 			flow.muSet(func() {
 				flow.stage = loginStageFailed
 				flow.status = "登录失败。"
@@ -164,6 +172,7 @@ func (m *Login) start(
 			restart, err = m.opts.Complete(ctx, flow.namespace, user)
 		}
 		if err != nil {
+			slog.Error("保存 Telegram 登录结果失败", "component", ID, "account", namespace, "error", err)
 			flow.muSet(func() {
 				flow.stage = loginStageFailed
 				flow.status = "登录已完成，但保存用户配置失败。"
@@ -179,6 +188,7 @@ func (m *Login) start(
 			}
 			flow.user = maps.Clone(user)
 		})
+		slog.Info("Telegram 登录已完成", "component", ID, "account", namespace, "restart", restart)
 		if restart && m.opts.RequestReboot != nil {
 			timer := time.NewTimer(300 * time.Millisecond)
 			defer timer.Stop()

@@ -53,6 +53,7 @@ func NewController(opts Options, logger *zap.Logger) *Controller {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	logger = logger.With(zap.String("component", "downloader.aria2"))
 	return &Controller{account: opts.Account, client: opts.Client, store: opts.Store, publicBaseURL: opts.PublicBaseURL, connections: opts.Connections, logger: logger}
 }
 
@@ -114,7 +115,6 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 	c.logger.Info("Submitted aria2 task",
 		zap.String("gid", gid),
 		zap.String("task_id", submission.TaskID),
-		zap.String("download_url", submission.DownloadURL),
 		zap.String("target_path", submission.FullPath))
 	return types.DownloadResult{Account: account, Target: c.Name(), ID: gid}, nil
 }

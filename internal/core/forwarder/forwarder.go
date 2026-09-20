@@ -101,6 +101,7 @@ func (f *Forwarder) forwardMessage(ctx context.Context, elem Elem, grouped ...*t
 	}()
 
 	log := logctx.From(ctx).With(
+		zap.String("component", "forwarder"),
 		zap.Int64("from", elem.From().ID()),
 		zap.Int64("to", elem.To().ID()),
 		zap.Int("message", elem.Msg().ID))

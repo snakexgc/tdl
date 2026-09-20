@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,6 +41,22 @@ var (
 
 func New() *cobra.Command {
 	var closeLog func() error
+	var closeStorage func() error
+	cleanup := func() error {
+		var err error
+		if closeStorage != nil {
+			err = closeStorage()
+			closeStorage = nil
+			if err != nil {
+				slog.Error("关闭存储失败", "component", "system", "error", err)
+			}
+		}
+		if closeLog != nil {
+			err = multierr.Combine(err, closeLog())
+			closeLog = nil
+		}
+		return err
+	}
 	// allow PersistentPreRun to be called for every command
 	cobra.EnableTraverseRunHooks = true
 	cobra.MousetrapHelpText = ""
@@ -50,9 +67,28 @@ func New() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBot(cmd)
+			err := runBot(cmd)
+			if err != nil {
+				level := zap.ErrorLevel
+				message := "TDL 运行失败"
+				if errors.Is(err, context.Canceled) {
+					level = zap.DebugLevel
+					message = "TDL 运行已取消"
+				}
+				logctx.From(cmd.Context()).Log(level, message, zap.Error(err))
+			} else {
+				logctx.From(cmd.Context()).Info("TDL 已停止")
+			}
+			// Cobra skips post-run hooks on errors, so close sinks here as well.
+			return multierr.Combine(err, cleanup())
 		},
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			defer func() {
+				if runErr != nil && closeLog != nil {
+					logctx.From(cmd.Context()).Error("TDL 初始化失败", zap.Error(runErr))
+					runErr = multierr.Combine(runErr, cleanup())
+				}
+			}()
 			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand {
 				return nil
 			}
@@ -73,14 +109,13 @@ func New() *cobra.Command {
 			logger, logs, closeFile := logutil.NewSession(level, filepath.Join(consts.LogPath, "latest.log"), cfg.Namespace)
 			previous := slog.Default()
 			slog.SetDefault(logging.Slog(logger))
-			closeLog = func() error { slog.SetDefault(previous); return closeFile() }
+			closeLog = func() error {
+				slog.SetDefault(previous)
+				return multierr.Combine(logger.Sync(), closeFile())
+			}
 			cmd.SetContext(logging.WithStore(logctx.With(cmd.Context(), logger), logs))
 
-			ns := cfg.Namespace
-			if ns != "" {
-				logctx.From(cmd.Context()).Info("Namespace",
-					zap.String("namespace", ns))
-			}
+			logger.Info("TDL 正在启动", zap.Bool("debug_enabled", cfg.Debug))
 
 			// v0.14.0: default storage changed from legacy to bolt, so we need to auto migrate to keep compatibility.
 			if shouldMigrateLegacyToBolt() {
@@ -95,6 +130,7 @@ func New() *cobra.Command {
 			}
 
 			cmd.SetContext(kv.With(cmd.Context(), stg))
+			closeStorage = stg.Close
 
 			return nil
 		},
@@ -102,11 +138,7 @@ func New() *cobra.Command {
 			if cmd.Name() == migrateConfigCommand || cmd.Name() == versionCommand {
 				return nil
 			}
-			return multierr.Combine(
-				kv.From(cmd.Context()).Close(),
-				logctx.From(cmd.Context()).Sync(),
-				closeLog(),
-			)
+			return cleanup()
 		},
 	}
 

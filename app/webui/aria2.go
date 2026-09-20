@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"go.uber.org/zap"
 
 	ariacomponent "github.com/snakexgc/tdl/application/downloader.aria2"
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
 	"github.com/snakexgc/tdl/bsw/ecual/aria2rpc"
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -123,7 +125,7 @@ type aria2TaskRecord = types.Aria2TaskRecord
 
 func (s *Server) aria2Observer() ariacomponent.Observer {
 	cfg := config.From(s.opts.Context)
-	return ariacomponent.Observer{Client: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: s.opts.NamespaceKV, Engine: s.opts.KVEngine, Namespace: s.namespace()}}, PublicBaseURL: cfg.HTTP.PublicBaseURL, TTL: time.Duration(cfg.HTTP.DownloadLinkTTLHours) * time.Hour}
+	return ariacomponent.Observer{Logger: logctx.From(s.opts.Context).With(zap.String("account", s.namespace())), Client: aria2rpc.NewClient(cfg.Aria2), Repository: taskhub.Aria2Observations{Links: taskhub.LinkRepository{Store: s.opts.NamespaceKV, Engine: s.opts.KVEngine, Namespace: s.namespace()}}, PublicBaseURL: cfg.HTTP.PublicBaseURL, TTL: time.Duration(cfg.HTTP.DownloadLinkTTLHours) * time.Hour}
 }
 
 func (s *Server) parseAria2Records(pairs map[string][]byte) (map[string]aria2TaskRecord, map[string][]aria2TaskRecord, error) {

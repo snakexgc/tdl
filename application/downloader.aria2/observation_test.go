@@ -7,7 +7,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -25,6 +29,52 @@ func TestObserverReadsEveryWaitingAndStoppedPage(t *testing.T) {
 	require.Contains(t, statuses, "last-waiting")
 	require.Contains(t, statuses, "last-stopped")
 	require.Len(t, repository.applied, 2, "later tasks need retention and completion updates too")
+}
+
+const logObservedGID = "owned"
+
+type logObservation struct {
+	linkObservation
+	previous string
+	accept   bool
+}
+
+func (o *logObservation) Snapshot(context.Context) (ports.Aria2ObservationSnapshot, error) {
+	return ports.Aria2ObservationSnapshot{Records: map[string]types.Aria2TaskRecord{
+		logObservedGID: {GID: logObservedGID, TaskID: testDocument1, Status: o.previous},
+	}}, nil
+}
+
+func (o *logObservation) Apply(context.Context, ports.ObservedLink, types.Aria2TaskRecord, bool, time.Time, time.Duration) (bool, error) {
+	return o.accept, nil
+}
+
+func TestObserverLogsOnlyAcceptedStateChanges(t *testing.T) {
+	for _, test := range []struct {
+		name, previous, next string
+		accept               bool
+		count                int
+		level                zapcore.Level
+	}{
+		{name: "complete", previous: aria2StatusActive, next: aria2StatusComplete, accept: true, count: 1, level: zap.InfoLevel},
+		{name: "failed", previous: aria2StatusActive, next: aria2StatusError, accept: true, count: 1, level: zap.ErrorLevel},
+		{name: "same state", previous: aria2StatusComplete, next: aria2StatusComplete, accept: true},
+		{name: "stale snapshot", previous: aria2StatusActive, next: aria2StatusComplete, accept: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			core, logs := observer.New(zap.DebugLevel)
+			client := &fakeAria2ControlClient{stopped: []types.Aria2DownloadStatus{{GID: logObservedGID, Status: test.next}}}
+			o := Observer{Logger: zap.New(core), Client: client, Repository: &logObservation{previous: test.previous, accept: test.accept}}
+			_, err := o.Observe(context.Background())
+			require.NoError(t, err)
+			require.Len(t, logs.All(), test.count)
+			if test.count > 0 {
+				require.Equal(t, test.level, logs.All()[0].Level)
+				require.Equal(t, ID, logs.All()[0].ContextMap()["component"])
+				require.Equal(t, testDocument1, logs.All()[0].ContextMap()["task_id"])
+			}
+		})
+	}
 }
 
 type failedObservationPage struct{ fakeAria2ControlClient }

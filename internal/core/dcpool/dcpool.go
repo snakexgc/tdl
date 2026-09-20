@@ -95,7 +95,7 @@ func (p *pool) invoker(ctx context.Context, dc int) tg.Invoker {
 	}
 
 	if err != nil {
-		logctx.From(ctx).Error("create invoker", zap.Error(err))
+		logctx.From(ctx).Warn("创建 DC 连接池失败，使用现有客户端", zap.String("component", "account.telegram"), zap.Int("dc", dc), zap.Error(err))
 		return p.api // degraded
 	}
 
@@ -157,7 +157,7 @@ func (p *pool) Takeout(ctx context.Context, dc int) *tg.Client {
 			return tg.NewClient(p.invoker(ctx, dc))
 		}
 		p.takeout = sid
-		logctx.From(ctx).Info("get takeout id", zap.Int64("id", sid))
+		logctx.From(ctx).Debug("Telegram takeout session ready", zap.String("component", "account.telegram"))
 	}
 
 	return tg.NewClient(chainMiddlewares(p.invoker(ctx, dc), takeout.Middleware(p.takeout)))

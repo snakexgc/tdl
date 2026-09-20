@@ -244,7 +244,8 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 			err = flushWriter(w)
 		}
 		if err != nil {
-			logger.Error("Writing HTTP response body failed",
+			// The owning HTTP handler or local worker records the final outcome.
+			logger.Debug("Writing download stream failed",
 				zap.Int("chunk_size", len(data)),
 				zap.Int("written", n),
 				zap.Int64("bytes_written", written),

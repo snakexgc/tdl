@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,12 +29,12 @@ type Entry struct {
 }
 
 type Store struct {
-	mu        sync.Mutex
-	entries   []Entry
-	next      int
-	sequence  uint64
-	writer    io.Writer
-	lastError string
+	mu         sync.Mutex
+	entries    []Entry
+	next       int
+	sequence   uint64
+	writer     io.Writer
+	sinkErrors map[string]string
 }
 
 func New(writer io.Writer) *Store { return &Store{writer: writer} }
@@ -55,32 +57,41 @@ func (s *Store) Write(entry Entry) error {
 		entry.At = time.Now()
 	}
 	entry.At = entry.At.UTC()
-	entry.Message = Redact(entry.Message)
-	if entry.Details != "" {
-		var details any
-		if json.Unmarshal([]byte(entry.Details), &details) == nil {
-			data, err := json.Marshal(safeValue("", details))
-			if err == nil {
-				entry.Details = bounded(string(data), 16384)
-			}
-		} else {
-			entry.Details = Redact(entry.Details)
-		}
-	}
+	entry = sanitizeEntry(entry)
 	s.append(entry)
 	if s.writer == nil {
 		return nil
 	}
 	data, err := json.Marshal(entry)
 	if err == nil {
-		_, err = s.writer.Write(append(data, '\n'))
+		data = append(data, '\n')
+		var written int
+		written, err = s.writer.Write(data)
+		if err == nil && written != len(data) {
+			err = io.ErrShortWrite
+		}
 	}
-	if err != nil {
-		s.lastError = err.Error()
-	} else {
-		s.lastError = ""
-	}
+	s.recordSinkError("events.jsonl", err)
 	return err
+}
+
+// RecordSinkError publishes failures from other sinks without recursively logging.
+// A successful journal write must not erase a text-log failure.
+func (s *Store) RecordSinkError(sink string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordSinkError(sink, err)
+}
+
+func (s *Store) recordSinkError(sink string, err error) {
+	if err == nil {
+		delete(s.sinkErrors, sink)
+		return
+	}
+	if s.sinkErrors == nil {
+		s.sinkErrors = make(map[string]string)
+	}
+	s.sinkErrors[sink] = Redact(err.Error())
 }
 
 // Restore reads only the bounded active journal; rotated archives stay on disk.
@@ -105,7 +116,7 @@ func (s *Store) Restore(path string) error {
 		if entry.ID > s.sequence {
 			s.sequence = entry.ID
 		}
-		s.append(entry)
+		s.append(sanitizeEntry(entry))
 	}
 	return scan.Err()
 }
@@ -122,10 +133,33 @@ func (s *Store) Snapshot() ([]Entry, string) {
 		}
 		result = append(result, s.entries[index])
 	}
-	return result, s.lastError
+	warnings := make([]string, 0, len(s.sinkErrors))
+	for sink, message := range s.sinkErrors {
+		warnings = append(warnings, sink+": "+message)
+	}
+	sort.Strings(warnings)
+	return result, strings.Join(warnings, "; ")
 }
 
 type contextKey struct{}
+
+func sanitizeEntry(entry Entry) Entry {
+	entry.Message = Redact(entry.Message)
+	entry.Account = Redact(entry.Account)
+	entry.Component = Redact(entry.Component)
+	entry.Kind = Redact(entry.Kind)
+	entry.Logger = Redact(entry.Logger)
+	entry.Caller = Redact(entry.Caller)
+	if entry.Details != "" {
+		var details any
+		if json.Valid([]byte(entry.Details)) && decodeJSON([]byte(entry.Details), &details) == nil {
+			entry.Details = safeDetails(details)
+		} else {
+			entry.Details = Redact(entry.Details)
+		}
+	}
+	return entry
+}
 
 func WithStore(ctx context.Context, store *Store) context.Context {
 	return context.WithValue(ctx, contextKey{}, store)

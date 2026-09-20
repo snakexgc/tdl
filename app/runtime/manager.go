@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
@@ -254,11 +253,11 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 	}
 	cfg := config.From(m.parent)
 	if cfg == nil || !cfg.Modules.WebUI || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
-		color.Yellow("Web 管理面板未启动：webui.address 或 webui.port 为空。")
+		logctx.From(ctx).Warn("Web 管理面板未启动：监听地址未配置", zap.String("component", "panel.webui"))
 		return false
 	}
 	if strings.TrimSpace(cfg.WebUI.Username) == "" || cfg.WebUI.Password == "" {
-		color.Yellow("Web 管理面板未启动：请设置 webui.username 和 webui.password。")
+		logctx.From(ctx).Warn("Web 管理面板未启动：登录凭据未配置", zap.String("component", "panel.webui"))
 		return false
 	}
 
@@ -287,12 +286,13 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 			ComponentManager: m,
 		})
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
-			color.Yellow("WebUI stopped: %v", err)
+			logctx.From(ctx).Error("Web 管理面板异常停止", zap.String("component", "panel.webui"), zap.Error(err))
 		}
 		errCh <- err
 		return err
 	}, rte.Recovery{})
 	if startErr != nil {
+		logctx.From(ctx).Error("启动 Web 管理面板失败", zap.String("component", "panel.webui"), zap.Error(startErr))
 		return false
 	}
 
@@ -303,7 +303,7 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 		}
 	case <-time.After(200 * time.Millisecond):
 	}
-	color.Green("WebUI: http://%s", config.WebUIListenAddr(cfg))
+	logctx.From(ctx).Info("Web 管理面板已启动", zap.String("component", "panel.webui"), zap.String("listen_addr", config.WebUIListenAddr(cfg)))
 	return true
 }
 

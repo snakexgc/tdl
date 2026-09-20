@@ -340,7 +340,7 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 	pool := p.pools.Get()
 	if pool == nil {
 		err := errors.New("telegram client unavailable")
-		p.logger.Error("Cannot stream download task",
+		p.logger.Debug("Cannot stream download task",
 			zap.String("task_id", task.ID),
 			zap.Error(err))
 		return err
@@ -356,7 +356,7 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 	))
 
 	refresh := func(ctx context.Context) (*tmedia.Media, error) {
-		p.logger.Warn("Refreshing expired Telegram file reference",
+		p.logger.Debug("Refreshing expired Telegram file reference",
 			zap.String("task_id", task.ID),
 			zap.Int64("peer_id", task.PeerID),
 			zap.Int("msg_id", task.MessageID))

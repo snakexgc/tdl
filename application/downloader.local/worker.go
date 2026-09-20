@@ -375,9 +375,18 @@ func (d *Worker) Execute(ctx context.Context, id string) {
 		record = *current
 		return true
 	})
-	if err != nil || !claimed {
+	if err != nil {
+		level := zap.ErrorLevel
+		if errors.Is(err, context.Canceled) {
+			level = zap.DebugLevel
+		}
+		d.logger.Log(level, "Failed to claim local download", zap.String("task_id", record.TaskID), zap.String("id", record.ID), zap.Error(err))
 		return
 	}
+	if !claimed {
+		return
+	}
+	d.logger.Info("本地下载已开始", zap.String("id", record.ID), zap.String("task_id", record.TaskID), zap.Int64("total", record.Total), zap.Int64("completed", completed))
 
 	file, err := os.OpenFile(record.Path, os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -452,11 +461,11 @@ func (d *Worker) markComplete(ctx context.Context, record types.LocalDownloadRec
 	if err := d.store.MarkDownloaded(context.WithoutCancel(ctx), record.TaskID); err != nil {
 		d.logger.Warn("Failed to mark source downloaded", zap.String("id", record.ID), zap.Error(err))
 	}
-	d.logger.Info("本地下载已完成", zap.String("id", record.ID), zap.Int64("bytes", record.Total))
+	d.logger.Info("本地下载已完成", zap.String("id", record.ID), zap.String("task_id", record.TaskID), zap.Int64("bytes", record.Total))
 }
 
 func (d *Worker) markError(ctx context.Context, record types.LocalDownloadRecord, cause error) {
-	_, err := d.store.Update(context.WithoutCancel(ctx), record.ID, func(current *types.LocalDownloadRecord) bool {
+	changed, err := d.store.Update(context.WithoutCancel(ctx), record.ID, func(current *types.LocalDownloadRecord) bool {
 		if !sameExecution(*current, record) {
 			return false
 		}
@@ -471,7 +480,9 @@ func (d *Worker) markError(ctx context.Context, record types.LocalDownloadRecord
 	if err != nil {
 		d.logger.Warn("Failed to persist local download error", zap.String("id", record.ID), zap.Error(err))
 	}
-	d.logger.Warn("Local download failed", zap.String("id", record.ID), zap.Error(cause))
+	if changed || err != nil {
+		d.logger.Error("Local download failed", zap.String("id", record.ID), zap.String("task_id", record.TaskID), zap.Error(cause))
+	}
 }
 
 // Persisted timestamps distinguish a recreated task and a restarted attempt

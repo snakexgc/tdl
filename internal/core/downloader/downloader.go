@@ -54,7 +54,8 @@ func (d *Downloader) Download(ctx context.Context, limit int) error {
 				logctx.
 					From(ctx).
 					Error("Download error",
-						zap.Any("element", elem),
+						zap.Int("dc", elem.File().DC()),
+						zap.Int64("file_size", elem.File().Size()),
 						zap.Error(err),
 					)
 			}
@@ -78,7 +79,7 @@ func (d *Downloader) download(ctx context.Context, elem Elem) error {
 	}
 
 	logctx.From(ctx).Debug("Start download elem",
-		zap.Any("elem", elem))
+		zap.Int("dc", elem.File().DC()), zap.Int64("file_size", elem.File().Size()))
 
 	client := d.opts.Pool.Client(ctx, elem.File().DC())
 	if elem.AsTakeout() {

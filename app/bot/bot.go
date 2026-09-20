@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
 	"github.com/mymmrac/telego"
@@ -125,11 +125,12 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	if err != nil {
 		return errors.Wrap(err, "get bot info")
 	}
-	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
 	account := types.AccountID(opts.Namespace)
 	if account == "" {
 		account = types.DefaultAccount
 	}
+	botLogger.logger = botLogger.logger.With("account", account)
+	slog.Info("机器人身份验证成功", "component", "console.bot", "account", account, "bot_id", botUser.ID)
 	transport := &botNotificationTransport{sender: bot, editor: bot}
 	host, console, notifications, err := application.BotHost(ctx, account, transport, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...)
 	if err != nil {
@@ -162,7 +163,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 				err := configureBotMenu(bounded, bot, console)
 				cancel()
 				if err != nil && ctx.Err() == nil {
-					color.Yellow("Failed to refresh bot menu: %v", err)
+					slog.Warn("刷新机器人菜单失败，稍后重试", "component", "console.bot", "account", account, "error", err)
 					timer := time.NewTimer(5 * time.Second)
 					select {
 					case <-ctx.Done():
@@ -358,7 +359,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := bh.StopWithContext(stopCtx); err != nil && !errors.Is(err, context.Canceled) {
-				color.Yellow("⚠️ Stop bot handler: %v", err)
+				slog.Error("停止机器人处理器失败", "component", "console.bot", "account", account, "error", err)
 			}
 			cancelPolling()
 		})
@@ -427,7 +428,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 
 		// unauthorized user: reply with their ID as copyable text
 		userIDStr := strconv.FormatInt(fromID, 10)
-		color.Yellow("🚫 Unauthorized user %d, replying with ID", fromID)
+		slog.Warn("拒绝未授权的机器人用户", "component", "console.bot", "account", account, "user_id", fromID)
 
 		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 			tu.ID(chatID),
@@ -439,7 +440,7 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return nil
 	}, th.AnyMessage())
 
-	color.Green("🔄 Bot is running... Press Ctrl+C to stop")
+	slog.Info("机器人已开始接收消息", "component", "console.bot", "account", account)
 
 	err = bh.Start()
 	botLogger.SetShuttingDown()
@@ -607,7 +608,7 @@ func handleAllowedMessage(
 		return nil
 	}
 
-	color.Cyan("✅ Allowed user %d sent message", fromID)
+	slog.Debug("收到已授权用户的未处理消息", "component", "console.bot", "user_id", fromID)
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -72,9 +73,16 @@ func CheckLatestFrom(ctx context.Context, repository, proxyURL string) (Info, er
 	info := currentInfo(repository)
 	release, err := fetchLatestRelease(ctx, repository, proxyURL)
 	if err != nil {
+		level := slog.LevelWarn
+		if ctx.Err() != nil {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "检查软件更新失败", "component", ID, "error", err)
 		return info, err
 	}
-	return infoForRelease(info, release), nil
+	info = infoForRelease(info, release)
+	slog.Info("软件更新检查已完成", "component", ID, "current_version", info.CurrentVersion, "latest_version", info.LatestVersion, "needs_update", info.NeedsUpdate)
+	return info, nil
 }
 
 func infoForRelease(info Info, release githubRelease) Info {
@@ -105,7 +113,7 @@ func infoForRelease(info Info, release githubRelease) Info {
 	return info
 }
 
-func DownloadLatest(ctx context.Context, proxyURL string) (Plan, Info, error) {
+func DownloadLatest(ctx context.Context, proxyURL string) (result Plan, resultInfo Info, resultErr error) {
 	info, err := CheckLatest(ctx, proxyURL)
 	if err != nil {
 		return Plan{}, info, err
@@ -116,6 +124,18 @@ func DownloadLatest(ctx context.Context, proxyURL string) (Plan, Info, error) {
 	if !info.CanUpdate || info.AssetURL == "" {
 		return Plan{}, info, errors.New(info.Message)
 	}
+	started := time.Now()
+	slog.Info("开始下载软件更新", "component", ID, "version", info.LatestVersion)
+	defer func() {
+		level := slog.LevelInfo
+		if resultErr != nil {
+			level = slog.LevelError
+		}
+		if errors.Is(resultErr, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "软件更新准备已结束", "component", ID, "version", info.LatestVersion, "duration", time.Since(started), "error", resultErr)
+	}()
 
 	client, err := newHTTPClient(proxyURL)
 	if err != nil {

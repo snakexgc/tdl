@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os/signal"
@@ -11,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/gotd/log/logzap"
 	"github.com/gotd/td/telegram/peers"
@@ -59,6 +59,7 @@ func Run(ctx context.Context, opts Options) error {
 	if account == "" {
 		account = types.DefaultAccount
 	}
+	ctx = logctx.With(ctx, logctx.From(ctx).With(zap.String("component", "account.telegram"), zap.String("account", string(account))))
 	var route ports.DownloadRoute
 	if opts.DownloadRouting != nil && opts.FeatureFlags == nil {
 		var err error
@@ -76,10 +77,10 @@ func Run(ctx context.Context, opts Options) error {
 		return errors.New("watch has no enabled work: enable modules.watch or modules.forward")
 	}
 	if opts.Forward && strings.TrimSpace(opts.ForwardTarget) == "" {
-		color.Yellow("⚠️ forward.target is empty; watched forwards will be sent to Saved Messages")
+		logctx.From(ctx).Info("转发目标未设置，将使用收藏夹", zap.String("component", "trigger.forward"))
 	}
 	if opts.Forward && len(opts.ForwardListen) == 0 {
-		color.Yellow("⚠️ modules.forward is enabled but forward.listen is empty")
+		logctx.From(ctx).Warn("转发监听来源为空", zap.String("component", "trigger.forward"))
 	}
 	opts.FileSizeMinMB, opts.FileSizeMaxMB, _ = config.NormalizeFileSizeRange(opts.FileSizeMinMB, opts.FileSizeMaxMB)
 	if opts.Filter == nil || opts.Naming == nil {
@@ -127,15 +128,15 @@ func Run(ctx context.Context, opts Options) error {
 	var pauseOnShutdownOnce sync.Once
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
-			color.Yellow("⏹ Stopping watcher...")
+			logctx.From(runCtx).Info("正在停止 Telegram 监听", zap.String("component", "account.telegram"))
 			if (opts.Download || opts.FeatureFlags != nil) && runtime.internal != nil {
 				paused, err := runtime.internal.PauseForShutdown(runCtx)
 				if err != nil {
-					color.Yellow("⚠️ Failed to pause internal download tasks before shutdown: %v", err)
+					logctx.From(runCtx).Warn("停止前暂停本地下载失败", zap.String("component", "downloader.local"), zap.Error(err))
 					return
 				}
 				if len(paused) > 0 {
-					color.Yellow("⏸ Paused %d internal download task(s) before shutdown", len(paused))
+					logctx.From(runCtx).Info("停止前已暂停本地下载", zap.String("component", "downloader.local"), zap.Int("count", len(paused)))
 				}
 			}
 		})
@@ -153,47 +154,12 @@ func Run(ctx context.Context, opts Options) error {
 		cancelRun()
 	}()
 
-	if opts.Download && opts.Forward {
-		color.Green("👀 Watching for reactions and forward sources... Press Ctrl+C to stop")
-	} else if opts.Forward {
-		color.Green("👀 Watching forward sources... Press Ctrl+C to stop")
-	} else {
-		color.Green("👀 Watching for reactions... Press Ctrl+C to stop")
-	}
-	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
-		color.Green("   Public base URL: %s", cfg.HTTP.PublicBaseURL)
-		if opts.DownloadSubmitter != nil {
-			color.Green("   Download submitter: %s", opts.DownloadSubmitter.Name())
-		} else {
-			color.Green("   Download submitter: none (links only)")
-		}
-	}
-	if opts.Download {
-		color.Green("   Downloader mode: %s", downloaderMode)
-		color.Green("   Download dir template: %s", opts.Dir)
-	}
-	color.Green("   Telegram DC pool size: %d", opts.PoolSize)
-	if opts.Download {
-		color.Green("   Per-DC connection and download capacity: %d", opts.PoolSize)
-		color.Green("   Max concurrent downloads: %d", opts.Limit)
-		if cfg.HTTP.DownloadLinkTTLHours <= 0 {
-			color.Green("   Download link TTL: permanent")
-		} else {
-			color.Green("   Download link TTL: %dh", cfg.HTTP.DownloadLinkTTLHours)
-		}
-		if downloaderMode == config.DownloaderModeAria2 {
-			color.Green("   HTTP Range connections per aria2 task: %d", opts.PoolSize)
-		}
-		color.Green("   Trigger reactions: %s", formatTriggerReactions(opts.TriggerReactions))
-		color.Green("   File size range: %d ~ %d MB (0 means unlimited)", opts.FileSizeMinMB, opts.FileSizeMaxMB)
-	}
-	if opts.Forward {
-		color.Green("   Forward mode: %s", opts.ForwardMode)
-		color.Green("   Forward target: %s", forwardTargetLabel(opts.ForwardTarget))
-		color.Green("   Forward listen: %s", formatForwardListen(opts.ForwardListen))
-		color.Green("   Forward comments: %t", opts.ForwardListenComments)
-		color.Green("   Forward trigger reactions: %s", formatTriggerReactions(opts.ForwardTriggerReactions))
-	}
+	logctx.From(runCtx).Info("Telegram 监听已启动",
+		zap.Bool("download_enabled", opts.Download), zap.Bool("forward_enabled", opts.Forward),
+		zap.String("downloader_mode", downloaderMode))
+	logctx.From(runCtx).Debug("Telegram 下载并发设置",
+		zap.Int("dc_pool_size", opts.PoolSize), zap.Int("max_concurrent_downloads", opts.Limit))
+
 	if opts.Download && downloaderMode == config.DownloaderModeAria2 {
 		warnPublicBaseURL(cfg.HTTP.PublicBaseURL)
 	}
@@ -212,8 +178,7 @@ func Run(ctx context.Context, opts Options) error {
 			return nil
 		}
 
-		color.Yellow("⚠️ Watcher disconnected: %v", err)
-		color.Yellow("🔄 Reconnecting in %v...", reconnectDelay)
+		logctx.From(runCtx).Warn("Telegram 监听已断开，稍后重连", zap.String("component", "account.telegram"), zap.Duration("retry_interval", reconnectDelay), zap.Error(err))
 
 		select {
 		case <-runCtx.Done():
@@ -266,7 +231,7 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 	}
 	d.OnFallback(func(ctx context.Context, e tg.Entities, update tg.UpdateClass) error {
 		updateType := fmt.Sprintf("%T", update)
-		logctx.From(ctx).Info("Unhandled update received",
+		logctx.From(ctx).Debug("Unhandled update received",
 			zap.String("type", updateType),
 			zap.Bool("entities_short", e.Short))
 		return nil
@@ -449,60 +414,12 @@ func warnPublicBaseURL(base string) {
 
 	switch u.Hostname() {
 	case "0.0.0.0", "::":
-		color.Yellow("⚠️ http.public_base_url uses %s; external downloaders usually cannot use this address directly", u.Hostname())
+		slog.Warn("下载公网地址使用未指定地址，外部下载器可能无法访问", "component", "proxy.range", "host", u.Hostname())
 	case "localhost":
-		color.Yellow("⚠️ http.public_base_url uses localhost; this only works when the downloader shares this machine and network namespace")
+		slog.Warn("下载公网地址使用 localhost，仅适合同机下载器", "component", "proxy.range")
 	default:
 		if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsLoopback() {
-			color.Yellow("⚠️ http.public_base_url uses loopback address %s; this only works when the downloader shares this machine and network namespace", u.Hostname())
+			slog.Warn("下载公网地址使用回环地址，仅适合同机下载器", "component", "proxy.range", "host", u.Hostname())
 		}
 	}
-}
-
-func formatTriggerReactions(values []string) string {
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = normalizeTriggerReaction(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		normalized = append(normalized, value)
-	}
-	if len(normalized) == 0 {
-		return "any"
-	}
-	return strings.Join(normalized, ", ")
-}
-
-func formatForwardListen(values []string) string {
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		normalized = append(normalized, value)
-	}
-	if len(normalized) == 0 {
-		return "(empty)"
-	}
-	return strings.Join(normalized, ", ")
-}
-
-func forwardTargetLabel(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "Saved Messages"
-	}
-	return value
 }

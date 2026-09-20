@@ -194,7 +194,7 @@ func (r *TelegramErrorRegulator) regulate(ctx context.Context, reason error) err
 		return err
 	}
 	if len(active) == 0 {
-		r.logger.Info("No active tdl aria2 tasks to regulate",
+		r.logger.Debug("No active tdl aria2 tasks to regulate",
 			zap.Error(reason))
 		return nil
 	}

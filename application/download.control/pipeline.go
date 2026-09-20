@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
@@ -29,8 +31,8 @@ type submissionOutcome struct {
 // SubmitBatch owns collection, policy selection, preparation and admission.
 // Returning means every submission has finished; it does not wait for transfer
 // completion. A connection can safely drain this call before closing its pool.
-func (s *Service) SubmitBatch(ctx context.Context, request types.DownloadIntent, resources ports.DownloadResources) (types.DownloadSubmissionSummary, error) {
-	result := types.DownloadSubmissionSummary{Link: request.Link, PeerID: request.PeerID, MessageID: request.MessageID}
+func (s *Service) SubmitBatch(ctx context.Context, request types.DownloadIntent, resources ports.DownloadResources) (result types.DownloadSubmissionSummary, resultErr error) {
+	result = types.DownloadSubmissionSummary{Link: request.Link, PeerID: request.PeerID, MessageID: request.MessageID}
 	ctx, done, err := s.begin(ctx)
 	if err != nil {
 		return result, err
@@ -39,6 +41,20 @@ func (s *Service) SubmitBatch(ctx context.Context, request types.DownloadIntent,
 	if request.Account != s.account || request.MessageID <= 0 {
 		return result, fmt.Errorf("invalid download intent account or message")
 	}
+	started := time.Now()
+	defer func() {
+		level := slog.LevelInfo
+		if resultErr != nil || result.Failed > 0 || result.Uncertain > 0 {
+			level = slog.LevelError
+		}
+		if ctx.Err() != nil || errors.Is(resultErr, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "下载提交已结束", "component", ID, "account", s.account,
+			"peer_id", request.PeerID, "message_id", request.MessageID, "total", result.Total,
+			"queued", result.Queued, "skipped", result.Skipped, "failed", result.Failed,
+			"uncertain", result.Uncertain, "duration", time.Since(started), "error", resultErr)
+	}()
 	if resources.Source == nil || resources.Filter == nil || resources.Naming == nil || resources.Files == nil {
 		return result, fmt.Errorf("download pipeline resources are unavailable")
 	}
@@ -161,6 +177,7 @@ func (s *Service) prepareBatch(ctx context.Context, media []ports.DownloadMedia,
 		}
 		allowed, reason := r.Filter.ShouldHandle(ctx, ports.FilterInput{Account: s.account, Name: item.Data.FileName, Size: item.Data.FileSize})
 		if !allowed {
+			slog.Debug("下载媒体未通过筛选", "component", ID, "account", s.account, "message_id", item.Data.MessageID, "reason", reason)
 			if reason == ports.ExtensionExcluded || reason == ports.SizeExcluded {
 				summary.Skipped++
 			} else {
