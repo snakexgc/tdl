@@ -18,6 +18,7 @@ import (
 	"github.com/snakexgc/tdl/application"
 	configuration "github.com/snakexgc/tdl/application/configuration.manager"
 	"github.com/snakexgc/tdl/bsw/services/logging"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	bootstrapconfig "github.com/snakexgc/tdl/internal/configuration"
 	"github.com/snakexgc/tdl/internal/core/logctx"
@@ -35,6 +36,8 @@ type (
 )
 
 var openStorage = func() (kv.Storage, error) { return kv.New(kv.DriverBolt, consts.DataDir) }
+
+var startupTimeProbe ports.TimeProbe
 
 func New() *cobra.Command {
 	var closeLog func() error
@@ -163,10 +166,6 @@ func runBot(cmd *cobra.Command) error {
 	if !ok {
 		return errors.New("configuration manager is not initialized")
 	}
-	store, err := ensureStartupNTP(cmd.Context(), startup.service)
-	if err != nil {
-		return err
-	}
 	host, err := application.ConfigurationHost(cmd.Context(), types.AccountID(config.Get().Namespace), startup.service)
 	if err != nil {
 		return err
@@ -175,8 +174,9 @@ func runBot(cmd *cobra.Command) error {
 	logctx.From(cmd.Context()).Info("统一配置已加载", zap.String("component", configuration.ID), zap.String("file", filepath.Join(consts.HomeDir, configuration.Filename)))
 	plan := reset.New(consts.HomeDir)
 	return tdlruntime.Run(cmd.Context(), tdlruntime.Options{
-		ComponentStore:    store,
+		ComponentStore:    startup.service.Store(),
 		ConfigurationHost: host,
+		TimeProbe:         startupTimeProbe,
 		ResetPlan:         plan,
 		RequestReset:      func() { reset.Request(plan) },
 		RequestReboot:     bot.RequestReboot,

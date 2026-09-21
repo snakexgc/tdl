@@ -14,7 +14,7 @@ func (p DialogTransport) Dialogs(ctx context.Context) ([]types.Dialog, error) {
 	opts := p.Options()
 	c, err := tclient.New(ctx, tclient.Options{
 		Connections: opts.Connections, Credentials: opts.Credentials,
-		Account: opts.Account, KV: opts.KV, Proxy: opts.Proxy, NTP: opts.NTP, ReconnectTimeout: opts.ReconnectTimeout,
+		Account: opts.Account, KV: opts.KV, Proxy: opts.Proxy, ReconnectTimeout: opts.ReconnectTimeout,
 	}, false)
 	if err != nil {
 		return nil, err

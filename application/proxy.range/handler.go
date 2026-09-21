@@ -97,6 +97,9 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if closer, ok := transport.(io.Closer); ok {
+		defer closer.Close()
+	}
 
 	if task.FileSize < 0 {
 		p.logger.Error("Download task has invalid file size",
@@ -110,6 +113,11 @@ func (p *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("ETag", etag)
 	rangeHeader := r.Header.Get("Range")
+	if r.Method == http.MethodHead {
+		// Range applies only to GET. Downloaders use HEAD to discover the full
+		// representation size before splitting it into independent requests.
+		rangeHeader = ""
+	}
 	if ifRange := strings.TrimSpace(r.Header.Get("If-Range")); ifRange != "" && ifRange != etag {
 		// The client can safely resume only the representation identified by our
 		// strong ETag. A stale or date-based If-Range therefore receives the full

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/snakexgc/tdl/interfaces/manifest"
 	"github.com/snakexgc/tdl/interfaces/ports"
@@ -14,6 +15,7 @@ import (
 
 const (
 	executorsField = "executors"
+	localRootField = "local_root"
 	aria2Executor  = "aria2"
 	httpExecutor   = "http"
 )
@@ -25,7 +27,7 @@ func Manifest() manifest.Manifest {
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 2, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0), manifest.PortOf[ports.DownloadPipeline](ports.DownloadPipelineName, 1, 0)},
 		Config: []manifest.ConfigField{
 			{Name: executorsField, Title: "下载方式与尝试顺序", Help: "勾选要使用的下载方式，按标出的顺序尝试。仅在上一种方式明确未接收任务时尝试下一种；仅生成链接始终放在最后。", Type: manifest.Strings, Default: []string{aria2Executor, httpExecutor}, Editor: "/static/js/download-methods.js"},
-			{Name: "local_root", Title: "本地保存目录", Help: "选择 local 时必填。填写 TDL 所在机器上的绝对路径，例如 D:\\Downloads 或 /data/downloads；容器部署时填写容器内路径。", Type: manifest.String, Default: ""},
+			{Name: localRootField, Title: "本地保存目录", Help: "留空使用 TDL 可执行文件所在目录下的 download 文件夹，下载时自动创建。也可填写本机绝对路径，例如 D:\\Downloads 或 /data/downloads；容器部署时填写容器内路径。", Type: manifest.String, Default: ""},
 		},
 	}, "download", "下载方式").SettingsOrder(10)
 }
@@ -38,7 +40,7 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 	if err := view.Get(executorsField, &route.Executors); err != nil {
 		return nil, err
 	}
-	if err := view.Get("local_root", &route.LocalRoot); err != nil {
+	if err := view.Get(localRootField, &route.LocalRoot); err != nil {
 		return nil, err
 	}
 	if len(route.Executors) == 0 {
@@ -54,8 +56,9 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		}
 		seen[name] = true
 	}
-	if (seen[localExecutor] || route.LocalRoot != "") && !filepath.IsAbs(route.LocalRoot) {
-		return nil, fmt.Errorf("local_root must be an absolute local path when local is selected")
+	route.LocalRoot = strings.TrimSpace(route.LocalRoot)
+	if route.LocalRoot != "" && !filepath.IsAbs(route.LocalRoot) {
+		return nil, fmt.Errorf("local_root must be empty or an absolute local path")
 	}
 	return func() { s.route.Store(&route) }, nil
 }

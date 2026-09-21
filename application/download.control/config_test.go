@@ -28,15 +28,25 @@ func TestRoutingConfigValidatesAndPersistsIndependentLocalRoot(t *testing.T) {
 		{"mode": "internal"},
 		{"mode": "local"},
 		{executorsField: []string{}},
-		{executorsField: []string{localExecutor}},
+		{executorsField: []string{localExecutor}, localRootField: "relative"},
 		{executorsField: []string{"other"}},
 		{executorsField: []string{aria2Executor, aria2Executor}},
 		{executorsField: []string{httpExecutor, aria2Executor}},
 	} {
 		require.Error(t, host.PatchSaved(ctx, ID, values, store))
 	}
+	for _, blank := range []string{"", "  "} {
+		require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{executorsField: []string{localExecutor}, localRootField: blank}, store))
+		route, err := routing.Route(ctx, types.DefaultAccount)
+		require.NoError(t, err)
+		require.Equal(t, []string{localExecutor}, route.Executors)
+		require.Empty(t, route.LocalRoot)
+		document, err := store.Load(ctx, ID)
+		require.NoError(t, err)
+		require.Equal(t, blank, document.Values[localRootField])
+	}
 	root := t.TempDir()
-	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{executorsField: []string{aria2Executor, localExecutor, httpExecutor}, "local_root": root}, store))
+	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{executorsField: []string{aria2Executor, localExecutor, httpExecutor}, localRootField: root}, store))
 	route, err := routing.Route(ctx, types.DefaultAccount)
 	require.NoError(t, err)
 	require.Equal(t, []string{aria2Executor, localExecutor, httpExecutor}, route.Executors)

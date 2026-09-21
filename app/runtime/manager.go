@@ -25,6 +25,7 @@ import (
 	"github.com/snakexgc/tdl/app/webui"
 	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	ntpclient "github.com/snakexgc/tdl/bsw/ecual/ntp"
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/logctx"
@@ -45,6 +46,7 @@ const (
 type Options struct {
 	ComponentStore    *rteconfig.Store
 	ConfigurationHost *rte.Runtime
+	TimeProbe         ports.TimeProbe
 	ResetPlan         *reset.Plan
 	RequestReset      func()
 	RequestReboot     func()
@@ -92,6 +94,9 @@ type Manager struct {
 	botProcess        *rte.Process
 	aria2Process      *rte.Process
 	panelProcess      *rte.Process
+	timeHost          *rte.Runtime
+	clock             *rte.ClockBinding
+	timeProbe         ports.TimeProbe
 	panelHost         *rte.Runtime
 	localHost         *rte.Runtime
 	botComponents     *rte.Runtime
@@ -156,6 +161,9 @@ func Run(ctx context.Context, opts Options) error {
 		return manager.configurationErr
 	}
 	webStarted := manager.StartWebUI(runCtx)
+	if runCtx.Err() != nil {
+		return manager.shutdown()
+	}
 	manager.ApplyConfig(config.Get())
 
 	if !webStarted && !manager.hasRunnableModule(config.From(manager.parent)) {
@@ -198,7 +206,13 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	}
 	source := config.NewSource(cfg)
 	ctx = config.WithSource(ctx, source)
+	clock := new(rte.ClockBinding)
+	ctx = rte.WithClock(ctx, clock)
+	if opts.TimeProbe == nil {
+		opts.TimeProbe = ntpclient.Client{}
+	}
 	manager := &Manager{
+		clock: clock, timeProbe: opts.TimeProbe,
 		configSource: source, configured: enabled, configurationErr: configErr,
 		downloadAccount:   types.AccountID(cfg.Namespace),
 		componentStore:    componentStore,
@@ -257,8 +271,12 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 	}
 
 	errCh := make(chan error, 1)
-	_, startErr := m.panelProcess.Start(func(ctx context.Context) error {
+	ready := make(chan struct{})
+	started, startErr := m.panelProcess.Start(func(ctx context.Context) error {
+		// Also unblock startup if Process recovers a panic in the panel adapter.
+		defer close(errCh)
 		err := webui.Run(ctx, webui.Options{
+			Ready:            func() { close(ready) },
 			ComponentStore:   m.componentStore,
 			SetComponentHost: func(host *rte.Runtime) { m.mu.Lock(); m.panelHost = host; m.mu.Unlock() },
 			Connections:      m.connections,
@@ -289,13 +307,20 @@ func (m *Manager) StartWebUI(ctx context.Context) bool {
 		logctx.From(ctx).Error("启动 Web 管理面板失败", zap.String("component", panelComponentID), zap.Error(startErr))
 		return false
 	}
+	if !started {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.panelHost != nil && m.panelProcess.Running()
+	}
 
 	select {
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
-			return false
-		}
-	case <-time.After(200 * time.Millisecond):
+	case <-errCh:
+		return false
+	case <-ctx.Done():
+		return false
+	case <-m.parent.Done():
+		return false
+	case <-ready:
 	}
 	logctx.From(ctx).Info("Web 管理面板已启动", zap.String("component", panelComponentID), zap.String("listen_addr", config.WebUIListenAddr(cfg)))
 	color.Green("WebUI: http://%s", config.WebUIListenAddr(cfg))
@@ -421,7 +446,6 @@ func (m *Manager) StartBot() {
 			AllowedUsers:          cfg.Bot.AllowedUsers,
 			Proxy:                 m.botProxy(cfg),
 			Namespace:             cfg.Namespace,
-			NTP:                   cfg.NTP,
 			ReconnectTimeout:      time.Duration(cfg.ReconnectTimeout) * time.Second,
 			WatchControl:          m.watchCtrl,
 			DisableAutoStartWatch: true,
@@ -460,7 +484,9 @@ func (m *Manager) StartWatch(ctx context.Context) error {
 	if m.watchCtrl.Running() {
 		return nil
 	}
-	if err := m.checkSession(ctx); err != nil {
+	// watch.Run owns authentication and reconnect attempts. An online preflight
+	// here would hold the lifecycle transition and prevent recovery when offline.
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	m.watchCtrl.UpdateOptions(m.watchOptions(cfg))
@@ -576,21 +602,6 @@ func (m *Manager) onLoginSuccess(_ *tg.User) {
 	}
 }
 
-func (m *Manager) checkSession(ctx context.Context) error {
-	if m.namespaceKV == nil {
-		return errors.New("本地数据未准备好")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	opts := m.sessionOptions()
-	opts.Checker = m.sessionPort
-	_, err := login.CheckSession(checkCtx, opts)
-	return err
-}
-
 func (m *Manager) sessionOptions() login.SessionOptions {
 	cfg := config.From(m.parent)
 	if cfg == nil {
@@ -600,7 +611,6 @@ func (m *Manager) sessionOptions() login.SessionOptions {
 		Connections: m.connections, Credentials: m, Account: m.downloadAccount,
 		KV:               m.namespaceKV,
 		Proxy:            config.EffectiveProxy(cfg),
-		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	}
 }
@@ -609,7 +619,7 @@ func (m *Manager) hasRunnableModule(cfg *config.Config) bool {
 	if cfg == nil {
 		return false
 	}
-	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.HTTP || cfg.Modules.Aria2 || m.connectionNeeded(cfg)
+	return (cfg.Modules.Bot && strings.TrimSpace(cfg.Bot.Token) != "") || cfg.Modules.HTTP || cfg.Modules.Aria2 || m.connectionNeeded(cfg) || m.componentEnabled("time.sync")
 }
 
 func (m *Manager) watchOptions(cfg *config.Config) watch.Options {

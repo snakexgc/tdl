@@ -166,7 +166,6 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		Credentials: opts.Credentials, Account: opts.Account,
 		KV:               kvd,
 		Proxy:            config.EffectiveProxy(cfg),
-		NTP:              cfg.NTP,
 		ReconnectTimeout: reconnectDelay,
 	}
 

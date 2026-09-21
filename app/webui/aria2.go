@@ -26,45 +26,6 @@ import (
 
 const aria2AddURIMethod = "aria2.addUri"
 
-type aria2GlobalStat struct {
-	DownloadSpeed string `json:"downloadSpeed"`
-	NumActive     string `json:"numActive"`
-	NumWaiting    string `json:"numWaiting"`
-	NumStopped    string `json:"numStopped"`
-}
-
-type aria2DashboardStat struct {
-	Available        bool
-	DownloadSpeedBPS int64
-	ActiveTasks      int64
-	WaitingTasks     int64
-	StoppedTasks     int64
-}
-
-func (s aria2DashboardStat) TotalTasks() int64 {
-	return s.ActiveTasks + s.WaitingTasks + s.StoppedTasks
-}
-
-func fetchAria2DashboardStat(ctx context.Context, cfg config.Aria2Config) (aria2DashboardStat, error) {
-	var result aria2DashboardStat
-	if strings.TrimSpace(cfg.RPCURL) == "" {
-		return result, nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-	defer cancel()
-
-	var stat aria2GlobalStat
-	if err := callAria2(ctx, cfg, "aria2.getGlobalStat", []any{}, &stat); err != nil {
-		return result, err
-	}
-	result.Available = true
-	result.DownloadSpeedBPS = parseAria2Length(stat.DownloadSpeed)
-	result.ActiveTasks = parseAria2Length(stat.NumActive)
-	result.WaitingTasks = parseAria2Length(stat.NumWaiting)
-	result.StoppedTasks = parseAria2Length(stat.NumStopped)
-	return result, nil
-}
-
 type aria2CheckResult struct {
 	OK         bool   `json:"ok"`
 	Configured bool   `json:"configured"`
@@ -451,12 +412,4 @@ func callAria2(ctx context.Context, cfg config.Aria2Config, method string, param
 		return err
 	}
 	return json.Unmarshal(raw, result)
-}
-
-func parseAria2Length(value string) int64 {
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0
-	}
-	return parsed
 }

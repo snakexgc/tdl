@@ -84,6 +84,56 @@ test("empty required numbers remain drafts after reloading a zero baseline", () 
   assert.equal(store.dirty, false);
 });
 
+test("saved addresses fill inputs without replacing hidden credentials on unchanged saves", () => {
+  const item = {
+    id: "connection",
+    fields: [
+      { name: "proxy", secret: true, format: "proxy" },
+      { name: "rpc_url", secret: true, format: "url" },
+      { name: "password", secret: true },
+      { name: "timeout", type: "int", default: 30 },
+    ],
+    previews: {
+      proxy: "socks5://127.0.0.1:1080",
+      rpc_url: "https://example.test/jsonrpc",
+    },
+  };
+  const store = new models.ConfigurationDrafts([item]);
+  assert.equal(store.value(item.id, "proxy"), item.previews.proxy);
+  assert.equal(store.value(item.id, "rpc_url"), item.previews.rpc_url);
+  assert.equal(store.value(item.id, "password"), "");
+  assert.equal(store.dirty, false);
+  // Editing and reverting an address must not submit its redacted value.
+  for (const name of ["proxy", "rpc_url"]) {
+    store.set(item.id, name, "https://changed.test:1080");
+    assert.equal(store.count, 1);
+    store.set(item.id, name, item.previews[name]);
+    assert.equal(store.dirty, false);
+    store.set(item.id, name, "");
+    assert.equal(store.dirty, false);
+  }
+  store.set(item.id, "timeout", 60);
+  assert.equal(
+    JSON.stringify(
+      store.patch(
+        item.id,
+        item.fields.map((f) => f.name),
+      ),
+    ),
+    '{"timeout":60}',
+  );
+  store.set(item.id, "proxy", "socks5://new-user:new-password@127.0.0.1:1080");
+  assert.equal(
+    store.patch(item.id, ["proxy"]).proxy,
+    "socks5://new-user:new-password@127.0.0.1:1080",
+  );
+  store.accept(
+    { ...item, previews: { ...item.previews, proxy: "socks5://[::1]:1080" } },
+    ["proxy"],
+  );
+  assert.equal(store.value(item.id, "proxy"), "socks5://[::1]:1080");
+});
+
 test("settings hints keep secrets private and distinguish zero, false and empty lists", () => {
   assert.equal(models.displayValue({ secret: true }, "secret"), "不回显");
   assert.doesNotMatch(
@@ -219,7 +269,7 @@ test("settings validate related fields and allow unlimited file size", () => {
       executors: ["local", "http"],
       local_root: "",
     }).has("local_root"),
-    true,
+    false,
   );
   assert.equal(
     check("download.control", {

@@ -41,6 +41,15 @@ func (s rangeSource) Open(ctx context.Context, id string) (types.RangeResource, 
 	if err != nil || !ok {
 		return types.RangeResource{}, nil, ok, err
 	}
+	local, err := s.proxy.openLocalTransfer(ctx, task)
+	if err != nil {
+		return types.RangeResource{}, nil, false, err
+	}
+	if local != nil {
+		resource := rangeResource(task)
+		resource.Available = true
+		return resource, local, true, nil
+	}
 	return rangeResource(task), rangeTransfer{proxy: s.proxy, task: task}, true, nil
 }
 

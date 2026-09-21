@@ -7,10 +7,8 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-faster/errors"
-	"github.com/gotd/contrib/clock"
 	"github.com/gotd/contrib/middleware/floodwait"
 	"github.com/gotd/log/logzap"
-	tdclock "github.com/gotd/td/clock"
 	"github.com/gotd/td/exchange"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
@@ -38,7 +36,6 @@ type Options struct {
 	Session          telegram.SessionStorage
 	Middlewares      []telegram.Middleware
 	Proxy            string
-	NTP              string
 	ReconnectTimeout time.Duration
 	UpdateHandler    telegram.UpdateHandler
 }
@@ -47,16 +44,6 @@ type Options struct {
 // Default middlewares(retry, recovery, flood wait) always added.
 func New(ctx context.Context, o Options) (*telegram.Client, error) {
 	ctx = logctx.With(ctx, logctx.From(ctx).With(zap.String("component", "account.telegram")))
-	// process clock
-	tclock := tdclock.System
-	if ntp := o.NTP; ntp != "" {
-		var err error
-		tclock, err = clock.NewNTP(ntp)
-		if err != nil {
-			return nil, errors.Wrap(err, "create network clock")
-		}
-	}
-
 	// process proxy
 	var dialer dcs.DialFunc = proxy.Direct.DialContext
 	if p := o.Proxy; p != "" {
@@ -84,7 +71,7 @@ func New(ctx context.Context, o Options) (*telegram.Client, error) {
 		MaxRetries:     5,
 		DialTimeout:    10 * time.Second,
 		Middlewares:    append(NewDefaultMiddlewares(ctx, o.ReconnectTimeout), o.Middlewares...),
-		Clock:          tclock,
+		Clock:          networkClock(ctx),
 		Logger:         logzap.New(logctx.From(ctx).Named("td")),
 	}
 

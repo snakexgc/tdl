@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -283,13 +284,33 @@ func TestSystemConfigAPIRejectsComponentSettingWrites(t *testing.T) {
 	require.Equal(t, webUITestUsername, config.Get().WebUI.Username)
 }
 
-func TestAria2DashboardUnavailableWhenRPCRequestFails(t *testing.T) {
-	stat, err := fetchAria2DashboardStat(context.Background(), config.Aria2Config{
-		RPCURL: "http://127.0.0.1:0",
-	})
+func TestDashboardDoesNotMonitorAria2(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	previous, err := config.Clone(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { *cfg = *previous })
 
-	require.Error(t, err)
-	require.False(t, stat.Available)
+	var requests atomic.Int32
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "aria2 unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(remote.Close)
+	cfg.Modules.Aria2 = true
+	cfg.Downloader.Executors = []string{config.DownloadExecutorAria2}
+	cfg.Aria2.RPCURL = remote.URL
+
+	server := NewServer(Options{})
+	recorder := httptest.NewRecorder()
+	server.handleDashboard(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"gotd_speed_bps"`)
+	require.Contains(t, recorder.Body.String(), `"dc_schedulers"`)
+	require.Contains(t, recorder.Body.String(), `"telegram_file_errors_10s"`)
+	require.NotContains(t, recorder.Body.String(), "aria2")
+	require.Zero(t, requests.Load())
 }
 
 func TestRebootRequestRejectsReentry(t *testing.T) {

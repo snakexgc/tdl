@@ -59,7 +59,6 @@ type Options struct {
 	AllowedUsers          []int64
 	Proxy                 string
 	Namespace             string
-	NTP                   string
 	ReconnectTimeout      time.Duration
 	WatchControl          watchControl
 	DisableAutoStartWatch bool
@@ -212,7 +211,6 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 			Connections: opts.Connections, Credentials: opts.Credentials, Account: account,
 			KV:               kvd,
 			Proxy:            opts.Proxy,
-			NTP:              opts.NTP,
 			ReconnectTimeout: opts.ReconnectTimeout,
 		}
 	}

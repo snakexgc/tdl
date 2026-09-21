@@ -17,6 +17,7 @@ import (
 
 	"github.com/snakexgc/tdl/bsw/services/dem"
 	"github.com/snakexgc/tdl/interfaces/manifest"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte/config"
 	"github.com/snakexgc/tdl/rte/eventbus"
@@ -35,6 +36,7 @@ type Component interface {
 type Kernel struct {
 	Account   types.AccountID
 	Config    config.View
+	Clock     ports.Clock
 	resolve   func(string) (any, error)
 	provide   func(string, any) error
 	Events    Events
@@ -131,19 +133,22 @@ type instance struct {
 	cancel       context.CancelFunc
 	owner        <-chan struct{}
 	runnables    *schedule.Group
+	bindings     map[string]any
 	observation  atomic.Pointer[observation]
 }
 
 type observation struct {
 	status    Status
 	runnables *schedule.Group
+	config    config.View
+	bindings  map[string]any
 }
 
-// Called under Runtime.mu; health readers only access the immutable snapshot.
+// Called under Runtime.mu; queries only access the immutable snapshot.
 func (i *instance) setStatus(status Status) {
 	previous := i.status
 	i.status = status
-	i.observation.Store(&observation{status: status, runnables: i.runnables})
+	i.observation.Store(&observation{status: status, runnables: i.runnables, config: i.config, bindings: i.bindings})
 	if previous != status {
 		level := slog.LevelInfo
 		switch status.State {
@@ -329,7 +334,7 @@ func (r *Runtime) startLocked(ctx context.Context) []Status {
 		}
 		runCtx, cancel := context.WithCancel(ctx)
 		item.cancel, item.owner = cancel, runCtx.Done()
-		kernel := Kernel{Account: r.account, Config: item.config}
+		kernel := Kernel{Account: r.account, Config: item.config, Clock: ClockFrom(runCtx)}
 		item.runnables = schedule.NewObserved(runCtx, func(name string, err error) { r.diagnostics.Report(id, "runnable:"+name, err) })
 		item.setStatus(Status{ID: id, State: Starting})
 		kernel.Runnables = item.runnables
@@ -387,6 +392,7 @@ func (r *Runtime) startLocked(ctx context.Context) []Status {
 			}
 			bindMu.Lock()
 			sealed = true
+			item.bindings = bindings
 			for name, value := range bindings {
 				r.ports[name] = value
 			}
@@ -425,24 +431,18 @@ func (r *Runtime) startLocked(ctx context.Context) []Status {
 // Resolve is the composition root's port lookup. SWCs receive scoped Kernel
 // lookups, which reject access to undeclared requirements.
 func (r *Runtime) Resolve(name string) (any, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.resolvePortLocked(r.providers[name], name)
+	return r.resolveComponentPort("", name)
 }
 
 // Resolve identity, state and value together so reconciliation cannot substitute
 // another component between the ownership check and the port lookup.
 func (r *Runtime) resolveComponentPort(id, name string) (any, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.resolvePortLocked(id, name)
-}
-
-func (r *Runtime) resolvePortLocked(id, name string) (any, error) {
-	item := r.instances[id]
-	if item != nil && item.status.State == Running && r.providers[name] == id {
-		if value, ok := r.ports[name]; ok {
-			return value, nil
+	for _, component := range *r.observed.Load() {
+		item := component.observation.Load()
+		if item.status.State == Running && (id == "" || item.status.ID == id) {
+			if value, ok := item.bindings[name]; ok {
+				return value, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("port %s unavailable", name)
@@ -472,6 +472,7 @@ func (r *Runtime) Reconfigure(ctx context.Context, id string, values map[string]
 		return err
 	}
 	item.config = view
+	item.setStatus(item.status)
 	return nil
 }
 
@@ -539,7 +540,15 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) Statuses() []Status { r.mu.Lock(); defer r.mu.Unlock(); return r.statuses() }
+func (r *Runtime) Statuses() []Status {
+	items := *r.observed.Load()
+	result := make([]Status, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.observation.Load().status)
+	}
+	return result
+}
+
 func (r *Runtime) statuses() []Status {
 	result := make([]Status, 0, len(r.order))
 	for _, id := range r.order {

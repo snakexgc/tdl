@@ -1,4 +1,4 @@
-// Package targetpath manipulates remote target paths without filesystem I/O.
+// Package targetpath handles download target paths without creating files or directories.
 package targetpath
 
 import (

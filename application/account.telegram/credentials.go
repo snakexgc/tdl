@@ -32,9 +32,8 @@ func Manifest() manifest.Manifest {
 		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0), manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0)},
 		Config: []manifest.ConfigField{
 			manifest.FormattedText("proxy", "统一网络代理", "", "proxy", true, true).InSettings("network", "网络代理与连接").WithHelp("Telegram、机器人和软件更新共用此代理。选择协议后填写 IP 或域名加端口，例如 127.0.0.1:1080；需要认证时展开填写。整体留空保留已保存的代理，修改时请同时填写所需的认证信息。"),
-			manifest.Text("ntp", "时间校准服务器", "", false, true).InSettings("network", "网络代理与连接").WithHelp("启动时优先检测已填写的服务器，最多尝试 3 次。留空或检测失败时，从内置服务器中自动选择最快的可用地址并写入配置；全部不可用则清空此项，使用系统时间。修改后保存并重启生效。"),
 			manifest.Number("file_limit", "同时下载的文件数", 1, 1, 10000, false).InSettings("download", "下载并发与节奏").WithHelp("限制同时下载的 Telegram 文件数。调大前请确认网络带宽和账号连接稳定。"),
-			manifest.Number("dc_pool_size", "每个数据中心的连接数", 8, 1, 10000, false).InSettings("download", "下载并发与节奏").WithHelp("每个 Telegram 数据中心可用于下载的连接容量，通常保留默认值。"),
+			manifest.Number("dc_pool_size", "每个数据中心的连接数", 8, 1, 10000, false).InSettings("download", "下载并发与节奏").WithHelp("每个 Telegram 数据中心的下载连接容量及分片请求并发上限。HTTP 多线程请求与本地下载器共享此额度，超出时排队；HTTP 直读已完成的本地文件不受此限制。"),
 			manifest.Number("delay_seconds", "任务间隔（秒）", 0, 0, 3600, true).InSettings("download", "下载并发与节奏").WithHelp("任务之间的等待时间；0 表示不额外等待。"),
 			manifest.Number("reconnect_timeout_seconds", "断线重试间隔（秒）", 3, 1, 86400, true).InSettings("network", "网络代理与连接").WithHelp("Telegram 监听连接中断后，等待这些秒再重新连接。"),
 
@@ -43,7 +42,7 @@ func Manifest() manifest.Manifest {
 			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true, Help: "留空保持不变。填写自定义 API ID 时需同时提供对应的 API Hash。"},
 			{Name: fieldBuiltinPreset, Title: "内置预设", Type: manifest.String, Default: presetDesktop, Choices: []string{presetDesktop, presetBuiltin}, ChoiceLabels: map[string]string{presetDesktop: "desktop（推荐）", presetBuiltin: presetBuiltin}, Help: "默认 desktop，不建议修改。更换预设可能需要重新登录。"},
 		},
-	}, "account", "Telegram API 凭据", "ntp", "reconnect_timeout_seconds", "dc_pool_size", fieldBuiltinPreset).SettingsOrder(30)
+	}, "account", "Telegram API 凭据", "reconnect_timeout_seconds", "dc_pool_size", fieldBuiltinPreset).SettingsOrder(30)
 }
 
 func Register(registry *rte.Registry) error {

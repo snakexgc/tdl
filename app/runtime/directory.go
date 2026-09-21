@@ -27,6 +27,7 @@ func (m *Manager) initDirectory() error {
 		resolve func() *rte.Runtime
 	}{
 		{"configuration", func() *rte.Runtime { return m.configurationHost }},
+		{"time", func() *rte.Runtime { return m.timeHost }},
 		{"account", func() *rte.Runtime { return m.accountHost }},
 		{"policies", func() *rte.Runtime { return m.policies }},
 		{"bot", func() *rte.Runtime { return m.botComponents }},

@@ -82,7 +82,7 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 			ID: accountResource, Enabled: true, Requires: []string{policyResource},
 			// Credential policy comes from the immutable startup store. It
 			// must not close an authenticated connection that is still in use.
-			Revision: revision(config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout),
+			Revision: revision(config.EffectiveProxy(cfg), cfg.Delay, cfg.ReconnectTimeout),
 			Running:  func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.accountHost != nil },
 			Start: func(context.Context) error {
 				connections := tgauth.NewConnections(m.parent)

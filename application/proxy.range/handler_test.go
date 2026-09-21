@@ -60,7 +60,10 @@ func TestRangeMaintenanceDrainsBeforeSourceCleanup(t *testing.T) {
 type testTransfer struct {
 	stream  func(context.Context, io.Writer) error
 	reports int
+	closed  int
 }
+
+func (s *testTransfer) Close() error { s.closed++; return nil }
 
 func (*testTransfer) Ready(context.Context) error { return nil }
 
@@ -110,10 +113,42 @@ func TestRangeComponentCancelsAndDrainsRequests(t *testing.T) {
 }
 
 func TestHeadDoesNotAcquireOrStream(t *testing.T) {
-	handler := New(testSource{nil}, nil, time.Second)
+	transport := &testTransfer{}
+	handler := New(testSource{transport}, nil, time.Second)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodHead, "/download/file", nil))
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "4", response.Header().Get("Content-Length"))
 	require.Empty(t, response.Body.String())
+	require.Equal(t, 1, transport.closed)
+}
+
+func TestRangeClosesSourceOnInvalidRange(t *testing.T) {
+	transport := &testTransfer{}
+	handler := New(testSource{transport}, nil, time.Second)
+	request := httptest.NewRequest(http.MethodGet, "/download/file", nil)
+	request.Header.Set("Range", "bytes=10-20")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, response.Code)
+	require.Equal(t, 1, transport.closed)
+}
+
+func TestHeadIgnoresRangeAndReturnsFullLength(t *testing.T) {
+	for _, header := range []string{"bytes=1-2", "bytes=0-0,3-3", "bytes=10-20", "invalid"} {
+		t.Run(header, func(t *testing.T) {
+			transport := &testTransfer{}
+			handler := New(testSource{transport}, nil, time.Second)
+			request := httptest.NewRequest(http.MethodHead, "/download/file", nil)
+			request.Header.Set("Range", header)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code)
+			require.Equal(t, "4", response.Header().Get("Content-Length"))
+			require.Empty(t, response.Header().Get("Content-Range"))
+			require.Empty(t, response.Body.String())
+			require.Equal(t, 1, transport.closed)
+			require.Zero(t, transport.reports)
+		})
+	}
 }

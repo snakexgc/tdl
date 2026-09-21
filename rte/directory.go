@@ -114,12 +114,11 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 	live := map[string]Configuration{}
 	views := map[string]config.View{}
 	for _, host := range d.runtimes() {
-		host.mu.Lock()
-		for _, entry := range host.configurationsLocked() {
+		entries, snapshots := host.configurationSnapshots()
+		for _, entry := range entries {
 			live[entry.ID] = entry
-			views[entry.ID] = host.instances[entry.ID].config
+			views[entry.ID] = snapshots[entry.ID]
 		}
-		host.mu.Unlock()
 	}
 	result := []Configuration{}
 	for _, definition := range d.catalog.Definitions() {

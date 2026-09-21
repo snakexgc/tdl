@@ -80,6 +80,7 @@ const (
 )
 
 type Options struct {
+	Ready                func()
 	Dialogs              ports.DialogCatalog
 	Catalog              *rte.Catalog
 	ComponentStore       *rteconfig.Store
@@ -172,6 +173,9 @@ func Run(ctx context.Context, opts Options) error {
 		defer opts.SetComponentHost(nil)
 	}
 	defer func() { _ = host.Stop(context.Background()) }()
+	if opts.Ready != nil {
+		opts.Ready()
+	}
 	select {
 	case <-ctx.Done():
 		return nil

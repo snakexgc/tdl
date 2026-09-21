@@ -78,7 +78,7 @@ func TestPrepareLocalOutputRootRejectsInvalidDirectory(t *testing.T) {
 	t.Parallel()
 	blocked := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(blocked, []byte("x"), 0o644))
-	for _, root := range []string{blocked, "", "relative"} {
+	for _, root := range []string{blocked, "relative"} {
 		actual, err := local.PrepareRoot(root)
 		require.Error(t, err)
 		require.Empty(t, actual)

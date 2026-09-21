@@ -44,7 +44,7 @@ func saveComponent(t *testing.T, store *rteconfig.Store, id string, enabled bool
 func newStoppedComponentStore(t *testing.T) *rteconfig.Store {
 	t.Helper()
 	store := newComponentStore(t)
-	for _, id := range []string{consoleComponentID, downloadTriggerComponentID, forwardTriggerComponentID, aria2ComponentID, rangeComponentID, panelComponentID} {
+	for _, id := range []string{consoleComponentID, downloadTriggerComponentID, forwardTriggerComponentID, aria2ComponentID, rangeComponentID, panelComponentID, "time.sync"} {
 		saveComponent(t, store, id, false, nil)
 	}
 	return store

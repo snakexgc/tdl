@@ -15,7 +15,7 @@ export class ConfigurationDrafts {
   baseline(id, name) {
     const field = this.field(id, name);
     return field?.secret
-      ? ""
+      ? (this.components.get(id)?.previews?.[name] ?? "")
       : (this.components.get(id)?.values?.[name] ?? field?.default);
   }
   value(id, name) {
@@ -166,7 +166,9 @@ export function displayValue(field, value) {
 
 export function fieldHint(field) {
   const parts = [];
-  if (field.secret) parts.push("不回显原值，留空保留");
+  if (field.secret && ["proxy", "url"].includes(field.format))
+    parts.push("认证信息不回显，地址未修改时保留原值");
+  else if (field.secret) parts.push("不回显原值，留空保留");
   else parts.push(`默认：${displayValue(field, field.default)}`);
   if (field.type === "int") {
     if (field.min != null && field.max != null)
@@ -298,14 +300,6 @@ export function settingsErrors(id, value) {
       errors.set("executors", "下载方式不能重复。");
     else if (executors.includes("http") && executors.at(-1) !== "http")
       errors.set("executors", "http 只生成链接，需要放在最后一行。");
-    if (
-      executors.includes("local") &&
-      !String(value("local_root") || "").trim()
-    )
-      errors.set(
-        "local_root",
-        "使用 local 下载时，请填写 TDL 所在机器上的绝对保存路径。",
-      );
   }
   return errors;
 }

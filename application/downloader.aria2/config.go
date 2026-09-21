@@ -28,7 +28,7 @@ func Manifest() manifest.Manifest {
 			manifest.PortOf[ports.Aria2Tasks](ports.Aria2TasksName, 1, 0),
 		}, Config: []manifest.ConfigField{
 			manifest.Flag("auto_download", "自动提交到 aria2", true, false).WithHelp("使用 aria2 下载方式时需要开启；关闭后不再自动向 aria2 提交新任务。"),
-			manifest.FormattedText("rpc_url", "aria2 RPC 地址", "http://127.0.0.1:6800/jsonrpc", "url", true, true).WithHelp("显示配置文件中的地址，认证信息不回显。填写 TDL 能访问的完整 RPC 地址，例如 http://127.0.0.1:6800/jsonrpc；留空保留原值。容器中的 127.0.0.1 指容器自身。"),
+			manifest.FormattedText("rpc_url", "aria2 RPC 地址", "http://127.0.0.1:6800/jsonrpc", "url", true, true).WithHelp("填写 TDL 能访问的完整 RPC 地址，例如 http://127.0.0.1:6800/jsonrpc；留空保留原值。修改地址时，请同时填写所需的认证信息或查询参数。容器中的 127.0.0.1 指容器自身。"),
 			manifest.Text("secret", "aria2 RPC 密钥", "", true, true).WithHelp("与 aria2 的 rpc-secret 一致。留空保留原值。"),
 			manifest.Text("directory", "aria2 保存目录", "", false, false).WithHelp("填写 aria2 所在机器上的目录；留空使用 aria2 自身的默认下载目录。"),
 			manifest.Number("timeout_seconds", "连接超时（秒）", 30, 1, 3600, true).WithHelp("单次 aria2 RPC 请求的最长等待时间。"),

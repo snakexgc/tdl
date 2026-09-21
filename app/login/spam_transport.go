@@ -44,7 +44,6 @@ func spamResponse(ctx context.Context, opts SessionOptions) (string, error) {
 		Connections: opts.Connections, Credentials: opts.Credentials, Account: opts.Account,
 		KV:               opts.KV,
 		Proxy:            opts.Proxy,
-		NTP:              opts.NTP,
 		ReconnectTimeout: opts.ReconnectTimeout,
 		UpdateHandler:    handler,
 	}, false)

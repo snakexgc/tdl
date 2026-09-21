@@ -87,7 +87,7 @@ func TestLiveAccountSerialSmoke(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, session, "never attempt a new login during this test")
 	cfg.Limit, cfg.PoolSize = 1, 1
-	cfg.NTP, cfg.Debug = "", false
+	cfg.Debug = false
 	cfg.Modules = config.ModulesConfig{}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()

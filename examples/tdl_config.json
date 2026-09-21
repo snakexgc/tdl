@@ -14,7 +14,6 @@
         "dc_pool_size": 8,
         "delay_seconds": 0,
         "file_limit": 1,
-        "ntp": "",
         "proxy": "",
         "reconnect_timeout_seconds": 3,
         "use_builtin": true
@@ -142,6 +141,14 @@
     "storage.maintenance": {
       "enabled": true,
       "values": {}
+    },
+    "time.sync": {
+      "enabled": true,
+      "values": {
+        "server": "",
+        "sync_interval_seconds": 300,
+        "timeout_seconds": 3
+      }
     },
     "trigger.download": {
       "enabled": true,

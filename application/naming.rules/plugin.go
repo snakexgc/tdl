@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync/atomic"
 	"text/template"
-	"time"
 
 	"github.com/snakexgc/tdl/application/naming.rules/tplfunc"
 	"github.com/snakexgc/tdl/interfaces/manifest"
@@ -28,6 +27,7 @@ type settings struct {
 	directory string
 	maxBytes  int
 	tpl       *template.Template
+	clock     ports.Clock
 }
 
 type Rules struct{ settings atomic.Pointer[settings] }
@@ -55,8 +55,9 @@ func (r *Rules) Init(ctx context.Context, k rte.Kernel) error {
 func (*Rules) Start(context.Context) error { return nil }
 func (*Rules) Stop(context.Context) error  { return nil }
 
-func (r *Rules) PrepareConfig(_ context.Context, view config.View) (func(), error) {
+func (r *Rules) PrepareConfig(ctx context.Context, view config.View) (func(), error) {
 	var next settings
+	next.clock = rte.ClockFrom(ctx)
 	for _, field := range []struct {
 		name   string
 		target any
@@ -66,7 +67,9 @@ func (r *Rules) PrepareConfig(_ context.Context, view config.View) (func(), erro
 		}
 	}
 	next.pattern = fileNameConfigTemplate(next.pattern)
-	tpl, err := template.New(ID).Funcs(tplfunc.FuncMap(tplfunc.All...)).Parse(next.pattern)
+	functions := tplfunc.FuncMap(tplfunc.All...)
+	functions["now"] = func() int64 { return next.clock.Now().Unix() }
+	tpl, err := template.New(ID).Funcs(functions).Parse(next.pattern)
 	if err != nil {
 		return nil, fmt.Errorf("filename template: %w", err)
 	}
@@ -96,7 +99,7 @@ func (r *Rules) Render(ctx context.Context, in ports.NamingInput) (ports.NamingR
 	}
 	data := in.Data
 	if data.DownloadedAt.IsZero() {
-		data.DownloadedAt = time.Now()
+		data.DownloadedAt = s.clock.Now()
 	}
 	name := in.RenderedName
 	if name == "" {

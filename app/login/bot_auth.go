@@ -27,7 +27,6 @@ type SessionOptions struct {
 	Account          types.AccountID
 	KV               storage.Storage
 	Proxy            string
-	NTP              string
 	ReconnectTimeout time.Duration
 }
 
@@ -87,7 +86,6 @@ func CheckSession(ctx context.Context, opts SessionOptions) (*tg.User, error) {
 		Credentials: opts.Credentials, Account: opts.Account,
 		KV:               opts.KV,
 		Proxy:            opts.Proxy,
-		NTP:              opts.NTP,
 		ReconnectTimeout: opts.ReconnectTimeout,
 	}, false)
 	if err != nil {
@@ -376,7 +374,6 @@ func runWithTemporarySession(
 		AppOverride:      &credentials.App,
 		KV:               tmp,
 		Proxy:            opts.Proxy,
-		NTP:              opts.NTP,
 		ReconnectTimeout: opts.ReconnectTimeout,
 		UpdateHandler:    updateHandler,
 		// The temporary storage starts empty, so loading from it cannot reuse an

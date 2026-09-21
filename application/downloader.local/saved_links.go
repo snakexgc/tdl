@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -77,11 +76,10 @@ func (s SavedLinks) Submit(ctx context.Context, in types.DownloadSubmission) (ty
 
 // PrepareRoot validates the configured local destination before queueing work.
 func PrepareRoot(configured string) (string, error) {
-	root := strings.TrimSpace(configured)
-	if !filepath.IsAbs(root) {
-		return "", fmt.Errorf("local download root must be absolute")
+	root, err := targetpath.LocalRoot(configured)
+	if err != nil {
+		return "", err
 	}
-	root = filepath.Clean(root)
 	if err := EnsureWritableDirectory(root); err != nil {
 		return "", fmt.Errorf("prepare local download directory %q: %w", root, err)
 	}

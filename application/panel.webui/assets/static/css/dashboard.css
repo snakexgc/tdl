@@ -135,12 +135,6 @@
 .dashboard-stat-fill-warning {
   background: var(--chart-4);
 }
-.dashboard-stat-fill-aria2-active {
-  background: var(--chart-3);
-}
-.dashboard-stat-fill-muted {
-  background: var(--line-strong);
-}
 
 /* ── SVG charts ── */
 .dashboard-chart-shell {
@@ -257,10 +251,6 @@
 
 .legend-software {
   background: var(--chart-2);
-}
-
-.legend-aria2 {
-  background: var(--chart-3);
 }
 
 .legend-retained {

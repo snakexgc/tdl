@@ -46,7 +46,6 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		Connections: s.opts.Connections, Credentials: s.opts.Credentials, Account: types.AccountID(s.opts.Namespace),
 		KV:               s.opts.NamespaceKV,
 		Proxy:            config.EffectiveProxy(cfg),
-		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	})
 	if err != nil {

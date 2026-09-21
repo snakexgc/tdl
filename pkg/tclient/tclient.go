@@ -23,7 +23,6 @@ type Options struct {
 	AppOverride      *types.TelegramApp
 	KV               storage.Storage
 	Proxy            string
-	NTP              string
 	ReconnectTimeout time.Duration
 	UpdateHandler    telegram.UpdateHandler
 }
@@ -92,13 +91,12 @@ func New(ctx context.Context, o Options, login bool, middlewares ...telegram.Mid
 			Session:          storage.NewSession(sessionStore, login),
 			Middlewares:      middlewares,
 			Proxy:            o.Proxy,
-			NTP:              o.NTP,
 			ReconnectTimeout: o.ReconnectTimeout,
 			UpdateHandler:    handler,
 		})
 	}
 	if o.Connections != nil {
-		key := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%s:%d", app.AppID, app.AppHash, o.Proxy, o.NTP, o.ReconnectTimeout)))
+		key := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%d", app.AppID, app.AppHash, o.Proxy, o.ReconnectTimeout)))
 		connection, err := o.Connections.Open(o.Account, fmt.Sprintf("%x", key), factory)
 		if err != nil {
 			return nil, err

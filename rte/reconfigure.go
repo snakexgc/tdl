@@ -93,6 +93,7 @@ func (r *Runtime) reconfigureLocked(ctx context.Context, values map[string]map[s
 	for _, next := range changes {
 		next.commit()
 		next.item.config = next.view
+		next.item.setStatus(next.item.status)
 		slog.Info("组件配置已生效", "component", next.item.status.ID, "account", r.account)
 	}
 	return nil

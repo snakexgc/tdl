@@ -178,6 +178,30 @@ func TestSchedulerCancellationRemovesQueuedChunk(t *testing.T) {
 	lease.Release()
 }
 
+func TestSchedulerRejectsCanceledRequestsWithAvailableCapacity(t *testing.T) {
+	s := NewScheduler(2, 8)
+	lease := mustAcquireTask(t, s, "active", 2)
+	defer lease.Release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for range 32 {
+		follower, err := s.Acquire(ctx, "active", 2)
+		if follower != nil {
+			follower.Release()
+		}
+		require.ErrorIs(t, err, context.Canceled)
+		chunk, err := lease.AcquireChunk(ctx)
+		if chunk != nil {
+			chunk.Release()
+		}
+		require.ErrorIs(t, err, context.Canceled)
+	}
+	require.Equal(t, 1, lease.state.refs)
+	require.Zero(t, s.Snapshots()[0].ActiveChunks)
+	require.Zero(t, s.Snapshots()[0].QueuedRequests)
+}
+
 func TestSchedulerCancellationWhileWaitingForFileSlotDoesNotLeak(t *testing.T) {
 	s := NewScheduler(1, 2)
 	blocking := mustAcquireTask(t, s, "blocking", 2)

@@ -110,9 +110,16 @@ func (s *Scheduler) Acquire(ctx context.Context, taskID string, dc int) (*TaskLe
 
 func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc int) (*taskState, error) {
 	registered := false
+	var state *taskState
 	for {
+		if err := ctx.Err(); err != nil {
+			if registered {
+				s.releaseTask(state)
+			}
+			return nil, err
+		}
 		s.mu.Lock()
-		state := s.files[taskID]
+		state = s.files[taskID]
 		if state == nil {
 			state = &taskState{taskID: taskID, dc: dc}
 			s.files[taskID] = state
@@ -189,6 +196,10 @@ func (l *TaskLease) AcquireChunk(ctx context.Context) (*ChunkLease, error) {
 	s := l.scheduler
 
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	if !l.state.active || l.state.refs < 1 {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("download task lease is released")
@@ -201,7 +212,15 @@ func (l *TaskLease) AcquireChunk(ctx context.Context) (*ChunkLease, error) {
 	case <-w.ready:
 		s.mu.Lock()
 		granted := w.granted
+		// Cancellation may race a grant; return its permit before admitting work.
+		err := ctx.Err()
+		if granted && err != nil {
+			s.releaseChunkLocked(l.state)
+		}
 		s.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
 		if !granted {
 			return nil, fmt.Errorf("download task lease is released")
 		}

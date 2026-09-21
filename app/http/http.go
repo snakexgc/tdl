@@ -51,12 +51,10 @@ const (
 	telegramChunkMaxRetries     = 4
 	telegramChunkRetryBaseDelay = 250 * time.Millisecond
 	telegramChunkRetryMaxDelay  = 2 * time.Second
-	// telegramChunkAttemptTimeout is a dead-connection backstop, NOT a throughput
-	// throttle: a single ≤1 MiB getFile slower than this means < ~3.5 KiB/s, which
-	// is below any usable link, so the connection is effectively dead. It is
-	// deliberately far above any real per-chunk transfer time so it can never cut
-	// off a slow-but-progressing download and shorten the resulting file.
-	telegramChunkAttemptTimeout = 5 * time.Minute
+	// telegramChunkAttemptTimeout bounds one upload.getFile attempt after a DC
+	// permit is acquired. Expired attempts release the permit and use the bounded
+	// transient retry path. This is a client policy, not a Telegram protocol limit.
+	telegramChunkAttemptTimeout = 30 * time.Second
 )
 
 const (

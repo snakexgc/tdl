@@ -9,7 +9,7 @@ type binding struct {
 
 func bindings() []binding {
 	return []binding{
-		{accountComponentID, "", map[string]string{"api_id": "telegram.api_id", "api_hash": "telegram.api_hash", "builtin_preset": "telegram.builtin_preset", "use_builtin": "telegram.use_builtin", proxyField: proxyField, ntpField: ntpField, fileLimitField: "limit", poolSizeField: "pool_size", "delay_seconds": "delay", reconnectTimeoutField: "reconnect_timeout"}},
+		{accountComponentID, "", map[string]string{"api_id": "telegram.api_id", "api_hash": "telegram.api_hash", "builtin_preset": "telegram.builtin_preset", "use_builtin": "telegram.use_builtin", proxyField: proxyField, fileLimitField: "limit", poolSizeField: "pool_size", "delay_seconds": "delay", reconnectTimeoutField: "reconnect_timeout"}},
 		{consoleComponentID, "modules.bot", map[string]string{"token": "bot.token", "allowed_users": "bot.allowed_users"}},
 		{"notify.telegram", "", map[string]string{"on_download_start": "bot.notify.on_download_start", "on_download_complete": "bot.notify.on_download_complete", "on_download_pause": "bot.notify.on_download_pause", "on_download_error": "bot.notify.on_download_error", "live_progress": "bot.notify.live_progress", "live_progress_interval_seconds": "bot.notify.live_progress_interval_seconds"}},
 		{"filter.rules", "", map[string]string{"include": "include", "exclude": "exclude", "min_mb": "file_size_min_mb", "max_mb": "file_size_max_mb"}},
@@ -32,7 +32,6 @@ const (
 	consoleComponentID = "console.bot"
 	directoryField     = "directory"
 	portField          = "port"
-	ntpField           = "ntp"
 )
 
 const (

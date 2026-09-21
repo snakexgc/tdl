@@ -64,7 +64,6 @@ type RuntimeConfig struct {
 	Limit            int                       `json:"limit"`
 	PoolSize         int                       `json:"pool_size"`
 	Delay            int                       `json:"delay"`
-	NTP              string                    `json:"ntp"`
 	ReconnectTimeout int                       `json:"reconnect_timeout"`
 	DownloadDir      string                    `json:"download_dir"`
 	Filename         string                    `json:"filename"`

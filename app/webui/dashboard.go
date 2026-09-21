@@ -12,6 +12,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/ps"
+	"github.com/snakexgc/tdl/rte"
 )
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +22,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":   true,
-		"time": time.Now().UTC().Format(time.RFC3339Nano),
+		"time": rte.Now(s.opts.Context).UTC().Format(time.RFC3339Nano),
 	})
 }
 
@@ -40,7 +41,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
-	cfg := config.From(s.opts.Context)
 	now := time.Now()
 	metricErrors := map[string]string{}
 
@@ -86,14 +86,6 @@ func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
 	dcSchedulers := httpdl.DCSchedulerSnapshots()
 	telegramFileErrors := httpdl.TelegramFileErrorCount()
 	telegramFileErrors10s := httpdl.TelegramFileErrorCountSince(10 * time.Second)
-	var aria2Stat aria2DashboardStat
-	if cfg != nil && cfg.Modules.Aria2 && config.PrimaryDownloadExecutor(cfg) != config.DownloadExecutorLocal {
-		stat, err := fetchAria2DashboardStat(ctx, cfg.Aria2)
-		aria2Stat = stat
-		if err != nil {
-			metricErrors["aria2"] = err.Error()
-		}
-	}
 
 	response := map[string]any{
 		"sampled_at": now.UTC().Format(time.RFC3339Nano),
@@ -116,29 +108,15 @@ func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
 		"download": map[string]any{
 			"gotd_bytes_total":         totalBytes,
 			"gotd_speed_bps":           gotdSpeed,
-			"aria2_speed_bps":          aria2Stat.DownloadSpeedBPS,
-			"aria2_available":          aria2Stat.Available,
 			"active_chunk_requests":    activeChunkRequests,
 			"telegram_file_errors":     telegramFileErrors,
 			"telegram_file_errors_10s": telegramFileErrors10s,
-			"aria2_task_count":         aria2Stat.TotalTasks(),
-			"aria2_active_tasks":       aria2Stat.ActiveTasks,
-			"aria2_waiting_tasks":      aria2Stat.WaitingTasks,
-			"aria2_stopped_tasks":      aria2Stat.StoppedTasks,
 		},
 		"http": map[string]any{
 			"active_chunk_requests":    activeChunkRequests,
 			"telegram_file_errors":     telegramFileErrors,
 			"telegram_file_errors_10s": telegramFileErrors10s,
 			"dc_schedulers":            dcSchedulers,
-		},
-		"aria2": map[string]any{
-			"available":     aria2Stat.Available,
-			"speed_bps":     aria2Stat.DownloadSpeedBPS,
-			"task_count":    aria2Stat.TotalTasks(),
-			"active_tasks":  aria2Stat.ActiveTasks,
-			"waiting_tasks": aria2Stat.WaitingTasks,
-			"stopped_tasks": aria2Stat.StoppedTasks,
 		},
 	}
 	if len(metricErrors) > 0 {
@@ -162,6 +140,7 @@ func (s *Server) statusSnapshot() map[string]any {
 		configurationVersion = versioned.ConfigurationVersion()
 	}
 	return map[string]any{
+		"clock":                 rte.ClockFrom(s.opts.Context).Status(),
 		"configuration_version": configurationVersion,
 		fieldNamespace:          s.namespace(),
 		"watch_running":         s.watchRunning(),

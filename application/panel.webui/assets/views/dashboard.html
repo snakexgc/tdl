@@ -21,7 +21,7 @@
       <div class="dashboard-card-head">
         <div>
           <h2>下载速度</h2>
-          <p id="dashboard-speed-meta">gotd / aria2</p>
+          <p id="dashboard-speed-meta">gotd</p>
         </div>
         <strong id="dashboard-speed-value">-</strong>
       </div>
@@ -30,7 +30,6 @@
       </div>
       <div class="dashboard-legend">
         <span><i class="legend-gotd"></i>gotd</span>
-        <span><i class="legend-aria2"></i>aria2</span>
       </div>
     </section>
     <section class="dashboard-card">
@@ -65,7 +64,8 @@
     </section>
 
   </div>
-  <details class="dashboard-diagnostics"><summary>下载调度与诊断指标</summary>
+  <section class="dashboard-diagnostics" aria-labelledby="dashboard-diagnostics-title">
+    <h2 id="dashboard-diagnostics-title">下载调度与诊断指标</h2>
     <section class="dashboard-card dashboard-pull-card">
       <div class="dashboard-card-head dashboard-card-head-plain">
         <div>
@@ -101,34 +101,7 @@
             <i class="dashboard-stat-fill dashboard-stat-fill-warning" id="dashboard-file-errors-bar"></i>
           </div>
         </div>
-        <div class="dashboard-stat-row">
-          <div class="dashboard-stat-line">
-            <span>aria2 活动任务数</span>
-            <strong id="dashboard-aria2-active-value">-</strong>
-          </div>
-          <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill dashboard-stat-fill-aria2-active" id="dashboard-aria2-active-bar"></i>
-          </div>
-        </div>
-        <div class="dashboard-stat-row">
-          <div class="dashboard-stat-line">
-            <span>aria2 等待任务数</span>
-            <strong id="dashboard-aria2-waiting-value">-</strong>
-          </div>
-          <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill dashboard-stat-fill-warning" id="dashboard-aria2-waiting-bar"></i>
-          </div>
-        </div>
-        <div class="dashboard-stat-row">
-          <div class="dashboard-stat-line">
-            <span>aria2 已停止任务数</span>
-            <strong id="dashboard-aria2-stopped-value">-</strong>
-          </div>
-          <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill dashboard-stat-fill-muted" id="dashboard-aria2-stopped-bar"></i>
-          </div>
-        </div>
       </div>
     </section>
-  </details>
+  </section>
 </section>

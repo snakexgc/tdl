@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"io/fs"
 
 	account "github.com/snakexgc/tdl/application/account.telegram"
@@ -17,6 +18,7 @@ import (
 	panel "github.com/snakexgc/tdl/application/panel.webui"
 	proxy "github.com/snakexgc/tdl/application/proxy.range"
 	maintenance "github.com/snakexgc/tdl/application/storage.maintenance"
+	timesync "github.com/snakexgc/tdl/application/time.sync"
 	downloadtrigger "github.com/snakexgc/tdl/application/trigger.download"
 	forwardtrigger "github.com/snakexgc/tdl/application/trigger.forward"
 	message "github.com/snakexgc/tdl/application/trigger.messagelink"
@@ -24,6 +26,7 @@ import (
 	update "github.com/snakexgc/tdl/application/update.self"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
+	"github.com/snakexgc/tdl/rte/config"
 )
 
 // declarations is the single feature catalog for static factories, schemas,
@@ -44,6 +47,10 @@ func definitions(commandSets ...[]types.ConsoleCommand) ([]rte.Definition, error
 	}
 	declarations := []declaration{
 		{nil, rte.Definition{Manifest: configuration.Manifest(), Scope: rte.ProcessScope}},
+		{nil, rte.Definition{Manifest: timesync.Manifest(), Scope: rte.ProcessScope, Validate: func(ctx context.Context, view config.View) error {
+			_, err := timesync.New(nil).PrepareConfig(ctx, view)
+			return err
+		}}},
 		{account.Register, ui(rte.AccountScope, account.Assets(), account.Routes())},
 		{consoleRegister, rte.Definition{Scope: rte.AccountScope, Host: "bot"}},
 		{filter.Register, rte.Definition{Scope: rte.AccountScope}},

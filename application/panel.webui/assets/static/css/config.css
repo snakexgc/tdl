@@ -231,11 +231,6 @@
 .settings-editor-field .settings-help {
   margin-top: 16px;
 }
-.settings-editor-field .server-value {
-  display: block;
-  margin-top: 8px;
-  color: var(--warning);
-}
 .settings-namespace {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
@@ -399,7 +394,7 @@
 }
 
 .proxy-auth summary {
-  color: var(--muted);
+  color: var(--text);
   font-size: 12px;
   cursor: pointer;
 }

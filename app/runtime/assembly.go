@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	"github.com/snakexgc/tdl/application"
+	timesync "github.com/snakexgc/tdl/application/time.sync"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
@@ -43,6 +45,42 @@ func (m *Manager) connectionNeeded(cfg *config.Config) bool {
 // knows neither module configuration. Backend factories stay here.
 func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 	return append(m.foundationUnits(cfg), []rte.ManagedUnit{
+		{
+			ID: timesync.ID, Enabled: m.componentEnabled(timesync.ID),
+			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.timeHost != nil },
+			Start: func(context.Context) error {
+				host, err := application.TimeHost(m.parent, m.downloadAccount, m.componentStore, m.timeProbe)
+				if err != nil {
+					return err
+				}
+				value, err := host.Resolve(ports.ClockName)
+				if err != nil {
+					_ = host.Stop(context.Background())
+					return err
+				}
+				m.clock.Bind(value.(ports.Clock))
+				m.mu.Lock()
+				m.timeHost = host
+				m.mu.Unlock()
+				return nil
+			},
+			Stop: stopResource(func(ctx context.Context) error {
+				m.mu.Lock()
+				host := m.timeHost
+				m.mu.Unlock()
+				if host == nil {
+					return nil
+				}
+				if err := host.Stop(ctx); err != nil {
+					return err
+				}
+				m.clock.Bind(nil)
+				m.mu.Lock()
+				m.timeHost = nil
+				m.mu.Unlock()
+				return nil
+			}),
+		},
 		{
 			ID: "http", Enabled: cfg.Modules.HTTP, Requires: []string{accountResource}, Revision: revision(config.HTTPListenAddr(cfg)), Running: m.httpCtrl.Running,
 			Update: func(context.Context) error { m.httpService.UpdateConfig(cfg); return nil },
@@ -112,13 +150,9 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 		},
 		{
 			ID: moduleIDWatch, Enabled: m.connectionNeeded(cfg), Requires: []string{accountResource},
-			Revision: revision(config.EffectiveProxy(cfg), cfg.NTP, cfg.Delay, cfg.ReconnectTimeout), Running: m.watchCtrl.Running,
+			Revision: revision(config.EffectiveProxy(cfg), cfg.Delay, cfg.ReconnectTimeout), Running: m.watchCtrl.Running,
 			Update: func(context.Context) error { m.watchCtrl.UpdateOptions(m.watchOptions(cfg)); return nil },
-			Start: func(ctx context.Context) error {
-				bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-				return m.StartWatch(bounded)
-			}, Stop: stopResource(m.watchCtrl.StopContext),
+			Start:  m.StartWatch, Stop: stopResource(m.watchCtrl.StopContext),
 		},
 	}...)
 }

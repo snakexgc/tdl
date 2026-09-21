@@ -58,7 +58,6 @@ function pushDashboardSample(data) {
   const memory = data.memory || {};
   const download = data.download || {};
   const httpMetrics = data.http || {};
-  const aria2 = data.aria2 || {};
   const dcSchedulers = Array.isArray(httpMetrics.dc_schedulers) ? httpMetrics.dc_schedulers : [];
   const totalMemory = Number(memory.total_bytes ?? process.memory_rss ?? 0);
   const retainedMemory = Number(memory.heap_retained_idle_bytes ?? 0);
@@ -75,16 +74,10 @@ function pushDashboardSample(data) {
     memoryPercent: Number(memory.total_percent || process.memory_percent || 0),
     gotdSpeed,
     gotdTotal: Number(download.gotd_bytes_total ?? download.bytes_total ?? 0),
-    aria2Speed: Number(aria2.speed_bps ?? download.aria2_speed_bps ?? 0),
-    aria2Available: Boolean(aria2.available ?? download.aria2_available),
     activeChunks: Number(httpMetrics.active_chunk_requests ?? download.active_chunk_requests ?? 0),
     dcSchedulers,
     fileErrors: Number(httpMetrics.telegram_file_errors ?? download.telegram_file_errors ?? 0),
     fileErrors10s: Number(httpMetrics.telegram_file_errors_10s ?? download.telegram_file_errors_10s ?? 0),
-    aria2Tasks: Number(aria2.task_count ?? download.aria2_task_count ?? 0),
-    aria2ActiveTasks: Number(aria2.active_tasks ?? download.aria2_active_tasks ?? 0),
-    aria2WaitingTasks: Number(aria2.waiting_tasks ?? download.aria2_waiting_tasks ?? 0),
-    aria2StoppedTasks: Number(aria2.stopped_tasks ?? download.aria2_stopped_tasks ?? 0),
   });
   if (state.dashboardSamples.length > 30) {
     state.dashboardSamples.splice(0, state.dashboardSamples.length - 30);
@@ -100,18 +93,11 @@ function renderDashboard() {
   setText("dashboard-memory-value", formatBytes(latest.memoryTotal));
   setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 保留堆 ${formatBytes(latest.memoryRetained)}`);
   setText("dashboard-speed-value", `${formatBytes(latest.gotdSpeed)}/s`);
-  setText("dashboard-speed-meta", `aria2 ${formatBytes(latest.aria2Speed)}/s · gotd累计 ${formatBytes(latest.gotdTotal)}`);
+  setText("dashboard-speed-meta", `gotd 累计 ${formatBytes(latest.gotdTotal)}`);
   setText("dashboard-active-chunks-value", formatCount(latest.activeChunks));
   setText("dashboard-dc-schedulers-meta", formatDCSchedulers(latest.dcSchedulers));
   setText("dashboard-file-errors-value", formatCount(latest.fileErrors));
   setText("dashboard-file-errors-10s-value", formatCount(latest.fileErrors10s));
-  setText("dashboard-aria2-active-value", formatCount(latest.aria2ActiveTasks));
-  setText("dashboard-aria2-waiting-value", formatCount(latest.aria2WaitingTasks));
-  setText("dashboard-aria2-stopped-value", formatCount(latest.aria2StoppedTasks));
-  setText(
-    "dashboard-aria2-tasks-meta",
-    `aria2：活动 ${formatCount(latest.aria2ActiveTasks)} · 等待 ${formatCount(latest.aria2WaitingTasks)} · 停止 ${formatCount(latest.aria2StoppedTasks)}`
-  );
   renderDashboardStatBars(latest);
 
   renderSmoothChart("dashboard-cpu-chart", "dashboard-cpu-axis", [
@@ -126,7 +112,6 @@ function renderDashboard() {
 
   renderSmoothChart("dashboard-speed-chart", "dashboard-speed-axis", [
     { key: "gotdSpeed", label: "gotd", color: "var(--chart-1)" },
-    { key: "aria2Speed", label: "aria2", color: "var(--chart-3)" },
   ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
 }
 
@@ -147,17 +132,11 @@ function renderDashboardStatBars(latest) {
     1,
     Number(latest.activeChunks || 0),
     Number(latest.fileErrors10s || 0),
-    Number(latest.fileErrors || 0),
-    Number(latest.aria2ActiveTasks || 0),
-    Number(latest.aria2WaitingTasks || 0),
-    Number(latest.aria2StoppedTasks || 0)
+    Number(latest.fileErrors || 0)
   );
   setDashboardStatBar("dashboard-active-chunks-bar", latest.activeChunks, max);
   setDashboardStatBar("dashboard-file-errors-10s-bar", latest.fileErrors10s, max);
   setDashboardStatBar("dashboard-file-errors-bar", latest.fileErrors, max);
-  setDashboardStatBar("dashboard-aria2-active-bar", latest.aria2ActiveTasks, max);
-  setDashboardStatBar("dashboard-aria2-waiting-bar", latest.aria2WaitingTasks, max);
-  setDashboardStatBar("dashboard-aria2-stopped-bar", latest.aria2StoppedTasks, max);
 }
 
 function setDashboardStatBar(id, value, max) {

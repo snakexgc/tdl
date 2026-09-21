@@ -106,7 +106,6 @@ func (m *webLoginManager) sessionOptions(namespace string, kvd storage.Storage) 
 		Connections: m.opts.Connections, Credentials: credentials, Account: types.AccountID(namespace),
 		KV:               kvd,
 		Proxy:            config.EffectiveProxy(cfg),
-		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	}
 }

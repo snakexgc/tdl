@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -92,6 +93,31 @@ func TestModeSwitchDoesNotReroutePreparedLocalTask(t *testing.T) {
 		called = true
 		require.Equal(t, root, in.Dir)
 		return types.DownloadResult{Account: in.Account, Target: localExecutorName, ID: in.TaskID}, nil
+	}}
+	result, err := pipeline.SubmitBatch(context.Background(), request, resources)
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, 1, result.Queued)
+	require.NoDirExists(t, resources.Defaults.RemoteRoot)
+}
+
+func TestLocalDownloadWithEmptyRootCreatesExecutableDownloadDirectory(t *testing.T) {
+	pipeline, resources, request := pipelineFixture(t)
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	root := filepath.Join(filepath.Dir(executable), "download")
+	_, statErr := os.Stat(root)
+	if os.IsNotExist(statErr) {
+		t.Cleanup(func() { require.NoError(t, os.Remove(root)) })
+	}
+	resources.Routing = &fixedDownloadRoute{ports.DownloadRoute{Executors: []string{localExecutorName}}}
+	called := false
+	resources.Executors[localExecutorName] = preparedExecutor{name: localExecutorName, submit: func(_ context.Context, in types.DownloadSubmission) (types.DownloadResult, error) {
+		called = true
+		require.Equal(t, root, in.Dir)
+		require.Equal(t, filepath.Join(root, testVideoFile), in.FullPath)
+		require.DirExists(t, root)
+		return types.DownloadResult{Target: localExecutorName, ID: in.TaskID}, nil
 	}}
 	result, err := pipeline.SubmitBatch(context.Background(), request, resources)
 	require.NoError(t, err)

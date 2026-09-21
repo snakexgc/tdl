@@ -418,8 +418,8 @@
   border: 1px solid var(--line);
   border-radius: 14px;
 }
-.dashboard-diagnostics > summary {
-  cursor: pointer;
+.dashboard-diagnostics > h2 {
+  font-size: 14px;
   font-weight: 600;
 }
 .dashboard-diagnostics .dashboard-pull-card {

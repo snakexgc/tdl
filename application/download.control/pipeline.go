@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -129,8 +128,11 @@ func (s *Service) batchRoute(ctx context.Context, r ports.DownloadResources) (po
 	if len(route.Executors) == 0 {
 		return route, fmt.Errorf("download executor list is empty")
 	}
-	if slices.Contains(route.Executors, localExecutor) && !filepath.IsAbs(route.LocalRoot) {
-		return route, fmt.Errorf("local download root must be absolute")
+	if slices.Contains(route.Executors, localExecutor) {
+		route.LocalRoot, err = targetpath.LocalRoot(route.LocalRoot)
+		if err != nil {
+			return route, err
+		}
 	}
 	return route, nil
 }

@@ -60,6 +60,8 @@ type connectionHandler struct {
 	handler telegram.UpdateHandler
 }
 
+// Open serializes transport construction. The factory must only construct local
+// state; network discovery and connection attempts belong to owned runnables.
 func (o *Connections) Open(account types.AccountID, key string, factory func(telegram.UpdateHandler) (*telegram.Client, error)) (*Connection, error) {
 	if account == "" {
 		account = types.DefaultAccount

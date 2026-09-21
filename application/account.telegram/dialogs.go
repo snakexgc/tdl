@@ -14,22 +14,53 @@ type Dialogs struct {
 	transport ports.DialogCatalog
 	items     []types.Dialog
 	at        time.Time
+	refresh   chan struct{}
 }
 
 func NewDialogs(transport ports.DialogCatalog) *Dialogs { return &Dialogs{transport: transport} }
 
 func (d *Dialogs) Dialogs(ctx context.Context) ([]types.Dialog, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if time.Since(d.at) > 30*time.Second {
-		items, err := d.transport.Dialogs(ctx)
-		if err != nil {
+	for {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		d.items, d.at = items, time.Now()
+		d.mu.Lock()
+		if time.Since(d.at) <= 30*time.Second {
+			items := append([]types.Dialog{}, d.items...)
+			d.mu.Unlock()
+			return items, nil
+		}
+		if pending := d.refresh; pending != nil {
+			d.mu.Unlock()
+			select {
+			case <-pending:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		d.refresh = make(chan struct{})
+		d.mu.Unlock()
+		return d.load(ctx)
 	}
-	return append([]types.Dialog{}, d.items...), nil
+}
+
+func (d *Dialogs) load(ctx context.Context) ([]types.Dialog, error) {
+	// Release waiters even if the request boundary recovers a transport panic.
+	defer func() {
+		d.mu.Lock()
+		close(d.refresh)
+		d.refresh = nil
+		d.mu.Unlock()
+	}()
+	// The network request owns no shared lock. Other callers may cancel
+	// independently while still sharing a successful refresh.
+	items, err := d.transport.Dialogs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	d.items, d.at = append([]types.Dialog{}, items...), time.Now()
+	d.mu.Unlock()
+	return append([]types.Dialog{}, items...), nil
 }

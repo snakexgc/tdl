@@ -24,5 +24,7 @@ type RangeTransfer interface {
 	Report(context.Context, []types.ByteRange) error
 }
 type RangeSource interface {
+	// A transfer implementing io.Closer is closed after every request, including
+	// HEAD and validation failures that never acquire a download lease.
 	Open(context.Context, string) (types.RangeResource, RangeTransfer, bool, error)
 }

@@ -1,11 +1,6 @@
 import { element, button } from "./ui.js";
 import { createProxyControl } from "./proxy-control.js";
-import {
-  settingID,
-  displayValue,
-  fieldHint,
-  settingsErrors,
-} from "./settings-model.js";
+import { settingID, fieldHint, settingsErrors } from "./settings-model.js";
 
 export async function renderSettingsBlock(host, group, context) {
   const { store, editable, busy, update, save } = context;
@@ -67,8 +62,7 @@ export async function renderSettingsBlock(host, group, context) {
         title = element("label", field.title || field.name),
         control = element("div", null, "settings-input"),
         help = element("div", null, "settings-help"),
-        error = element("small", null, "settings-field-error"),
-        saved = element("small", null, "server-value");
+        error = element("small", null, "settings-field-error");
       title.htmlFor = controlID;
       title.id = `${controlID}-label`;
       help.id = `${controlID}-help`;
@@ -76,13 +70,11 @@ export async function renderSettingsBlock(host, group, context) {
       error.hidden = true;
       error.setAttribute("aria-live", "polite");
       if (field.help) help.append(element("p", field.help));
-      const preview = store.components.get(group.id).previews?.[field.name];
-      if (preview) help.prepend(element("p", `配置文件中的地址：${preview}`));
       help.append(element("small", fieldHint(field), "settings-field-meta"));
       const current = store.value(group.id, field.name);
-      const record = { field, row, error, saved, touched: false };
+      const record = { field, row, error, touched: false };
       rows.push(record);
-      row.append(title, control, help, error, saved);
+      row.append(title, control, help, error);
       if (field.editor) {
         const url = new URL(field.editor, window.location.origin);
         if (
@@ -171,11 +163,12 @@ export async function renderSettingsBlock(host, group, context) {
           input.rows = 3;
           input.spellcheck = false;
         } else {
-          input.type = field.secret ? "password" : "text";
+          input.type =
+            field.secret && field.format !== "url" ? "password" : "text";
           input.value = String(current ?? "");
           input.spellcheck = false;
           input.autocomplete = field.secret ? "new-password" : "off";
-          if (field.secret) {
+          if (field.secret && field.format !== "url") {
             input.placeholder = "留空保留原值";
             control.classList.add("settings-secret");
             const reveal = button("显示", () => {
@@ -265,13 +258,9 @@ export async function renderSettingsBlock(host, group, context) {
       store.value(group.id, name),
     );
     for (const record of rows) {
-      const { field, input, row, error, saved } = record,
+      const { field, input, row, error } = record,
         isDirty = Object.hasOwn(patch, field.name);
       row.classList.toggle("is-dirty", isDirty);
-      saved.hidden = !isDirty || field.secret;
-      saved.textContent = saved.hidden
-        ? ""
-        : `已保存的值：${displayValue(field, store.baseline(group.id, field.name))}`;
       if (!input) continue;
       let problem = errors.get(field.name) || "";
       if (!problem && field.format === "nonempty" && !input.value.trim())

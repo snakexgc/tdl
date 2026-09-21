@@ -90,7 +90,9 @@ func TestBotComponentConfigurationPersistence(t *testing.T) {
 	require.NoError(t, manager.initDirectory())
 	configurations, editable := manager.ComponentConfigurations()
 	require.True(t, editable)
-	require.Len(t, configurations, 19)
+	catalog, err := application.Catalog()
+	require.NoError(t, err)
+	require.Len(t, configurations, len(catalog.Definitions()))
 	// Missing documents use schema defaults, never the bootstrap permission list.
 	require.False(t, console.Allowed(types.DefaultAccount, 42))
 	const consoleID = consoleComponentID

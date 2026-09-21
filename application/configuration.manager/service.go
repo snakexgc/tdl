@@ -77,6 +77,7 @@ func (s *Service) Complete(ctx context.Context, input Document) (Document, error
 	if !namespaceName.MatchString(input.System.Namespace) {
 		return Document{}, fmt.Errorf("system.namespace must contain English letters only")
 	}
+	input = s.migrateTimeConfiguration(input)
 	result := Document{Version: Version, System: input.System, Components: map[string]Component{}}
 	for _, definition := range s.catalog.Definitions() {
 		id := definition.Manifest.ID

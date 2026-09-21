@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/snakexgc/tdl/interfaces/manifest"
+	"github.com/snakexgc/tdl/rte/config"
 )
 
 // Configuration describes a running component for a schema-driven HMI.
@@ -36,16 +37,21 @@ type ConfigurationChange struct {
 }
 
 func (r *Runtime) Configurations() []Configuration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.configurationsLocked()
+	result, _ := r.configurationSnapshots()
+	return result
 }
 
-func (r *Runtime) configurationsLocked() []Configuration {
-	result := make([]Configuration, 0, len(r.order))
-	for _, id := range r.order {
-		item := r.instances[id]
-		m := item.registration.Manifest
+// Configuration and state come from the same publication; lifecycle hooks and
+// runnable drains must not hold up the management plane's reads.
+func (r *Runtime) configurationSnapshots() ([]Configuration, map[string]config.View) {
+	items := *r.observed.Load()
+	result := make([]Configuration, 0, len(items))
+	views := make(map[string]config.View, len(items))
+	for _, component := range items {
+		item := component.observation.Load()
+		m := component.registration.Manifest
+		id := m.ID
+		views[id] = item.config
 		entry := Configuration{ID: id, Title: m.Title, State: item.status.State, Enabled: true, Fields: []manifest.ConfigField{}, Values: map[string]any{}}
 		entry.Feature = m.Feature
 		entry.Previews = publicPreviews(m.Config, item.config)
@@ -74,5 +80,5 @@ func (r *Runtime) configurationsLocked() []Configuration {
 		}
 		result = append(result, entry)
 	}
-	return result
+	return result, views
 }
