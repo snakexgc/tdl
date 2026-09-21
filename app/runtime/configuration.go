@@ -11,6 +11,9 @@ import (
 )
 
 func (m *Manager) SetComponentEnabled(ctx context.Context, id string, enabled bool, revision string) error {
+	if id == rangeComponentID && !enabled {
+		return fmt.Errorf("HTTP 下载服务必须随程序启动，不能禁用")
+	}
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
 	if m.directory == nil || m.configSource == nil {

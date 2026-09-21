@@ -3,6 +3,7 @@
 const listeners = new Map();
 const endpoints = { status: "/api/status", dashboard: "/api/dashboard", forwards: "/api/forwards" };
 endpoints["download-tasks-local"] = "/api/download-tasks?executor=local";
+endpoints["download-storage"] = "/api/download-storage";
 endpoints["download-tasks-aria2"] = "/api/download-tasks?executor=aria2";
 let socket, reconnect, fallback, stopped = true, attempts = 0;
 const pending = new Set();

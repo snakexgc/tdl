@@ -16,7 +16,6 @@ import {
   activateTabs,
 } from "./ui.js";
 import {
-  executors,
   executorLabel,
   taskKey,
   taskState,
@@ -27,6 +26,8 @@ import {
 } from "./download-model.js";
 
 let snapshots = {},
+  executors = [],
+  mode = "",
   errors = {},
   selected = new Set(),
   releases = [],
@@ -127,12 +128,37 @@ function init() {
     `/aria2ng.html#!/settings/rpc/set?${new URLSearchParams({ protocol, host: location.hostname, port: location.port || (protocol === "https" ? "443" : "80"), interface: "aria2/jsonrpc" })}`;
 }
 async function load(url) {
+  stop();
+  active = true;
+  const version = ++generation;
+  const status = await api("/api/status");
+  if (!active || version !== generation) return;
+  mode = status.downloader?.mode || "http";
+  executors = mode === "local" ? ["local"] :
+    mode === "aria2" && status.downloader?.aria2_enabled !== false
+      ? ["aria2"] : [];
+  snapshots = {};
+  errors = {};
+  selected.clear();
+  $("advanced-download").hidden = !executors.includes("aria2");
+  $("download-storage").hidden = mode !== "local";
+  const filter = $("download-executor");
+  filter.replaceChildren();
+  for (const executor of executors) {
+    const option = element("option", executorLabel(executor));
+    option.value = executor;
+    filter.append(option);
+  }
+  filter.closest("label").hidden = executors.length < 2;
+  if (mode === "local") {
+    releases.push(observe("download-storage", receiveStorage));
+  }
   const tab = url?.searchParams?.get("tab") === "links" ? "links" : "tasks";
   activateTabs($("download-tabs"), tab);
   $("download-tasks-panel").hidden = tab !== "tasks";
   $("download-links-panel").hidden = tab !== "links";
   if (tab === "links") {
-    stop();
+    void refreshStorage(version);
     linksReady ||= (async () => {
       await fragment($("download-links-panel"), "kv");
       linksPage = (await import("./kv.js")).page;
@@ -151,13 +177,12 @@ async function load(url) {
   }
   linksPage?.stop?.();
   active = true;
-  if (!releases.length)
-    for (const executor of executors)
-      releases.push(
-        observe(`download-tasks-${executor}`, (data, error) =>
-          receive(executor, data, error),
-        ),
-      );
+  for (const executor of executors)
+    releases.push(
+      observe(`download-tasks-${executor}`, (data, error) =>
+        receive(executor, data, error),
+      ),
+    );
   $("download-state").value = url?.searchParams?.get("state") || "all";
   render();
   await refresh();
@@ -168,8 +193,9 @@ export async function loadDownloads() {
 async function refresh() {
   if (!active) return;
   const version = ++generation;
-  await Promise.all(
-    executors.map(async (executor) => {
+  await Promise.all([
+    refreshStorage(version),
+    ...executors.map(async (executor) => {
       try {
         const data = await api(`/api/download-tasks?executor=${executor}`, {
           signal: AbortSignal.timeout(5000),
@@ -180,7 +206,43 @@ async function refresh() {
           receive(executor, null, error.message);
       }
     }),
-  );
+  ]);
+}
+async function refreshStorage(version) {
+  if (mode !== "local") return;
+  try {
+    const data = await api("/api/download-storage", {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (active && version === generation) receiveStorage(data);
+  } catch (error) {
+    if (active && version === generation)
+      receiveStorage(null, error.message);
+  }
+}
+function receiveStorage(data, error) {
+  if (!active || mode !== "local") return;
+  const errors = data?.errors || {};
+  $("download-storage-path").textContent = data?.root || "";
+  for (const [id, value, kind, bytes] of [
+    ["free", data?.free_bytes, "disk", true],
+    ["total", data?.total_bytes, "disk", true],
+    ["bytes", data?.file_bytes, "directory", true],
+    ["count", data?.file_count, "directory", false],
+  ])
+    $(`download-storage-${id}`).textContent =
+      error || errors[kind] || value == null
+        ? "—" : bytes ? formatBytes(value) : String(value);
+  const problems = [
+    error,
+    errors.disk && `磁盘信息：${errors.disk}`,
+    errors.directory && `目录统计：${errors.directory}`,
+  ].filter(Boolean);
+  $("download-storage-message").textContent = problems.length
+    ? problems.join("；")
+    : data && !data.exists ? "保存目录尚未创建，首次下载时自动创建。" : "";
+  $("download-storage-message").className =
+    problems.length ? "bad-text" : "subtle";
 }
 function receive(executor, data, error) {
   if (!active) return;
@@ -310,7 +372,7 @@ async function control(action, tasks) {
   if (
     action === "delete" &&
     !confirm(
-      `删除选中的 ${tasks.length} 项下载任务？本地未完成任务的临时文件会清理，已完成文件保留；aria2 移除任务或结果记录，不主动删除下载文件。`,
+      `删除选中的 ${tasks.length} 项下载任务？${mode === "local" ? "本地未完成任务的临时文件会清理，已完成文件保留。" : "aria2 移除任务或结果记录，不主动删除下载文件。"}`,
     )
   )
     return;

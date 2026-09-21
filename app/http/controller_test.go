@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/snakexgc/tdl/pkg/config"
 )
@@ -47,11 +49,20 @@ func TestControllerReportsListenFailure(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.HTTP.Address = testHTTPAddress
 	cfg.HTTP.Port = port
-	controller := NewController(context.Background(), NewService(cfg, nil, nil))
+	logs, observed := observer.New(zap.ErrorLevel)
+	controller := NewController(context.Background(), NewService(cfg, nil, zap.New(logs)))
+	t.Cleanup(controller.Stop)
 
-	require.True(t, controller.Start())
-	require.Eventually(t, func() bool { return !controller.Running() }, time.Second, 10*time.Millisecond)
-	require.Error(t, controller.LastError())
+	require.False(t, controller.Start())
+	require.False(t, controller.Running())
+	require.ErrorContains(t, controller.LastError(), config.HTTPListenAddr(cfg))
+	require.Equal(t, 1, observed.Len())
+	require.Contains(t, observed.All()[0].ContextMap()["error"], config.HTTPListenAddr(cfg))
+	require.NoError(t, listener.Close())
+	require.True(t, controller.Start(), "a failed bind must allow an immediate retry")
+	conn, err := net.DialTimeout("tcp", config.HTTPListenAddr(cfg), time.Second)
+	require.NoError(t, err, "successful Start must mean the listener is bound")
+	require.NoError(t, conn.Close())
 }
 
 func TestServiceUpdatesHTTPConfigWithoutReplacingSharedState(t *testing.T) {

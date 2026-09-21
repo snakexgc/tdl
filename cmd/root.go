@@ -83,7 +83,15 @@ func New() *cobra.Command {
 			return multierr.Combine(err, cleanup())
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			pathsReady := false
 			defer func() {
+				if runErr != nil && closeLog == nil && pathsReady {
+					// Configuration validation precedes the normal logger. Persist
+					// these failures too, without requiring a valid runtime snapshot.
+					logger, closeFile := logutil.NewWithClose(zap.ErrorLevel, filepath.Join(consts.LogPath, "latest.log"))
+					logger.Error("TDL 配置或初始化失败", zap.Error(runErr))
+					runErr = multierr.Combine(runErr, logger.Sync(), closeFile())
+				}
 				if runErr != nil && closeLog != nil {
 					logctx.From(cmd.Context()).Error("TDL 初始化失败", zap.Error(runErr))
 					runErr = multierr.Combine(runErr, cleanup())
@@ -95,6 +103,7 @@ func New() *cobra.Command {
 			if err := consts.InitPaths(); err != nil {
 				return err
 			}
+			pathsReady = true
 			service, err := bootstrapconfig.Open(cmd.Context(), consts.HomeDir)
 			if err != nil {
 				return err

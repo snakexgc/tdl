@@ -8,12 +8,16 @@ import (
 	"net/http"
 
 	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
 const fieldResult = "result"
 
 func (s *Server) downloadTasksSnapshot(executor string) func(context.Context) (any, error) {
 	return func(ctx context.Context) (any, error) {
+		if executor == config.DownloadExecutorAria2 && !config.Aria2Enabled(config.From(s.opts.Context)) {
+			return map[string]any{fieldItems: []types.DownloadTask{}}, nil
+		}
 		if s.opts.DownloadControl == nil {
 			return nil, fmt.Errorf("download control is unavailable")
 		}
@@ -36,6 +40,10 @@ func (s *Server) downloadAccount() types.AccountID {
 func (s *Server) handleDownloadTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, "GET")
+		return
+	}
+	if r.URL.Query().Get("executor") == config.DownloadExecutorAria2 && !config.Aria2Enabled(config.From(s.opts.Context)) {
+		writeJSON(w, http.StatusOK, map[string]any{fieldItems: []types.DownloadTask{}})
 		return
 	}
 	if s.opts.DownloadControl == nil {
@@ -71,6 +79,10 @@ func (s *Server) handleDownloadTaskActions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	request.Account = s.downloadAccount()
+	if request.Executor == config.DownloadExecutorAria2 && !config.Aria2Enabled(config.From(s.opts.Context)) {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("aria2 is not the active downloader"))
+		return
+	}
 	if s.opts.DownloadControl == nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("download control is unavailable"))
 		return

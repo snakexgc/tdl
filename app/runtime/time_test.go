@@ -33,7 +33,7 @@ func TestTimeComponentEnablementControlsProbingAndRTEBinding(t *testing.T) {
 			probe := new(runtimeTimeProbe)
 			manager := NewManager(ctx, nil, nil, Options{ComponentStore: store, TimeProbe: probe})
 			t.Cleanup(manager.Shutdown)
-			require.Equal(t, enabled, manager.hasRunnableModule(config.From(manager.parent)), "time sync can run as an independent headless component")
+			require.True(t, manager.hasRunnableModule(config.From(manager.parent)), "HTTP is always a runnable process service")
 			clock := rte.ClockFrom(manager.parent)
 			require.False(t, clock.Status().Synchronized)
 			require.NoError(t, manager.reconciler.Reconcile(manager.parent, manager.managedUnits(config.From(manager.parent))))

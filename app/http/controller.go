@@ -4,6 +4,8 @@ import (
 	"context"
 	stderrors "errors"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -78,6 +80,9 @@ func (s *Service) UpdateConfig(cfg *config.Config) bool {
 type Controller struct {
 	service *Service
 	process *rte.Process
+	startMu sync.Mutex
+	ready   atomic.Bool
+	lastErr error
 }
 
 func NewController(parent context.Context, service *Service) *Controller {
@@ -92,14 +97,39 @@ func (c *Controller) Start() bool {
 	if c == nil || c.service == nil || c.service.Proxy() == nil {
 		return false
 	}
-	started, _ := c.process.Start(func(ctx context.Context) error {
-		err := c.service.Proxy().Start(ctx)
+	c.startMu.Lock()
+	defer c.startMu.Unlock()
+	if c.Running() {
+		return false
+	}
+	c.lastErr = nil
+	ready, finished := make(chan struct{}), make(chan error, 1)
+	started, err := c.process.Start(func(ctx context.Context) (err error) {
+		defer func() { c.ready.Store(false); finished <- err }()
+		err = c.service.Proxy().start(ctx, func() { c.ready.Store(true); close(ready) })
 		if stderrors.Is(err, http.ErrServerClosed) || stderrors.Is(err, context.Canceled) {
 			return nil
 		}
+		if err != nil {
+			c.service.Proxy().logger.Error("HTTP 下载服务启动或运行失败", zap.String("listen", config.HTTPConfigListenAddr(c.service.Proxy().config())), zap.Error(err))
+		}
 		return err
 	}, rte.Recovery{})
-	return started
+	if !started {
+		c.lastErr = err
+		return false
+	}
+	select {
+	case <-ready:
+		return true
+	case err := <-finished:
+		c.lastErr = err
+		// Drain the failed invocation so a corrected configuration can restart immediately.
+		ctx, cancel := context.WithTimeout(context.Background(), controllerStopTimeout)
+		defer cancel()
+		_ = c.process.Stop(ctx)
+		return false
+	}
 }
 
 func (c *Controller) Stop() {
@@ -114,10 +144,15 @@ func (c *Controller) StopContext(ctx context.Context) error {
 	}
 	return c.process.Stop(ctx)
 }
-func (c *Controller) Running() bool { return c != nil && c.process.Running() }
+func (c *Controller) Running() bool { return c != nil && c.ready.Load() && c.process.Running() }
 func (c *Controller) LastError() error {
 	if c == nil {
 		return nil
+	}
+	c.startMu.Lock()
+	defer c.startMu.Unlock()
+	if c.lastErr != nil {
+		return c.lastErr
 	}
 	return c.process.LastError()
 }

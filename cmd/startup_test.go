@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,42 @@ import (
 )
 
 type startupProbeFunc func(context.Context, string, time.Duration) (types.TimeSample, error)
+
+func TestStartupConfigurationErrorsAreWrittenToLog(t *testing.T) {
+	const helperEnv = "TDL_TEST_INVALID_STARTUP"
+	phase := os.Getenv(helperEnv)
+	if phase == "" {
+		for _, phase := range []string{"json", "http-port"} {
+			t.Run(phase, func(t *testing.T) {
+				executable, err := os.Executable()
+				require.NoError(t, err)
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				child := exec.CommandContext(ctx, executable, "-test.run=^TestStartupConfigurationErrorsAreWrittenToLog$")
+				child.Env = append(os.Environ(), helperEnv+"="+phase, consts.EnvHome+"="+t.TempDir())
+				output, err := child.CombinedOutput()
+				require.NoError(t, err, string(output))
+			})
+		}
+		return
+	}
+	content := `{"version":`
+	if phase == "http-port" {
+		content = `{"version":1,"system":{"namespace":"default"},"components":{"proxy.range":{"enabled":true,"values":{"port":70000}}}}`
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(consts.EnvHome), "tdl_config.json"), []byte(content), 0o600))
+	command := New()
+	command.SetArgs(nil)
+	require.Error(t, command.ExecuteContext(context.Background()))
+	data, err := os.ReadFile(filepath.Join(consts.LogPath, "latest.log"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "ERROR")
+	require.Contains(t, string(data), "TDL 配置或初始化失败")
+	if phase == "http-port" {
+		require.Contains(t, string(data), "proxy.range")
+		require.Contains(t, string(data), "port")
+	}
+}
 
 func (f startupProbeFunc) Query(ctx context.Context, host string, timeout time.Duration) (types.TimeSample, error) {
 	return f(ctx, host, timeout)

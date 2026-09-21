@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -249,6 +250,10 @@ func (p *downloadProxy) StreamParallel(ctx context.Context, task *Task, lease *t
 }
 
 func (p *downloadProxy) Start(ctx context.Context) error {
+	return p.start(ctx, nil)
+}
+
+func (p *downloadProxy) start(ctx context.Context, ready func()) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	handler := rangeproxy.New(rangeSource{proxy: p}, p.logger, p.clientWaitTimeout)
@@ -262,6 +267,11 @@ func (p *downloadProxy) Start(ctx context.Context) error {
 	p.cfgMu.Unlock()
 	defer func() { _ = host.Stop(context.Background()) }()
 	server := p.newServer()
+	listener, err := (&net.ListenConfig{}).Listen(runCtx, "tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("HTTP 下载服务监听 %s 失败: %w", server.Addr, err)
+	}
+	defer listener.Close()
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
@@ -272,7 +282,11 @@ func (p *downloadProxy) Start(ctx context.Context) error {
 			_ = server.Close()
 		}
 	}()
-	err = server.ListenAndServe()
+	if ready != nil {
+		ready()
+	}
+	p.logger.Info("HTTP 下载服务已启动", zap.String("listen", listener.Addr().String()))
+	err = server.Serve(listener)
 	cancel()
 	<-shutdownDone
 	return err

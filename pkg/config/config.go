@@ -86,7 +86,15 @@ func PrimaryDownloadExecutor(cfg *Config) string {
 }
 
 func UsesDownloadExecutor(cfg *Config, executor string) bool {
-	return cfg != nil && slices.Contains(cfg.Downloader.Executors, executor)
+	if executor == DownloadExecutorHTTP {
+		return cfg != nil && slices.Contains(cfg.Downloader.Executors, executor)
+	}
+	return PrimaryDownloadExecutor(cfg) == executor
+}
+
+// Aria2Enabled keeps the optional RPC manager out of local and link-only operation.
+func Aria2Enabled(cfg *Config) bool {
+	return cfg != nil && cfg.Modules.Aria2 && PrimaryDownloadExecutor(cfg) == DownloadExecutorAria2
 }
 
 func NormalizeForwardMode(mode string) (string, error) {

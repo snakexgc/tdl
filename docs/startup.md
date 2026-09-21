@@ -6,20 +6,20 @@
 
 1. 读取并校验本地 `tdl_config.json`，初始化日志和本地数据库，启动 `configuration.manager`。
 2. 冻结业务配置，装配本地规则、账号资源所有者和任务控制端口。这些构造及 Start 方法不连接 Telegram、Bot API、aria2，也不探测 NTP。账号资源所有者此时仅持有连接生命周期，不代表已经联网或登录。
-3. 启动 `panel.webui`。绑定 TCP 监听器、装配路由和管理端口成功后，发送明确的就绪通知；收到通知后才输出 WebUI 地址。WebUI 是第一个对外启动的服务。
-4. 通过生产依赖图启动独立的 `time.sync` SWC、HTTP 下载代理、Bot、aria2 和 Telegram 监听。时间同步组件发布 `time.clock` 端口，并由 RTE 周期任务在后台校时；同步成功不作为其他后台模块的启动前置条件。
+3. 启动必需的 HTTP 下载服务，再启动 `panel.webui`。二者绑定 TCP 监听器并装配路由成功后才报告就绪；HTTP 监听失败会记录地址和错误，不阻止 WebUI 启动。配置解析失败也写入日志文件。
+4. 通过生产依赖图启动独立的 `time.sync` SWC、Bot、所选下载器的管理服务和 Telegram 监听。只有选择 aria2 且启用对应组件时才启动 aria2 管理；本地和仅链接模式不启动它。时间同步组件发布 `time.clock` 端口，并由 RTE 周期任务在后台校时；同步成功不作为其他后台模块的启动前置条件。
 5. Telegram 监听直接进入其认证和重连循环，启动钩子不再先执行在线会话检查。网络失败由其进程、控制器及 RTE 诊断记录，不撤销 WebUI；NTP 首次同步失败时使用系统时间，后续失败时保留上次成功的偏移并继续重试。
 
 ```mermaid
 flowchart TD
     Config[本地配置与 configuration.manager] --> Local[本地资源与端口装配：不联网]
-    Local --> Panel[WebUI 绑定端口并报告就绪]
+    Local --> Range[HTTP 下载服务：始终尝试绑定端口]
+    Range --> Panel[WebUI 绑定端口并报告就绪]
     Panel --> NTP[time.sync：后台周期校时]
     NTP --> Clock[RTE 时间端口：本地读取]
     Panel --> Backends[协调后台资源]
     Backends --> Bot[Bot API]
-    Backends --> Aria2[aria2 RPC]
-    Backends --> Range[HTTP 下载代理]
+    Backends --> Aria2[选择 aria2 时启动 RPC 管理]
     Backends --> Telegram[Telegram 监听与业务组件]
 ```
 
@@ -43,8 +43,8 @@ WebUI 的业务操作仍可能依赖网络，例如 Telegram 登录、更新检�
 | `console.bot` | `host.bot`，机器人身份验证后装配 | Bot API |
 | `notify.telegram` | Bot 宿主，通知端口 | Bot API |
 | `storage.maintenance` | Bot 运行时装配的数据维护服务 | 清理本身只访问本地数据库；Bot 命令入口依赖 Bot API |
-| `downloader.aria2` | 独立 aria2 进程及组件宿主 | aria2 RPC，按现有策略重连 |
-| `proxy.range` | 独立 HTTP 控制器及组件宿主 | 监听不要求 Telegram 在线；远端文件读取才需要 Telegram，完整本地文件可直接读取 |
+| `downloader.aria2` | 选择 aria2 时启动独立进程及组件宿主 | aria2 RPC，按现有策略重连；提交新任务不依赖管理进程处于运行状态 |
+| `proxy.range` | 随程序启动，独立 HTTP 控制器及组件宿主 | 监听不要求 Telegram 或 aria2 在线；远端文件读取才需要 Telegram，完整本地文件可直接读取 |
 | `downloader.local` | Telegram 连接作用域内装配下载 worker | Telegram 与本地文件系统 |
 | `forwarder` | Telegram 连接作用域内装配转发 worker | Telegram |
 | `trigger.download` | Telegram 监听连接内装配下载意图处理 | Telegram 事件及下载执行器 |

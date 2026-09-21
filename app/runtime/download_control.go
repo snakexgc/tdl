@@ -77,10 +77,16 @@ func (m *Manager) SubmitBatch(ctx context.Context, request types.DownloadIntent,
 type aria2ControlBackend struct{ manager *Manager }
 
 func (b aria2ControlBackend) ListTasks(ctx context.Context) ([]types.DownloadTask, error) {
+	if !config.Aria2Enabled(config.From(b.manager.parent)) {
+		return []types.DownloadTask{}, nil
+	}
 	return aria2.NewController(config.From(b.manager.parent), b.manager.namespaceKV, nil).ListTasks(ctx)
 }
 
 func (b aria2ControlBackend) ChangeTasks(ctx context.Context, action string, ids []string) (types.DownloadActionResult, error) {
+	if !config.Aria2Enabled(config.From(b.manager.parent)) {
+		return types.DownloadActionResult{}, fmt.Errorf("aria2 is not the active downloader")
+	}
 	return aria2.NewController(config.From(b.manager.parent), b.manager.namespaceKV, nil).ChangeTasks(ctx, action, ids)
 }
 
@@ -115,7 +121,7 @@ func (p aria2Submission) Submit(ctx context.Context, request types.DownloadSubmi
 	m.mu.Lock()
 	manager := m.aria2Mgr
 	m.mu.Unlock()
-	if cfg == nil || !cfg.Modules.Aria2 || !cfg.Aria2.AutoDownload || manager == nil || !m.aria2Process.Running() {
+	if !config.Aria2Enabled(cfg) || !cfg.Aria2.AutoDownload || manager == nil {
 		return types.DownloadResult{}, ports.ErrDownloadNotAccepted
 	}
 	return manager.Submit(ctx, request)

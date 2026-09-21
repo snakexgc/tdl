@@ -26,7 +26,11 @@ export async function renderComponentForms(host, message, data, ids) {
       if (message) message.textContent = text;
     };
     form.append(ownMessage);
-    if (data.can_toggle) {
+    if (component.id === "proxy.range") {
+      const required = document.createElement("p");
+      required.textContent = "HTTP 下载服务随程序启动，所有下载方式共用。";
+      form.append(required);
+    } else if (data.can_toggle) {
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "btn";

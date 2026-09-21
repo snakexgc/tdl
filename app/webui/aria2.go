@@ -40,6 +40,10 @@ func (s *Server) handleAria2Check(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
+	if !config.Aria2Enabled(config.From(s.opts.Context)) {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("aria2 is not the active downloader"))
+		return
+	}
 	writeJSON(w, http.StatusOK, checkAria2(r.Context(), config.From(s.opts.Context).Aria2))
 }
 
@@ -177,6 +181,10 @@ func (s *Server) handleAria2Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := config.From(s.opts.Context)
+	if !config.Aria2Enabled(cfg) {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("aria2 is not the active downloader"))
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 16<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "read request"))

@@ -88,6 +88,11 @@ func (s *Service) Complete(ctx context.Context, input Document) (Document, error
 		if !exists {
 			component.Enabled = id != "trigger.forward"
 		}
+		// Download links are a process service in every downloader mode. Accept
+		// older documents with enabled=false, but always activate the listener.
+		if id == "proxy.range" {
+			component.Enabled = true
+		}
 		view, err := s.catalog.View(ctx, id, component.Values)
 		if err != nil {
 			return Document{}, fmt.Errorf("components: %w", err)

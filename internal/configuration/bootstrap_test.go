@@ -32,6 +32,24 @@ func readFile(t *testing.T, home string) []byte {
 	return data
 }
 
+func TestHTTPDisabledInExistingDocumentStillLoadsAsRequired(t *testing.T) {
+	ctx, home := context.Background(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, manager.Filename), []byte(`{"version":1,"system":{"namespace":"default"},"components":{"proxy.range":{"enabled":false,"values":{"address":"127.0.0.1","port":23456}},"download.control":{"enabled":true,"values":{"executors":["local","http"]}}}}`), 0o600))
+	service, err := configuration.Open(ctx, home)
+	require.NoError(t, err)
+	document, err := service.Store().Load(ctx, "proxy.range")
+	require.NoError(t, err)
+	require.True(t, document.Enabled)
+	system, err := service.System(ctx)
+	require.NoError(t, err)
+	cfg, enabled, err := runtimeconfig.Load(ctx, service.Store(), system)
+	require.NoError(t, err)
+	require.True(t, enabled["proxy.range"])
+	require.True(t, cfg.Modules.HTTP)
+	require.Equal(t, 23456, cfg.HTTP.Port)
+	require.False(t, runtimeconfig.Aria2Enabled(cfg))
+}
+
 func TestFirstStartupCreatesCompleteConfigurationAndLiveSWC(t *testing.T) {
 	ctx, home := context.Background(), t.TempDir()
 	service, err := configuration.Open(ctx, home)

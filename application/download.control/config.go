@@ -26,7 +26,7 @@ func Manifest() manifest.Manifest {
 		ID:      ID, Commands: Commands(), Pages: []manifest.Page{{Path: "/downloads", Title: "下载管理", View: "downloads", Module: "/static/js/downloads.js", Style: "/static/css/downloads.css", Order: 20, KeepVisible: true, SettingsURL: "/config?tab=download"}}, Title: "下载任务控制",
 		Provides: []manifest.Port{manifest.PortOf[ports.DownloadControl](ports.DownloadControlName, 2, 0), manifest.PortOf[ports.DownloadRouting](ports.DownloadRoutingName, 1, 0), manifest.PortOf[ports.DownloadPipeline](ports.DownloadPipelineName, 1, 0)},
 		Config: []manifest.ConfigField{
-			{Name: executorsField, Title: "下载方式与尝试顺序", Help: "勾选要使用的下载方式，按标出的顺序尝试。仅在上一种方式明确未接收任务时尝试下一种；仅生成链接始终放在最后。", Type: manifest.Strings, Default: []string{aria2Executor, httpExecutor}, Editor: "/static/js/download-methods.js"},
+			{Name: executorsField, Title: "下载器", Help: "选择本地下载器或 aria2。两种方式均提供 HTTP 下载链接，可复制到其他下载工具使用。", Type: manifest.Strings, Default: []string{aria2Executor, httpExecutor}, Editor: "/static/js/download-methods.js"},
 			{Name: localRootField, Title: "本地保存目录", Help: "留空使用 TDL 可执行文件所在目录下的 download 文件夹，下载时自动创建。也可填写本机绝对路径，例如 D:\\Downloads 或 /data/downloads；容器部署时填写容器内路径。", Type: manifest.String, Default: ""},
 		},
 	}, "download", "下载方式").SettingsOrder(10)
@@ -56,6 +56,13 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 		}
 		seen[name] = true
 	}
+	// Older documents allowed multiple downloaders. Preserve the first choice
+	// and the link fallback, without starting or submitting to another downloader.
+	selected := []string{route.Executors[0]}
+	if selected[0] != httpExecutor && seen[httpExecutor] {
+		selected = append(selected, httpExecutor)
+	}
+	route.Executors = selected
 	route.LocalRoot = strings.TrimSpace(route.LocalRoot)
 	if route.LocalRoot != "" && !filepath.IsAbs(route.LocalRoot) {
 		return nil, fmt.Errorf("local_root must be empty or an absolute local path")

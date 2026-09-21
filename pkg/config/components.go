@@ -101,5 +101,8 @@ func loadComponents(ctx context.Context, store *config.Store, system ports.Syste
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, nil, err
 	}
+	// HTTP serves every download mode, including links copied to external tools.
+	result.Modules.HTTP = true
+	enabled[proxyComponentID] = true
 	return &result, enabled, nil
 }

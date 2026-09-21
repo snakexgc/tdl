@@ -82,7 +82,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 			}),
 		},
 		{
-			ID: "http", Enabled: cfg.Modules.HTTP, Requires: []string{accountResource}, Revision: revision(config.HTTPListenAddr(cfg)), Running: m.httpCtrl.Running,
+			ID: "http", Enabled: true, Revision: revision(config.HTTPListenAddr(cfg)), Running: m.httpCtrl.Running,
 			Update: func(context.Context) error { m.httpService.UpdateConfig(cfg); return nil },
 			Start: func(context.Context) error {
 				if !m.httpCtrl.Start() && !m.httpCtrl.Running() {
@@ -92,7 +92,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 			}, Stop: stopResource(m.httpCtrl.StopContext),
 		},
 		{
-			ID: moduleIDAria2, Enabled: cfg.Modules.Aria2, Revision: revision(effectiveAria2ManagerConfig(cfg)), Running: m.aria2Process.Running,
+			ID: moduleIDAria2, Enabled: config.Aria2Enabled(cfg), Revision: revision(effectiveAria2ManagerConfig(cfg)), Running: m.aria2Process.Running,
 			Update: func(context.Context) error {
 				next := effectiveAria2ManagerConfig(cfg)
 				m.mu.Lock()

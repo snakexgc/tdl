@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,5 +48,10 @@ func newStoppedComponentStore(t *testing.T) *rteconfig.Store {
 	for _, id := range []string{consoleComponentID, downloadTriggerComponentID, forwardTriggerComponentID, aria2ComponentID, rangeComponentID, panelComponentID, "time.sync"} {
 		saveComponent(t, store, id, false, nil)
 	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, listener.Close())
+	saveComponent(t, store, rangeComponentID, true, map[string]any{"address": "127.0.0.1", "port": port})
 	return store
 }

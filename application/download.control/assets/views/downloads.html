@@ -10,6 +10,7 @@
       ><a
         class="btn secondary"
         id="advanced-download"
+        hidden
         target="_blank"
         rel="noopener"
         href="/aria2ng.html"
@@ -39,6 +40,18 @@
       链接记录
     </button>
   </div>
+  <section id="download-storage" class="card" hidden aria-label="本地存储统计">
+    <h2>本地存储</h2>
+    <p id="download-storage-path" class="mono"></p>
+    <dl class="storage-metrics">
+      <div><dt>磁盘可用空间</dt><dd id="download-storage-free">—</dd></div>
+      <div><dt>磁盘总容量</dt><dd id="download-storage-total">—</dd></div>
+      <div><dt>已下载文件大小</dt><dd id="download-storage-bytes">—</dd></div>
+      <div><dt>已下载文件数量</dt><dd id="download-storage-count">—</dd></div>
+    </dl>
+    <p class="subtle">统计保存目录及子目录内的普通文件，不含已知未完成任务和符号链接；每 30 秒更新。文件大小为逻辑大小。</p>
+    <p id="download-storage-message" class="subtle" role="status"></p>
+  </section>
   <section
     id="download-tasks-panel"
     role="tabpanel"
@@ -54,7 +67,6 @@
         ><select id="download-executor">
           <option value="all">全部执行器</option>
           <option value="local">本地下载</option>
-          <option value="aria2">aria2</option>
         </select></label
       >
       <label

@@ -156,7 +156,8 @@ func (s *Server) statusSnapshot() map[string]any {
 			"proxy":   "/aria2/jsonrpc",
 		},
 		"downloader": map[string]any{
-			"mode": config.PrimaryDownloadExecutor(cfg),
+			"mode":          config.PrimaryDownloadExecutor(cfg),
+			"aria2_enabled": config.Aria2Enabled(cfg),
 		},
 		"http": map[string]any{
 			"listen":          config.HTTPListenAddr(cfg),

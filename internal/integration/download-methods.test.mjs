@@ -70,7 +70,7 @@ async function load() {
   return module.namespace;
 }
 
-test("download method controls preserve order, pin HTTP last and validate an empty selection", async () => {
+test("download method controls select one downloader and keep HTTP links available", async () => {
   const { createEditor } = await load();
   const original = ["aria2", "http"],
     editor = await createEditor(original, { editable: true });
@@ -82,29 +82,26 @@ test("download method controls preserve order, pin HTTP last and validate an emp
     input.checked = checked;
     input.dispatchEvent(new Event("change"));
   };
-  const action = (name) =>
-    descendants(editor.element).find(
-      (node) => node.attributes["aria-label"] === name,
-    );
   let changes = 0;
   editor.element.addEventListener("change", () => changes++);
   toggle("local", true);
-  assert.deepEqual(value(), ["aria2", "local", "http"]);
-  assert.equal(action("下移保存到本机").disabled, true);
-  action("上移保存到本机").dispatchEvent(new Event("click"));
-  assert.deepEqual(value(), ["local", "aria2", "http"]);
-  assert.equal(action("上移保存到本机").disabled, true);
-  assert.equal(changes, 2);
+  assert.deepEqual(value(), ["local", "http"]);
+  const controls = descendants(editor.element).filter((node) => node.tag === "input");
+  assert.equal(controls.length, 2);
+  assert(controls.every((input) => input.type === "radio"));
+  assert.equal(controls.filter((input) => input.checked).length, 1);
+  assert.equal(changes, 1);
   assert.deepEqual(original, ["aria2", "http"]);
   editor.value().push("unexpected");
-  assert.equal(value().length, 3);
-  for (const method of value()) toggle(method, false);
-  assert.deepEqual(value(), []);
-  assert(descendants(editor.element).some((node) => node.validation));
-  toggle("http", true);
-  toggle("local", true);
-  assert.deepEqual(value(), ["local", "http"]);
-  assert(!descendants(editor.element).some((node) => node.validation));
+  assert.equal(value().length, 2);
+  toggle("aria2", true);
+  assert.deepEqual(value(), ["aria2", "http"]);
+});
+
+test("legacy multiple downloaders keep only the first choice", async () => {
+  const { createEditor } = await load();
+  const editor = await createEditor(["local", "aria2", "http"], { editable: true });
+  assert.deepEqual(Array.from(editor.value()), ["local", "http"]);
 });
 
 test("download methods remain visible but cannot be changed in readonly mode", async () => {

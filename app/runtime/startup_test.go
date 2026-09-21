@@ -26,6 +26,45 @@ const (
 
 type offlineStartupSession struct{ calls atomic.Int32 }
 
+func TestHTTPAlwaysStartsAndAria2OnlyRunsWhenSelected(t *testing.T) {
+	for _, mode := range []string{"local", "aria2", "http"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			store := newStoppedComponentStore(t)
+			saveComponent(t, store, "download.control", true, map[string]any{"executors": []string{mode}})
+			saveComponent(t, store, aria2ComponentID, true, nil)
+			m := NewManager(config.WithSource(ctx, config.NewSource(config.DefaultConfig())), nil, nil, Options{ComponentStore: store})
+			t.Cleanup(m.Shutdown)
+			require.NoError(t, m.configurationErr)
+			cfg := config.From(m.parent)
+			cfg.Modules.HTTP = false // Legacy flags cannot suppress the process service.
+			for _, unit := range m.managedUnits(cfg) {
+				switch unit.ID {
+				case "http":
+					require.True(t, unit.Enabled)
+					require.Empty(t, unit.Requires, "HTTP must not wait for optional account or downloader modules")
+				case moduleIDAria2:
+					require.Equal(t, mode == "aria2", unit.Enabled)
+				}
+			}
+			m.StartHTTP()
+			require.True(t, m.httpCtrl.Running())
+			client := &http.Client{Timeout: time.Second}
+			defer client.CloseIdleConnections()
+			response, err := client.Get("http://" + config.HTTPListenAddr(cfg) + "/download/missing")
+			require.NoError(t, err)
+			response.Body.Close()
+			require.Equal(t, http.StatusNotFound, response.StatusCode)
+			if mode != "aria2" {
+				m.StartAria2Manager()
+				require.False(t, m.aria2Process.Running())
+			}
+			require.Error(t, m.SetComponentEnabled(ctx, rangeComponentID, false, ""))
+		})
+	}
+}
+
 func (s *offlineStartupSession) Check(context.Context, types.AccountID) (*ports.AccountIdentity, error) {
 	s.calls.Add(1)
 	return nil, &net.DNSError{Err: "network unavailable", IsTimeout: true}

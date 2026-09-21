@@ -1,6 +1,26 @@
 @import url("/static/css/kv.css");
 
-/* Downloads view: AriaNg iframe shell, aria2 connection guide, local task table. */
+/* Downloads view: task controls and local storage statistics. */
+
+.storage-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+}
+.storage-metrics dt {
+  color: var(--muted);
+}
+.storage-metrics dd {
+  margin: .4rem 0 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+#download-storage {
+  margin-bottom: 1rem;
+}
+#download-storage-path {
+  overflow-wrap: anywhere;
+}
 .frame-wrap {
   height: calc(100dvh - 260px);
   min-height: 440px;

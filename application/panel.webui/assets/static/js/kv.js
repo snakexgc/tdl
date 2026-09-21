@@ -59,7 +59,7 @@ export function initKV() {
       const item = state.kvItems.find(item => item.id === detail.dataset.linkDetails);
       if (item) {
         const content = element("div");
-        content.innerHTML = `<h3>${escapeHTML(item.file_name || item.id)}</h3><p class="mono">${escapeHTML(item.id)}</p><p><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">${escapeHTML(item.url)}</a></p><h3>传输状态</h3>${renderDownloadedState(item)}<h3>本地下载记录</h3>${renderInternalEntries(item)}<h3>aria2 下载记录</h3>${renderAria2Entries(item)}`;
+        content.innerHTML = `<h3>${escapeHTML(item.file_name || item.id)}</h3><p class="mono">${escapeHTML(item.id)}</p><p><a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">${escapeHTML(item.url)}</a></p><h3>传输状态</h3>${renderDownloadedState(item)}${state.downloaderMode === "local" ? `<h3>本地下载记录</h3>${renderInternalEntries(item)}` : state.downloaderMode === "aria2" ? `<h3>aria2 下载记录</h3>${renderAria2Entries(item)}` : ""}`;
         content.style.overflowWrap = "anywhere";
         openDrawer("链接记录详情", content);
       }

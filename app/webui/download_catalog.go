@@ -35,15 +35,16 @@ func (a catalogAdapter) Observe(ctx context.Context) (types.LinkCatalogSnapshot,
 	if err != nil {
 		return types.LinkCatalogSnapshot{}, err
 	}
-	_, recordsByTask, err := s.parseAria2Records(pairs)
-	if err != nil {
-		return types.LinkCatalogSnapshot{}, err
-	}
-
 	cfg := config.From(s.opts.Context)
-	downloaderMode := config.PrimaryDownloadExecutor(cfg)
+	recordsByTask := map[string][]aria2TaskRecord{}
 	var statusErrText string
-	if downloaderMode == config.DownloadExecutorAria2 && strings.TrimSpace(cfg.Aria2.RPCURL) != "" {
+	if config.Aria2Enabled(cfg) {
+		_, recordsByTask, err = s.parseAria2Records(pairs)
+		if err != nil {
+			return types.LinkCatalogSnapshot{}, err
+		}
+	}
+	if config.Aria2Enabled(cfg) && strings.TrimSpace(cfg.Aria2.RPCURL) != "" {
 		_, statusErr := s.aria2Observer().Observe(ctx)
 		if statusErr != nil {
 			statusErrText = statusErr.Error()

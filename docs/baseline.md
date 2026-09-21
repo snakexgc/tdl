@@ -10,7 +10,7 @@
 | --- | ---: | --- |
 | `account.telegram` | 10 | 凭据、代理、时间校准、并发、连接容量、任务与重连间隔 |
 | `console.bot` | 2 | Bot token、允许的用户 |
-| `download.control` | 2 | 执行器顺序、本地根目录 |
+| `download.control` | 2 | 所选下载器、本地根目录 |
 | `downloader.aria2` | 17 | RPC、下载目录、超时、重试、状态采样、停滞与错误处理 |
 | `downloader.local` | 2 | 队列扫描与退出超时 |
 | `filter.rules` | 4 | 包含、排除、文件大小范围 |
@@ -25,6 +25,10 @@
 | `storage.maintenance`、`trigger.download`、`trigger.messagelink`、`update.self` | 0 | 仅启停开关 |
 
 `TDL_HOME` 负责定位应用目录；`config-init --home` 是离线工具参数。构建参数、外部 aria2/Docker 设置、数据库记录和浏览器界面状态不属于业务配置文件。
+
+HTTP 下载服务固定随程序启动，本地下载、自动添加 aria2 任务和复制直链共用该服务；旧配置中的 `proxy.range.enabled=false` 不再关闭服务，监听或配置失败写入错误日志。下载方式单选本地或 aria2；旧 `executors` 数组只采用第一个下载器，保留末尾 HTTP 链接行为。仅生成链接的旧配置继续有效。
+
+本地模式不启动 aria2 管理，也不向 aria2 查询任务。下载管理页显示本地保存目录所在磁盘的可用空间及目录内文件数量、逻辑大小；递归统计子目录，排除已知未完成任务，不跟随目录内符号链接。目录尚未创建时查询最近已有父目录，不会为了统计而创建目录。Windows 使用当前用户可用空间并支持盘符、挂载目录和 UNC 路径；Unix 系统按实际文件系统查询。统计最多缓存 30 秒，权限或扫描失败会在页面显示，不能取得的指标显示为未知。
 
 `forward.rules.values.rules` 是唯一的对象数组配置，最多 200 条规则。每条规则的 7 个子字段如下；停用规则同样验证结构，启用规则还会检查循环转发。
 

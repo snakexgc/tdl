@@ -49,7 +49,7 @@ func TestRoutingConfigValidatesAndPersistsIndependentLocalRoot(t *testing.T) {
 	require.NoError(t, host.PatchSaved(ctx, ID, map[string]any{executorsField: []string{aria2Executor, localExecutor, httpExecutor}, localRootField: root}, store))
 	route, err := routing.Route(ctx, types.DefaultAccount)
 	require.NoError(t, err)
-	require.Equal(t, []string{aria2Executor, localExecutor, httpExecutor}, route.Executors)
+	require.Equal(t, []string{aria2Executor, httpExecutor}, route.Executors)
 	require.Equal(t, root, route.LocalRoot)
 	route.Executors[0] = "mutated"
 	document, err := store.Load(ctx, ID)

@@ -157,9 +157,11 @@ func Run(ctx context.Context, opts Options) error {
 
 	manager := NewManager(runCtx, engine, namespaceKV, opts)
 	if manager.configurationErr != nil {
+		logctx.From(runCtx).Error("启动配置无效", zap.Error(manager.configurationErr))
 		manager.Shutdown()
 		return manager.configurationErr
 	}
+	manager.StartHTTP()
 	webStarted := manager.StartWebUI(runCtx)
 	if runCtx.Err() != nil {
 		return manager.shutdown()
@@ -229,7 +231,7 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 		requestUpdate:     opts.RequestUpdate,
 		watchEnabled:      cfg.Modules.Watch,
 		forwardEnabled:    cfg.Modules.Forward,
-		aria2Enabled:      cfg.Modules.Aria2,
+		aria2Enabled:      config.Aria2Enabled(cfg),
 		aria2Auto:         watchAutoDownloadEnabled(cfg),
 		aria2Config:       effectiveAria2ManagerConfig(cfg),
 	}
@@ -365,7 +367,7 @@ func (m *Manager) ApplyConfig(cfg *config.Config) {
 func (m *Manager) applyConfigLocked(cfg *config.Config, version uint64, async bool) error {
 	m.mu.Lock()
 	m.watchEnabled, m.forwardEnabled = cfg.Modules.Watch, cfg.Modules.Forward
-	m.aria2Enabled, m.aria2Auto = cfg.Modules.Aria2, watchAutoDownloadEnabled(cfg)
+	m.aria2Enabled, m.aria2Auto = config.Aria2Enabled(cfg), watchAutoDownloadEnabled(cfg)
 	m.mu.Unlock()
 	m.httpService.UpdateConfig(cfg)
 	units := m.managedUnits(cfg)
@@ -508,10 +510,6 @@ func (m *Manager) restartWatch(ctx context.Context) error {
 }
 
 func (m *Manager) StartHTTP() {
-	cfg := config.From(m.parent)
-	if cfg == nil || !cfg.Modules.HTTP {
-		return
-	}
 	m.httpCtrl.Start()
 }
 

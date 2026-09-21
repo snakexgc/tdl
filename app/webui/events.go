@@ -136,6 +136,8 @@ func (s *Server) snapshotSource(topic string) telemetry.Source {
 		return s.dashboardSnapshot
 	case "download-tasks-local":
 		return s.downloadTasksSnapshot(localDownloadExecutor)
+	case "download-storage":
+		return s.downloadStorageSnapshot
 	case "download-tasks-aria2":
 		return s.downloadTasksSnapshot(config.DownloadExecutorAria2)
 	case "forwards":

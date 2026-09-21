@@ -157,6 +157,11 @@ function render() {
         `${component.enabled === false ? "启用" : "停用"} ${component.title || component.id}`,
       );
       control.disabled = saving || !canToggle;
+      if (component.id === "proxy.range") {
+        control.disabled = true;
+        control.textContent = "始终启用";
+        control.setAttribute("aria-label", "HTTP 下载服务始终启用");
+      }
       row.append(control);
       const logs = link(
         "日志",

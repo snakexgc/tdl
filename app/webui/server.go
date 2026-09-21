@@ -118,6 +118,7 @@ type ComponentDiagnostics interface {
 type Server struct {
 	dialogs        ports.DialogCatalog
 	samples        *telemetry.Sampler
+	storageSamples *telemetry.Sampler
 	assets         fs.FS
 	accountActions *accounttelegram.Actions
 	opts           Options
@@ -201,6 +202,7 @@ func NewServer(opts Options) *Server {
 	}
 	server := &Server{
 		samples:             telemetry.New(time.Second),
+		storageSamples:      telemetry.New(30 * time.Second),
 		assets:              application.WebAssets(opts.Catalog),
 		configuration:       panel.NewConfiguration(configurationStore{manager: opts.ConfigurationManager, active: active}),
 		activeConfiguration: active,
@@ -239,6 +241,7 @@ func (s *Server) routes() http.Handler {
 		"/api/status":                 s.handleStatus,
 		"/api/aria2/check":            s.handleAria2Check,
 		"/api/download-tasks":         s.handleDownloadTasks,
+		"/api/download-storage":       s.handleDownloadStorage,
 		"/api/download-tasks/actions": s.handleDownloadTaskActions,
 		"/api/forwards":               s.handleForwards,
 		"/api/forwards/actions":       s.handleForwardActions,
