@@ -15,17 +15,15 @@ import (
 )
 
 const (
-	optPath       = "path"
 	testCaseValid = "valid"
 	testNSBar     = "bar"
 	testNSFoo     = "foo"
 )
 
 func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
-	storages := map[Driver]map[string]any{
-		DriverBolt:   {optPath: t.TempDir()},
-		DriverLegacy: {optPath: filepath.Join(t.TempDir(), "test.db")},
-		DriverFile:   {optPath: filepath.Join(t.TempDir(), "test.json")},
+	storages := map[Driver]string{
+		DriverBolt: t.TempDir(),
+		DriverFile: filepath.Join(t.TempDir(), "test.json"),
 	}
 
 	for driver, opts := range storages {
@@ -40,9 +38,8 @@ func forEachStorage(t *testing.T, fn func(e Storage, t *testing.T)) {
 }
 
 func forEachBoltBackedStorage(t *testing.T, fn func(driver Driver, e Storage, t *testing.T)) {
-	storages := map[Driver]map[string]any{
-		DriverBolt:   {optPath: t.TempDir()},
-		DriverLegacy: {optPath: filepath.Join(t.TempDir(), "test.db")},
+	storages := map[Driver]string{
+		DriverBolt: t.TempDir(),
 	}
 
 	for driver, opts := range storages {
@@ -56,7 +53,7 @@ func forEachBoltBackedStorage(t *testing.T, fn func(driver Driver, e Storage, t 
 	}
 }
 
-func rawBoltValuePointer(t *testing.T, kv *legacyKV, key string) uintptr {
+func rawBoltValuePointer(t *testing.T, kv *boltNamespace, key string) uintptr {
 	t.Helper()
 
 	var ptr uintptr
@@ -81,22 +78,18 @@ func bytePointer(v []byte) uintptr {
 func TestNew(t *testing.T) {
 	tests := map[Driver][]struct {
 		name    string
-		opts    map[string]any
+		opts    string
 		wantErr bool
 	}{
 		DriverBolt: {
-			{name: testCaseValid, opts: map[string]any{optPath: t.TempDir()}, wantErr: false},
-			{name: "invalid", opts: map[string]any{optPath: ""}, wantErr: true},
-		},
-		DriverLegacy: {
-			{name: testCaseValid, opts: map[string]any{optPath: filepath.Join(t.TempDir(), "test.db")}, wantErr: false},
-			{name: "invalid", opts: map[string]any{optPath: ""}, wantErr: true},
+			{name: testCaseValid, opts: t.TempDir(), wantErr: false},
+			{name: "invalid", opts: "", wantErr: true},
 		},
 		DriverFile: {
-			{name: testCaseValid, opts: map[string]any{optPath: filepath.Join(t.TempDir(), "test.json")}, wantErr: false},
+			{name: testCaseValid, opts: filepath.Join(t.TempDir(), "test.json"), wantErr: false},
 		},
 		Driver("unknown"): {
-			{name: "unknown", opts: map[string]any{optPath: ""}, wantErr: true},
+			{name: "unknown", opts: "", wantErr: true},
 		},
 	}
 
@@ -143,82 +136,20 @@ func TestStorage_Namespaces(t *testing.T) {
 	})
 }
 
-func TestStorage_MigrateTo(t *testing.T) {
-	meta := Meta{
-		"foo": {
-			"1": []byte("2"),
-			"3": []byte("4"),
-			"5": []byte("6"),
-		},
-		testNSBar: {
-			"7":  []byte("8"),
-			"9":  []byte("10"),
-			"11": []byte("12"),
-		},
-	}
-
-	forEachStorage(t, func(e Storage, t *testing.T) {
-		for ns, pairs := range meta {
-			kv, err := e.Open(ns)
-			require.NoError(t, err)
-			require.NotNil(t, kv)
-
-			for key, value := range pairs {
-				require.NoError(t, kv.Set(context.TODO(), key, value))
-			}
-		}
-
-		m, err := e.MigrateTo()
-		assert.NoError(t, err)
-		assert.Equal(t, meta, m)
-	})
-}
-
-func TestStorage_MigrateFrom(t *testing.T) {
-	meta := Meta{
-		"foo": {
-			"1": []byte("2"),
-			"3": []byte("4"),
-			"5": []byte("6"),
-		},
-		testNSBar: {
-			"7":  []byte("8"),
-			"9":  []byte("10"),
-			"11": []byte("12"),
-		},
-	}
-
-	forEachStorage(t, func(e Storage, t *testing.T) {
-		require.NoError(t, e.MigrateFrom(meta))
-
-		for ns, pairs := range meta {
-			kv, err := e.Open(ns)
-			require.NoError(t, err)
-			require.NotNil(t, kv)
-
-			for key, value := range pairs {
-				v, err := kv.Get(context.TODO(), key)
-				require.NoError(t, err)
-				require.Equal(t, value, v)
-			}
-		}
-	})
-}
-
 func TestBoltBackedStorage_GetReturnsOwnedBytes(t *testing.T) {
 	forEachBoltBackedStorage(t, func(_ Driver, e Storage, t *testing.T) {
 		kv, err := e.Open("foo")
 		require.NoError(t, err)
 
-		legacyKV, ok := kv.(*legacyKV)
+		boltNamespace, ok := kv.(*boltNamespace)
 		require.True(t, ok)
 
 		value := []byte(`{"task":"watch.download.index"}`)
-		require.NoError(t, legacyKV.Set(context.TODO(), "key", value))
+		require.NoError(t, boltNamespace.Set(context.TODO(), "key", value))
 
-		rawPtr := rawBoltValuePointer(t, legacyKV, "key")
+		rawPtr := rawBoltValuePointer(t, boltNamespace, "key")
 
-		got, err := legacyKV.Get(context.TODO(), "key")
+		got, err := boltNamespace.Get(context.TODO(), "key")
 		require.NoError(t, err)
 		require.Equal(t, value, got)
 		require.NotZero(t, bytePointer(got))
@@ -226,31 +157,8 @@ func TestBoltBackedStorage_GetReturnsOwnedBytes(t *testing.T) {
 	})
 }
 
-func TestBoltBackedStorage_MigrateToReturnsOwnedBytes(t *testing.T) {
-	forEachBoltBackedStorage(t, func(_ Driver, e Storage, t *testing.T) {
-		kv, err := e.Open("foo")
-		require.NoError(t, err)
-
-		legacyKV, ok := kv.(*legacyKV)
-		require.True(t, ok)
-
-		value := []byte(`{"hello":"world"}`)
-		require.NoError(t, legacyKV.Set(context.TODO(), "key", value))
-
-		rawPtr := rawBoltValuePointer(t, legacyKV, "key")
-
-		meta, err := e.MigrateTo()
-		require.NoError(t, err)
-		require.Equal(t, value, meta["foo"]["key"])
-		require.NotZero(t, bytePointer(meta["foo"]["key"]))
-		require.NotEqual(t, rawPtr, bytePointer(meta["foo"]["key"]))
-	})
-}
-
 func TestFileStorageConcurrentSetKeepsAllKeys(t *testing.T) {
-	storage, err := New(DriverFile, map[string]any{
-		optPath: filepath.Join(t.TempDir(), "test.json"),
-	})
+	storage, err := New(DriverFile, filepath.Join(t.TempDir(), "test.json"))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, storage.Close())
@@ -291,4 +199,32 @@ func TestFileStorageConcurrentSetKeepsAllKeys(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, value, got)
 	}
+}
+
+func TestLegacyDriverIsRejected(t *testing.T) {
+	_, err := New(Driver("legacy"), filepath.Join(t.TempDir(), "data.kv"))
+	require.ErrorContains(t, err, "unsupported driver")
+}
+
+func TestSnapshotIsScopedAndOwnsItsBytes(t *testing.T) {
+	forEachStorage(t, func(engine Storage, t *testing.T) {
+		ctx := context.Background()
+		first, err := engine.Open("first")
+		require.NoError(t, err)
+		second, err := engine.Open("second")
+		require.NoError(t, err)
+		require.NoError(t, first.Set(ctx, "key", []byte("first value")))
+		require.NoError(t, second.Set(ctx, "secret", []byte("second value")))
+		values, err := engine.Snapshot(ctx, "first")
+		require.NoError(t, err)
+		require.Equal(t, map[string][]byte{"key": []byte("first value")}, values)
+		values["key"][0] = 'X'
+		value, err := first.Get(ctx, "key")
+		require.NoError(t, err)
+		require.Equal(t, []byte("first value"), value)
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = engine.Snapshot(canceled, "first")
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }

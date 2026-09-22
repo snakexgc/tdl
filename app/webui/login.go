@@ -2,8 +2,6 @@ package webui
 
 import (
 	"context"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -11,165 +9,59 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/app/login"
-	"github.com/snakexgc/tdl/core/storage"
+	account "github.com/snakexgc/tdl/application/account.telegram"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
-const (
-	webLoginTimeout = 10 * time.Minute
-
-	loginStageSendingCode = "sending_code"
-	loginStageCode        = "code"
-	loginStageDone        = "done"
-	loginStageFailed      = "failed"
-
-	loginStatusSendingCode = "正在连接 Telegram 并发送验证码，请稍候；网络状况不佳时可能需要一些时间。"
-	loginStatusCodeSent    = "验证码已发送，请输入 Telegram 收到的原始验证码。"
-)
-
 type webLoginManager struct {
+	ports.AccountLogin
 	opts Options
-
-	mu     sync.Mutex
-	active *webLoginFlow
-}
-
-type webLoginFlow struct {
-	mu        sync.Mutex
-	kind      string
-	stage     string
-	status    string
-	errText   string
-	phone     string
-	namespace string
-	user      map[string]any
-
-	codeCh     chan string
-	passwordCh chan string
-	done       chan struct{}
-	cancel     context.CancelFunc
-}
-
-type webLoginStatus struct {
-	Active    bool           `json:"active"`
-	Kind      string         `json:"kind,omitempty"`
-	Stage     string         `json:"stage,omitempty"`
-	Status    string         `json:"status,omitempty"`
-	Error     string         `json:"error,omitempty"`
-	Phone     string         `json:"phone,omitempty"`
-	Namespace string         `json:"namespace,omitempty"`
-	User      map[string]any `json:"user,omitempty"`
 }
 
 func newWebLoginManager(opts Options) *webLoginManager {
-	return &webLoginManager{opts: opts}
-}
-
-func (m *webLoginManager) startPhone(parent context.Context, phone, namespace string) error {
-	phone = normalizePhone(phone)
-	if phone == "" {
-		return errors.New("phone is required")
-	}
-	namespace, kvd, err := m.openNamespaceKV(namespace)
-	if err != nil {
-		return err
-	}
-	return m.start(parent, "phone", namespace, func(ctx context.Context, flow *webLoginFlow) (*tg.User, error) {
-		authenticator := webCodeAuthenticator{
-			flow:  flow,
-			phone: phone,
-		}
-		return login.CodeWithAuthenticator(ctx, m.sessionOptions(kvd), authenticator)
-	}, func(flow *webLoginFlow) {
-		flow.phone = phone
-		flow.stage = loginStageSendingCode
-		flow.status = loginStatusSendingCode
-	})
-}
-
-func (m *webLoginManager) start(
-	parent context.Context,
-	kind string,
-	namespace string,
-	run func(context.Context, *webLoginFlow) (*tg.User, error),
-	init func(*webLoginFlow),
-) error {
-	if parent != nil {
-		select {
-		case <-parent.Done():
-			return parent.Err()
-		default:
+	if opts.Namespace == "" {
+		if cfg := config.From(opts.Context); cfg != nil {
+			opts.Namespace = cfg.Namespace
 		}
 	}
-	base := m.opts.Context
-	if base == nil {
-		base = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(base, webLoginTimeout)
-	flow := &webLoginFlow{
-		kind:       kind,
-		stage:      "starting",
-		status:     "登录流程已开始。",
-		namespace:  namespace,
-		codeCh:     make(chan string, 1),
-		passwordCh: make(chan string, 1),
-		done:       make(chan struct{}),
-		cancel:     cancel,
-	}
-	if init != nil {
-		init(flow)
-	}
-
-	m.mu.Lock()
-	if m.active != nil && !m.active.finished() {
-		m.mu.Unlock()
-		cancel()
-		return errors.New("another login flow is already active")
-	}
-	m.active = flow
-	m.mu.Unlock()
-
-	go func() {
-		defer cancel()
-		defer close(flow.done)
-		user, err := run(ctx, flow)
-		if err != nil {
-			flow.muSet(func() {
-				flow.stage = loginStageFailed
-				flow.status = "登录失败。"
-				flow.errText = loginErrorText(err)
-			})
-			return
-		}
-		restart, err := m.saveNamespaceIfChanged(flow.namespace)
-		if err != nil {
-			flow.muSet(func() {
-				flow.stage = loginStageFailed
-				flow.status = "登录已完成，但保存用户配置失败。"
-				flow.errText = err.Error()
-			})
-			return
-		}
-		flow.muSet(func() {
-			flow.stage = loginStageDone
-			flow.status = "登录成功。"
-			if restart {
-				flow.status = "登录成功，正在重启以切换到该用户。"
+	m := &webLoginManager{opts: opts}
+	// The account service serializes flows and calls Complete on the same
+	// goroutine after Authenticate. SDK state stays within this adapter.
+	var authenticatedUser *tg.User
+	m.AccountLogin = account.NewLogin(account.LoginOptions{
+		Context: opts.Context,
+		Prepare: func(raw string) (string, error) {
+			namespace, _, err := m.openNamespaceKV(raw)
+			return namespace, err
+		},
+		Authenticate: func(ctx context.Context, namespace, phone string, challenge ports.LoginChallenge) (map[string]any, error) {
+			namespace, kvd, err := m.openNamespaceKV(namespace)
+			if err != nil {
+				return nil, err
 			}
-			flow.user = telegramUserInfo(user)
-		})
-		if restart && m.opts.RequestReboot != nil {
-			go func() {
-				time.Sleep(300 * time.Millisecond)
-				m.opts.RequestReboot()
-			}()
-			return
-		}
-		if m.opts.OnLoginSuccess != nil {
-			m.opts.OnLoginSuccess(user)
-		}
-	}()
-	return nil
+			user, err := login.CodeWithAuthenticator(ctx, m.sessionOptions(namespace, kvd), webCodeAuthenticator{LoginChallenge: challenge, phone: phone})
+			if err != nil {
+				return nil, err
+			}
+			authenticatedUser = user
+			return telegramUserInfo(user), nil
+		},
+		Complete: func(ctx context.Context, namespace string, user map[string]any) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			restart, err := config.SelectNamespace(ctx, m.currentNamespace(), namespace)
+			if err == nil && !restart && opts.OnLoginSuccess != nil {
+				opts.OnLoginSuccess(authenticatedUser)
+			}
+			return restart, err
+		},
+		RequestReboot: opts.RequestReboot,
+	})
+	return m
 }
 
 func (m *webLoginManager) openNamespaceKV(raw string) (string, storage.Storage, error) {
@@ -190,270 +82,67 @@ func (m *webLoginManager) openNamespaceKV(raw string) (string, storage.Storage, 
 	return "", nil, errors.New("namespace storage is not configured")
 }
 
-func (m *webLoginManager) saveNamespaceIfChanged(namespace string) (bool, error) {
-	cfg := config.Get()
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	if cfg.Namespace == namespace {
-		return false, nil
-	}
-	next, err := config.Clone(cfg)
-	if err != nil {
-		return false, err
-	}
-	next.Namespace = namespace
-	if err := config.Set(next); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (m *webLoginManager) currentNamespace() string {
 	if m.opts.Namespace != "" {
 		return m.opts.Namespace
 	}
-	cfg := config.Get()
+	cfg := config.From(m.opts.Context)
 	if cfg != nil {
 		return cfg.Namespace
 	}
 	return ""
 }
 
-func (m *webLoginManager) sessionOptions(kvd storage.Storage) login.SessionOptions {
-	cfg := config.Get()
+func (m *webLoginManager) sessionOptions(namespace string, kvd storage.Storage) login.SessionOptions {
+	cfg := config.From(m.opts.Context)
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
+	var credentials ports.TelegramCredentials
+	if m.opts.Credentials != nil {
+		credentials = loginCredentials{source: m.opts.Credentials, owner: types.AccountID(m.currentNamespace()), target: types.AccountID(namespace)}
+	}
 	return login.SessionOptions{
+		Connections: m.opts.Connections, Credentials: credentials, Account: types.AccountID(namespace),
 		KV:               kvd,
 		Proxy:            config.EffectiveProxy(cfg),
-		NTP:              cfg.NTP,
 		ReconnectTimeout: time.Duration(cfg.ReconnectTimeout) * time.Second,
 	}
 }
 
-func (m *webLoginManager) status() webLoginStatus {
-	m.mu.Lock()
-	flow := m.active
-	m.mu.Unlock()
-	if flow == nil {
-		return webLoginStatus{Active: false, Status: "当前没有登录流程。"}
-	}
-
-	flow.mu.Lock()
-	defer flow.mu.Unlock()
-	return webLoginStatus{
-		Active:    !flow.isTerminalLocked(),
-		Kind:      flow.kind,
-		Stage:     flow.stage,
-		Status:    flow.status,
-		Error:     flow.errText,
-		Phone:     flow.phone,
-		Namespace: flow.namespace,
-		User:      flow.user,
-	}
+// Credential settings are installation-wide; explicitly bind the current
+// profile to the selected login namespace without mislabelling session storage.
+type loginCredentials struct {
+	source ports.TelegramCredentials
+	owner  types.AccountID
+	target types.AccountID
 }
 
-func (m *webLoginManager) submitCode(code string) error {
-	flow, err := m.requireActive()
-	if err != nil {
-		return err
+func (c loginCredentials) Resolve(ctx context.Context, account types.AccountID) (types.TelegramCredentials, error) {
+	if account != c.target {
+		return types.TelegramCredentials{}, errors.New("login credential account mismatch")
 	}
-	return flow.sendCode(strings.TrimSpace(code))
-}
-
-func (m *webLoginManager) submitPassword(password string) error {
-	flow, err := m.requireActive()
-	if err != nil {
-		return err
+	owner := c.owner
+	if owner == "" {
+		owner = types.DefaultAccount
 	}
-	return flow.sendPassword(strings.TrimSpace(password))
-}
-
-func (m *webLoginManager) cancel() {
-	m.mu.Lock()
-	flow := m.active
-	m.mu.Unlock()
-	if flow != nil {
-		flow.cancel()
-	}
-}
-
-func (m *webLoginManager) requireActive() (*webLoginFlow, error) {
-	m.mu.Lock()
-	flow := m.active
-	m.mu.Unlock()
-	if flow == nil || flow.finished() {
-		return nil, errors.New("no active login flow")
-	}
-	return flow, nil
+	return c.source.Resolve(ctx, owner)
 }
 
 type webCodeAuthenticator struct {
-	flow  *webLoginFlow
+	ports.LoginChallenge
 	phone string
 }
 
-func (a webCodeAuthenticator) Phone(ctx context.Context) (string, error) {
-	return a.phone, nil
-}
-
+func (a webCodeAuthenticator) Phone(context.Context) (string, error) { return a.phone, nil }
 func (a webCodeAuthenticator) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
-	// gotd only asks for the code after Telegram has acknowledged SendCode.
-	a.flow.prompt(loginStageCode, loginStatusCodeSent)
-	return a.flow.waitCode(ctx)
+	return a.LoginChallenge.Code(ctx)
 }
 
-func (a webCodeAuthenticator) Password(ctx context.Context) (string, error) {
-	a.flow.prompt("password", "请输入 Telegram 2FA 密码。")
-	return a.flow.waitPassword(ctx)
-}
-
-func (a webCodeAuthenticator) AuthInputError(ctx context.Context, input string, err error) error {
-	return a.flow.authInputError(ctx, input, err)
-}
-
-func (a webCodeAuthenticator) SignUp(_ context.Context) (auth.UserInfo, error) {
+func (a webCodeAuthenticator) SignUp(context.Context) (auth.UserInfo, error) {
 	return auth.UserInfo{}, errors.New("sign up is not supported")
 }
 
 func (a webCodeAuthenticator) AcceptTermsOfService(_ context.Context, tos tg.HelpTermsOfService) error {
 	return &auth.SignUpRequired{TermsOfService: tos}
-}
-
-func (f *webLoginFlow) prompt(stage, status string) {
-	f.muSet(func() {
-		f.stage = stage
-		if f.errText == "" {
-			f.status = status
-		}
-	})
-}
-
-func (f *webLoginFlow) authInputError(_ context.Context, input string, err error) error {
-	stage := input
-	if stage == "" {
-		stage = "password"
-	}
-	message := loginInputErrorText(input, err)
-	f.muSet(func() {
-		f.stage = stage
-		f.status = message
-		f.errText = message
-	})
-	return nil
-}
-
-func (f *webLoginFlow) verifying(stage, status string) {
-	f.muSet(func() {
-		f.stage = stage
-		f.status = status
-		f.errText = ""
-	})
-}
-
-func (f *webLoginFlow) muSet(fn func()) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	fn()
-}
-
-func (f *webLoginFlow) waitCode(ctx context.Context) (string, error) {
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case code := <-f.codeCh:
-		if code == "" {
-			return "", errors.New("code is empty")
-		}
-		f.verifying(loginStageCode, "正在验证验证码...")
-		return code, nil
-	}
-}
-
-func (f *webLoginFlow) waitPassword(ctx context.Context) (string, error) {
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case password := <-f.passwordCh:
-		if password == "" {
-			return "", errors.New("password is empty")
-		}
-		f.verifying("password", "正在验证 2FA 密码...")
-		return password, nil
-	}
-}
-
-func (f *webLoginFlow) sendCode(code string) error {
-	if code == "" {
-		return errors.New("code is empty")
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.stage != loginStageCode {
-		return errors.New("验证码尚未发送，请稍候。")
-	}
-	select {
-	case f.codeCh <- code:
-		f.stage = loginStageCode
-		f.status = "正在验证验证码..."
-		f.errText = ""
-		return nil
-	default:
-		return errors.New("code has already been submitted")
-	}
-}
-
-func (f *webLoginFlow) sendPassword(password string) error {
-	if password == "" {
-		return errors.New("password is empty")
-	}
-	select {
-	case f.passwordCh <- password:
-		f.verifying("password", "正在验证 2FA 密码...")
-		return nil
-	default:
-		return errors.New("password has already been submitted")
-	}
-}
-
-func (f *webLoginFlow) finished() bool {
-	select {
-	case <-f.done:
-		return true
-	default:
-		return false
-	}
-}
-
-func (f *webLoginFlow) isTerminalLocked() bool {
-	return f.stage == loginStageDone || f.stage == loginStageFailed
-}
-
-func normalizePhone(phone string) string {
-	return strings.NewReplacer(" ", "", "\t", "", "-", "", "(", "", ")", "").Replace(phone)
-}
-
-func loginErrorText(err error) string {
-	if err == nil {
-		return ""
-	}
-	text := err.Error()
-	lower := strings.ToLower(text)
-	if strings.Contains(lower, "retryuntilack") && strings.Contains(lower, "retry limit reached") {
-		return "连接 Telegram 超时，未能完成初始化。请检查服务器能否访问 Telegram；如果需要代理，请在配置中填写 proxy，也可以适当调大 reconnect_timeout 后重试。原始错误：" + text
-	}
-	return text
-}
-
-func loginInputErrorText(input string, err error) string {
-	switch input {
-	case login.AuthInputCode:
-		return "验证码不正确，请重新输入。"
-	case login.AuthInputPassword:
-		return "2FA 密码不正确，请重新输入。"
-	default:
-		return loginErrorText(err)
-	}
 }

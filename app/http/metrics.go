@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/snakexgc/tdl/app/http/transfer"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
 )
 
 type TelegramFileErrorReporter interface {

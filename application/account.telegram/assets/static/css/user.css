@@ -1,0 +1,470 @@
+/* User view: tabs, account switcher, and the multi-step login flow. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab-button {
+  min-height: 40px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 0 16px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease;
+  margin-bottom: -1px;
+}
+
+.tab-button:hover {
+  color: var(--text);
+}
+
+.tab-button.active {
+  color: var(--primary-dark);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
+.user-tab {
+  display: none;
+}
+
+.user-tab.active {
+  display: block;
+}
+
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.user-switch {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  margin: 0 0 24px;
+  padding: 24px;
+}
+
+.user-switch-copy {
+  min-width: 0;
+}
+
+.user-switch-field {
+  margin-bottom: 0;
+}
+
+.user-switch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-switch-actions .btn {
+  min-height: 38px;
+}
+
+/* ── Login flow ── */
+.login-flow {
+  display: grid;
+  gap: 16px;
+  max-width: 980px;
+}
+
+.login-flow-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+  align-items: end;
+  gap: 14px;
+  padding: 24px;
+}
+
+.login-flow-head h2,
+.user-switch h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ── Step progress indicator ── */
+.login-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.login-steps li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.login-steps span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.login-steps li.is-current {
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
+.login-steps li.is-current span {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.login-steps li.is-complete {
+  color: var(--success);
+}
+
+.login-steps li.is-complete span {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.login-steps li.is-error {
+  color: var(--danger);
+}
+
+.login-steps li.is-error span {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ── Login meta chips ── */
+.login-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 0;
+}
+
+.login-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.login-meta strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* ── Login stage panel ── */
+.login-stage {
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.login-step-panel {
+  min-height: 300px;
+  padding: 24px;
+}
+
+.login-step-panel.animate-in {
+  animation: login-panel-in 220ms ease-out both;
+}
+
+@keyframes login-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-step-panel.animate-in,
+  .login-waiting-indicator {
+    animation: none;
+  }
+}
+
+.login-step-copy h3 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.login-step-copy p {
+  max-width: 620px;
+  margin-bottom: 18px;
+}
+
+.login-form-panel {
+  max-width: 420px;
+}
+
+.login-waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  max-width: 680px;
+}
+
+.login-waiting-indicator {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin-top: 2px;
+  border: 3px solid var(--primary-soft);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: login-waiting-spin 800ms linear infinite;
+}
+
+@keyframes login-waiting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Login result ── */
+.login-result-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 16px;
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 28px;
+  font-weight: 800;
+  border: 2px solid var(--line);
+}
+
+.login-result-mark.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+
+.login-result-actions,
+.login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.login-actions {
+  justify-content: flex-end;
+}
+
+.login-flow .notice:empty {
+  display: none;
+}
+
+/* ── Login status as a styled banner card ── */
+#login-status:not(:empty) {
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid;
+  margin-bottom: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#login-status:not(.error):not(.success):not(:empty) {
+  background: var(--panel-soft);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+#login-status.success:not(:empty) {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success);
+}
+
+#login-status.error:not(:empty) {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+/* ── User attribute badges ── */
+.user-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+/* Status dot for valid/invalid badges */
+.user-badge-valid::before,
+.user-badge-invalid::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  flex: 0 0 6px;
+}
+
+.user-badge-valid {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success);
+}
+
+.user-badge-valid::before {
+  background: var(--success);
+}
+
+.user-badge-invalid {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+.user-badge-invalid::before {
+  background: var(--danger);
+}
+
+.user-badge-premium {
+  background: var(--warning-soft);
+  border-color: var(--warning-line);
+  color: var(--warning);
+}
+
+.user-badge-verified {
+  background: var(--info-soft);
+  border-color: var(--info-line);
+  color: var(--info);
+}
+
+.user-badge-bot {
+  background: var(--info-soft);
+  border-color: var(--info-line);
+  color: var(--info);
+}
+
+.user-badge-restricted {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+.user-badge-normal {
+  background: var(--panel-soft);
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+/* ── Status-colored info rows ── */
+.info-item.info-item-status-ok {
+  background: var(--success-soft);
+  box-shadow: inset 3px 0 0 var(--success);
+}
+
+.info-item.info-item-status-danger {
+  background: var(--danger-soft);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.info-item.info-item-status-warning {
+  background: var(--warning-soft);
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.info-item.info-item-status-info {
+  background: var(--info-soft);
+  box-shadow: inset 3px 0 0 var(--info);
+}
+
+.info-item.info-item-status-muted {
+  background: var(--panel-soft);
+  box-shadow: inset 3px 0 0 var(--line-strong);
+}
+
+.info-item[class*="info-item-status"] .info-value {
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .login-flow-head,
+  .user-switch {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .user-switch-actions {
+    justify-content: flex-start;
+  }
+
+  .user-switch-actions .btn {
+    flex: 1;
+  }
+
+  .login-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .login-step-panel {
+    padding: 16px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+  }
+}

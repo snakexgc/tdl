@@ -4,25 +4,30 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	bberrors "go.etcd.io/bbolt/errors"
 
 	"github.com/snakexgc/tdl/app/bot"
-	"github.com/snakexgc/tdl/app/updater"
+	"github.com/snakexgc/tdl/app/reset"
+	"github.com/snakexgc/tdl/application"
 	"github.com/snakexgc/tdl/cmd"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "__apply-update" {
-		if err := updater.RunApply(os.Args[2:]); err != nil {
+		if err := application.RunUpdateApply(os.Args[2:]); err != nil {
 			os.Exit(1)
 		}
 		return
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Windows console close is delivered as SIGTERM; all services must receive
+	// the same cancellation as Ctrl+C before the OS shutdown deadline expires.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	humanizeErrors := map[error]string{
@@ -39,6 +44,14 @@ func main() {
 
 		color.Red("Error: %+v", err)
 		os.Exit(1)
+	}
+	if plan := reset.Requested(); plan != nil {
+		if err := plan.Execute(); err != nil {
+			color.Red("Reset failed; TDL remains stopped: %+v", err)
+			os.Exit(1)
+		}
+		color.Green("Reset complete. Start TDL again to configure and log in.")
+		return
 	}
 	if plan, ok := bot.UpdateRequested(); ok {
 		if err := startUpdate(plan); err != nil {
@@ -66,13 +79,13 @@ func restartCurrentProcess() error {
 		return errors.Wrap(err, "get working directory")
 	}
 
-	return updater.StartAttached(exe, os.Args[1:], cwd)
+	return application.StartAttached(exe, os.Args[1:], cwd)
 }
 
-func startUpdate(plan updater.Plan) error {
+func startUpdate(plan types.UpdatePlan) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return errors.Wrap(err, "get executable path")
 	}
-	return updater.StartApply(plan, exe, os.Args[1:])
+	return application.StartUpdateApply(plan, exe, os.Args[1:])
 }

@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"strings"
 
 	"github.com/mymmrac/telego"
@@ -17,7 +18,6 @@ const (
 	botCmdForward = "/forward"
 
 	botCmdDownloads         = "/downloads"
-	botCmdDownloadsHelp     = "/downloads_help"
 	botCmdDownloadsActive   = "/downloads_active"
 	botCmdDownloadsWaiting  = "/downloads_waiting"
 	botCmdDownloadsStopped  = "/downloads_stopped"
@@ -25,24 +25,7 @@ const (
 	botCmdDownloadsPauseAll = "/downloads_pause_all"
 	botCmdDownloadsStartAll = "/downloads_start_all"
 
-	botCmdAria2         = "/aria2"
-	botCmdAria2Help     = "/aria2_help"
-	botCmdAria2Active   = "/aria2_active"
-	botCmdAria2Waiting  = "/aria2_waiting"
-	botCmdAria2Stopped  = "/aria2_stopped"
-	botCmdAria2Overview = "/aria2_overview"
-	botCmdAria2PauseAll = "/aria2_pause_all"
-	botCmdAria2StartAll = "/aria2_start_all"
-	botCmdAria2Retry    = "/aria2_retry"
-
-	botCmdInternal         = "/internal"
-	botCmdInternalHelp     = "/internal_help"
-	botCmdInternalActive   = "/internal_active"
-	botCmdInternalWaiting  = "/internal_waiting"
-	botCmdInternalStopped  = "/internal_stopped"
-	botCmdInternalOverview = "/internal_overview"
-	botCmdInternalPauseAll = "/internal_pause_all"
-	botCmdInternalStartAll = "/internal_start_all"
+	botCmdAria2Retry = "/aria2_retry"
 )
 
 func handleDownloadCommand(
@@ -50,10 +33,13 @@ func handleDownloadCommand(
 	msg *telego.Message,
 	text string,
 	aria2Factory aria2ControllerFactory,
-	internalFactory internalDownloadControllerFactory,
+	localFactory localDownloadControllerFactory,
 ) (bool, error) {
-	if config.EffectiveDownloaderMode(config.Get()) == config.DownloaderModeInternal {
-		return handleInternalDownloadCommand(ctx, msg, text, internalFactory)
+	if commandName(text) == botCmdAria2Retry {
+		return handleAria2Command(ctx, msg, text, aria2Factory)
+	}
+	if config.PrimaryDownloadExecutor(botConfiguration(ctx)) == config.DownloadExecutorLocal {
+		return handleLocalDownloadCommand(ctx, msg, text, localFactory)
 	}
 	return handleAria2Command(ctx, msg, text, aria2Factory)
 }
@@ -62,19 +48,30 @@ func handleDownloadCallback(
 	ctx *th.Context,
 	query telego.CallbackQuery,
 	aria2Factory aria2ControllerFactory,
-	internalFactory internalDownloadControllerFactory,
+	localFactory localDownloadControllerFactory,
 ) error {
 	switch {
 	case strings.HasPrefix(query.Data, "aria2:"):
 		return handleAria2Callback(ctx, query, aria2Factory)
-	case strings.HasPrefix(query.Data, "internal:"):
-		return handleInternalDownloadCallback(ctx, query, internalFactory)
+	case strings.HasPrefix(query.Data, "local:"):
+		return handleLocalDownloadCallback(ctx, query, localFactory)
 	default:
 		return nil
 	}
 }
 
-func aria2DownloaderEnabled() bool {
-	cfg := config.Get()
-	return cfg != nil && cfg.Modules.Aria2 && config.EffectiveDownloaderMode(cfg) == config.DownloaderModeAria2
+func aria2DownloaderEnabled(contexts ...context.Context) bool {
+	var ctx context.Context
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	cfg := config.From(ctx)
+	return cfg != nil && cfg.Modules.Aria2 && config.UsesDownloadExecutor(cfg, config.DownloadExecutorAria2)
+}
+
+func botConfiguration(ctx *th.Context) *config.Config {
+	if ctx == nil {
+		return config.Get()
+	}
+	return config.From(ctx)
 }

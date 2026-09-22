@@ -3,21 +3,33 @@ package webui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
-	"reflect"
 	"strings"
-	"time"
 
 	"github.com/go-faster/errors"
 
-	"github.com/snakexgc/tdl/app/updater"
-	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
+
+const shutdownInProgressMessage = "an update, reboot or reset is already in progress"
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"config": publicConfig(config.Get())})
+		value, err := s.configuration.Read(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"config":            value,
+			"active_config":     s.activeConfiguration,
+			"restart_available": s.opts.RequestReboot != nil,
+			"editable":          s.opts.ConfigurationManager != nil,
+		})
 	case http.MethodPatch:
 		var req struct {
 			Values map[string]json.RawMessage `json:"values"`
@@ -26,75 +38,26 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 			return
 		}
-		next, err := config.Clone(config.Get())
+		next, err := s.configuration.Patch(r.Context(), req.Values)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
+			status := http.StatusBadRequest
+			if errors.Is(err, ports.ErrConfigurationConflict) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err)
 			return
 		}
-		for path, raw := range req.Values {
-			if strings.EqualFold(strings.TrimSpace(path), "namespace") {
-				writeError(w, http.StatusBadRequest, errors.New("namespace must be changed from user management"))
-				return
-			}
-			if isBlankWebUIUsernamePatch(path, raw) {
-				writeError(w, http.StatusBadRequest, errors.New("webui.username cannot be blank"))
-				return
-			}
-			if isBlankSensitivePatch(path, raw) {
-				continue
-			}
-			if err := setConfigJSONValue(next, path, raw); err != nil {
-				writeError(w, http.StatusBadRequest, errors.Wrapf(err, "set %s", path))
-				return
-			}
-		}
-		if err := config.Set(next); err != nil {
-			writeError(w, http.StatusInternalServerError, errors.Wrap(err, "save config"))
-			return
-		}
-		if s.opts.AfterConfigSave != nil {
-			s.opts.AfterConfigSave(next)
-		}
+		slog.Info("运行设置已保存", "component", "panel.webui", "account", s.namespace())
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":         true,
-			"config":     publicConfig(next),
-			fieldMessage: "配置已保存。模块开关会立即生效；监听地址、命名空间、Bot Token 等基础连接参数建议重启后再使用。",
+			"ok":                true,
+			"config":            next,
+			"active_config":     s.activeConfiguration,
+			"restart_available": s.opts.RequestReboot != nil,
+			"editable":          s.opts.ConfigurationManager != nil,
+			fieldMessage:        "设置已保存到 tdl_config.json，重启后生效。",
 		})
 	default:
 		methodNotAllowed(w, "GET, PATCH")
-	}
-}
-
-func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
-	if s.opts.ModuleManager == nil {
-		writeError(w, http.StatusBadRequest, errors.New("module manager is not available"))
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"modules": s.opts.ModuleManager.ModuleStates()})
-	case http.MethodPost:
-		var req struct {
-			ID      string `json:"id"`
-			Enabled bool   `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
-			return
-		}
-		state, err := s.opts.ModuleManager.SetModuleEnabled(r.Context(), req.ID, req.Enabled)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":      true,
-			"module":  state,
-			"modules": s.opts.ModuleManager.ModuleStates(),
-		})
-	default:
-		methodNotAllowed(w, "GET, POST")
 	}
 }
 
@@ -103,7 +66,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	info, err := updater.CheckLatest(r.Context(), config.EffectiveProxy(config.Get()))
+	info, err := s.checkUpdate(r)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -120,11 +83,28 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("update is not available in this mode"))
 		return
 	}
-	if !s.shutdownRequested.CompareAndSwap(false, true) {
-		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
+	var req struct {
+		Version string `json:"version"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode selected version"))
 		return
 	}
-	plan, info, err := updater.DownloadLatest(r.Context(), config.EffectiveProxy(config.Get()))
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		writeError(w, http.StatusBadRequest, errors.New("request must contain one JSON object"))
+		return
+	}
+	if req.Version == "" || strings.TrimSpace(req.Version) != req.Version || len(req.Version) > 256 {
+		writeError(w, http.StatusBadRequest, errors.New("请选择有效的目标版本"))
+		return
+	}
+	if !s.shutdownRequested.CompareAndSwap(false, true) {
+		writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
+		return
+	}
+	plan, info, err := s.downloadUpdate(r, req.Version)
 	if err != nil {
 		s.shutdownRequested.Store(false)
 		writeError(w, http.StatusBadGateway, err)
@@ -133,12 +113,24 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"update":     info,
-		fieldMessage: fmt.Sprintf("更新包已下载，准备更新到 %s 并重启。", info.LatestVersion),
+		fieldMessage: fmt.Sprintf("更新包已下载，准备切换到 %s 并重启。", plan.Version),
 	})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.opts.RequestUpdate(plan)
-	}()
+	_ = http.NewResponseController(w).Flush()
+	s.opts.RequestUpdate(plan)
+}
+
+func (s *Server) checkUpdate(r *http.Request) (types.UpdateInfo, error) {
+	if s.opts.Updater != nil {
+		return s.opts.Updater.CheckVersions(r.Context())
+	}
+	return types.UpdateInfo{}, errors.New("update service is unavailable")
+}
+
+func (s *Server) downloadUpdate(r *http.Request, version string) (types.UpdatePlan, types.UpdateInfo, error) {
+	if s.opts.Updater != nil {
+		return s.opts.Updater.DownloadVersion(r.Context(), version)
+	}
+	return types.UpdatePlan{}, types.UpdateInfo{}, errors.New("update service is unavailable")
 }
 
 func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
@@ -151,140 +143,10 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.shutdownRequested.CompareAndSwap(false, true) {
-		writeError(w, http.StatusConflict, errors.New("an update or reboot is already in progress"))
+		writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldMessage: "正在重启 tdl"})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.opts.RequestReboot()
-	}()
-}
-
-func publicConfig(cfg *config.Config) *config.Config {
-	next, err := config.Clone(cfg)
-	if err != nil {
-		next = config.DefaultConfig()
-	}
-	next.Bot.Token = ""
-	next.Aria2.Secret = ""
-	next.WebUI.Password = ""
-	next.ProxyPassword = ""
-	return next
-}
-
-func isBlankWebUIUsernamePatch(path string, raw json.RawMessage) bool {
-	if !strings.EqualFold(strings.TrimSpace(path), "webui.username") {
-		return false
-	}
-	var value string
-	return json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) == ""
-}
-
-func isBlankSensitivePatch(path string, raw json.RawMessage) bool {
-	switch strings.ToLower(strings.TrimSpace(path)) {
-	case "bot.token", "aria2.secret", "webui.password", "proxy_password":
-	default:
-		return false
-	}
-	var value string
-	return json.Unmarshal(raw, &value) == nil && value == ""
-}
-
-func setConfigJSONValue(cfg *config.Config, path string, raw json.RawMessage) error {
-	return setPathJSONValue(reflect.ValueOf(cfg).Elem(), splitConfigPath(path), raw)
-}
-
-func splitConfigPath(path string) []string {
-	parts := strings.Split(strings.TrimSpace(path), ".")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-func setPathJSONValue(value reflect.Value, path []string, raw json.RawMessage) error {
-	value = indirectValue(value)
-	if len(path) == 0 {
-		return errors.New("empty config path")
-	}
-
-	switch value.Kind() {
-	case reflect.Struct:
-		field, ok := fieldByJSONName(value, path[0])
-		if !ok {
-			return fmt.Errorf("unknown config key %q", path[0])
-		}
-		if len(path) == 1 {
-			return setReflectJSONValue(field, raw)
-		}
-		return setPathJSONValue(field, path[1:], raw)
-	case reflect.Map:
-		if len(path) != 1 {
-			return fmt.Errorf("config key %q is not an object", path[0])
-		}
-		key, err := mapKeyValue(value.Type().Key(), path[0])
-		if err != nil {
-			return err
-		}
-		item := reflect.New(value.Type().Elem())
-		if err := json.Unmarshal(raw, item.Interface()); err != nil {
-			return err
-		}
-		if value.IsNil() {
-			value.Set(reflect.MakeMap(value.Type()))
-		}
-		value.SetMapIndex(key, item.Elem())
-		return nil
-	default:
-		return fmt.Errorf("config key %q cannot be expanded", path[0])
-	}
-}
-
-func setReflectJSONValue(value reflect.Value, raw json.RawMessage) error {
-	if !value.CanSet() {
-		return errors.New("config value cannot be set")
-	}
-	target := reflect.New(value.Type())
-	if err := json.Unmarshal(raw, target.Interface()); err != nil {
-		return err
-	}
-	value.Set(target.Elem())
-	return nil
-}
-
-func fieldByJSONName(value reflect.Value, name string) (reflect.Value, bool) {
-	value = indirectValue(value)
-	typ := value.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		jsonName := strings.Split(field.Tag.Get("json"), ",")[0]
-		if jsonName == "" {
-			jsonName = field.Name
-		}
-		if strings.EqualFold(jsonName, name) || strings.EqualFold(field.Name, name) {
-			return value.Field(i), true
-		}
-	}
-	return reflect.Value{}, false
-}
-
-func indirectValue(value reflect.Value) reflect.Value {
-	for value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	return value
-}
-
-func mapKeyValue(typ reflect.Type, raw string) (reflect.Value, error) {
-	switch typ.Kind() {
-	case reflect.String:
-		return reflect.ValueOf(raw).Convert(typ), nil
-	default:
-		return reflect.Value{}, fmt.Errorf("unsupported map key type %s", typ)
-	}
+	_ = http.NewResponseController(w).Flush()
+	s.opts.RequestReboot()
 }

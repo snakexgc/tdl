@@ -15,19 +15,22 @@ import (
 //go:embed version.tmpl
 var version string
 
+const versionCommand = "version"
+
 func NewVersion() *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
+		Use:   versionCommand,
 		Short: "Check the version info",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buf := &bytes.Buffer{}
-			if err := template.Must(template.New("version").Parse(version)).Execute(buf, map[string]interface{}{
+			if err := template.Must(template.New(versionCommand).Parse(version)).Execute(buf, map[string]interface{}{
 				"Version":   consts.Version,
 				"Commit":    consts.Commit,
 				"Date":      consts.CommitDate,
 				"GoVersion": runtime.Version(),
 				"GOOS":      runtime.GOOS,
 				"GOARCH":    runtime.GOARCH,
+				"GOARM":     consts.GOARM,
 			}); err != nil {
 				return err
 			}

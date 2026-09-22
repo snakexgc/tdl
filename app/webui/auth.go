@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -30,6 +31,10 @@ func (s *Server) auth(next http.Handler) http.Handler {
 				return
 			}
 			writeError(w, http.StatusUnauthorized, errors.New("authentication required"))
+			return
+		}
+		if s.shutdownRequested.Load() && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -150,7 +155,7 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 		return
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	user := ""
 	if cfg != nil {
 		user = cfg.WebUI.Username
@@ -182,17 +187,20 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	if cfg == nil || !credentialsOK(strings.TrimSpace(req.Username), req.Password, cfg.WebUI.Username, cfg.WebUI.Password) {
 		s.recordLoginFailure(r, time.Now())
+		slog.Warn("Web 管理面板登录失败", "component", "panel.webui", "account", s.namespace(), "remote_addr", r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, errors.New("用户名或密码错误"))
 		return
 	}
 	s.clearLoginFailures(r)
 	if err := s.issueSession(w, r); err != nil {
+		slog.Error("创建 Web 管理面板会话失败", "component", "panel.webui", "account", s.namespace(), "error", err)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	slog.Info("Web 管理面板登录成功", "component", "panel.webui", "account", s.namespace())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                         true,
 		fieldUsingDefaultCredentials: config.UsesDefaultWebUICredentials(cfg),
@@ -270,5 +278,6 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearSession(w, r)
+	slog.Info("Web 管理面板已退出登录", "component", "panel.webui", "account", s.namespace())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

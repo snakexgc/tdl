@@ -11,16 +11,17 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/snakexgc/tdl/app/http/transfer"
-	"github.com/snakexgc/tdl/core/dcpool"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/tmedia"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/internal/core/dcpool"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
 )
 
 type poolHolder struct {
 	mu      sync.RWMutex
 	pool    dcpool.Pool
 	changed chan struct{}
+	size    int64
 }
 
 func (h *poolHolder) Set(pool dcpool.Pool) {
@@ -30,10 +31,23 @@ func (h *poolHolder) Set(pool dcpool.Pool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pool = pool
+	if pool != nil && h.size > 0 {
+		dcpool.Resize(pool, h.size)
+	}
 	if h.changed != nil {
 		close(h.changed)
 		h.changed = make(chan struct{})
 	}
+}
+
+func (h *poolHolder) Resize(size int64) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.size = size
+	dcpool.Resize(h.pool, size)
 }
 
 func (h *poolHolder) Get() dcpool.Pool {
@@ -230,7 +244,8 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 			err = flushWriter(w)
 		}
 		if err != nil {
-			logger.Error("Writing HTTP response body failed",
+			// The owning HTTP handler or local worker records the final outcome.
+			logger.Debug("Writing download stream failed",
 				zap.Int("chunk_size", len(data)),
 				zap.Int("written", n),
 				zap.Int64("bytes_written", written),
@@ -241,7 +256,7 @@ func streamTelegramMedia(ctx context.Context, pool dcpool.Pool, source *telegram
 	return nil
 }
 
-// streamTelegramMediaParallel preserves parallel internal downloads without
+// streamTelegramMediaParallel preserves parallel local downloads without
 // introducing a retained cache. A worker does not start another chunk until
 // its previous result has been written, bounding decoded chunk memory by the
 // worker count while DC permits remain scoped to actual Telegram RPCs.

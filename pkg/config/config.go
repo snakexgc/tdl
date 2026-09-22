@@ -1,35 +1,26 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/url"
-	"os"
-	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/go-faster/errors"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 const (
-	DefaultLimit         = 1
-	DefaultPoolSize      = 8
-	DefaultHTTPAddress   = "0.0.0.0"
-	DefaultHTTPPort      = 22334
-	DefaultWebUIAddress  = "0.0.0.0"
-	DefaultWebUIPort     = 22335
-	DefaultWebUIUsername = "admin"
-	DefaultWebUIPassword = "admin"
-	DefaultFilename      = "P_S_F"
-	DefaultFilenameMax   = 255
-)
-
-const (
-	DownloaderModeAria2    = "aria2"
-	DownloaderModeInternal = "internal"
+	DownloadExecutorAria2 = "aria2"
+	DownloadExecutorLocal = "local"
+	DownloadExecutorHTTP  = "http"
 )
 
 const (
@@ -37,192 +28,34 @@ const (
 	ForwardModeClone   = "clone"
 )
 
-// BotNotifyConfig controls which aria2 events trigger Telegram notifications.
-type BotNotifyConfig struct {
-	OnDownloadStart         bool `json:"on_download_start"`
-	OnDownloadComplete      bool `json:"on_download_complete"`
-	OnDownloadPause         bool `json:"on_download_pause"`
-	OnDownloadError         bool `json:"on_download_error"`
-	LiveProgress            bool `json:"live_progress"`
-	LiveProgressIntervalSec int  `json:"live_progress_interval_seconds"`
-}
+type (
+	BotNotifyConfig  = types.BotNotifyConfig
+	BotConfig        = types.BotConfig
+	HTTPConfig       = types.HTTPConfig
+	WebUIConfig      = types.WebUIConfig
+	ModulesConfig    = types.ModulesConfig
+	DownloaderConfig = types.DownloaderConfig
+	Aria2Config      = types.Aria2Config
+	ForwardConfig    = types.ForwardConfig
+	Config           = types.RuntimeConfig
+)
 
-// BotConfig Bot 配置
-type BotConfig struct {
-	Token        string          `json:"token"`
-	AllowedUsers []int64         `json:"allowed_users"`
-	Notify       BotNotifyConfig `json:"notify"`
-}
-
-type HTTPConfig struct {
-	Listen               string `json:"listen,omitempty"`
-	Address              string `json:"address"`
-	Port                 int    `json:"port"`
-	PublicBaseURL        string `json:"public_base_url"`
-	DownloadLinkTTLHours int    `json:"download_link_ttl_hours"`
-}
-
-type WebUIConfig struct {
-	Listen   string `json:"listen,omitempty"`
-	Address  string `json:"address"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type ModulesConfig struct {
-	Bot     bool `json:"bot"`
-	Watch   bool `json:"watch"`
-	HTTP    bool `json:"http"`
-	Aria2   bool `json:"aria2"`
-	Forward bool `json:"forward"`
-}
-
-type DownloaderConfig struct {
-	Mode string `json:"mode"`
-}
-
-type Aria2Config struct {
-	RPCURL         string `json:"rpc_url"`
-	Secret         string `json:"secret"`
-	Dir            string `json:"dir"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	AutoDownload   bool   `json:"auto_download"`
-}
-
-type ForwardConfig struct {
-	Mode             string   `json:"mode"`
-	Target           string   `json:"target"`
-	Listen           []string `json:"listen"`
-	ListenComments   bool     `json:"listen_comments"`
-	Silent           bool     `json:"silent"`
-	DedupeTTLSeconds int      `json:"dedupe_ttl_seconds"`
-	TriggerReactions []string `json:"trigger_reactions"`
-}
-
-// Config 全局配置结构
-type Config struct {
-	Proxy            string           `json:"proxy"`
-	ProxyUsername    string           `json:"proxy_username"`
-	ProxyPassword    string           `json:"proxy_password"`
-	Namespace        string           `json:"namespace"`
-	Debug            bool             `json:"debug"`
-	Limit            int              `json:"limit"`
-	PoolSize         int              `json:"pool_size"`
-	Delay            int              `json:"delay"`
-	NTP              string           `json:"ntp"`
-	ReconnectTimeout int              `json:"reconnect_timeout"`
-	DownloadDir      string           `json:"download_dir"`
-	Filename         string           `json:"filename"`
-	FilenameMax      int              `json:"filename_max_length"`
-	TriggerReactions []string         `json:"trigger_reactions"`
-	Include          []string         `json:"include"`
-	Exclude          []string         `json:"exclude"`
-	FileSizeMinMB    int64            `json:"file_size_min_mb"`
-	FileSizeMaxMB    int64            `json:"file_size_max_mb"`
-	HTTP             HTTPConfig       `json:"http"`
-	WebUI            WebUIConfig      `json:"webui"`
-	Modules          ModulesConfig    `json:"modules"`
-	Downloader       DownloaderConfig `json:"downloader"`
-	Aria2            Aria2Config      `json:"aria2"`
-	Bot              BotConfig        `json:"bot"`
-	Forward          ForwardConfig    `json:"forward"`
-}
-
-// DefaultConfig 返回默认配置
+// DefaultConfig projects the current component schema defaults into an adapter snapshot.
 func DefaultConfig() *Config {
-	return &Config{
-		Namespace:        "default",
-		Debug:            false,
-		Limit:            DefaultLimit,
-		PoolSize:         DefaultPoolSize,
-		Delay:            0,
-		ReconnectTimeout: 3,
-		DownloadDir:      "G\\Y&M",
-		Filename:         DefaultFilename,
-		FilenameMax:      DefaultFilenameMax,
-		TriggerReactions: []string{},
-		Include:          []string{},
-		Exclude:          []string{},
-		FileSizeMinMB:    0,
-		FileSizeMaxMB:    0,
-		HTTP: HTTPConfig{
-			Address:              DefaultHTTPAddress,
-			Port:                 DefaultHTTPPort,
-			PublicBaseURL:        "",
-			DownloadLinkTTLHours: 24,
-		},
-		WebUI: WebUIConfig{
-			Address:  DefaultWebUIAddress,
-			Port:     DefaultWebUIPort,
-			Username: DefaultWebUIUsername,
-			Password: DefaultWebUIPassword,
-		},
-		Modules: ModulesConfig{
-			Bot:     true,
-			Watch:   true,
-			HTTP:    true,
-			Aria2:   true,
-			Forward: false,
-		},
-		Downloader: DownloaderConfig{
-			Mode: DownloaderModeAria2,
-		},
-		Aria2: Aria2Config{
-			RPCURL:         "http://127.0.0.1:6800/jsonrpc",
-			Secret:         "",
-			Dir:            "",
-			TimeoutSeconds: 30,
-			AutoDownload:   true,
-		},
-		Bot: BotConfig{
-			Token:        "",
-			AllowedUsers: []int64{},
-			Notify: BotNotifyConfig{
-				OnDownloadStart:         false,
-				OnDownloadComplete:      false,
-				OnDownloadPause:         false,
-				OnDownloadError:         false,
-				LiveProgress:            false,
-				LiveProgressIntervalSec: 5,
-			},
-		},
-		Forward: ForwardConfig{
-			Mode:             ForwardModeDefault,
-			Target:           "",
-			Listen:           []string{},
-			ListenComments:   true,
-			Silent:           false,
-			DedupeTTLSeconds: 600,
-			TriggerReactions: []string{},
-		},
+	cfg, err := Clone(schemaDefaults())
+	if err != nil {
+		panic(err)
 	}
+	return cfg
 }
 
-// UnmarshalJSON keeps configurations written before the file-size range was
-// introduced compatible. The former file_size_mb value becomes the lower
-// bound unless the new lower-bound field is present explicitly.
-func (cfg *Config) UnmarshalJSON(data []byte) error {
-	type configJSON Config
-	decoded := configJSON(*cfg)
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*cfg = Config(decoded)
-
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	if _, hasNewMinimum := fields["file_size_min_mb"]; hasNewMinimum {
-		return nil
-	}
-	legacy, hasLegacyMinimum := fields["file_size_mb"]
-	if !hasLegacyMinimum {
-		return nil
-	}
-	return json.Unmarshal(legacy, &cfg.FileSizeMinMB)
-}
+var schemaDefaults = sync.OnceValue(func() *Config {
+	cfg, _, err := loadComponents(context.Background(), nil, ports.SystemConfiguration{Namespace: "default"})
+	if err != nil {
+		panic(err)
+	} // Invalid compiled-in schemas are programming errors.
+	return cfg
+})
 
 func NormalizeNamespace(namespace string) (string, error) {
 	namespace = strings.TrimSpace(namespace)
@@ -238,87 +71,35 @@ func NormalizeNamespace(namespace string) (string, error) {
 	return namespace, nil
 }
 
-func EffectiveLimit(cfg *Config) int {
-	if cfg == nil || cfg.Limit < 1 {
-		return DefaultLimit
-	}
-	return cfg.Limit
-}
-
-func EffectivePoolSize(cfg *Config) int {
-	if cfg == nil || cfg.PoolSize < 1 {
-		return DefaultPoolSize
-	}
-	return cfg.PoolSize
-}
-
 func EffectiveProxy(cfg *Config) string {
 	if cfg == nil {
 		return ""
 	}
-	proxyURL := strings.TrimSpace(cfg.Proxy)
-	username := strings.TrimSpace(cfg.ProxyUsername)
-	if proxyURL == "" || username == "" {
-		return proxyURL
-	}
-
-	u, err := url.Parse(proxyURL)
-	if err != nil || u.User != nil {
-		return proxyURL
-	}
-	if cfg.ProxyPassword == "" {
-		u.User = url.User(username)
-	} else {
-		u.User = url.UserPassword(username, cfg.ProxyPassword)
-	}
-	return u.String()
+	return strings.TrimSpace(cfg.Proxy)
 }
 
-func EffectiveFilename(cfg *Config) string {
-	if cfg == nil {
-		return DefaultFilename
+func PrimaryDownloadExecutor(cfg *Config) string {
+	if cfg == nil || len(cfg.Downloader.Executors) == 0 {
+		return ""
 	}
-	filename := strings.TrimSpace(cfg.Filename)
-	if filename == "" {
-		return DefaultFilename
-	}
-	return filename
+	return cfg.Downloader.Executors[0]
 }
 
-func EffectiveFilenameMax(cfg *Config) int {
-	if cfg == nil || cfg.FilenameMax <= 0 {
-		return DefaultFilenameMax
+func UsesDownloadExecutor(cfg *Config, executor string) bool {
+	if executor == DownloadExecutorHTTP {
+		return cfg != nil && slices.Contains(cfg.Downloader.Executors, executor)
 	}
-	return cfg.FilenameMax
+	return PrimaryDownloadExecutor(cfg) == executor
 }
 
-func NormalizeDownloaderMode(mode string) (string, error) {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		return DownloaderModeAria2, nil
-	}
-	switch mode {
-	case DownloaderModeAria2, DownloaderModeInternal:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("downloader.mode must be %q or %q", DownloaderModeAria2, DownloaderModeInternal)
-	}
-}
-
-func EffectiveDownloaderMode(cfg *Config) string {
-	if cfg == nil {
-		return DownloaderModeAria2
-	}
-	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
-	if err != nil {
-		return DownloaderModeAria2
-	}
-	return mode
+// Aria2Enabled keeps the optional RPC manager out of local and link-only operation.
+func Aria2Enabled(cfg *Config) bool {
+	return cfg != nil && cfg.Modules.Aria2 && PrimaryDownloadExecutor(cfg) == DownloadExecutorAria2
 }
 
 func NormalizeForwardMode(mode string) (string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" || mode == "direct" {
+	if mode == "" {
 		return ForwardModeDefault, nil
 	}
 	switch mode {
@@ -329,311 +110,44 @@ func NormalizeForwardMode(mode string) (string, error) {
 	}
 }
 
-func EffectiveForwardMode(cfg *Config) string {
-	if cfg == nil {
-		return ForwardModeDefault
-	}
-	mode, err := NormalizeForwardMode(cfg.Forward.Mode)
-	if err != nil {
-		return ForwardModeDefault
-	}
-	return mode
-}
-
-func EffectiveForwardDedupeTTL(cfg *Config) int {
-	if cfg == nil || cfg.Forward.DedupeTTLSeconds <= 0 {
-		return 600
-	}
-	return cfg.Forward.DedupeTTLSeconds
-}
-
-// NormalizeFileSizeRange returns a usable inclusive range in MB. Zero means
-// that the corresponding boundary is unlimited. Any invalid range is reset
-// as a whole so callers never apply only part of a malformed setting.
-func NormalizeFileSizeRange(minMB, maxMB int64) (normalizedMinMB, normalizedMaxMB int64, valid bool) {
-	if minMB < 0 || maxMB < 0 || (minMB > 0 && maxMB > 0 && minMB > maxMB) {
-		return 0, 0, false
-	}
-	return minMB, maxMB, true
-}
-
 func HTTPListenAddr(cfg *Config) string {
-	if cfg == nil {
-		return HTTPConfigListenAddr(HTTPConfig{})
-	}
 	return HTTPConfigListenAddr(cfg.HTTP)
 }
 
 func HTTPConfigListenAddr(cfg HTTPConfig) string {
-	address := DefaultHTTPAddress
-	port := DefaultHTTPPort
-	if strings.TrimSpace(cfg.Address) != "" {
-		address = strings.TrimSpace(cfg.Address)
-	}
-	if cfg.Port > 0 {
-		port = cfg.Port
-	}
-	return net.JoinHostPort(address, strconv.Itoa(port))
+	return net.JoinHostPort(cfg.Address, strconv.Itoa(cfg.Port))
 }
 
 func WebUIListenAddr(cfg *Config) string {
-	address := DefaultWebUIAddress
-	port := DefaultWebUIPort
-	if cfg != nil {
-		if strings.TrimSpace(cfg.WebUI.Address) != "" {
-			address = strings.TrimSpace(cfg.WebUI.Address)
-		}
-		if cfg.WebUI.Port > 0 {
-			port = cfg.WebUI.Port
-		}
-	}
-	return net.JoinHostPort(address, strconv.Itoa(port))
+	return net.JoinHostPort(cfg.WebUI.Address, strconv.Itoa(cfg.WebUI.Port))
 }
 
 func UsesDefaultWebUICredentials(cfg *Config) bool {
 	if cfg == nil {
 		return false
 	}
-	return strings.TrimSpace(cfg.WebUI.Username) == DefaultWebUIUsername && cfg.WebUI.Password == DefaultWebUIPassword
-}
-
-func normalizeHTTPConfig(cfg *Config) error {
-	if cfg == nil {
-		return nil
-	}
-	httpCfg := &cfg.HTTP
-	httpCfg.Address = strings.TrimSpace(httpCfg.Address)
-	if strings.TrimSpace(httpCfg.Listen) != "" {
-		address, port, err := splitLegacyListen("http.listen", httpCfg.Listen, DefaultHTTPAddress)
-		if err != nil {
-			return err
-		}
-		httpCfg.Address = address
-		httpCfg.Port = port
-		httpCfg.Listen = ""
-	}
-	if httpCfg.Address == "" {
-		httpCfg.Address = DefaultHTTPAddress
-	}
-	if httpCfg.Port == 0 {
-		httpCfg.Port = DefaultHTTPPort
-	}
-	if httpCfg.Port < 1 || httpCfg.Port > 65535 {
-		return fmt.Errorf("http.port must be between 1 and 65535")
-	}
-	return nil
-}
-
-func normalizeWebUIConfig(cfg *Config) error {
-	if cfg == nil {
-		return nil
-	}
-	web := &cfg.WebUI
-	web.Address = strings.TrimSpace(web.Address)
-	if strings.TrimSpace(web.Listen) != "" {
-		address, port, err := splitLegacyListen("webui.listen", web.Listen, DefaultWebUIAddress)
-		if err != nil {
-			return err
-		}
-		web.Address = address
-		web.Port = port
-		web.Listen = ""
-	}
-	if web.Address == "" {
-		web.Address = DefaultWebUIAddress
-	}
-	if web.Port == 0 {
-		web.Port = DefaultWebUIPort
-	}
-	if web.Port < 1 || web.Port > 65535 {
-		return fmt.Errorf("webui.port must be between 1 and 65535")
-	}
-	web.Username = strings.TrimSpace(web.Username)
-	return nil
-}
-
-func splitLegacyListen(field, listen, defaultAddress string) (string, int, error) {
-	listen = strings.TrimSpace(listen)
-	host, portText, err := net.SplitHostPort(listen)
-	if err != nil {
-		return "", 0, fmt.Errorf("%s must be host:port: %w", field, err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		return "", 0, fmt.Errorf("%s has invalid port %q", field, portText)
-	}
-	host = strings.TrimSpace(host)
-	if host == "" {
-		host = defaultAddress
-	}
-	return host, port, nil
-}
-
-func Validate(cfg *Config) error {
-	if cfg == nil {
-		return errors.New("config is nil")
-	}
-	namespace, err := NormalizeNamespace(cfg.Namespace)
-	if err != nil {
-		return errors.Wrap(err, "validate namespace")
-	}
-	cfg.Namespace = namespace
-	cfg.Proxy = strings.TrimSpace(cfg.Proxy)
-	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
-	cfg.NTP = strings.TrimSpace(cfg.NTP)
-	cfg.Limit = EffectiveLimit(cfg)
-	cfg.PoolSize = EffectivePoolSize(cfg)
-	cfg.Filename = EffectiveFilename(cfg)
-	cfg.FilenameMax = EffectiveFilenameMax(cfg)
-	cfg.FileSizeMinMB, cfg.FileSizeMaxMB, _ = NormalizeFileSizeRange(cfg.FileSizeMinMB, cfg.FileSizeMaxMB)
-	mode, err := NormalizeDownloaderMode(cfg.Downloader.Mode)
-	if err != nil {
-		return err
-	}
-	cfg.Downloader.Mode = mode
-	forwardMode, err := NormalizeForwardMode(cfg.Forward.Mode)
-	if err != nil {
-		return err
-	}
-	cfg.Forward.Mode = forwardMode
-	cfg.Forward.Target = strings.TrimSpace(cfg.Forward.Target)
-	cfg.Forward.Listen = normalizeStringList(cfg.Forward.Listen)
-	if cfg.Forward.DedupeTTLSeconds < 0 {
-		return errors.New("forward.dedupe_ttl_seconds must be greater than or equal to 0")
-	}
-	cfg.Forward.TriggerReactions = normalizeStringList(cfg.Forward.TriggerReactions)
-	if cfg.Bot.Notify.LiveProgressIntervalSec < 5 {
-		cfg.Bot.Notify.LiveProgressIntervalSec = 5
-	}
-	if err := normalizeHTTPConfig(cfg); err != nil {
-		return err
-	}
-	if err := normalizeWebUIConfig(cfg); err != nil {
-		return err
-	}
-	return nil
-}
-
-func normalizeStringList(values []string) []string {
-	if len(values) == 0 {
-		return []string{}
-	}
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+	return strings.TrimSpace(cfg.WebUI.Username) == schemaDefaults().WebUI.Username && cfg.WebUI.Password == schemaDefaults().WebUI.Password
 }
 
 var (
-	instance   *Config
-	once       sync.Once
-	configPath string
-	mu         sync.RWMutex
+	instance *Config
+	mu       sync.RWMutex
+	persist  func(context.Context, *Config, *Config) error
 )
 
-// Init 初始化配置，从 JSON 文件加载
-func Init(execDir string) error {
-	var err error
-	once.Do(func() {
-		configPath = filepath.Join(execDir, "config.json")
-		instance, err = Load(configPath)
-	})
-	return err
+// Install binds the runtime snapshot to the configuration service.
+func Install(cfg *Config, save func(context.Context, *Config, *Config) error) {
+	mu.Lock()
+	defer mu.Unlock()
+	instance = cfg
+	persist = save
 }
 
-// Load 从文件加载配置
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// 文件不存在，创建默认配置
-			cfg := DefaultConfig()
-			if err := Save(path, cfg); err != nil {
-				return nil, errors.Wrap(err, "save default config")
-			}
-			return cfg, nil
-		}
-		return nil, errors.Wrap(err, "read config file")
+func persistConfig(ctx context.Context, next *Config) error {
+	if persist == nil {
+		return errors.New("configuration persistence is not installed")
 	}
-
-	cfg := DefaultConfig()
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, errors.Wrap(err, "unmarshal config")
-	}
-	if err := Validate(cfg); err != nil {
-		return nil, errors.Wrap(err, "validate config")
-	}
-
-	return cfg, nil
-}
-
-// Save 保存配置到文件
-func Save(path string, cfg *Config) error {
-	if err := Validate(cfg); err != nil {
-		return errors.Wrap(err, "validate config")
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "marshal config")
-	}
-
-	if err := writeFileAtomic(path, data, 0o644); err != nil {
-		return errors.Wrap(err, "write config file")
-	}
-
-	return nil
-}
-
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if dir == "" {
-		dir = "."
-	}
-	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer func() {
-		_ = temp.Close()
-		_ = os.Remove(tempPath)
-	}()
-
-	if err := temp.Chmod(perm); err != nil {
-		return err
-	}
-	if _, err := temp.Write(data); err != nil {
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-
-	// Persist the directory entry where the platform supports syncing a
-	// directory. The rename itself is still atomic if this best-effort sync is
-	// unavailable (for example on Windows).
-	if parent, err := os.Open(dir); err == nil {
-		_ = parent.Sync()
-		_ = parent.Close()
-	}
-	return nil
+	return persist(ctx, instance, next)
 }
 
 // Get 获取配置实例
@@ -661,10 +175,28 @@ func Set(cfg *Config) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if err := Save(configPath, cfg); err != nil {
+	if err := persistConfig(context.Background(), cfg); err != nil {
 		return err
 	}
 
 	instance = cfg
+	return nil
+}
+
+// CompareAndSet prevents a stale control-plane snapshot from overwriting a
+// concurrent configuration update made by another entry point.
+func CompareAndSet(ctx context.Context, expected, next *Config) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(instance, expected) {
+		return ports.ErrConfigurationConflict
+	}
+	if err := persistConfig(ctx, next); err != nil {
+		return err
+	}
+	instance = next
 	return nil
 }

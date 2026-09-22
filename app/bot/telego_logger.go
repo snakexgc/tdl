@@ -2,48 +2,48 @@ package bot
 
 import (
 	"fmt"
-	"io"
-	"os"
+	"log/slog"
 	"strings"
-	"sync"
 	"sync/atomic"
-	"time"
+
+	"github.com/snakexgc/tdl/bsw/services/logging"
 )
 
 const telegoTokenReplacement = "BOT_TOKEN"
 
 type shutdownAwareTelegoLogger struct {
-	out          io.Writer
+	logger       *slog.Logger
 	replacer     *strings.Replacer
 	shuttingDown atomic.Bool
-	mu           sync.Mutex
 }
 
 func newShutdownAwareTelegoLogger(token string) *shutdownAwareTelegoLogger {
-	return &shutdownAwareTelegoLogger{
-		out:      os.Stderr,
-		replacer: strings.NewReplacer(token, telegoTokenReplacement),
+	logger := &shutdownAwareTelegoLogger{logger: slog.Default().With("component", "console.bot")}
+	if token != "" {
+		logger.replacer = strings.NewReplacer(token, telegoTokenReplacement)
 	}
+	return logger
 }
 
 func (l *shutdownAwareTelegoLogger) SetShuttingDown() {
 	l.shuttingDown.Store(true)
 }
 
+// Telego debug messages include full request/response bodies and login input.
+// Keep wire dumps disabled; recoverable transport errors are logged below.
 func (l *shutdownAwareTelegoLogger) Debugf(_ string, _ ...any) {}
 
 func (l *shutdownAwareTelegoLogger) Errorf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	if shouldSuppressTelegoError(msg, l.shuttingDown.Load()) {
-		return
-	}
 	if l.replacer != nil {
 		msg = l.replacer.Replace(msg)
 	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_, _ = fmt.Fprintf(l.out, "[%s] ERROR %s\n", time.Now().Format(time.UnixDate), msg)
+	msg = logging.Redact(msg)
+	if shouldSuppressTelegoError(msg, l.shuttingDown.Load()) {
+		l.logger.Debug(msg)
+		return
+	}
+	l.logger.Error(msg)
 }
 
 func shouldSuppressTelegoError(msg string, shuttingDown bool) bool {

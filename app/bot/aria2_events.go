@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/aria2"
-	"github.com/snakexgc/tdl/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/utils"
 )
@@ -47,22 +47,53 @@ type aria2ProgressEntry struct {
 
 // aria2ProgressTracker maps GIDs to their live-progress state.
 type aria2ProgressTracker struct {
-	mu    sync.Mutex
-	items map[string]*aria2ProgressEntry
+	mu     sync.Mutex
+	items  map[string]*aria2ProgressEntry
+	active sync.WaitGroup
+	closed bool
 }
 
 func newAria2ProgressTracker() *aria2ProgressTracker {
 	return &aria2ProgressTracker{items: make(map[string]*aria2ProgressEntry)}
 }
 
-// Set registers (or replaces) a progress entry for gid, cancelling any previous one.
-func (t *aria2ProgressTracker) Set(gid string, cancel context.CancelFunc, tracked []trackedMessage) {
+// Run owns a progress loop until it exits. Replacing an entry cancels the old
+// loop; that old loop may only remove its own entry when it finally drains.
+func (t *aria2ProgressTracker) Run(ctx context.Context, gid string, tracked []trackedMessage, run func(context.Context)) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.closed {
+		return false
+	}
 	if prev, ok := t.items[gid]; ok {
 		prev.cancel()
 	}
-	t.items[gid] = &aria2ProgressEntry{cancel: cancel, tracked: tracked}
+	ctx, cancel := context.WithCancel(ctx)
+	entry := &aria2ProgressEntry{cancel: cancel, tracked: tracked}
+	t.items[gid] = entry
+	t.active.Go(func() {
+		defer func() {
+			cancel()
+			t.mu.Lock()
+			if t.items[gid] == entry {
+				delete(t.items, gid)
+			}
+			t.mu.Unlock()
+		}()
+		runAria2EventHandler(ctx, "progress", gid, func() { run(ctx) })
+	})
+	return true
+}
+
+func (t *aria2ProgressTracker) Close() {
+	t.mu.Lock()
+	t.closed = true
+	for gid, entry := range t.items {
+		entry.cancel()
+		delete(t.items, gid)
+	}
+	t.mu.Unlock()
+	t.active.Wait()
 }
 
 // Cancel stops the progress loop for gid and returns the tracked messages (nil if none).
@@ -84,18 +115,19 @@ func runAria2EventListener(ctx context.Context, notifier *botNotifier, factory a
 	}
 
 	tracker := newAria2ProgressTracker()
+	defer tracker.Close()
 
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		if !aria2DownloaderEnabled() {
+		if !aria2DownloaderEnabled(ctx) {
 			waitAria2EventReconnect(ctx)
 			continue
 		}
 
-		wsURL, err := aria2WebSocketURL(config.Get().Aria2.RPCURL)
+		wsURL, err := aria2WebSocketURL(config.From(ctx).Aria2.RPCURL)
 		if err == nil {
 			_ = listenAria2Events(ctx, wsURL, notifier, factory, tracker)
 		}
@@ -121,6 +153,29 @@ func waitAria2EventReconnect(ctx context.Context) bool {
 }
 
 func listenAria2Events(ctx context.Context, wsURL string, notifier *botNotifier, factory aria2ControllerFactory, tracker *aria2ProgressTracker) error {
+	ctx, cancel := context.WithCancel(ctx)
+	var handlers sync.WaitGroup
+	defer func() { cancel(); handlers.Wait() }()
+	slots := make(chan struct{}, 16)
+	if initial := config.From(ctx); initial != nil {
+		rpcURL := initial.Aria2.RPCURL
+		handlers.Go(func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					current := config.From(ctx)
+					if current == nil || current.Aria2.RPCURL != rpcURL || !aria2DownloaderEnabled(ctx) {
+						cancel()
+						return
+					}
+				}
+			}
+		})
+	}
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
 		return err
@@ -142,8 +197,16 @@ func listenAria2Events(ctx context.Context, wsURL string, notifier *botNotifier,
 			continue
 		}
 
-		go runAria2EventHandler(ctx, event.Method, gid, func() {
-			handleAria2Event(ctx, notifier, factory, tracker, event.Method, gid)
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		handlers.Go(func() {
+			defer func() { <-slots }()
+			runAria2EventHandler(ctx, event.Method, gid, func() {
+				handleAria2Event(ctx, notifier, factory, tracker, event.Method, gid)
+			})
 		})
 	}
 }
@@ -164,16 +227,16 @@ func runAria2EventHandler(ctx context.Context, method, gid string, handler func(
 }
 
 func handleAria2Event(ctx context.Context, notifier *botNotifier, factory aria2ControllerFactory, tracker *aria2ProgressTracker, method, gid string) {
-	if !aria2DownloaderEnabled() {
+	if !aria2DownloaderEnabled(ctx) {
 		return
 	}
 
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	if cfg == nil {
 		return
 	}
 
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aria2CommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, aria2CommandTimeout)
 	defer cancel()
 	controller := factory()
 
@@ -189,61 +252,58 @@ func handleAria2Event(ctx context.Context, notifier *botNotifier, factory aria2C
 		text := formatAria2ProgressMessage(task)
 		tracked := notifier.SendAndTrack(ctx, text)
 		if cfg.Bot.Notify.LiveProgress && len(tracked) > 0 {
-			progressCtx, progressCancel := context.WithCancel(context.WithoutCancel(ctx))
-			tracker.Set(gid, progressCancel, tracked)
 			intervalSec := cfg.Bot.Notify.LiveProgressIntervalSec
 			if intervalSec < 5 {
 				intervalSec = 15
 			}
-			go runAria2ProgressLoop(progressCtx, notifier, factory, tracker, gid, tracked, intervalSec)
+			tracker.Run(ctx, gid, tracked, func(progressCtx context.Context) {
+				runAria2ProgressLoop(progressCtx, notifier, factory, gid, tracked, intervalSec)
+			})
 		}
 
 	case aria2EventDownloadComplete:
 		tracked := tracker.Cancel(gid)
 		task, err := controller.TellStatus(cmdCtx, gid)
-		if err == nil && len(tracked) > 0 {
+		if err != nil {
+			return // A daemon event alone does not establish account ownership.
+		}
+		if len(tracked) > 0 {
 			notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "complete"))
 		}
 		if cfg.Bot.Notify.OnDownloadComplete {
-			if err == nil {
-				notifyAria2DownloadComplete(ctx, notifier, task)
-			} else {
-				notifier.Notify(ctx, fmt.Sprintf("下载完成 GID: %s", gid))
-			}
+			notifyAria2DownloadComplete(ctx, notifier, task)
 		}
 
 	case aria2EventDownloadPause:
 		tracked := tracker.Cancel(gid)
 		task, err := controller.TellStatus(cmdCtx, gid)
+		if err != nil {
+			return
+		}
 		if cfg.Bot.Notify.OnDownloadPause {
-			if err == nil {
-				if len(tracked) > 0 {
-					notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "pause"))
-				} else {
-					notifier.Notify(ctx, fmt.Sprintf("%s 下载已暂停", aria2.TaskName(task)))
-				}
+			if len(tracked) > 0 {
+				notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "pause"))
 			} else {
-				notifier.Notify(ctx, fmt.Sprintf("GID %s 下载已暂停", gid))
+				notifier.Notify(ctx, fmt.Sprintf("%s 下载已暂停", aria2.TaskName(task)))
 			}
 		}
 
 	case aria2EventDownloadError:
 		tracked := tracker.Cancel(gid)
 		task, err := controller.TellStatus(cmdCtx, gid)
+		if err != nil {
+			return
+		}
 		if cfg.Bot.Notify.OnDownloadError {
-			if err == nil {
-				if len(tracked) > 0 {
-					notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "error"))
-				} else {
-					info := aria2.TaskInfoFromStatus(task)
-					msg := aria2.TaskName(task) + " 下载失败"
-					if info.ErrorMessage != "" {
-						msg += "：" + info.ErrorMessage
-					}
-					notifier.Notify(ctx, msg)
-				}
+			if len(tracked) > 0 {
+				notifier.EditTracked(ctx, tracked, formatAria2DownloadFinal(task, "error"))
 			} else {
-				notifier.Notify(ctx, fmt.Sprintf("GID %s 下载失败", gid))
+				info := aria2.TaskInfoFromStatus(task)
+				msg := aria2.TaskName(task) + " 下载失败"
+				if info.ErrorMessage != "" {
+					msg += "：" + info.ErrorMessage
+				}
+				notifier.Notify(ctx, msg)
 			}
 		}
 	}
@@ -254,7 +314,6 @@ func runAria2ProgressLoop(
 	ctx context.Context,
 	notifier *botNotifier,
 	factory aria2ControllerFactory,
-	tracker *aria2ProgressTracker,
 	gid string,
 	tracked []trackedMessage,
 	intervalSec int,
@@ -275,7 +334,6 @@ func runAria2ProgressLoop(
 			}
 			status := task.Status
 			if status == "complete" || status == "error" || status == "removed" {
-				tracker.Cancel(gid)
 				return
 			}
 			notifier.EditTracked(ctx, tracked, formatAria2ProgressMessage(task))

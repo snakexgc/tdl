@@ -8,12 +8,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
 )
@@ -34,11 +36,9 @@ const (
 
 func initWebUITestConfig(t *testing.T) {
 	t.Helper()
-	var initErr error
 	webUITestConfigOnce.Do(func() {
-		initErr = config.Init(t.TempDir())
+		config.Install(config.DefaultConfig(), func(ctx context.Context, _, _ *config.Config) error { return ctx.Err() })
 	})
-	require.NoError(t, initErr)
 
 	cfg := config.Get()
 	cfg.HTTP.PublicBaseURL = "http://127.0.0.1:22334"
@@ -199,7 +199,23 @@ func TestRoutesServeAppShellForViewPaths(t *testing.T) {
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/css")
 }
 
-func TestConfigAPIExposesSplitListenFields(t *testing.T) {
+func TestComponentAssetsAreServedByTheirDeclaredPaths(t *testing.T) {
+	initWebUITestConfig(t)
+	handler := NewServer(Options{}).routes()
+	for _, path := range []string{"/static/js/user.js", "/static/js/update.js", "/static/js/forwards.js", "/static/js/downloads.js", "/static/css/update.css"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, recorder.Code, path)
+		require.NotEmpty(t, recorder.Body.String(), path)
+	}
+	for _, path := range []string{"/aria2ng.html", "/views/update.html", "/api/update/check", "/api/forwards"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		require.NotEqual(t, http.StatusOK, recorder.Code, path)
+	}
+}
+
+func TestConfigAPIExposesOnlySystemSettings(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()
 	previous, err := config.Clone(cfg)
@@ -208,12 +224,8 @@ func TestConfigAPIExposesSplitListenFields(t *testing.T) {
 		*cfg = *previous
 	}()
 
-	cfg.HTTP.Listen = ""
-	cfg.HTTP.Address = "0.0.0.0"
-	cfg.HTTP.Port = 22334
-	cfg.WebUI.Listen = ""
-	cfg.WebUI.Address = "0.0.0.0"
-	cfg.WebUI.Port = 22335
+	cfg.Telegram.APIHash = "private-hash"
+	cfg.Proxy = "socks5://user:private@127.0.0.1:1080"
 	cfg.WebUI.Username = webUITestUsername
 	cfg.WebUI.Password = webUITestPassword
 
@@ -234,20 +246,19 @@ func TestConfigAPIExposesSplitListenFields(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	publicCfg, ok := body["config"].(map[string]any)
 	require.True(t, ok)
-	httpCfg, ok := publicCfg["http"].(map[string]any)
-	require.True(t, ok)
-	webUICfg, ok := publicCfg["webui"].(map[string]any)
-	require.True(t, ok)
-
-	require.Equal(t, "0.0.0.0", httpCfg["address"])
-	require.Equal(t, float64(22334), httpCfg["port"])
-	require.NotContains(t, httpCfg, "listen")
-	require.Equal(t, "0.0.0.0", webUICfg["address"])
-	require.Equal(t, float64(22335), webUICfg["port"])
-	require.NotContains(t, webUICfg, "listen")
+	require.Equal(t, map[string]any{"namespace": cfg.Namespace, logDebugLevel: cfg.Debug}, publicCfg)
+	require.NotContains(t, body, "component_managed")
+	require.NotContains(t, rec.Body.String(), "private")
+	for _, path := range []string{"/api/modules", "/api/internal-downloads", "/api/internal-downloads/actions"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.AddCookie(req.Cookies()[0])
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusNotFound, recorder.Code, path)
+	}
 }
 
-func TestConfigAPIRejectsBlankWebUIUsername(t *testing.T) {
+func TestSystemConfigAPIRejectsComponentSettingWrites(t *testing.T) {
 	initWebUITestConfig(t)
 	cfg := config.Get()
 	previous, err := config.Clone(cfg)
@@ -273,13 +284,33 @@ func TestConfigAPIRejectsBlankWebUIUsername(t *testing.T) {
 	require.Equal(t, webUITestUsername, config.Get().WebUI.Username)
 }
 
-func TestAria2DashboardUnavailableWhenRPCRequestFails(t *testing.T) {
-	stat, err := fetchAria2DashboardStat(context.Background(), config.Aria2Config{
-		RPCURL: "http://127.0.0.1:0",
-	})
+func TestDashboardDoesNotMonitorAria2(t *testing.T) {
+	initWebUITestConfig(t)
+	cfg := config.Get()
+	previous, err := config.Clone(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { *cfg = *previous })
 
-	require.Error(t, err)
-	require.False(t, stat.Available)
+	var requests atomic.Int32
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "aria2 unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(remote.Close)
+	cfg.Modules.Aria2 = true
+	cfg.Downloader.Executors = []string{config.DownloadExecutorAria2}
+	cfg.Aria2.RPCURL = remote.URL
+
+	server := NewServer(Options{})
+	recorder := httptest.NewRecorder()
+	server.handleDashboard(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"gotd_speed_bps"`)
+	require.Contains(t, recorder.Body.String(), `"dc_schedulers"`)
+	require.Contains(t, recorder.Body.String(), `"telegram_file_errors_10s"`)
+	require.NotContains(t, recorder.Body.String(), "aria2")
+	require.Zero(t, requests.Load())
 }
 
 func TestRebootRequestRejectsReentry(t *testing.T) {
@@ -355,10 +386,11 @@ func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        testDocumentID,
-		FileName:  testFileName,
-		FileSize:  123,
-		CreatedAt: createdAt,
+		LastActiveAt: createdAt,
+		ID:           testDocumentID,
+		FileName:     testFileName,
+		FileSize:     123,
+		CreatedAt:    createdAt,
 	})
 	require.NoError(t, err)
 	indexData, err := json.Marshal(map[string]time.Time{
@@ -366,7 +398,7 @@ func TestListDownloadLinksSkipsDownloadIndexKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskIndexKey:                   indexData,
 			downloadTaskKeyPrefix + testDocumentID: taskData,
@@ -388,10 +420,11 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 
 	createdAt := time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        testDocumentID,
-		FileName:  "video.mp4",
-		FileSize:  100,
-		CreatedAt: createdAt,
+		LastActiveAt: createdAt,
+		ID:           testDocumentID,
+		FileName:     "video.mp4",
+		FileSize:     100,
+		CreatedAt:    createdAt,
 	})
 	require.NoError(t, err)
 	oldRecordData, err := json.Marshal(aria2TaskRecord{
@@ -399,7 +432,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 		TaskID:      testDocumentID,
 		DownloadURL: "http://127.0.0.1:22334/download/" + testDocumentID,
 		CreatedAt:   createdAt,
-		Status:      "error",
+		Status:      fieldError,
 		Error:       "EOF",
 	})
 	require.NoError(t, err)
@@ -429,7 +462,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 		cfg.HTTP.PublicBaseURL = oldBase
 	}()
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskKeyPrefix + testDocumentID: taskData,
 			aria2TaskKeyPrefix + "old-gid":         oldRecordData,
@@ -437,6 +470,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 	}}
 	namespaceKV, err := engine.Open(testQueueDefault)
 	require.NoError(t, err)
+	indexCatalogFixtures(t, engine)
 	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault, NamespaceKV: namespaceKV})
 
 	items, statusErr, err := server.listDownloadLinks(context.Background())
@@ -475,7 +509,7 @@ func TestListDownloadLinksDiscoversRetriedAria2GIDByDownloadURL(t *testing.T) {
 func TestListUserSessionsOnlyReturnsNamespacesWithSession(t *testing.T) {
 	initWebUITestConfig(t)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testUserAlice: {
 			userSessionKey: []byte("alice-session"),
 		},
@@ -505,7 +539,7 @@ func TestListUserSessionsOnlyReturnsNamespacesWithSession(t *testing.T) {
 func TestDeleteUserSessionRemovesLoginKeysOnly(t *testing.T) {
 	initWebUITestConfig(t)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testUserAlice: {
 			userSessionKey:                   []byte("alice-session"),
 			userAppKey:                       []byte("desktop"),
@@ -532,7 +566,7 @@ func TestDeleteUserSessionRemovesLoginKeysOnly(t *testing.T) {
 func TestHandleUserDeleteRejectsCurrentUser(t *testing.T) {
 	initWebUITestConfig(t)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testUserBob: {
 			userSessionKey: []byte("bob-session"),
 		},
@@ -550,7 +584,7 @@ func TestHandleUserDeleteRejectsCurrentUser(t *testing.T) {
 func TestDeleteDownloadLinkRefusesDownloadIndexKey(t *testing.T) {
 	initWebUITestConfig(t)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskIndexKey: []byte("{}"),
 		},
@@ -830,11 +864,12 @@ func TestListDownloadLinksUsesLastActiveForExpiry(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskKeyPrefix + testDocumentID: taskData,
 		},
 	}}
+	indexCatalogFixtures(t, engine)
 	server := NewServer(Options{KVEngine: engine, Namespace: testQueueDefault})
 
 	items, _, err := server.listDownloadLinks(context.Background())
@@ -851,14 +886,15 @@ func TestRefreshDownloadTaskActivitySlidesExpiry(t *testing.T) {
 
 	created := time.Now().Add(-72 * time.Hour)
 	taskData, err := json.Marshal(persistentDownloadTask{
-		ID:        testDocumentID,
-		FileName:  testFileName,
-		FileSize:  10,
-		CreatedAt: created,
+		LastActiveAt: created,
+		ID:           testDocumentID,
+		FileName:     testFileName,
+		FileSize:     10,
+		CreatedAt:    created,
 	})
 	require.NoError(t, err)
 
-	engine := &fakeWebUIKVEngine{meta: kv.Meta{
+	engine := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{
 		testQueueDefault: {
 			downloadTaskKeyPrefix + testDocumentID: taskData,
 		},
@@ -883,30 +919,17 @@ func TestRefreshDownloadTaskActivitySlidesExpiry(t *testing.T) {
 }
 
 type fakeWebUIKVEngine struct {
-	meta kv.Meta
+	mu   sync.Mutex
+	meta map[string]map[string][]byte
 }
 
 func (f *fakeWebUIKVEngine) Name() string {
 	return "fake"
 }
 
-func (f *fakeWebUIKVEngine) MigrateTo() (kv.Meta, error) {
-	out := make(kv.Meta, len(f.meta))
-	for ns, pairs := range f.meta {
-		out[ns] = make(map[string][]byte, len(pairs))
-		for key, value := range pairs {
-			out[ns][key] = append([]byte(nil), value...)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeWebUIKVEngine) MigrateFrom(meta kv.Meta) error {
-	f.meta = meta
-	return nil
-}
-
 func (f *fakeWebUIKVEngine) Namespaces() ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]string, 0, len(f.meta))
 	for ns := range f.meta {
 		out = append(out, ns)
@@ -915,8 +938,10 @@ func (f *fakeWebUIKVEngine) Namespaces() ([]string, error) {
 }
 
 func (f *fakeWebUIKVEngine) Open(ns string) (storage.Storage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.meta == nil {
-		f.meta = kv.Meta{}
+		f.meta = map[string]map[string][]byte{}
 	}
 	if _, ok := f.meta[ns]; !ok {
 		f.meta[ns] = map[string][]byte{}
@@ -936,6 +961,8 @@ type fakeWebUINamespaceKV struct {
 }
 
 func (f *fakeWebUINamespaceKV) Get(_ context.Context, key string) ([]byte, error) {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
 	value, ok := f.engine.meta[f.namespace][key]
 	if !ok {
 		return nil, storage.ErrNotFound
@@ -944,11 +971,72 @@ func (f *fakeWebUINamespaceKV) Get(_ context.Context, key string) ([]byte, error
 }
 
 func (f *fakeWebUINamespaceKV) Set(_ context.Context, key string, value []byte) error {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
 	f.engine.meta[f.namespace][key] = append([]byte(nil), value...)
 	return nil
 }
 
 func (f *fakeWebUINamespaceKV) Delete(_ context.Context, key string) error {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
 	delete(f.engine.meta[f.namespace], key)
 	return nil
+}
+
+func (f *fakeWebUIKVEngine) Snapshot(ctx context.Context, namespace string) (map[string][]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := map[string][]byte{}
+	for key, value := range f.meta[namespace] {
+		result[key] = append([]byte(nil), value...)
+	}
+	return result, ctx.Err()
+}
+
+func (f *fakeWebUINamespaceKV) Update(ctx context.Context, fn func(storage.Storage) error) error {
+	f.engine.mu.Lock()
+	defer f.engine.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	values := make(map[string][]byte)
+	for key, value := range f.engine.meta[f.namespace] {
+		values[key] = append([]byte(nil), value...)
+	}
+	next := &fakeWebUIKVEngine{meta: map[string]map[string][]byte{f.namespace: values}}
+	if err := fn(&fakeWebUINamespaceKV{engine: next, namespace: f.namespace}); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.engine.meta[f.namespace] = next.meta[f.namespace]
+	return nil
+}
+
+// Fixture records are written through their collection so positive catalog
+// tests exercise the same indexes as production writers.
+func indexCatalogFixtures(t *testing.T, engine kv.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	namespaces, err := engine.Namespaces()
+	require.NoError(t, err)
+	for _, namespace := range namespaces {
+		values, err := engine.Snapshot(ctx, namespace)
+		require.NoError(t, err)
+		store, err := engine.Open(namespace)
+		require.NoError(t, err)
+		for key, data := range values {
+			switch {
+			case strings.HasPrefix(key, downloadTaskKeyPrefix) && key != downloadTaskIndexKey:
+				require.NoError(t, taskhub.Links(store).Put(ctx, strings.TrimPrefix(key, downloadTaskKeyPrefix), data, time.Now()))
+			case strings.HasPrefix(key, aria2TaskKeyPrefix) && key != aria2TaskIndexKey:
+				var record aria2TaskRecord
+				require.NoError(t, json.Unmarshal(data, &record))
+				require.NoError(t, store.Delete(ctx, key))
+				require.NoError(t, taskhub.NewAria2Repository(store, 0).Add(ctx, record))
+			}
+		}
+	}
 }

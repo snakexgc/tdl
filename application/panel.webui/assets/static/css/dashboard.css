@@ -1,0 +1,298 @@
+/* Dashboard view: metric cards, stat bars, and SVG charts. */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 16px;
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.dashboard-section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.dashboard-section-head .notice {
+  margin: 0;
+  font-size: 12px;
+}
+
+.dashboard-card {
+  min-height: 340px;
+  padding: 24px;
+  display: grid;
+  grid-template-rows: auto minmax(200px, 1fr) auto;
+  gap: 24px;
+}
+
+.dashboard-card-wide {
+  grid-column: 1 / -1;
+}
+
+.dashboard-pull-card {
+  grid-template-rows: auto 1fr;
+}
+
+.dashboard-card-head-plain {
+  justify-content: flex-start;
+}
+
+.dashboard-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.dashboard-card-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  line-height: 24px;
+}
+
+.dashboard-card-head p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dashboard-card-head strong {
+  color: var(--text);
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* ── Stat bars (download status card) ── */
+.dashboard-stat-bars {
+  display: grid;
+  gap: 16px;
+  align-content: center;
+}
+
+.dashboard-stat-row {
+  min-width: 0;
+}
+
+.dashboard-stat-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.dashboard-stat-line span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.dashboard-stat-line strong {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.1;
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+  letter-spacing: -0.02em;
+}
+
+.dashboard-stat-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-strong);
+}
+
+.dashboard-stat-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--chart-2);
+  transition: width 220ms ease;
+}
+
+.dashboard-stat-fill-danger {
+  background: var(--danger);
+}
+.dashboard-stat-fill-warning {
+  background: var(--chart-4);
+}
+
+/* ── SVG charts ── */
+.dashboard-chart-shell {
+  position: relative;
+  width: 100%;
+  min-height: 200px;
+  overflow: visible;
+}
+
+.dashboard-chart {
+  display: block;
+  width: 100%;
+  height: 220px;
+  min-height: 200px;
+}
+
+.dashboard-chart .grid-line {
+  stroke: var(--line);
+  stroke-dasharray: 3 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .axis-line {
+  stroke: var(--line);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .axis-tick {
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .axis-label {
+  fill: var(--muted);
+  font-size: 10.5px;
+}
+
+.dashboard-chart .series-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .hover-line {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .hover-point {
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-chart .hover-tooltip-bg {
+  fill: rgba(255, 255, 255, 0.97);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  filter: drop-shadow(0 4px 8px rgb(0 0 0 / 0.08));
+}
+
+.dashboard-chart .hover-tooltip-title {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-chart .hover-tooltip-text {
+  fill: var(--muted);
+  font-size: 11.5px;
+}
+
+.dashboard-chart .chart-hit-area {
+  cursor: crosshair;
+  fill: transparent;
+  pointer-events: all;
+}
+
+/* ── Chart legends ── */
+.dashboard-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dashboard-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dashboard-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+}
+
+.legend-cpu,
+.legend-total,
+.legend-gotd {
+  background: var(--chart-1);
+}
+
+.legend-software {
+  background: var(--chart-2);
+}
+
+.legend-retained {
+  background: var(--chart-3);
+}
+
+@media (min-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+  .dashboard-card {
+    grid-column: span 6;
+  }
+  .dashboard-pull-card {
+    grid-column: span 5;
+  }
+  .dashboard-speed-card {
+    grid-column: span 7;
+  }
+}
+
+@media (max-width: 1100px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-card-wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard-card {
+    padding: 20px 16px;
+    gap: 20px;
+  }
+  .dashboard-card-head {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .dashboard-card-head strong {
+    font-size: 26px;
+    line-height: 32px;
+  }
+}

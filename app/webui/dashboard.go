@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"net/http"
 	"runtime"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/ps"
+	"github.com/snakexgc/tdl/rte"
 )
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +22,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":   true,
-		"time": time.Now().UTC().Format(time.RFC3339Nano),
+		"time": rte.Now(s.opts.Context).UTC().Format(time.RFC3339Nano),
 	})
 }
 
@@ -30,17 +32,25 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := config.Get()
+	data, err := s.samples.Read(r.Context(), "dashboard", s.dashboardSnapshot)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
 	now := time.Now()
 	metricErrors := map[string]string{}
 
-	cpuPercent, err := ps.GetSelfCPU(r.Context())
+	cpuPercent, err := ps.GetSelfCPU(ctx)
 	if err != nil {
 		metricErrors["cpu"] = err.Error()
 	}
 
 	var rss uint64
-	if memInfo, err := ps.GetSelfMem(r.Context()); err != nil {
+	if memInfo, err := ps.GetSelfMem(ctx); err != nil {
 		metricErrors["memory"] = err.Error()
 	} else if memInfo != nil {
 		rss = memInfo.RSS
@@ -56,7 +66,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	var memoryTotal uint64
 	var memoryPercent float64
-	if vm, err := hostmem.VirtualMemoryWithContext(r.Context()); err != nil {
+	if vm, err := hostmem.VirtualMemoryWithContext(ctx); err != nil {
 		metricErrors["memory_total"] = err.Error()
 	} else if vm != nil && vm.Total > 0 {
 		memoryTotal = vm.Total
@@ -76,14 +86,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	dcSchedulers := httpdl.DCSchedulerSnapshots()
 	telegramFileErrors := httpdl.TelegramFileErrorCount()
 	telegramFileErrors10s := httpdl.TelegramFileErrorCountSince(10 * time.Second)
-	var aria2Stat aria2DashboardStat
-	if cfg != nil {
-		stat, err := fetchAria2DashboardStat(r.Context(), cfg.Aria2)
-		aria2Stat = stat
-		if err != nil {
-			metricErrors["aria2"] = err.Error()
-		}
-	}
 
 	response := map[string]any{
 		"sampled_at": now.UTC().Format(time.RFC3339Nano),
@@ -106,15 +108,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"download": map[string]any{
 			"gotd_bytes_total":         totalBytes,
 			"gotd_speed_bps":           gotdSpeed,
-			"aria2_speed_bps":          aria2Stat.DownloadSpeedBPS,
-			"aria2_available":          aria2Stat.Available,
 			"active_chunk_requests":    activeChunkRequests,
 			"telegram_file_errors":     telegramFileErrors,
 			"telegram_file_errors_10s": telegramFileErrors10s,
-			"aria2_task_count":         aria2Stat.TotalTasks(),
-			"aria2_active_tasks":       aria2Stat.ActiveTasks,
-			"aria2_waiting_tasks":      aria2Stat.WaitingTasks,
-			"aria2_stopped_tasks":      aria2Stat.StoppedTasks,
 		},
 		"http": map[string]any{
 			"active_chunk_requests":    activeChunkRequests,
@@ -122,19 +118,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"telegram_file_errors_10s": telegramFileErrors10s,
 			"dc_schedulers":            dcSchedulers,
 		},
-		"aria2": map[string]any{
-			"available":     aria2Stat.Available,
-			"speed_bps":     aria2Stat.DownloadSpeedBPS,
-			"task_count":    aria2Stat.TotalTasks(),
-			"active_tasks":  aria2Stat.ActiveTasks,
-			"waiting_tasks": aria2Stat.WaitingTasks,
-			"stopped_tasks": aria2Stat.StoppedTasks,
-		},
 	}
 	if len(metricErrors) > 0 {
 		response["errors"] = metricErrors
 	}
-	writeJSON(w, http.StatusOK, response)
+	return response, nil
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -142,10 +130,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	cfg := config.Get()
-	writeJSON(w, http.StatusOK, map[string]any{
-		fieldNamespace:  s.namespace(),
-		"watch_running": s.watchRunning(),
+	writeJSON(w, http.StatusOK, s.statusSnapshot())
+}
+
+func (s *Server) statusSnapshot() map[string]any {
+	cfg := config.From(s.opts.Context)
+	var configurationVersion uint64
+	if versioned, ok := s.opts.ComponentManager.(interface{ ConfigurationVersion() uint64 }); ok {
+		configurationVersion = versioned.ConfigurationVersion()
+	}
+	return map[string]any{
+		"clock":                 rte.ClockFrom(s.opts.Context).Status(),
+		"configuration_version": configurationVersion,
+		fieldNamespace:          s.namespace(),
+		"watch_running":         s.watchRunning(),
 		"webui": map[string]any{
 			"listen":                     config.WebUIListenAddr(cfg),
 			"address":                    cfg.WebUI.Address,
@@ -158,7 +156,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"proxy":   "/aria2/jsonrpc",
 		},
 		"downloader": map[string]any{
-			"mode": config.EffectiveDownloaderMode(cfg),
+			"mode":          config.PrimaryDownloadExecutor(cfg),
+			"aria2_enabled": config.Aria2Enabled(cfg),
 		},
 		"http": map[string]any{
 			"listen":          config.HTTPListenAddr(cfg),
@@ -168,7 +167,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"download_ttl":    cfg.HTTP.DownloadLinkTTLHours,
 		},
 		"version": versionInfo(),
-	})
+	}
 }
 
 func (s *Server) telegramDownloadSpeed(totalBytes int64, sampledAt time.Time) float64 {

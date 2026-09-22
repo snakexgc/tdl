@@ -1,23 +1,16 @@
 package kv
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/go-faster/errors"
-	"github.com/mitchellh/mapstructure"
 	"go.etcd.io/bbolt"
 	"go.uber.org/multierr"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/pkg/validator"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
-
-func init() {
-	register(DriverBolt, func(m map[string]any) (Storage, error) { return newBolt(m) })
-}
 
 type bolt struct {
 	path string
@@ -25,26 +18,13 @@ type bolt struct {
 	mu   *sync.Mutex
 }
 
-func newBolt(opts map[string]any) (*bolt, error) {
-	type options struct {
-		Path string `validate:"required" mapstructure:"path"`
-	}
-
-	var o options
-	if err := mapstructure.WeakDecode(opts, &o); err != nil {
-		return nil, errors.Wrap(err, "decode options")
-	}
-
-	if err := validator.Struct(&o); err != nil {
-		return nil, errors.Wrap(err, "validate options")
-	}
-
-	if err := os.MkdirAll(o.Path, 0o755); err != nil {
+func newBolt(path string) (*bolt, error) {
+	if err := os.MkdirAll(path, 0o755); err != nil {
 		return nil, errors.Wrap(err, "create dir")
 	}
 
 	return &bolt{
-		path: o.Path,
+		path: path,
 		dbs:  make(map[string]*bbolt.DB),
 		mu:   &sync.Mutex{},
 	}, nil
@@ -52,61 +32,6 @@ func newBolt(opts map[string]any) (*bolt, error) {
 
 func (b *bolt) Name() string {
 	return DriverBolt.String()
-}
-
-func (b *bolt) MigrateTo() (Meta, error) {
-	meta := make(Meta)
-
-	if err := b.walk(func(path string) (rerr error) {
-		ns := filepath.Base(path)
-		meta[ns] = make(map[string][]byte)
-
-		db, err := b.open(ns)
-		if err != nil {
-			return errors.Wrap(err, "open")
-		}
-
-		return db.db.View(func(tx *bbolt.Tx) error {
-			bucket := tx.Bucket(db.ns)
-			if bucket == nil {
-				return errors.New("namespace bucket is missing")
-			}
-			return bucket.ForEach(func(k, v []byte) error {
-				meta[ns][string(k)] = bytes.Clone(v)
-				return nil
-			})
-		})
-	}); err != nil {
-		return nil, errors.Wrap(err, "walk")
-	}
-
-	return meta, nil
-}
-
-func (b *bolt) MigrateFrom(meta Meta) error {
-	for ns, pairs := range meta {
-		db, err := b.open(ns)
-		if err != nil {
-			return errors.Wrap(err, "open")
-		}
-
-		if err = db.db.Update(func(tx *bbolt.Tx) error {
-			bk, err := tx.CreateBucketIfNotExists(db.ns)
-			if err != nil {
-				return errors.Wrap(err, "create bucket")
-			}
-			for key, value := range pairs {
-				if err = bk.Put([]byte(key), value); err != nil {
-					return errors.Wrap(err, "put")
-				}
-			}
-			return nil
-		}); err != nil {
-			return errors.Wrap(err, "update")
-		}
-	}
-
-	return nil
 }
 
 func (b *bolt) Namespaces() ([]string, error) {
@@ -138,7 +63,7 @@ func (b *bolt) Open(ns string) (storage.Storage, error) {
 	return b.open(ns)
 }
 
-func (b *bolt) open(ns string) (*legacyKV, error) {
+func (b *bolt) open(ns string) (*boltNamespace, error) {
 	if ns == "" {
 		return nil, errors.New("namespace is required")
 	}
@@ -146,7 +71,7 @@ func (b *bolt) open(ns string) (*legacyKV, error) {
 	defer b.mu.Unlock()
 
 	if db, ok := b.dbs[ns]; ok {
-		return &legacyKV{db: db, ns: []byte(ns)}, nil
+		return &boltNamespace{db: db, ns: []byte(ns)}, nil
 	}
 
 	db, err := bbolt.Open(filepath.Join(b.path, ns), os.ModePerm, boltOptions)
@@ -162,7 +87,7 @@ func (b *bolt) open(ns string) (*legacyKV, error) {
 
 	b.dbs[ns] = db
 
-	return &legacyKV{db: db, ns: []byte(ns)}, nil
+	return &boltNamespace{db: db, ns: []byte(ns)}, nil
 }
 
 func (b *bolt) Close() error {

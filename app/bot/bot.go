@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,38 +21,51 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/app/login"
-	"github.com/snakexgc/tdl/app/updater"
 	"github.com/snakexgc/tdl/app/watch"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/util/netutil"
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/util/netutil"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
+	"github.com/snakexgc/tdl/rte/schedule"
 )
 
 var processRebootRequested atomic.Bool
 var (
 	processUpdateMu   sync.Mutex
-	processUpdatePlan *updater.Plan
+	processUpdatePlan *types.UpdatePlan
 )
 
 type Options struct {
+	CommandResolver       func(string, string) (any, error)
+	CommandContributions  []ports.ConsoleContribution
+	SessionChecker        ports.AccountSession
+	Connections           *tgauth.Connections
+	DownloadControl       ports.DownloadControl
+	Credentials           ports.TelegramCredentials
+	Updater               ports.Updater
+	ComponentStore        *rteconfig.Store
+	SetComponentHost      func(*rte.Runtime)
+	SetComponentRefresh   func(func(context.Context) error)
 	Token                 string
 	AllowedUsers          []int64
 	Proxy                 string
 	Namespace             string
-	NTP                   string
 	ReconnectTimeout      time.Duration
-	Watch                 watch.Options
 	WatchControl          watchControl
 	DisableAutoStartWatch bool
-	AfterConfigSave       func(*config.Config)
 	OnLoginSuccess        func(*tg.User)
 	SetNotifier           func(watch.NotifyFunc)
 	RequestReboot         func()
-	RequestUpdate         func(updater.Plan)
+	RequestUpdate         func(types.UpdatePlan)
 }
 
 type watchControl interface {
@@ -73,16 +87,16 @@ func RequestReboot() {
 	processUpdateMu.Unlock()
 }
 
-func UpdateRequested() (updater.Plan, bool) {
+func UpdateRequested() (types.UpdatePlan, bool) {
 	processUpdateMu.Lock()
 	defer processUpdateMu.Unlock()
 	if processUpdatePlan == nil {
-		return updater.Plan{}, false
+		return types.UpdatePlan{}, false
 	}
 	return *processUpdatePlan, true
 }
 
-func RequestUpdate(plan updater.Plan) {
+func RequestUpdate(plan types.UpdatePlan) {
 	processRebootRequested.Store(false)
 	processUpdateMu.Lock()
 	processUpdatePlan = &plan
@@ -91,9 +105,12 @@ func RequestUpdate(plan updater.Plan) {
 
 func Run(ctx context.Context, opts Options) (rerr error) {
 	if opts.Token == "" {
-		return errors.New("bot token is empty, please set bot.token in config.json")
+		return errors.New("bot token is empty, please set console.bot values.token for the selected account in tdl_config.json")
 	}
 
+	if opts.CommandResolver == nil || opts.DownloadControl == nil || opts.WatchControl == nil {
+		return errors.New("bot requires runtime component ports")
+	}
 	// create telego bot with proxy
 	bot, botLogger, err := newBot(opts.Token, opts.Proxy)
 	if err != nil {
@@ -105,16 +122,83 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	if err != nil {
 		return errors.Wrap(err, "get bot info")
 	}
+	account := types.AccountID(opts.Namespace)
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	botLogger.logger = botLogger.logger.With("account", account)
+	slog.Info("机器人身份验证成功", "component", "console.bot", "account", account, "bot_id", botUser.ID)
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
-	notifier := newBotNotifier(bot, opts.AllowedUsers)
-	allowed := newAllowedUsers(opts.AllowedUsers)
+	transport := &botNotificationTransport{sender: bot, editor: bot}
+	host, console, notifications, err := application.BotHost(ctx, account, transport, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...)
+	if err != nil {
+		return errors.Wrap(err, "start bot components")
+	}
+	notifier := &botNotifier{host: host, service: notifications, account: account}
+	defer notifier.Close()
+	if opts.SetComponentHost != nil {
+		opts.SetComponentHost(host)
+		defer opts.SetComponentHost(nil)
+	}
 	if opts.SetNotifier != nil {
 		opts.SetNotifier(notifier.Notify)
 		defer opts.SetNotifier(nil)
 	}
 
-	if err := configureBotMenu(ctx, bot); err != nil {
+	if err := configureBotMenu(ctx, bot, console); err != nil {
 		return errors.Wrap(err, "create bot menu")
+	}
+	menuChanged := make(chan struct{}, 1)
+	background := schedule.New(ctx)
+	defer func() { _ = background.Stop(context.Background()) }()
+	if err := background.Run("console.menu", 0, 0, func(ctx context.Context) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-menuChanged:
+				bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+				err := configureBotMenu(bounded, bot, console)
+				cancel()
+				if err != nil && ctx.Err() == nil {
+					slog.Warn("刷新机器人菜单失败，稍后重试", "component", "console.bot", "account", account, "error", err)
+					timer := time.NewTimer(5 * time.Second)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return nil
+					case <-timer.C:
+					}
+					select {
+					case menuChanged <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}
+	}, nil); err != nil {
+		return err
+	}
+	if opts.SetComponentRefresh != nil {
+		var refreshMu sync.Mutex
+		refresh := func(refreshCtx context.Context) error {
+			refreshMu.Lock()
+			defer refreshMu.Unlock()
+			if err := application.ReconcileBotHost(refreshCtx, host, account, transport, opts.AllowedUsers, opts.ComponentStore, opts.CommandContributions...); err != nil {
+				return err
+			}
+			select {
+			case menuChanged <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+		opts.SetComponentRefresh(refresh)
+		defer opts.SetComponentRefresh(nil)
+		// Catch saves that completed between host creation and callback binding.
+		if err := refresh(ctx); err != nil {
+			return err
+		}
 	}
 
 	kvEngine := kv.From(ctx)
@@ -124,19 +208,15 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	}
 	sessionOptionsForKV := func(kvd storage.Storage) login.SessionOptions {
 		return login.SessionOptions{
+			Connections: opts.Connections, Credentials: opts.Credentials, Account: account,
 			KV:               kvd,
 			Proxy:            opts.Proxy,
-			NTP:              opts.NTP,
 			ReconnectTimeout: opts.ReconnectTimeout,
 		}
 	}
 	sessionOpts := sessionOptionsForKV(kvd)
+	sessionOpts.Checker = opts.SessionChecker
 	watchCtrl := opts.WatchControl
-	ownsWatch := false
-	if watchCtrl == nil {
-		watchCtrl = watch.NewController(ctx, opts.Watch, notifier.Notify)
-		ownsWatch = true
-	}
 	loginMgr := newLoginManagerWithFactory(ctx, bot, func(namespace string) (loginRunner, error) {
 		namespace, err := config.NormalizeNamespace(namespace)
 		if err != nil {
@@ -146,18 +226,43 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "open namespace storage")
 		}
-		return gotdLoginRunner{opts: sessionOptionsForKV(targetKV)}, nil
+		targetOptions := sessionOptionsForKV(targetKV)
+		targetOptions.Account = types.AccountID(namespace)
+		return gotdLoginRunner{opts: targetOptions}, nil
 	})
-	aria2Factory := func() *aria2.Controller {
-		return aria2.NewController(config.Get(), kvd, nil)
+	aria2Factory := componentAria2Factory(console, opts.CommandResolver)
+	downloadControl := opts.DownloadControl
+	localFactory := func() *localDownloadControl {
+		return &localDownloadControl{port: downloadControl, account: account}
 	}
-	internalFactory := func() *watch.InternalDownloadController {
-		return watch.NewInternalDownloadController(kvd)
+	if err := background.Run("aria2.events", 0, 0, func(ctx context.Context) error {
+		runAria2EventListener(ctx, notifier, aria2Factory)
+		return nil
+	}, nil); err != nil {
+		return err
 	}
-	go runAria2EventListener(ctx, notifier, aria2Factory)
+	retryCandidates := make(chan struct{}, 1)
+	if err := background.Run("aria2.retry-candidates", 0, 0, func(ctx context.Context) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-retryCandidates:
+				notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+			}
+		}
+	}, nil); err != nil {
+		return err
+	}
+	requestRetryCandidates := func() {
+		select {
+		case retryCandidates <- struct{}{}:
+		default:
+		}
+	}
 	var requestReboot func()
-	onLoginSuccess := func(user *tg.User, namespace string) {
-		restart, err := saveBotNamespaceIfChanged(namespace)
+	onLoginSuccess := func(flowCtx context.Context, user *tg.User, namespace string) {
+		restart, err := config.SelectNamespace(flowCtx, string(account), namespace)
 		if err != nil {
 			notifier.Notify(ctx, fmt.Sprintf("登录成功，但保存用户配置失败：%v", err))
 			return
@@ -175,16 +280,28 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		if !opts.DisableAutoStartWatch {
 			notifyWatchAfterLogin(ctx, notifier, watchCtrl)
 		}
-		if aria2DownloaderEnabled() {
-			go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+		if aria2DownloaderEnabled(ctx) {
+			requestRetryCandidates()
 		}
 	}
-	loginMgr.SetOnSuccess(onLoginSuccess)
+	loginMgr.SetOnSuccess(func(flowCtx context.Context, user *ports.LoginUser, namespace string) {
+		onLoginSuccess(flowCtx, &tg.User{ID: user.ID, Username: user.Username, FirstName: user.FirstName, LastName: user.LastName}, namespace)
+	})
+	loginHost, loginPort, err := application.BotLoginHost(ctx, account, loginMgr)
+	if err != nil {
+		return err
+	}
+	defer loginHost.Stop(context.Background())
+	maintenanceHost, maintenancePort, err := application.MaintenanceHost(ctx, account, taskhub.CleanupRepository{Engine: kvEngine, Namespace: string(account), Store: kvd})
+	if err != nil {
+		return err
+	}
+	defer maintenanceHost.Stop(context.Background())
 
 	startup := checkSessionAndMaybeStartWatch(ctx, watchCtrl, sessionOpts, !opts.DisableAutoStartWatch)
 	notifier.Notify(ctx, startupMessage(botUser, startup))
-	if startup.WatchStarted && aria2DownloaderEnabled() {
-		go notifyAria2RetryCandidates(ctx, notifier, aria2Factory)
+	if startup.WatchStarted && aria2DownloaderEnabled(ctx) {
+		requestRetryCandidates()
 	}
 
 	// start long polling
@@ -210,17 +327,31 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			botLogger.SetShuttingDown()
-			if ownsWatch {
-				watchCtrl.Stop()
-			}
 
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := bh.StopWithContext(stopCtx); err != nil && !errors.Is(err, context.Canceled) {
-				color.Yellow("⚠️ Stop bot handler: %v", err)
+				slog.Error("停止机器人处理器失败", "component", "console.bot", "account", account, "error", err)
 			}
 			cancelPolling()
 		})
+	}
+	shutdownRequests := make(chan struct{}, 1)
+	if err := background.Run("console.shutdown", 0, 0, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+		case <-shutdownRequests:
+		}
+		shutdown()
+		return nil
+	}, nil); err != nil {
+		return err
+	}
+	requestShutdown := func() {
+		select {
+		case shutdownRequests <- struct{}{}:
+		default:
+		}
 	}
 	requestReboot = func() {
 		rebootRequested.Store(true)
@@ -229,27 +360,31 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		} else {
 			RequestReboot()
 		}
-		go shutdown()
+		requestShutdown()
 	}
-	requestUpdate := func(plan updater.Plan) {
+	requestUpdate := func(plan types.UpdatePlan) {
 		rebootRequested.Store(false)
 		if opts.RequestUpdate != nil {
 			opts.RequestUpdate(plan)
 		} else {
 			RequestUpdate(plan)
 		}
-		go shutdown()
+		requestShutdown()
 	}
 	updateController := newTDLUpdateController(requestUpdate)
+	updateController.updater = opts.Updater
+	botContext := ctx
 	bh.HandleCallbackQuery(func(ctx *th.Context, query telego.CallbackQuery) error {
-		if !allowed.Contains(query.From.ID) {
+		ctx = ctx.WithContext(config.InheritSource(ctx, botContext))
+		if !console.Allowed(account, query.From.ID) {
 			_ = ctx.Bot().AnswerCallbackQuery(ctx, tu.CallbackQuery(query.ID).WithText("没有权限。"))
 			return nil
 		}
-		return handleDownloadCallback(ctx, query, aria2Factory, internalFactory)
+		return handleDownloadCallback(ctx, query, aria2Factory, localFactory)
 	}, th.AnyCallbackQuery())
 
 	bh.Handle(func(ctx *th.Context, update telego.Update) error {
+		ctx = ctx.WithContext(config.InheritSource(ctx, botContext))
 		if update.Message == nil || update.Message.From == nil {
 			return nil
 		}
@@ -258,13 +393,14 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		chatID := update.Message.Chat.ID
 
 		// check if user is allowed
-		if allowed.Contains(fromID) {
-			return handleAllowedMessage(ctx, update.Message, loginMgr, requestReboot, updateController, watchCtrl, aria2Factory, internalFactory, kvEngine, opts.Namespace, kvd)
+		if console.Allowed(account, fromID) {
+			contributions := append(append([]ports.ConsoleContribution{}, opts.CommandContributions...), declaredCommandHandlers(console.Commands(), opts.CommandResolver)...)
+			return handleAllowedMessage(ctx, update.Message, loginPort, requestReboot, updateController, watchCtrl, aria2Factory, localFactory, maintenancePort, account, console, contributions...)
 		}
 
 		// unauthorized user: reply with their ID as copyable text
 		userIDStr := strconv.FormatInt(fromID, 10)
-		color.Yellow("🚫 Unauthorized user %d, replying with ID", fromID)
+		slog.Warn("拒绝未授权的机器人用户", "component", "console.bot", "account", account, "user_id", fromID)
 
 		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 			tu.ID(chatID),
@@ -276,12 +412,8 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		return nil
 	}, th.AnyMessage())
 
+	slog.Info("机器人已开始接收消息", "component", "console.bot", "account", account)
 	color.Green("🔄 Bot is running... Press Ctrl+C to stop")
-
-	go func() {
-		<-ctx.Done()
-		shutdown()
-	}()
 
 	err = bh.Start()
 	botLogger.SetShuttingDown()
@@ -335,29 +467,13 @@ func versionSummary() string {
 	)
 }
 
-func configureBotMenu(ctx context.Context, bot *telego.Bot) error {
-	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
-		Commands: []telego.BotCommand{
-			{Command: "start", Description: "开始使用并显示下载器控制键盘"},
-			{Command: "menu", Description: "显示当前下载器控制键盘"},
-			{Command: "help", Description: "查看当前下载器帮助"},
-			{Command: "info", Description: "查看当前下载器信息"},
-			{Command: "login_code", Description: "验证码登录（需填写用户名）"},
-			{Command: "cancel_login", Description: "取消正在进行的登录"},
-			{Command: "forward", Description: "回复 Telegram 消息链接并转发"},
-			{Command: "downloads", Description: "查看当前下载器管理命令"},
-			{Command: "downloads_active", Description: "查看正在下载的任务"},
-			{Command: "downloads_waiting", Description: "查看等待或暂停的任务"},
-			{Command: "downloads_stopped", Description: "查看已完成或停止的任务"},
-			{Command: "downloads_overview", Description: "查看下载任务概况"},
-			{Command: "downloads_pause_all", Description: "暂停全部下载任务"},
-			{Command: "downloads_start_all", Description: "开始全部下载任务"},
-			{Command: "aria2_retry", Description: "重试已停止的下载任务"},
-			{Command: "reboot", Description: "重启(不推荐)"},
-			{Command: "update_tdl", Description: "检查并更新 tdl"},
-			{Command: "clean_kv", Description: "清空KV缓存(危险)"},
-		},
-	})
+func configureBotMenu(ctx context.Context, bot *telego.Bot, console ports.Console) error {
+	commands := console.Commands()
+	menu := make([]telego.BotCommand, 0, len(commands))
+	for _, command := range commands {
+		menu = append(menu, telego.BotCommand{Command: command.Name, Description: command.Description})
+	}
+	return bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{Commands: menu})
 }
 
 func checkSessionAndMaybeStartWatch(ctx context.Context, watchCtrl watchControl, opts login.SessionOptions, autoStart bool) startupState {
@@ -410,50 +526,26 @@ func notifyWatchAfterLogin(ctx context.Context, notifier *botNotifier, watchCtrl
 	notifier.Notify(ctx, "登录完成，watch 已在运行。")
 }
 
-func saveBotNamespaceIfChanged(namespace string) (bool, error) {
-	namespace, err := config.NormalizeNamespace(namespace)
-	if err != nil {
-		return false, err
-	}
-
-	cfg := config.Get()
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	if cfg.Namespace == namespace {
-		return false, nil
-	}
-
-	next, err := config.Clone(cfg)
-	if err != nil {
-		return false, err
-	}
-	next.Namespace = namespace
-	if err := config.Set(next); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func handleAllowedMessage(
 	ctx *th.Context,
 	msg *telego.Message,
-	loginMgr *loginManager,
+	loginMgr ports.BotLogin,
 	requestReboot func(),
 	updateController *tdlUpdateController,
 	watchCtrl watchControl,
 	aria2Factory aria2ControllerFactory,
-	internalFactory internalDownloadControllerFactory,
-	kvEngine kv.Storage,
-	namespace string,
-	namespaceKV storage.Storage,
+	localFactory localDownloadControllerFactory,
+	maintenance ports.KVMaintenance,
+	account types.AccountID,
+	console ports.Console,
+	extras ...ports.ConsoleContribution,
 ) error {
 	fromID := msg.From.ID
 	chatID := msg.Chat.ID
 	text := strings.TrimSpace(msg.Text)
 
 	if msg.Chat.Type != telego.ChatTypePrivate {
-		if isPrivateCommand(text) {
+		if console.PrivateCommand(strings.TrimPrefix(commandName(text), "/")) {
 			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
 				tu.ID(chatID),
 				"请在私聊中发送控制命令。",
@@ -462,67 +554,33 @@ func handleAllowedMessage(
 		return nil
 	}
 
-	if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, internalFactory); handled || err != nil {
-		return err
+	if commandName(text) != "" && console != nil {
+		response, handled, err := dispatchConsoleCommand(ctx, msg, console, account, commandAdapters(ctx, msg, loginMgr, requestReboot, updateController, aria2Factory, localFactory, maintenance, account), extras)
+		if err != nil {
+			return err
+		}
+		if handled {
+			if response.Text != "" {
+				return sendMessage(ctx, chatID, response.Text)
+			}
+			return nil
+		}
 	}
-	if handled, err := handleKVCommand(ctx, msg, text, kvEngine, namespace, namespaceKV); handled || err != nil {
-		return err
-	}
-	if handled, err := handleUpdateCommand(ctx, msg, text, updateController); handled || err != nil {
-		return err
-	}
-	if handled, err := handleForwardCommand(ctx, msg, text, namespaceKV); handled || err != nil {
-		return err
+	// Reply keyboards and login input are transport conversations, not slash commands.
+	if commandName(text) == "" {
+		if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, localFactory); handled || err != nil {
+			return err
+		}
 	}
 	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
 		return err
 	}
 
-	switch commandName(text) {
-	case "/login_code":
-		loginNamespace, err := loginNamespaceFromCommand(text)
-		if err != nil {
-			sendLoginNamespaceUsage(ctx, chatID, "/login_code")
-			return nil
-		}
-		if err := loginMgr.StartCode(fromID, chatID, loginNamespace); err != nil {
-			if errors.Is(err, errLoginBusy) {
-				_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
-					tu.ID(chatID),
-					"已有登录流程正在进行，请先完成或发送 /cancel_login 取消。",
-				))
-				return nil
-			}
-			return err
-		}
-		return nil
-	case "/cancel_login":
-		if loginMgr.Cancel(fromID, chatID) {
-			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在取消当前登录流程。"))
-			return nil
-		}
-		if loginMgr.Busy() {
-			_, _ = ctx.Bot().SendMessage(ctx, tu.Message(
-				tu.ID(chatID),
-				"已有登录流程正在进行，只能由发起会话取消。",
-			))
-			return nil
-		}
-		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "当前没有可取消的登录流程。"))
-		return nil
-	case "/reboot":
-		_, _ = ctx.Bot().SendMessage(ctx, tu.Message(tu.ID(chatID), "正在重启程序，稍后会收到新的启动状态。"))
-		if requestReboot != nil {
-			requestReboot()
-		}
+	if loginMgr.HandleInput(fromID, chatID, msg.Text, msg.MessageID) {
 		return nil
 	}
 
-	if loginMgr.HandleInput(fromID, chatID, text, msg.MessageID) {
-		return nil
-	}
-
-	color.Cyan("✅ Allowed user %d sent message", fromID)
+	slog.Debug("收到已授权用户的未处理消息", "component", "console.bot", "user_id", fromID)
 	return nil
 }
 
@@ -548,23 +606,6 @@ func sendLoginNamespaceUsage(ctx *th.Context, chatID int64, command string) {
 		tu.ID(chatID),
 		fmt.Sprintf("请在命令后填写用户名，例如：%s alice。\n用户名只能使用英文字母，用来区分保存在 .tdl 目录下的登录数据。", command),
 	))
-}
-
-func isPrivateCommand(text string) bool {
-	switch commandName(text) {
-	case botCmdStart, botCmdMenu, botCmdHelp, botCmdInfo,
-		botCmdForward, "/login_code", "/cancel_login", "/reboot",
-		botCmdDownloads, botCmdDownloadsHelp, botCmdDownloadsActive, botCmdDownloadsWaiting, botCmdDownloadsStopped,
-		botCmdDownloadsOverview, botCmdDownloadsPauseAll, botCmdDownloadsStartAll,
-		botCmdInternal, botCmdInternalHelp, botCmdInternalActive, botCmdInternalWaiting, botCmdInternalStopped,
-		botCmdInternalOverview, botCmdInternalPauseAll, botCmdInternalStartAll,
-		"/update_tdl", botCmdAria2, botCmdAria2Help, botCmdAria2Active, botCmdAria2Waiting, botCmdAria2Stopped,
-		botCmdAria2Overview, botCmdAria2PauseAll, botCmdAria2StartAll, botCmdAria2Retry,
-		"/clean_kv":
-		return true
-	default:
-		return false
-	}
 }
 
 // newBot creates a telego Bot instance with optional proxy support.

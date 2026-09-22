@@ -2,17 +2,12 @@ package httpdl
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
+	"net"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"path"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,12 +17,18 @@ import (
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 
-	"github.com/snakexgc/tdl/app/http/transfer"
-	"github.com/snakexgc/tdl/core/logctx"
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/tmedia"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/application"
+	rangeproxy "github.com/snakexgc/tdl/application/proxy.range"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	transfer "github.com/snakexgc/tdl/bsw/ecual/comif"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/logctx"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/tmedia"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
 const (
@@ -51,12 +52,10 @@ const (
 	telegramChunkMaxRetries     = 4
 	telegramChunkRetryBaseDelay = 250 * time.Millisecond
 	telegramChunkRetryMaxDelay  = 2 * time.Second
-	// telegramChunkAttemptTimeout is a dead-connection backstop, NOT a throughput
-	// throttle: a single ≤1 MiB getFile slower than this means < ~3.5 KiB/s, which
-	// is below any usable link, so the connection is effectively dead. It is
-	// deliberately far above any real per-chunk transfer time so it can never cut
-	// off a slow-but-progressing download and shorten the resulting file.
-	telegramChunkAttemptTimeout = 5 * time.Minute
+	// telegramChunkAttemptTimeout bounds one upload.getFile attempt after a DC
+	// permit is acquired. Expired attempts release the permit and use the bounded
+	// transient retry path. This is a client policy, not a Telegram protocol limit.
+	telegramChunkAttemptTimeout = 30 * time.Second
 )
 
 const (
@@ -65,8 +64,8 @@ const (
 )
 
 const (
-	downloadTaskKeyPrefix  = "watch.download."
-	downloadTaskIndexKey   = "watch.download.index"
+	downloadTaskKeyPrefix  = taskhub.LinkPrefix
+	downloadTaskIndexKey   = taskhub.LinkIndex
 	defaultDownloadTaskTTL = 24 * time.Hour
 	sourceRegistryIdleTTL  = 2 * time.Minute
 	telegramFileErrorTTL   = time.Minute
@@ -76,8 +75,6 @@ const (
 	DownloadTaskKeyPrefix = downloadTaskKeyPrefix
 	DownloadTaskIndexKey  = downloadTaskIndexKey
 )
-
-var errRangeNoOverlap = errors.New("requested range does not overlap content")
 
 type Task = downloadTask
 
@@ -94,24 +91,21 @@ type downloadRange struct {
 	end   int64
 }
 
-func (r downloadRange) length() int64 {
-	if r.end < r.start {
-		return 0
-	}
-	return r.end - r.start + 1
-}
-
 type downloadProxy struct {
-	cfgMu     sync.RWMutex
-	cfg       config.HTTPConfig
-	tasks     *taskStore
-	pools     *poolHolder
-	sources   *sourceRegistry
-	server    *http.Server
-	stream    taskStreamer
-	parallel  taskStreamer
-	scheduler *transfer.Scheduler
-	logger    *zap.Logger
+	account        types.AccountID
+	rangeHost      *rte.Runtime
+	rangeHandler   http.Handler
+	componentStore *rteconfig.Store
+	cfgMu          sync.RWMutex
+	cfg            config.HTTPConfig
+	tasks          *taskStore
+	pools          *poolHolder
+	sources        *sourceRegistry
+	server         *http.Server
+	stream         taskStreamer
+	parallel       taskStreamer
+	scheduler      *transfer.Scheduler
+	logger         *zap.Logger
 
 	reporterMu sync.RWMutex
 	reporter   TelegramFileErrorReporter
@@ -124,10 +118,10 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 		logger = zap.NewNop()
 	}
 	if maxFiles < 1 {
-		maxFiles = config.DefaultLimit
+		maxFiles = config.DefaultConfig().Limit
 	}
 	if poolSize < 1 {
-		poolSize = config.DefaultPoolSize
+		poolSize = config.DefaultConfig().PoolSize
 	}
 	if pools == nil {
 		pools = &poolHolder{}
@@ -139,7 +133,7 @@ func newDownloadProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *pool
 		pools:             pools,
 		sources:           newSourceRegistry(),
 		scheduler:         transfer.NewScheduler(maxFiles, poolSize),
-		logger:            logger.Named("http-download"),
+		logger:            logger.Named("http-download").With(zap.String("component", "proxy.range")),
 		clientWaitTimeout: telegramClientWaitTimeout,
 	}
 
@@ -180,6 +174,9 @@ func (p *downloadProxy) updateConfig(cfg config.HTTPConfig) bool {
 func NewProxy(cfg config.HTTPConfig, maxFiles, poolSize int, pools *PoolHolder, kv storage.Storage, logger *zap.Logger) *Proxy {
 	return newDownloadProxy(cfg, maxFiles, poolSize, pools, kv, logger)
 }
+
+// SetComponentStore is called by the composition root before the proxy starts.
+func (p *downloadProxy) SetComponentStore(store *rteconfig.Store) { p.componentStore = store }
 
 func (p *downloadProxy) Tasks() *TaskStore {
 	if p == nil {
@@ -253,80 +250,59 @@ func (p *downloadProxy) StreamParallel(ctx context.Context, task *Task, lease *t
 }
 
 func (p *downloadProxy) Start(ctx context.Context) error {
-	cfg := p.config()
-	p.logger.Info("Starting HTTP download proxy",
-		zap.String("listen", config.HTTPConfigListenAddr(cfg)),
-		zap.String("public_base_url", cfg.PublicBaseURL),
-		zap.Duration("download_link_ttl", p.tasks.TTL()),
-		zap.Int("per_dc_capacity", p.scheduler.Capacity()))
+	return p.start(ctx, nil)
+}
 
-	p.startCleanupLoop(ctx)
-	p.startSourceCleanupLoop(ctx)
+func (p *downloadProxy) start(ctx context.Context, ready func()) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	handler := rangeproxy.New(rangeSource{proxy: p}, p.logger, p.clientWaitTimeout)
+	host, err := application.RangeHost(runCtx, p.account, handler, p.componentStore)
+	if err != nil {
+		return err
+	}
+	p.cfgMu.Lock()
+	p.rangeHost = host
+	p.rangeHandler = handler
+	p.cfgMu.Unlock()
+	defer func() { _ = host.Stop(context.Background()) }()
 	server := p.newServer()
-
+	listener, err := (&net.ListenConfig{}).Listen(runCtx, "tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("HTTP 下载服务监听 %s 失败: %w", server.Addr, err)
+	}
+	defer listener.Close()
+	shutdownDone := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		defer close(shutdownDone)
+		<-runCtx.Done()
+		shutdownCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+		}
 	}()
+	if ready != nil {
+		ready()
+	}
+	p.logger.Info("HTTP 下载服务已启动", zap.String("listen", listener.Addr().String()))
+	err = server.Serve(listener)
+	cancel()
+	<-shutdownDone
+	return err
+}
 
-	return server.ListenAndServe()
+func (p *downloadProxy) Host() *rte.Runtime {
+	if p == nil {
+		return nil
+	}
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+	return p.rangeHost
 }
 
 func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
 	return p.tasks.CleanupExpired(ctx, time.Now())
-}
-
-func (p *downloadProxy) startCleanupLoop(ctx context.Context) {
-	if p.tasks.kv == nil || p.tasks.TTL() == 0 {
-		return
-	}
-
-	cleanup := func() {
-		if err := p.CleanupExpiredTasks(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			p.logger.Warn("Failed to clean expired download tasks", zap.Error(err))
-		}
-	}
-
-	cleanup()
-	go func() {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				cleanup()
-			}
-		}
-	}()
-}
-
-func (p *downloadProxy) startSourceCleanupLoop(ctx context.Context) {
-	cleanup := func() {
-		if n := p.sources.CleanupIdle(time.Now(), sourceRegistryIdleTTL); n > 0 {
-			p.logger.Debug("Cleaned idle HTTP media sources", zap.Int("count", n))
-		}
-	}
-
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				cleanup()
-				return
-			case <-ticker.C:
-				cleanup()
-			}
-		}
-	}()
 }
 
 func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
@@ -364,261 +340,6 @@ func (p *downloadProxy) routes() http.Handler {
 	return mux
 }
 
-func (p *downloadProxy) handleDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	taskID := strings.TrimPrefix(r.URL.Path, "/download/")
-	if taskID == "" || strings.Contains(taskID, "/") {
-		p.logger.Warn("Rejecting invalid download path",
-			zap.String("method", r.Method),
-			zap.String("path", r.URL.Path),
-			zap.String("remote_addr", r.RemoteAddr),
-			zap.String("user_agent", r.UserAgent()))
-		http.NotFound(w, r)
-		return
-	}
-
-	p.logger.Info("Download request received",
-		zap.String("method", r.Method),
-		zap.String("task_id", taskID),
-		zap.String("range", r.Header.Get("Range")),
-		zap.String("remote_addr", r.RemoteAddr),
-		zap.String("user_agent", r.UserAgent()))
-
-	task, ok, err := p.tasks.Get(r.Context(), taskID)
-	if err != nil {
-		p.logger.Error("Failed to load download task",
-			zap.String("task_id", taskID),
-			zap.Error(err))
-		http.Error(w, "failed to load download task", http.StatusInternalServerError)
-		return
-	}
-	if !ok {
-		p.logger.Warn("Download task not found",
-			zap.String("task_id", taskID))
-		http.NotFound(w, r)
-		return
-	}
-
-	if task.FileSize < 0 {
-		p.logger.Error("Download task has invalid file size",
-			zap.String("task_id", taskID),
-			zap.Int64("file_size", task.FileSize))
-		http.Error(w, "invalid download size", http.StatusInternalServerError)
-		return
-	}
-
-	etag := downloadETag(task)
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", etag)
-	rangeHeader := r.Header.Get("Range")
-	if ifRange := strings.TrimSpace(r.Header.Get("If-Range")); ifRange != "" && ifRange != etag {
-		// The client can safely resume only the representation identified by our
-		// strong ETag. A stale or date-based If-Range therefore receives the full
-		// current representation, as required by HTTP range semantics.
-		rangeHeader = ""
-	}
-	ranges, err := parseDownloadRanges(rangeHeader, task.FileSize)
-	if err != nil {
-		if errors.Is(err, errRangeNoOverlap) && task.FileSize == 0 {
-			ranges = nil
-		} else {
-			p.logger.Warn("Invalid download range",
-				zap.String("task_id", taskID),
-				zap.String("range", r.Header.Get("Range")),
-				zap.Error(err))
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", task.FileSize))
-			http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
-			return
-		}
-	}
-	if downloadRangesSizeExceeds(ranges, task.FileSize) {
-		// Mirroring net/http ServeContent, ignore obviously abusive or redundant
-		// multi-range sets whose combined payload exceeds the representation.
-		ranges = nil
-	}
-	partial := len(ranges) > 0
-	responseRanges := ranges
-	if !partial {
-		responseRanges = []downloadRange{{start: 0, end: task.FileSize - 1}}
-	}
-
-	if r.Method != http.MethodHead && task.FileSize > 0 {
-		if task.Media == nil {
-			http.Error(w, "download media is unavailable", http.StatusInternalServerError)
-			return
-		}
-		waitTimeout := p.clientWaitTimeout
-		if waitTimeout <= 0 {
-			waitTimeout = telegramClientWaitTimeout
-		}
-		waitStart := time.Now()
-		waitCtx, cancel := context.WithTimeout(r.Context(), waitTimeout)
-		_, waitErr := p.pools.Wait(waitCtx)
-		cancel()
-		if waitErr != nil {
-			fields := []zap.Field{
-				zap.String("task_id", task.ID),
-				zap.String("file_name", task.FileName),
-				zap.Duration("waited", time.Since(waitStart)),
-				zap.Error(waitErr),
-			}
-			if r.Context().Err() != nil {
-				p.logger.Warn("Download client disconnected while waiting for Telegram", fields...)
-				return
-			}
-			p.logger.Warn("Telegram download backend is not ready", fields...)
-			w.Header().Set("Retry-After", "3")
-			http.Error(w, "telegram download backend is not ready", http.StatusServiceUnavailable)
-			return
-		}
-	}
-
-	var lease *transfer.TaskLease
-	if r.Method != http.MethodHead && task.FileSize > 0 {
-		waitStart := time.Now()
-		acquired, err := p.scheduler.Acquire(r.Context(), task.ID, task.Media.DC)
-		if err != nil {
-			fields := []zap.Field{
-				zap.String("task_id", task.ID),
-				zap.String("file_name", task.FileName),
-				zap.Duration("waited", time.Since(waitStart)),
-				zap.Error(err),
-			}
-			if errors.Is(err, context.Canceled) {
-				p.logger.Warn("Download request canceled while waiting for slot", fields...)
-				return
-			}
-
-			p.logger.Error("Failed to acquire download slot", fields...)
-			http.Error(w, "failed to acquire download slot", http.StatusInternalServerError)
-			return
-		}
-		lease = acquired
-		defer lease.Release()
-
-		if waited := time.Since(waitStart); waited >= 100*time.Millisecond {
-			p.logger.Info("Download request waited for slot",
-				zap.String("task_id", task.ID),
-				zap.String("file_name", task.FileName),
-				zap.Duration("waited", waited))
-		}
-	}
-
-	contentType := mime.TypeByExtension(filepath.Ext(task.FileName))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": task.FileName})
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", disposition)
-	status := http.StatusOK
-	var multipartWriter *multipart.Writer
-	switch len(ranges) {
-	case 0:
-		w.Header().Set("Content-Length", strconv.FormatInt(task.FileSize, 10))
-	case 1:
-		status = http.StatusPartialContent
-		selected := ranges[0]
-		w.Header().Set("Content-Length", strconv.FormatInt(selected.length(), 10))
-		w.Header().Set("Content-Range", selected.contentRange(task.FileSize))
-	default:
-		status = http.StatusPartialContent
-		multipartWriter = multipart.NewWriter(w)
-		w.Header().Set("Content-Type", "multipart/byteranges; boundary="+multipartWriter.Boundary())
-		w.Header().Set("Content-Length", strconv.FormatInt(multipartDownloadRangesSize(ranges, contentType, task.FileSize, multipartWriter.Boundary()), 10))
-	}
-	w.WriteHeader(status)
-
-	p.logger.Info("Serving download task",
-		zap.String("task_id", task.ID),
-		zap.String("file_name", task.FileName),
-		zap.Int64("file_size", task.FileSize),
-		zap.Int("range_count", len(responseRanges)),
-		zap.Bool("partial", partial))
-
-	if r.Method == http.MethodHead {
-		p.logger.Info("HEAD request served without body",
-			zap.String("task_id", task.ID))
-		return
-	}
-	if task.FileSize == 0 {
-		p.logger.Info("Empty download stream finished", zap.String("task_id", task.ID))
-		p.recordHTTPDelivery(context.WithoutCancel(r.Context()), task, nil)
-		return
-	}
-
-	streamErr := p.streamDownloadRanges(r.Context(), task, lease, responseRanges, contentType, multipartWriter, w)
-	if streamErr != nil {
-		fields := []zap.Field{
-			zap.String("task_id", task.ID),
-			zap.String("file_name", task.FileName),
-			zap.Int("range_count", len(responseRanges)),
-			zap.Error(streamErr),
-		}
-		if errors.Is(streamErr, context.Canceled) {
-			p.logger.Warn("Download client disconnected", fields...)
-			return
-		}
-
-		p.logger.Error("Download stream failed", fields...)
-		return
-	}
-
-	p.logger.Info("Download stream finished",
-		zap.String("task_id", task.ID),
-		zap.String("file_name", task.FileName),
-		zap.Int("range_count", len(responseRanges)))
-	p.recordHTTPDelivery(context.WithoutCancel(r.Context()), task, responseRanges)
-}
-
-func (p *downloadProxy) recordHTTPDelivery(ctx context.Context, task *downloadTask, ranges []downloadRange) {
-	if p == nil || p.tasks == nil || task == nil {
-		return
-	}
-	persistCtx, cancel := context.WithTimeout(ctx, httpDeliveryPersistTimeout)
-	defer cancel()
-	completed, err := p.tasks.recordHTTPDelivery(persistCtx, task.ID, task.FileSize, ranges, time.Now())
-	if err != nil {
-		p.logger.Warn("Failed to persist HTTP delivery status",
-			zap.String("task_id", task.ID),
-			zap.String("file_name", task.FileName),
-			zap.Error(err))
-		return
-	}
-	if completed {
-		p.logger.Info("HTTP download completed",
-			zap.String("task_id", task.ID),
-			zap.String("file_name", task.FileName),
-			zap.Int64("file_size", task.FileSize))
-	}
-}
-
-func (p *downloadProxy) streamDownloadRanges(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, ranges []downloadRange, contentType string, mw *multipart.Writer, w io.Writer) error {
-	for _, selected := range ranges {
-		target := w
-		if mw != nil {
-			part, err := mw.CreatePart(selected.mimeHeader(contentType, task.FileSize))
-			if err != nil {
-				return errors.Wrap(err, "create multipart download range")
-			}
-			target = part
-		}
-		if err := p.stream(ctx, task, lease, selected.start, selected.end, target); err != nil {
-			return err
-		}
-	}
-	if mw != nil {
-		return errors.Wrap(mw.Close(), "close multipart download ranges")
-	}
-	return nil
-}
-
 func (p *downloadProxy) streamTask(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer) error {
 	return p.streamTaskWithMode(ctx, task, lease, start, end, w, false)
 }
@@ -631,7 +352,7 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 	pool := p.pools.Get()
 	if pool == nil {
 		err := errors.New("telegram client unavailable")
-		p.logger.Error("Cannot stream download task",
+		p.logger.Debug("Cannot stream download task",
 			zap.String("task_id", task.ID),
 			zap.Error(err))
 		return err
@@ -647,7 +368,7 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 	))
 
 	refresh := func(ctx context.Context) (*tmedia.Media, error) {
-		p.logger.Warn("Refreshing expired Telegram file reference",
+		p.logger.Debug("Refreshing expired Telegram file reference",
 			zap.String("task_id", task.ID),
 			zap.Int64("peer_id", task.PeerID),
 			zap.Int("msg_id", task.MessageID))
@@ -777,121 +498,4 @@ func downloadLinkTTL(cfg config.HTTPConfig) time.Duration {
 
 func LinkTTL(cfg config.HTTPConfig) time.Duration {
 	return downloadLinkTTL(cfg)
-}
-
-func (r downloadRange) contentRange(size int64) string {
-	return fmt.Sprintf("bytes %d-%d/%d", r.start, r.end, size)
-}
-
-func (r downloadRange) mimeHeader(contentType string, size int64) textproto.MIMEHeader {
-	return textproto.MIMEHeader{
-		"Content-Range": {r.contentRange(size)},
-		"Content-Type":  {contentType},
-	}
-}
-
-func downloadETag(task *downloadTask) string {
-	if task == nil {
-		return `"0"`
-	}
-	sum := sha256.Sum256([]byte(task.ID + ":" + strconv.FormatInt(task.FileSize, 10)))
-	return fmt.Sprintf(`"%x"`, sum[:16])
-}
-
-func parseDownloadRanges(header string, size int64) ([]downloadRange, error) {
-	if size < 0 {
-		return nil, errors.New("invalid content length")
-	}
-	if strings.TrimSpace(header) == "" {
-		return nil, nil
-	}
-	unit, spec, ok := strings.Cut(header, "=")
-	if !ok || !strings.EqualFold(strings.TrimSpace(unit), "bytes") {
-		return nil, errors.New("invalid range unit")
-	}
-
-	ranges := make([]downloadRange, 0, strings.Count(spec, ",")+1)
-	noOverlap := false
-	for raw := range strings.SplitSeq(spec, ",") {
-		raw = textproto.TrimString(raw)
-		if raw == "" {
-			return nil, errors.New("invalid empty range")
-		}
-		first, last, ok := strings.Cut(raw, "-")
-		if !ok {
-			return nil, errors.New("invalid range format")
-		}
-		first = textproto.TrimString(first)
-		last = textproto.TrimString(last)
-		if first == "" {
-			suffix, convErr := strconv.ParseInt(last, 10, 64)
-			if convErr != nil || suffix <= 0 {
-				return nil, errors.New("invalid suffix range")
-			}
-			if suffix > size {
-				suffix = size
-			}
-			if suffix == 0 {
-				noOverlap = true
-				continue
-			}
-			ranges = append(ranges, downloadRange{start: size - suffix, end: size - 1})
-			continue
-		}
-
-		start, convErr := strconv.ParseInt(first, 10, 64)
-		if convErr != nil || start < 0 {
-			return nil, errors.New("invalid range start")
-		}
-		if start >= size {
-			noOverlap = true
-			continue
-		}
-		end := size - 1
-		if last != "" {
-			end, convErr = strconv.ParseInt(last, 10, 64)
-			if convErr != nil || end < start {
-				return nil, errors.New("invalid range bounds")
-			}
-			if end >= size {
-				end = size - 1
-			}
-		}
-		ranges = append(ranges, downloadRange{start: start, end: end})
-	}
-	if noOverlap && len(ranges) == 0 {
-		return nil, errRangeNoOverlap
-	}
-	return ranges, nil
-}
-
-func downloadRangesSizeExceeds(ranges []downloadRange, size int64) bool {
-	var total int64
-	for _, selected := range ranges {
-		length := selected.length()
-		if length > size-total {
-			return true
-		}
-		total += length
-	}
-	return false
-}
-
-type downloadCountingWriter int64
-
-func (w *downloadCountingWriter) Write(p []byte) (int, error) {
-	*w += downloadCountingWriter(len(p))
-	return len(p), nil
-}
-
-func multipartDownloadRangesSize(ranges []downloadRange, contentType string, size int64, boundary string) int64 {
-	var encoded downloadCountingWriter
-	mw := multipart.NewWriter(&encoded)
-	_ = mw.SetBoundary(boundary)
-	for _, selected := range ranges {
-		_, _ = mw.CreatePart(selected.mimeHeader(contentType, size))
-		encoded += downloadCountingWriter(selected.length())
-	}
-	_ = mw.Close()
-	return int64(encoded)
 }

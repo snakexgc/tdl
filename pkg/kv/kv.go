@@ -6,58 +6,39 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
 
-//go:generate go-enum --values --names --flag --nocase
-
-// Driver
-// ENUM(legacy, bolt, file)
 type Driver string
 
-const DriverTypeKey = "type"
+const (
+	DriverBolt Driver = "bolt"
+	DriverFile Driver = "file"
+)
 
-type Meta map[string]map[string][]byte // namespace, key, value
+func (d Driver) String() string { return string(d) }
 
 type Storage interface {
 	Name() string
-	MigrateTo() (Meta, error)
-	MigrateFrom(Meta) error
+	Snapshot(context.Context, string) (map[string][]byte, error)
 	Namespaces() ([]string, error)
 	Open(ns string) (storage.Storage, error)
 	io.Closer
 }
 
-var drivers = map[Driver]func(map[string]any) (Storage, error){}
-
-func register(name Driver, fn func(map[string]any) (Storage, error)) {
-	drivers[name] = fn
-}
-
-func New(driver Driver, opts map[string]any) (Storage, error) {
-	if fn, ok := drivers[driver]; ok {
-		return fn(opts)
+// New opens a supported storage backend at an explicit filesystem path.
+func New(driver Driver, path string) (Storage, error) {
+	if path == "" {
+		return nil, errors.New("storage path is required")
 	}
-
-	return nil, errors.Errorf("unsupported driver: %s", driver)
-}
-
-func NewWithMap(o map[string]string) (Storage, error) {
-	driver, err := ParseDriver(o[DriverTypeKey])
-	if err != nil {
-		return nil, errors.Wrap(err, "parse driver")
+	switch driver {
+	case DriverBolt:
+		return newBolt(path)
+	case DriverFile:
+		return newFile(path)
+	default:
+		return nil, errors.Errorf("unsupported driver: %s", driver)
 	}
-
-	opts := make(map[string]any)
-	for k, v := range o {
-		if k == DriverTypeKey {
-			continue
-		}
-
-		opts[k] = v
-	}
-
-	return New(driver, opts)
 }
 
 type ctxKey struct{}

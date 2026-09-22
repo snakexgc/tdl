@@ -6,6 +6,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+)
+
+const (
+	controllerTestTemplate = "test"
 )
 
 func TestControllerStopWaitsForWatchShutdown(t *testing.T) {
@@ -25,7 +32,7 @@ func TestControllerStopWaitsForWatchShutdown(t *testing.T) {
 		return nil
 	}
 
-	controller := NewController(context.Background(), Options{Template: "test"}, nil)
+	controller := NewController(context.Background(), controllerTestOptions(t, Options{Template: controllerTestTemplate}), nil)
 	require.True(t, controller.Start())
 
 	select {
@@ -62,11 +69,65 @@ func TestControllerStopWaitsForWatchShutdown(t *testing.T) {
 	require.False(t, controller.Running())
 }
 
+func TestControllerRequiresInjectedPolicies(t *testing.T) {
+	controller := NewController(context.Background(), Options{}, nil)
+	require.False(t, controller.Start())
+	require.ErrorContains(t, controller.LastError(), "ports are required")
+}
+
 func TestControllerSubmitMessageLinkRequiresRunningWatcher(t *testing.T) {
-	controller := NewController(context.Background(), Options{Template: "test"}, nil)
+	controller := NewController(context.Background(), controllerTestOptions(t, Options{Template: controllerTestTemplate}), nil)
 
 	_, err := controller.SubmitMessageLink(context.Background(), "https://t.me/example/1")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "监听下载未运行")
+}
+
+type cancelableMessageLinks struct{ entered, canceled chan struct{} }
+
+func (cancelableMessageLinks) Validate(_ context.Context, _ types.AccountID, raw string) (string, error) {
+	return raw, nil
+}
+
+func (p cancelableMessageLinks) Submit(ctx context.Context, _ types.AccountID, _ string, _ ports.MessageLinkSource, _ ports.DownloadRequests) (types.DownloadSubmissionSummary, error) {
+	close(p.entered)
+	<-ctx.Done()
+	close(p.canceled)
+	return types.DownloadSubmissionSummary{}, ctx.Err()
+}
+
+type requestCapability struct {
+	ports.DownloadIntents
+	ports.DownloadRequests
+}
+
+func TestControllerCancellationReachesDispatcher(t *testing.T) {
+	previous := runControllerWatch
+	t.Cleanup(func() { runControllerWatch = previous })
+	links := cancelableMessageLinks{entered: make(chan struct{}), canceled: make(chan struct{})}
+	runControllerWatch = func(ctx context.Context, opts Options) error {
+		w := &Watcher{opts: opts, messageLinks: opts.messageLinks, intents: requestCapability{}}
+		w.dispatcher(ctx)
+		return nil
+	}
+	controller := NewController(context.Background(), controllerTestOptions(t, Options{Template: controllerTestTemplate, MessageLinks: links}), nil)
+	require.True(t, controller.Start())
+	t.Cleanup(controller.Stop)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := controller.SubmitMessageLink(ctx, "https://t.me/example/1"); done <- err }()
+	select {
+	case <-links.entered:
+	case <-time.After(time.Second):
+		t.Fatal("message link did not reach dispatcher")
+	}
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	select {
+	case <-links.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("caller cancellation did not reach dispatcher")
+	}
 }

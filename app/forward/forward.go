@@ -3,13 +3,14 @@ package forward
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/snakexgc/tdl/core/forwarder"
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/forwarder"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -20,8 +21,22 @@ func ResolvePeer(ctx context.Context, manager *peers.Manager, target string) (pe
 		return nil, errors.New("peer manager is nil")
 	}
 	target = strings.TrimSpace(target)
-	if target == "" {
+	if target == "" || target == "self" {
 		return manager.Self(ctx)
+	}
+	if kind, raw, typed := strings.Cut(target, ":"); typed && (kind == "user" || kind == "chat" || kind == "channel") {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("invalid chat reference %q", target)
+		}
+		switch kind {
+		case "user":
+			return manager.ResolveUserID(ctx, id)
+		case "chat":
+			return manager.ResolveChatID(ctx, id)
+		case "channel":
+			return manager.ResolveChannelID(ctx, id)
+		}
 	}
 	return tutil.GetInputPeer(ctx, manager, target)
 }

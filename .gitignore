@@ -9,7 +9,10 @@ tdl
 .DS_Store
 .workbuddy
 config.json
+/tdl_config.json
+/components/
 data
 .claude/
 .trae/
 CLAUDE.md
+计划.md

@@ -8,68 +8,37 @@ import (
 	"sync"
 
 	"github.com/go-faster/errors"
-	"github.com/mitchellh/mapstructure"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/pkg/validator"
+	"github.com/snakexgc/tdl/internal/core/storage"
 )
-
-func init() {
-	register(DriverFile, newFile)
-}
 
 type file struct {
 	path string
 	mu   sync.Mutex
 }
 
-func newFile(opts map[string]any) (Storage, error) {
-	type options struct {
-		Path string `validate:"required" mapstructure:"path"`
-	}
-
-	var o options
-	if err := mapstructure.WeakDecode(opts, &o); err != nil {
-		return nil, errors.Wrap(err, "decode options")
-	}
-
-	if err := validator.Struct(&o); err != nil {
-		return nil, errors.Wrap(err, "validate options")
-	}
-
-	_, err := os.Stat(o.Path)
+func newFile(path string) (Storage, error) {
+	_, err := os.Stat(path)
 	if err == nil {
-		return &file{path: o.Path}, nil
+		return &file{path: path}, nil
 	}
 
 	if !os.IsNotExist(err) {
 		return nil, errors.Wrap(err, "stat file")
 	}
 
-	if err = os.MkdirAll(filepath.Dir(o.Path), 0o755); err != nil {
+	if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, errors.Wrap(err, "create file directory")
 	}
-	if err = os.WriteFile(o.Path, []byte("{}"), 0o644); err != nil {
+	if err = os.WriteFile(path, []byte("{}"), 0o644); err != nil {
 		return nil, errors.Wrap(err, "create file")
 	}
 
-	return &file{path: o.Path}, nil
+	return &file{path: path}, nil
 }
 
 func (f *file) Name() string {
 	return DriverFile.String()
-}
-
-func (f *file) MigrateTo() (Meta, error) {
-	meta, err := f.read()
-	if err != nil {
-		return nil, errors.Wrap(err, "read")
-	}
-	return meta, nil
-}
-
-func (f *file) MigrateFrom(meta Meta) error {
-	return f.write(meta)
 }
 
 func (f *file) Namespaces() ([]string, error) {
@@ -126,13 +95,6 @@ func (f *file) readUnlocked() (map[string]map[string][]byte, error) {
 	}
 
 	return m, nil
-}
-
-func (f *file) write(m map[string]map[string][]byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	return f.writeUnlocked(m)
 }
 
 func (f *file) writeUnlocked(m map[string]map[string][]byte) error {
@@ -199,4 +161,15 @@ func (f *fileKV) Delete(_ context.Context, key string) error {
 		return errors.Wrap(err, "mutate")
 	}
 	return nil
+}
+
+func (f *file) Snapshot(ctx context.Context, namespace string) (map[string][]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	values, err := f.read()
+	if err != nil {
+		return nil, err
+	}
+	return values[namespace], ctx.Err()
 }

@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,7 +9,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	appforward "github.com/snakexgc/tdl/app/forward"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 // handleForwards lists the persistent forward queue (pending, running and
@@ -18,21 +19,30 @@ func (s *Server) handleForwards(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	queue := appforward.Jobs()
-	items, err := queue.List(r.Context())
+	data, err := s.forwardsSnapshot(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	running, err := queue.RunningCount(r.Context())
+	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) forwardsSnapshot(ctx context.Context) (any, error) {
+	queue := s.opts.ForwardQueue
+	items, err := queue.List(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+		return nil, err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	running := 0
+	for _, job := range items {
+		if !job.Terminal() {
+			running++
+		}
+	}
+	return map[string]any{
 		fieldItems:   items,
 		fieldRunning: running,
-	})
+	}, nil
 }
 
 // handleForwardActions applies bulk pause/resume/delete to forward jobs.
@@ -49,9 +59,9 @@ func (s *Server) handleForwardActions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode request"))
 		return
 	}
-	queue := appforward.Jobs()
+	queue := s.opts.ForwardQueue
 	var (
-		result appforward.ActionResult
+		result types.ForwardActionResult
 		err    error
 	)
 	switch strings.ToLower(strings.TrimSpace(req.Action)) {
@@ -70,7 +80,7 @@ func (s *Server) handleForwardActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     len(result.Errors) == 0,
-		"result": result,
+		"ok":        len(result.Errors) == 0,
+		fieldResult: result,
 	})
 }

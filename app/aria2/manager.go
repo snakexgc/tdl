@@ -2,142 +2,83 @@ package aria2
 
 import (
 	"context"
-	"time"
+	"sync"
 
-	"github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	appdownload "github.com/snakexgc/tdl/app/download"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/application"
+	component "github.com/snakexgc/tdl/application/downloader.aria2"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
+	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
-// Manager owns aria2 connectivity, recovery and monitoring. It is deliberately
-// independent from the Telegram watcher and HTTP server lifecycles.
 type Manager struct {
-	controller *Controller
-	client     *Client
-	store      *TaskStore
-	regulator  *TelegramErrorRegulator
-	monitor    *ZeroSpeedMonitor
-	limit      int
-	baseURL    string
-	logger     *zap.Logger
+	*component.Manager
+	account types.AccountID
+	mu      sync.Mutex
+	host    *rte.Runtime
+	store   *rteconfig.Store
+	tasks   *TaskStore
 }
 
-func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger) *Manager {
-	if cfg == nil {
-		cfg = config.Get()
-	}
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	logger = logger.Named("aria2-manager")
-	client := NewClient(cfg.Aria2)
-	store := NewTaskStore(kvd, downloadLinkTTL(cfg.HTTP))
-	controller := &Controller{
-		client:        client,
-		store:         store,
-		publicBaseURL: cfg.HTTP.PublicBaseURL,
-		connections:   config.EffectivePoolSize(cfg),
-		logger:        logger,
-	}
-	return &Manager{
-		controller: controller,
-		client:     client,
-		store:      store,
-		regulator:  NewTelegramErrorRegulator(client, store, cfg.HTTP.PublicBaseURL, logger),
-		monitor:    NewZeroSpeedMonitor(client, store, cfg.HTTP.PublicBaseURL, logger),
-		limit:      config.EffectiveLimit(cfg),
-		baseURL:    cfg.HTTP.PublicBaseURL,
-		logger:     logger,
-	}
+func (m *Manager) SetComponentStore(store *rteconfig.Store) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.store = store
 }
 
-func (m *Manager) Name() string {
-	return aria2DownloaderName
+func NewManager(cfg *config.Config, kvd storage.Storage, logger *zap.Logger, engines ...kv.Storage) *Manager {
+	opts := componentOptions(cfg, kvd)
+	repository := taskhub.LinkRepository{Store: kvd, Namespace: string(opts.Account)}
+	if len(engines) > 0 {
+		repository.Engine = engines[0]
+	}
+	opts.Observations = taskhub.Aria2Observations{Links: repository}
+	if cfg != nil {
+		opts.LinkTTL = downloadLinkTTL(cfg.HTTP)
+	}
+	return &Manager{Manager: component.NewManager(opts, logger), account: opts.Account, tasks: opts.Store.(*TaskStore)}
 }
 
-func (m *Manager) Submit(ctx context.Context, submission appdownload.Submission) (appdownload.Result, error) {
-	if m == nil || m.controller == nil {
-		return appdownload.Result{}, errors.New("aria2 manager is not initialized")
-	}
-	return m.controller.Submit(ctx, submission)
+func (m *Manager) UpdateLinks(cfg config.HTTPConfig) {
+	ttl := downloadLinkTTL(cfg)
+	m.tasks.SetTTL(ttl)
+	m.UpdateLinkPolicy(cfg.PublicBaseURL, ttl)
 }
 
-// ReportTelegramFileError lets the optional manager react to Telegram stream
-// errors without making the HTTP package depend on aria2.
-func (m *Manager) ReportTelegramFileError(ctx context.Context, err error) {
-	if m == nil || m.regulator == nil {
-		return
+func (m *Manager) Host() *rte.Runtime {
+	if m == nil {
+		return nil
 	}
-	m.regulator.ReportTelegramFileError(ctx, err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.host
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	if m == nil || m.client == nil {
-		return errors.New("aria2 manager is not initialized")
-	}
-	if err := m.waitUntilReady(ctx, DefaultConnectRetryInterval); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
+	finished := make(chan error, 1)
+	m.mu.Lock()
+	store := m.store
+	m.mu.Unlock()
+	host, err := application.Aria2DownloadHost(ctx, m.account, m.Manager, finished, store)
+	if err != nil {
 		return err
 	}
-
-	m.logger.Info("Aria2 manager connected", zap.Int("max_concurrent_downloads", m.limit))
-	go m.regulator.Run(ctx)
-	go m.monitor.Run(ctx)
-	if count, err := ResumeStartupPausedTasks(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			m.logger.Warn("Failed to resume paused aria2 tasks at startup", zap.Error(err))
-		}
-	} else if count > 0 {
-		m.logger.Info("Resumed paused aria2 tasks at startup", zap.Int("count", count))
+	m.mu.Lock()
+	m.host = host
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.host = nil; m.mu.Unlock() }()
+	select {
+	case <-ctx.Done():
+	case err = <-finished:
 	}
-
-	<-ctx.Done()
-	if paused, err := PauseTDLTasksForShutdown(ctx, m.client, m.store, m.baseURL, m.logger); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			m.logger.Warn("Failed to pause aria2 tasks during manager shutdown", zap.Error(err))
-		}
-	} else if len(paused) > 0 {
-		m.logger.Info("Paused aria2 tasks during manager shutdown", zap.Int("count", len(paused)))
+	if stopErr := host.Stop(context.Background()); stopErr != nil {
+		return stopErr
 	}
-	return nil
-}
-
-func (m *Manager) waitUntilReady(ctx context.Context, retryInterval time.Duration) error {
-	if retryInterval <= 0 {
-		retryInterval = DefaultConnectRetryInterval
-	}
-	delay := min(retryInterval, maxConnectRetryInterval)
-	for {
-		err := m.client.SetMaxConcurrentDownloads(ctx, m.limit)
-		if err == nil {
-			return nil
-		}
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		m.logger.Warn("Aria2 manager is not ready, retrying",
-			zap.Duration("retry_interval", delay),
-			zap.Error(err))
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
-		delay = nextAria2RetryInterval(delay)
-	}
+	return err
 }

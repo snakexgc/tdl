@@ -1,0 +1,139 @@
+package taskhub
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/go-faster/errors"
+
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
+)
+
+const (
+	aria2TaskKeyPrefix = Aria2Prefix
+	aria2TaskIndexKey  = Aria2Index
+
+	DefaultAria2TaskTTL = 24 * time.Hour
+)
+
+type Aria2Record = types.Aria2TaskRecord
+
+type Aria2Repository struct {
+	kv  storage.Storage
+	ttl atomic.Int64
+}
+
+func NewAria2Repository(kv storage.Storage, ttl ...time.Duration) *Aria2Repository {
+	taskTTL := DefaultAria2TaskTTL
+	if len(ttl) > 0 {
+		taskTTL = ttl[0]
+	}
+	repository := &Aria2Repository{kv: kv}
+	repository.SetTTL(taskTTL)
+	return repository
+}
+
+func (s *Aria2Repository) SetTTL(ttl time.Duration) { s.ttl.Store(int64(ttl)) }
+
+func (s *Aria2Repository) Add(ctx context.Context, record Aria2Record) error {
+	if s == nil || s.kv == nil {
+		return nil
+	}
+	if record.GID == "" {
+		return errors.New("aria2 gid is empty")
+	}
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = time.Now()
+	}
+	if err := s.cleanup(ctx); err != nil {
+		return err
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return Aria2(s.kv).Merge(ctx, record.GID, data, record.CreatedAt)
+}
+
+func (s *Aria2Repository) GIDs(ctx context.Context) (map[string]struct{}, error) {
+	records, err := s.Records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]struct{}, len(records))
+	for gid := range records {
+		result[gid] = struct{}{}
+	}
+	return result, nil
+}
+
+func (s *Aria2Repository) Records(ctx context.Context) (map[string]Aria2Record, error) {
+	result := make(map[string]Aria2Record)
+	if s == nil || s.kv == nil {
+		return result, nil
+	}
+	if err := s.cleanup(ctx); err != nil {
+		return nil, err
+	}
+	records, err := Aria2(s.kv).Records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for gid, data := range records {
+		record, err := DecodeAria2Record(data, gid)
+		if err != nil {
+			return nil, err
+		}
+		if record.Deleted {
+			continue
+		}
+		result[record.GID] = record
+	}
+	return result, nil
+}
+
+func (s *Aria2Repository) Remove(ctx context.Context, gid string) error {
+	if s == nil || s.kv == nil || gid == "" {
+		return nil
+	}
+	return Aria2(s.kv).Remove(ctx, gid)
+}
+
+func (s *Aria2Repository) cleanup(ctx context.Context) error {
+	ttl := time.Duration(s.ttl.Load())
+	if ttl <= 0 {
+		return nil
+	}
+	now := time.Now()
+	return Aria2(s.kv).Sweep(ctx, func(data []byte, stamp time.Time) (bool, error) {
+		var record Aria2Record
+		if err := json.Unmarshal(data, &record); err != nil {
+			return false, err
+		}
+		if record.ControlUntil.After(now) {
+			return false, nil
+		}
+		return isAria2TaskExpired(stamp, now, ttl), nil
+	})
+}
+
+func Aria2StorageKey(gid string) string { return aria2TaskKeyPrefix + gid }
+func isAria2TaskExpired(createdAt, now time.Time, ttl time.Duration) bool {
+	return ttl > 0 && !createdAt.IsZero() && now.Sub(createdAt) > ttl
+}
+
+// DecodeAria2Record reads the current persisted schema without upgrading records.
+func DecodeAria2Record(data []byte, gid string) (Aria2Record, error) {
+	var record Aria2Record
+	if err := json.Unmarshal(data, &record); err != nil {
+		return record, err
+	}
+	if record.GID == "" || record.GID != gid || record.Revision == 0 || types.NormalizeDownloadState(record.Status) == types.DownloadUnknown || record.State != types.NormalizeDownloadState(record.Status) {
+		return record, fmt.Errorf("invalid aria2 task record %q", gid)
+	}
+	return record, nil
+}

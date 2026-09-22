@@ -2,126 +2,127 @@ package bot
 
 import (
 	"context"
-	"sync"
+	"log/slog"
+	"time"
 
-	"github.com/fatih/color"
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
+
+	"github.com/snakexgc/tdl/application"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/rte"
 )
 
 type botMessageSender interface {
-	SendMessage(ctx context.Context, params *telego.SendMessageParams) (*telego.Message, error)
+	SendMessage(context.Context, *telego.SendMessageParams) (*telego.Message, error)
 }
-
 type botMessageEditor interface {
-	EditMessageText(ctx context.Context, params *telego.EditMessageTextParams) (*telego.Message, error)
+	EditMessageText(context.Context, *telego.EditMessageTextParams) (*telego.Message, error)
 }
-
-// trackedMessage holds a chat ID and message ID for a sent message that may be later edited.
-type trackedMessage struct {
-	chatID    int64
-	messageID int
-}
+type trackedMessage = types.NotificationMessage
 
 type botNotifier struct {
-	mu      sync.RWMutex
-	bot     botMessageSender
-	editor  botMessageEditor // nil when bot does not implement EditMessageText
-	chatIDs []int64
+	host    *rte.Runtime
+	service ports.Notifications
+	account types.AccountID
 }
 
-func newBotNotifier(bot botMessageSender, chatIDs []int64) *botNotifier {
-	editor, _ := bot.(botMessageEditor)
-	return &botNotifier{
-		bot:     bot,
-		editor:  editor,
-		chatIDs: uniqueInt64s(chatIDs),
+type botNotificationTransport struct {
+	sender botMessageSender
+	editor botMessageEditor
+}
+
+func (t *botNotificationTransport) Send(ctx context.Context, chatID int64, text string) (int, error) {
+	message, err := t.sender.SendMessage(ctx, tu.Message(tu.ID(chatID), text))
+	if err != nil || message == nil {
+		return 0, err
 	}
+	return message.MessageID, nil
+}
+
+func (t *botNotificationTransport) Edit(ctx context.Context, chatID int64, messageID int, text string) error {
+	if t.editor == nil {
+		return nil
+	}
+	_, err := t.editor.EditMessageText(ctx, &telego.EditMessageTextParams{ChatID: tu.ID(chatID), MessageID: messageID, Text: text})
+	return err
+}
+
+func newBotNotifier(ctx context.Context, account types.AccountID, bot botMessageSender, chatIDs []int64) (*botNotifier, error) {
+	if account == "" {
+		account = types.DefaultAccount
+	}
+	editor, _ := bot.(botMessageEditor)
+	host, service, err := application.NotificationHost(ctx, account, &botNotificationTransport{sender: bot, editor: editor}, chatIDs)
+	if err != nil {
+		return nil, err
+	}
+	return &botNotifier{host: host, service: service, account: account}, nil
+}
+
+func (n *botNotifier) Close() {
+	if n == nil || n.host == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := n.host.Stop(ctx); err != nil {
+		slog.Error("停止通知服务失败", "component", "notify.telegram", "account", n.account, "error", err)
+	}
+}
+
+func notificationContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	// Final task notifications may outlive a canceled task; the SWC still limits
+	// their duration and cancels them with the Bot lifecycle.
+	return context.WithoutCancel(ctx)
 }
 
 func (n *botNotifier) Notify(ctx context.Context, text string) {
-	if n == nil || n.bot == nil || text == "" {
+	service := n.current()
+	if service == nil || text == "" {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx = context.WithoutCancel(ctx)
-
-	n.mu.RLock()
-	chatIDs := append([]int64(nil), n.chatIDs...)
-	n.mu.RUnlock()
-
-	for _, chatID := range chatIDs {
-		if _, err := n.bot.SendMessage(ctx, tu.Message(tu.ID(chatID), text)); err != nil {
-			color.Yellow("Failed to notify user %d: %v", chatID, err)
-		}
+	if err := service.Enqueue(notificationContext(ctx), text); err != nil {
+		slog.Warn("通知入队失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }
 
-// SendAndTrack sends text to all chat IDs and returns the resulting message references.
-// Used for live-progress messages that will later be edited.
 func (n *botNotifier) SendAndTrack(ctx context.Context, text string) []trackedMessage {
-	if n == nil || n.bot == nil || text == "" {
+	service := n.current()
+	if service == nil || text == "" {
 		return nil
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	refs, err := service.Send(notificationContext(ctx), text)
+	if err != nil {
+		slog.Error("发送通知失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
-	ctx = context.WithoutCancel(ctx)
-
-	n.mu.RLock()
-	chatIDs := append([]int64(nil), n.chatIDs...)
-	n.mu.RUnlock()
-
-	var tracked []trackedMessage
-	for _, chatID := range chatIDs {
-		msg, err := n.bot.SendMessage(ctx, tu.Message(tu.ID(chatID), text))
-		if err != nil {
-			color.Yellow("Failed to send tracked message to user %d: %v", chatID, err)
-			continue
-		}
-		if msg != nil {
-			tracked = append(tracked, trackedMessage{chatID: chatID, messageID: msg.MessageID})
-		}
-	}
-	return tracked
+	return refs
 }
 
-// EditTracked edits all previously tracked messages with the new text.
-func (n *botNotifier) EditTracked(ctx context.Context, tracked []trackedMessage, text string) {
-	if n == nil || n.editor == nil || len(tracked) == 0 || text == "" {
+func (n *botNotifier) EditTracked(ctx context.Context, refs []trackedMessage, text string) {
+	service := n.current()
+	if service == nil || text == "" || len(refs) == 0 {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx = context.WithoutCancel(ctx)
-
-	for _, ref := range tracked {
-		if _, err := n.editor.EditMessageText(ctx, &telego.EditMessageTextParams{
-			ChatID:    tu.ID(ref.chatID),
-			MessageID: ref.messageID,
-			Text:      text,
-		}); err != nil {
-			color.Yellow("Failed to edit tracked message for user %d msg %d: %v", ref.chatID, ref.messageID, err)
-		}
+	if err := service.Edit(notificationContext(ctx), refs, text); err != nil {
+		slog.Warn("更新通知失败", "component", "notify.telegram", "account", n.account, "error", err)
 	}
 }
 
-func uniqueInt64s(values []int64) []int64 {
-	if len(values) == 0 {
+func (n *botNotifier) current() ports.Notifications {
+	if n == nil {
 		return nil
 	}
-
-	seen := make(map[int64]struct{}, len(values))
-	unique := make([]int64, 0, len(values))
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		unique = append(unique, value)
+	if n.host == nil {
+		return n.service
 	}
-	return unique
+	value, err := n.host.Resolve(ports.NotificationsName)
+	if err != nil {
+		return nil
+	}
+	return value.(ports.Notifications)
 }

@@ -10,10 +10,11 @@ import (
 	"github.com/gotd/td/tgerr"
 	"github.com/stretchr/testify/require"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/core/storage/keygen"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/internal/core/storage/keygen"
 	"github.com/snakexgc/tdl/pkg/key"
-	"github.com/snakexgc/tdl/pkg/tclient"
 )
 
 func TestCommitTemporarySessionCopiesSessionAndApp(t *testing.T) {
@@ -22,6 +23,13 @@ func TestCommitTemporarySessionCopiesSessionAndApp(t *testing.T) {
 	dst := newMemoryStorage()
 
 	require.NoError(t, tmp.Set(ctx, keygen.New("session"), []byte("temporary-session")))
+	identity := tgauth.Fingerprint(types.TelegramApp{AppID: 2040, AppHash: "captured-app-hash"})
+	require.Error(t, commitTemporarySession(ctx, tmp, dst))
+	require.NoError(t, tmp.Set(ctx, key.App(), []byte("desktop")))
+	require.Error(t, commitTemporarySession(ctx, tmp, dst))
+	_, err := dst.Get(ctx, keygen.New("session"))
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.NoError(t, tmp.Set(ctx, tgauth.FingerprintKey, []byte(identity)))
 	require.NoError(t, commitTemporarySession(ctx, tmp, dst))
 
 	session, err := dst.Get(ctx, keygen.New("session"))
@@ -30,7 +38,23 @@ func TestCommitTemporarySessionCopiesSessionAndApp(t *testing.T) {
 
 	app, err := dst.Get(ctx, key.App())
 	require.NoError(t, err)
-	require.Equal(t, []byte(tclient.AppDesktop), app)
+	require.Equal(t, []byte("desktop"), app)
+	fingerprint, err := dst.Get(ctx, tgauth.FingerprintKey)
+	require.NoError(t, err)
+	require.Equal(t, identity, string(fingerprint))
+}
+
+func TestCommitTemporarySessionPreservesCapturedCredentials(t *testing.T) {
+	ctx := context.Background()
+	tmp, dst := newMemoryStorage(), newMemoryStorage()
+	require.NoError(t, tmp.Set(ctx, keygen.New("session"), []byte("authenticated")))
+	require.NoError(t, tmp.Set(ctx, key.App(), []byte("builtin")))
+	identity := tgauth.Fingerprint(types.TelegramApp{AppID: 12345, AppHash: "custom-hash"})
+	require.NoError(t, tmp.Set(ctx, tgauth.FingerprintKey, []byte(identity)))
+	require.NoError(t, commitTemporarySession(ctx, tmp, dst))
+	actual, err := dst.Get(ctx, tgauth.FingerprintKey)
+	require.NoError(t, err)
+	require.Equal(t, identity, string(actual))
 }
 
 func TestCommitTemporarySessionDoesNotWriteWithoutSession(t *testing.T) {

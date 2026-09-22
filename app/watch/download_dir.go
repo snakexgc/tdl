@@ -2,20 +2,14 @@ package watch
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
-	"github.com/flytam/filenamify"
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/snakexgc/tdl/core/util/tutil"
+	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
 
@@ -24,24 +18,10 @@ type aria2GlobalDirGetter interface {
 }
 
 type downloadDirData struct {
-	ID               string
-	Name             string
-	MessageTitle     string
-	MessageID        string
-	TriggerMessageID string
-	FileName         string
-	AlbumID          string
-	Time             time.Time
+	ID   string
+	Name string
+	Time time.Time
 }
-
-var windowsDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
-
-const (
-	safeMessageTitleMaxRunes  = 80
-	safeMessageTitleHeadRunes = 48
-	safeMessageTitleTailRunes = 30
-	safeMessageTitleMarker    = "..."
-)
 
 func prepareAria2OutputRoot(ctx context.Context, client aria2GlobalDirGetter, cfg *config.Config) (root string, ensureDirs bool, err error) {
 	if cfg == nil {
@@ -82,38 +62,7 @@ func (w *Watcher) downloadDirData(ctx context.Context, file fileTask) downloadDi
 		}
 	}
 
-	triggerMsg := file.triggerMsg
-	if triggerMsg == nil {
-		triggerMsg = file.msg
-	}
-	messageTitle := ""
-	triggerMessageID := ""
-	if triggerMsg != nil {
-		messageTitle = strings.TrimSpace(triggerMsg.Message)
-		triggerMessageID = strconv.Itoa(triggerMsg.ID)
-	}
-	messageID := ""
-	albumID := ""
-	if file.msg != nil {
-		messageID = strconv.Itoa(file.msg.ID)
-		if groupedID, ok := file.msg.GetGroupedID(); ok {
-			albumID = strconv.FormatInt(groupedID, 10)
-		}
-	}
-	fileName := ""
-	if file.media != nil {
-		fileName = file.media.Name
-	}
-	return downloadDirData{
-		ID:               id,
-		Name:             safePathSegment(name),
-		MessageTitle:     messageTitle,
-		MessageID:        messageID,
-		TriggerMessageID: triggerMessageID,
-		FileName:         fileName,
-		AlbumID:          albumID,
-		Time:             time.Now(),
-	}
+	return downloadDirData{ID: id, Name: safePathSegment(name), Time: time.Now()}
 }
 
 func peerTemplateName(peer peers.Peer) string {
@@ -142,289 +91,4 @@ func peerTemplateName(peer peers.Peer) string {
 		}
 		return ""
 	}
-}
-
-func renderDownloadDir(pattern string, data downloadDirData) []string {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		return nil
-	}
-
-	rawSegments := splitPathParts(pattern)
-	segments := make([]string, 0, len(rawSegments))
-	for _, raw := range rawSegments {
-		segment := renderDownloadDirSegment(raw, data)
-		segment = safePathSegment(segment)
-		if segment != "" {
-			segments = append(segments, segment)
-		}
-	}
-	return segments
-}
-
-func renderDownloadDirSegment(segment string, data downloadDirData) string {
-	var b strings.Builder
-	for _, r := range segment {
-		if r == '&' {
-			continue
-		}
-		if value, ok := downloadTemplateValue(r, data); ok {
-			b.WriteString(value)
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func downloadTemplateValue(r rune, data downloadDirData) (string, bool) {
-	switch r {
-	case 'F':
-		return strings.TrimSuffix(data.FileName, filepath.Ext(data.FileName)), true
-	case 'I':
-		return safeMessageTitleSegment(data.MessageTitle), true
-	case 'G':
-		return data.Name, true
-	case 'P':
-		return data.ID, true
-	case 'S':
-		return data.MessageID, true
-	case 'R':
-		return data.TriggerMessageID, true
-	case 'A':
-		return data.AlbumID, true
-	case 'Y':
-		return fmt.Sprintf("%04d", data.Time.Year()), true
-	case 'M':
-		return fmt.Sprintf("%02d", int(data.Time.Month())), true
-	case 'D':
-		return fmt.Sprintf("%02d", data.Time.Day()), true
-	default:
-		return "", false
-	}
-}
-
-func safePathSegment(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	safe, err := filenamify.FilenamifyV2(value)
-	if err != nil || safe == "" {
-		return "invalid-filename"
-	}
-	return safe
-}
-
-func safeMessageTitleSegment(value string) string {
-	return safeMessageTitleSegmentWithMax(value, safeMessageTitleMaxRunes)
-}
-
-func safeMessageTitleSegmentWithMax(value string, maxRunes int) string {
-	if maxRunes <= 0 {
-		return ""
-	}
-
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return limitFileNameRunes([]rune("untitled"), maxRunes)
-	}
-
-	runes := make([]rune, 0, len(value))
-	for _, r := range value {
-		if isMessageTitleFilenameRune(r) {
-			runes = append(runes, r)
-		}
-	}
-	if len(runes) == 0 {
-		return limitFileNameRunes([]rune("untitled"), maxRunes)
-	}
-	return limitFileNameRunes(runes, maxRunes)
-}
-
-func isMessageTitleFilenameRune(r rune) bool {
-	return (r >= 'a' && r <= 'z') ||
-		(r >= 'A' && r <= 'Z') ||
-		(r >= '0' && r <= '9') ||
-		unicode.Is(unicode.Han, r)
-}
-
-func renderedNameLeafByteLen(rendered string) int {
-	_, leaf := splitRenderedNameLeaf(rendered)
-	return len(leaf)
-}
-
-// limitRenderedNameLeafBytes hard-truncates the filename leaf to maxBytes, preserving the
-// file extension and never splitting a multi-byte UTF-8 rune.
-func limitRenderedNameLeafBytes(rendered string, maxBytes int) string {
-	prefix, leaf := splitRenderedNameLeaf(rendered)
-	return prefix + limitFileNameSegmentBytes(leaf, maxBytes)
-}
-
-func splitRenderedNameLeaf(rendered string) (prefix, leaf string) {
-	lastSlash := strings.LastIndexAny(rendered, `/\`)
-	if lastSlash < 0 {
-		return "", rendered
-	}
-	return rendered[:lastSlash+1], rendered[lastSlash+1:]
-}
-
-// limitFileNameSegmentBytes hard-truncates name to maxBytes (UTF-8), keeping the extension intact.
-func limitFileNameSegmentBytes(name string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(name) <= maxBytes {
-		return name
-	}
-
-	ext := filepath.Ext(name)
-	extBytes := len(ext)
-	if ext != "" && extBytes < maxBytes {
-		base := strings.TrimSuffix(name, ext)
-		return truncateBytesKeepingRunes(base, maxBytes-extBytes) + ext
-	}
-
-	return truncateBytesKeepingRunes(name, maxBytes)
-}
-
-// truncateBytesKeepingRunes shortens s to at most maxBytes without splitting a UTF-8 rune.
-func truncateBytesKeepingRunes(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	var n int
-	for _, r := range s {
-		size := utf8.RuneLen(r)
-		if n+size > maxBytes {
-			break
-		}
-		n += size
-	}
-	return s[:n]
-}
-
-func limitFileNameRunes(runes []rune, maxRunes int) string {
-	if maxRunes <= 0 || len(runes) == 0 {
-		return ""
-	}
-	if len(runes) <= maxRunes {
-		return string(runes)
-	}
-
-	marker := []rune(safeMessageTitleMarker)
-	if maxRunes <= len(marker)+1 {
-		return string(runes[:maxRunes])
-	}
-
-	available := maxRunes - len(marker)
-	tail := min(safeMessageTitleTailRunes, available/2)
-	head := min(safeMessageTitleHeadRunes, available-tail)
-	if head+tail < available {
-		head += available - head - tail
-	}
-
-	return string(runes[:head]) + safeMessageTitleMarker + string(runes[len(runes)-tail:])
-}
-
-func resolveTargetPath(baseDir, renderedName string) (dir, out, fullPath string) {
-	parts := splitPathParts(renderedName)
-	if len(parts) == 0 {
-		out = safePathSegment(renderedName)
-		return baseDir, out, joinTargetPath(baseDir, out)
-	}
-
-	out = parts[len(parts)-1]
-	if len(parts) > 1 {
-		dir = joinTargetPath(baseDir, parts[:len(parts)-1]...)
-	} else {
-		dir = baseDir
-	}
-	fullPath = joinTargetPath(dir, out)
-	return dir, out, fullPath
-}
-
-func splitPathParts(value string) []string {
-	fields := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '/' || r == '\\'
-	})
-	parts := make([]string, 0, len(fields))
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if field == "" || field == "." || field == ".." {
-			continue
-		}
-		parts = append(parts, field)
-	}
-	return parts
-}
-
-func joinTargetPath(base string, parts ...string) string {
-	sep := targetPathSeparator(base)
-	originalBase := base
-	base = strings.TrimRight(base, `/\`)
-	if base == "" && strings.HasPrefix(originalBase, "/") {
-		base = "/"
-	}
-
-	cleanParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.Trim(part, `/\`)
-		if part == "" || part == "." || part == ".." {
-			continue
-		}
-		cleanParts = append(cleanParts, part)
-	}
-
-	if base == "/" {
-		if len(cleanParts) == 0 {
-			return "/"
-		}
-		return "/" + strings.Join(cleanParts, "/")
-	}
-
-	withBase := make([]string, 0, len(cleanParts)+1)
-	if base != "" {
-		withBase = append(withBase, base)
-	}
-	withBase = append(withBase, cleanParts...)
-	if len(withBase) == 0 {
-		return ""
-	}
-	return strings.Join(withBase, sep)
-}
-
-func targetPathSeparator(base string) string {
-	if looksWindowsPath(base) {
-		return `\`
-	}
-	return "/"
-}
-
-func looksWindowsPath(path string) bool {
-	return windowsDrivePath.MatchString(path) || strings.HasPrefix(path, `\\`)
-}
-
-func cleanTargetRoot(root string) string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return ""
-	}
-	if looksWindowsPath(root) {
-		return filepath.Clean(root)
-	}
-	return pathCleanSlash(root)
-}
-
-func pathCleanSlash(path string) string {
-	absolute := strings.HasPrefix(path, "/")
-	parts := splitPathParts(path)
-	clean := strings.Join(parts, "/")
-	if absolute {
-		return "/" + clean
-	}
-	if clean == "" {
-		return "."
-	}
-	return clean
 }

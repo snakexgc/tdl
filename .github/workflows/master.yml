@@ -14,12 +14,6 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        directory:
-          - .
-          - core
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -32,7 +26,6 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.2
-          working-directory: ${{ matrix.directory }}
   unit-test:
     runs-on: ubuntu-22.04
     steps:
@@ -46,28 +39,50 @@ jobs:
       - name: Build
         run: go build
       - name: Unit Test
-        run: go test -v $(go list ./... | grep -v /test) # skip e2e test
-  e2e-test:
+        run: go test -race ./...
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Component UI tests
+        run: node --experimental-vm-modules --test internal/integration/*.test.mjs
+      - name: Component assembly and generated documentation
+        run: |
+          go run ./cmd/swc-check
+          go run ./cmd/swc-check -empty
+          go run ./cmd/swc-docs -config-out examples/tdl_config.json
+          git ls-files --error-unmatch docs/configuration.md examples/tdl_config.json
+          git diff --exit-code -- docs/configuration.md examples/tdl_config.json
+  release-build-check:
     runs-on: ubuntu-22.04
-    if: false # skip e2e test for now, since it is not stable
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: linux, arch: amd64}
+          - {os: linux, arch: arm64}
+          - {os: linux, arch: '386'}
+          - {os: linux, arch: riscv64}
+          - {os: linux, arch: loong64}
+          - {os: linux, arch: arm, arm: '5'}
+          - {os: linux, arch: arm, arm: '6'}
+          - {os: linux, arch: arm, arm: '7'}
+          - {os: windows, arch: amd64}
+          - {os: windows, arch: arm64}
+          - {os: windows, arch: '386'}
+          - {os: darwin, arch: amd64}
+          - {os: darwin, arch: arm64}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Setup Golang env
-        uses: actions/setup-go@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
-      - name: Setup Teamgram Env
+      - name: Verify release target without publishing
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_ARM: ${{ matrix.arm }}
         run: |
-          git clone https://github.com/iyear/teamgram-server.git
-          cd teamgram-server
-          git checkout 10151bb92555aa1bedcba9f8f24b0e7deac22dee
-          sudo docker compose -f ./docker-compose-env.yaml up -d --quiet-pull
-          sudo docker compose up -d --quiet-pull
-      - name: Build
-        run: go build
-      - name: E2E Test
-        run: ginkgo -v -r ./test
+          flags=$(go run ./cmd/buildflags --version baseline-check --commit "$GITHUB_SHA" --arm "$TARGET_ARM")
+          CGO_ENABLED=0 GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" GOARM="$TARGET_ARM" go build -trimpath -ldflags "$flags" -o "$RUNNER_TEMP/tdl-check" .

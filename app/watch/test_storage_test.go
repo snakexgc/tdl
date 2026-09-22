@@ -1,46 +1,18 @@
 package watch
 
 import (
-	"context"
-	"sync"
+	"go.uber.org/zap"
 
-	"github.com/snakexgc/tdl/core/storage"
+	httpdl "github.com/snakexgc/tdl/app/http"
+	"github.com/snakexgc/tdl/internal/core/storage"
+	"github.com/snakexgc/tdl/pkg/config"
 )
 
-type memoryTaskStorage struct {
-	mu   sync.Mutex
-	data map[string][]byte
-}
+func newMemoryTaskStorage() *storage.Memory { return &storage.Memory{} }
 
-func newMemoryTaskStorage() *memoryTaskStorage {
-	return &memoryTaskStorage{
-		data: map[string][]byte{},
+func newTestWatchRuntime(cfg *config.Config, opts Options, store storage.Storage, logger *zap.Logger) *watchRuntime {
+	if opts.HTTPService == nil {
+		opts.HTTPService = httpdl.NewService(cfg, store, logger)
 	}
-}
-
-func (m *memoryTaskStorage) Get(ctx context.Context, key string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	value, ok := m.data[key]
-	if !ok {
-		return nil, storage.ErrNotFound
-	}
-	return append([]byte(nil), value...), nil
-}
-
-func (m *memoryTaskStorage) Set(ctx context.Context, key string, value []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.data[key] = append([]byte(nil), value...)
-	return nil
-}
-
-func (m *memoryTaskStorage) Delete(ctx context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.data, key)
-	return nil
+	return newWatchRuntime(opts, store, logger)
 }

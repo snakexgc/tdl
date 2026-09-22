@@ -2,7 +2,6 @@ package webui
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"io/fs"
 	"mime"
@@ -14,16 +13,28 @@ import (
 
 	"github.com/gotd/td/tg"
 
+	appforward "github.com/snakexgc/tdl/app/forward"
 	httpdl "github.com/snakexgc/tdl/app/http"
-	"github.com/snakexgc/tdl/app/updater"
-	"github.com/snakexgc/tdl/app/watch"
-	"github.com/snakexgc/tdl/core/storage"
+	"github.com/snakexgc/tdl/app/login"
+	"github.com/snakexgc/tdl/app/reset"
+	"github.com/snakexgc/tdl/application"
+	accounttelegram "github.com/snakexgc/tdl/application/account.telegram"
+	downloadcontrol "github.com/snakexgc/tdl/application/download.control"
+	local "github.com/snakexgc/tdl/application/downloader.local"
+	panel "github.com/snakexgc/tdl/application/panel.webui"
+	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
+	"github.com/snakexgc/tdl/bsw/services/telemetry"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
+	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
-//go:embed index.html login.html aria2ng.html static views
-var assets embed.FS
+var assets = application.WebAssets()
 
 func init() {
 	// Serve module scripts and stylesheets with a strict, correct MIME type
@@ -37,8 +48,8 @@ func init() {
 const (
 	downloadTaskKeyPrefix = httpdl.DownloadTaskKeyPrefix
 	downloadTaskIndexKey  = httpdl.DownloadTaskIndexKey
-	aria2TaskKeyPrefix    = "watch.aria2.task."
-	aria2TaskIndexKey     = "watch.aria2.index"
+	aria2TaskKeyPrefix    = taskhub.Aria2Prefix
+	aria2TaskIndexKey     = taskhub.Aria2Index
 
 	aria2StatusComplete    = "complete"
 	tdlAria2PieceSize      = "1024K"
@@ -58,6 +69,7 @@ const (
 	fieldDeleted                 = "deleted"
 	valueTrue                    = "true"
 	fieldMessage                 = "message"
+	fieldError                   = "error"
 	fieldDefault                 = "default"
 
 	actionDelete = "delete"
@@ -68,37 +80,55 @@ const (
 )
 
 type Options struct {
-	Context         context.Context
-	KVEngine        kv.Storage
-	Namespace       string
-	NamespaceKV     storage.Storage
-	AfterConfigSave func(*config.Config)
-	OnLoginSuccess  func(*tg.User)
-	RequestReboot   func()
-	RequestUpdate   func(updater.Plan)
-	WatchRunning    func() bool
-	ModuleManager   ModuleManager
+	Ready                func()
+	Dialogs              ports.DialogCatalog
+	Catalog              *rte.Catalog
+	ComponentStore       *rteconfig.Store
+	SessionChecker       ports.AccountSession
+	Connections          *tgauth.Connections
+	SetComponentHost     func(*rte.Runtime)
+	DownloadControl      ports.DownloadControl
+	LocalLinks           ports.DownloadExecutor
+	Credentials          ports.TelegramCredentials
+	Updater              ports.Updater
+	ComponentManager     ComponentManager
+	ForwardQueue         ports.ForwardTasks
+	Context              context.Context
+	KVEngine             kv.Storage
+	Namespace            string
+	NamespaceKV          storage.Storage
+	ConfigurationManager ports.ConfigurationManager
+	OnLoginSuccess       func(*tg.User)
+	RequestReboot        func()
+	ResetPlan            *reset.Plan
+	RequestReset         func()
+	RequestUpdate        func(types.UpdatePlan)
+	WatchRunning         func() bool
 }
 
-type ModuleManager interface {
-	ModuleStates() []ModuleState
-	SetModuleEnabled(ctx context.Context, id string, enabled bool) (ModuleState, error)
+type ComponentManager interface {
+	ComponentConfigurations() ([]rte.Configuration, bool)
+	SaveComponentConfiguration(context.Context, string, map[string]any) error
 }
 
-type ModuleState struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	Running     bool   `json:"running"`
-	CanToggle   bool   `json:"can_toggle"`
-	Status      string `json:"status"`
+type ComponentDiagnostics interface {
+	ComponentHealth() []rte.Health
 }
 
 type Server struct {
-	opts Options
+	dialogs        ports.DialogCatalog
+	samples        *telemetry.Sampler
+	storageSamples *telemetry.Sampler
+	assets         fs.FS
+	accountActions *accounttelegram.Actions
+	opts           Options
 
-	login *webLoginManager
+	login               *webLoginManager
+	configuration       ports.Configuration
+	activeConfiguration ports.SystemConfiguration
+	sessionCatalog      ports.SessionCatalog
+	downloadLinksPort   ports.DownloadLinks
+	downloadCatalogPort ports.DownloadCatalog
 
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
@@ -109,11 +139,12 @@ type Server struct {
 	dashboardLastBytes  int64
 	dashboardLastSample time.Time
 
-	shutdownRequested atomic.Bool
+	shutdownRequested  atomic.Bool
+	maintenanceRunning atomic.Bool
 }
 
 func Run(ctx context.Context, opts Options) error {
-	cfg := config.Get()
+	cfg := config.From(ctx)
 	if cfg == nil || strings.TrimSpace(config.WebUIListenAddr(cfg)) == "" {
 		return nil
 	}
@@ -125,70 +156,140 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	server := NewServer(opts)
-	server.startAria2SyncLoop(ctx)
-
-	httpServer := &http.Server{
-		Addr:    config.WebUIListenAddr(cfg),
-		Handler: server.routes(),
+	defer func() { _ = server.accountActions.Stop(context.Background()) }()
+	defer func() { _ = server.login.Stop(context.Background()) }()
+	completed := make(chan error, 1)
+	host, err := application.PanelHostStored(ctx, types.AccountID(opts.Namespace), panel.Options{
+		Configuration:   server.configuration,
+		Sessions:        server.sessionCatalog,
+		DownloadLinks:   server.downloadLinksPort,
+		DownloadCatalog: server.downloadCatalogPort,
+		Login:           server.login.AccountLogin,
+		Address:         config.WebUIListenAddr(cfg), Handler: server.routes(), Completed: completed,
+	}, opts.ComponentStore, server.accountActions)
+	if err != nil {
+		return err
 	}
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-	}()
-
-	return httpServer.ListenAndServe()
+	if opts.SetComponentHost != nil {
+		opts.SetComponentHost(host)
+		defer opts.SetComponentHost(nil)
+	}
+	defer func() { _ = host.Stop(context.Background()) }()
+	if opts.Ready != nil {
+		opts.Ready()
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-completed:
+		return err
+	}
 }
 
 func NewServer(opts Options) *Server {
-	return &Server{
-		opts:     opts,
-		login:    newWebLoginManager(opts),
-		sessions: map[string]time.Time{},
-		logins:   map[string]loginFailure{},
+	if opts.Catalog == nil {
+		var err error
+		opts.Catalog, err = application.Catalog()
+		if err != nil {
+			panic(err)
+		}
 	}
+	if opts.ForwardQueue == nil {
+		opts.ForwardQueue = appforward.NewQueue(opts.NamespaceKV)
+	}
+	var active ports.SystemConfiguration
+	if cfg := config.From(opts.Context); cfg != nil {
+		active = config.System(cfg)
+	}
+	server := &Server{
+		samples:             telemetry.New(time.Second),
+		storageSamples:      telemetry.New(30 * time.Second),
+		assets:              application.WebAssets(opts.Catalog),
+		configuration:       panel.NewConfiguration(configurationStore{manager: opts.ConfigurationManager, active: active}),
+		activeConfiguration: active,
+		opts:                opts,
+		login:               newWebLoginManager(opts),
+		sessions:            map[string]time.Time{},
+		logins:              map[string]loginFailure{},
+	}
+	server.dialogs = opts.Dialogs
+	if server.dialogs == nil {
+		server.dialogs = accounttelegram.NewDialogs(login.DialogTransport{Options: func() login.SessionOptions { return server.login.sessionOptions(server.namespace(), opts.NamespaceKV) }})
+	}
+	server.sessionCatalog = accounttelegram.NewSessions(server.namespace(), tgauth.SessionRepository{Engine: opts.KVEngine, Connections: opts.Connections})
+	server.downloadLinksPort = downloadcontrol.NewLinkControl(types.AccountID(server.namespace()), taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}, server.localDownloadController())
+	server.downloadCatalogPort = downloadcontrol.NewCatalog(types.AccountID(server.namespace()), catalogAdapter{server: server, repository: taskhub.LinkRepository{Store: opts.NamespaceKV, Engine: opts.KVEngine, Namespace: server.namespace()}})
+	server.accountActions = accounttelegram.NewActions(opts.Context, types.AccountID(server.namespace()), server.sessionCatalog, accountSelection{}, login.SpamProbe{Options: func() login.SessionOptions { return server.login.sessionOptions(server.namespace(), opts.NamespaceKV) }})
+	return server
 }
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
-	staticFS, _ := fs.Sub(assets, "static")
+	staticFS, _ := fs.Sub(s.assets, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("/login", s.handleLoginPage)
-	mux.HandleFunc("/api/auth/session", s.handleAuthSession)
-	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
-	mux.HandleFunc("/api/auth/logout", s.authFunc(s.handleAuthLogout))
-	mux.HandleFunc("/views/", s.authFunc(s.handleViewAsset))
-	mux.HandleFunc("/aria2ng.html", s.authFunc(s.handleAsset("aria2ng.html", "text/html; charset=utf-8")))
-	mux.HandleFunc("/aria2/jsonrpc", s.authFunc(s.handleAria2Proxy))
-	mux.HandleFunc("/api/heartbeat", s.authFunc(s.handleHeartbeat))
-	mux.HandleFunc("/api/dashboard", s.authFunc(s.handleDashboard))
-	mux.HandleFunc("/api/status", s.authFunc(s.handleStatus))
-	mux.HandleFunc("/api/aria2/check", s.authFunc(s.handleAria2Check))
-	mux.HandleFunc("/api/internal-downloads", s.authFunc(s.handleInternalDownloads))
-	mux.HandleFunc("/api/internal-downloads/actions", s.authFunc(s.handleInternalDownloadActions))
-	mux.HandleFunc("/api/forwards", s.authFunc(s.handleForwards))
-	mux.HandleFunc("/api/forwards/actions", s.authFunc(s.handleForwardActions))
-	mux.HandleFunc("/api/kv/links", s.authFunc(s.handleKVLinks))
-	mux.HandleFunc("/api/kv/links/actions", s.authFunc(s.handleKVActions))
-	mux.HandleFunc("/api/kv/links/", s.authFunc(s.handleKVLink))
-	mux.HandleFunc("/api/user", s.authFunc(s.handleUser))
-	mux.HandleFunc("/api/user/switch", s.authFunc(s.handleUserSwitch))
-	mux.HandleFunc("/api/user/delete", s.authFunc(s.handleUserDelete))
-	mux.HandleFunc("/api/user/spam-check", s.authFunc(s.handleSpamCheck))
-	mux.HandleFunc("/api/login/status", s.authFunc(s.handleLoginStatus))
-	mux.HandleFunc("/api/login/phone/start", s.authFunc(s.handleLoginPhoneStart))
-	mux.HandleFunc("/api/login/code", s.authFunc(s.handleLoginCode))
-	mux.HandleFunc("/api/login/password", s.authFunc(s.handleLoginPassword))
-	mux.HandleFunc("/api/login/cancel", s.authFunc(s.handleLoginCancel))
-	mux.HandleFunc("/api/modules", s.authFunc(s.handleModules))
-	mux.HandleFunc("/api/config", s.authFunc(s.handleConfig))
-	mux.HandleFunc("/api/update/check", s.authFunc(s.handleUpdateCheck))
-	mux.HandleFunc("/api/update/apply", s.authFunc(s.handleUpdateApply))
-	mux.HandleFunc("/api/system/reboot", s.authFunc(s.handleReboot))
-	mux.HandleFunc("/", s.authFunc(s.handleAppShell))
+	handlers := map[string]http.HandlerFunc{
+		"/login":                      s.handleLoginPage,
+		"/api/auth/session":           s.handleAuthSession,
+		"/api/auth/login":             s.handleAuthLogin,
+		"/api/auth/logout":            s.handleAuthLogout,
+		"/views/":                     s.handleViewAsset,
+		"/aria2ng.html":               s.handleAsset("aria2ng.html", "text/html; charset=utf-8"),
+		"/aria2/jsonrpc":              s.handleAria2Proxy,
+		"/api/heartbeat":              s.handleHeartbeat,
+		"/api/events":                 s.handleEvents,
+		"/api/dashboard":              s.handleDashboard,
+		"/api/status":                 s.handleStatus,
+		"/api/aria2/check":            s.handleAria2Check,
+		"/api/download-tasks":         s.handleDownloadTasks,
+		"/api/download-storage":       s.handleDownloadStorage,
+		"/api/download-tasks/actions": s.handleDownloadTaskActions,
+		"/api/forwards":               s.handleForwards,
+		"/api/forwards/actions":       s.handleForwardActions,
+		"/api/kv/links":               s.handleKVLinks,
+		"/api/kv/links/actions":       s.handleKVActions,
+		"/api/kv/links/":              s.handleKVLink,
+		"/api/storage/clean":          s.handleStorageClean,
+		"/api/user":                   s.handleUser,
+		"/api/dialogs":                s.handleDialogs,
+		"/api/user/switch":            s.handleUserSwitch,
+		"/api/user/delete":            s.handleUserDelete,
+		"/api/user/spam-check":        s.handleSpamCheck,
+		"/api/login/status":           s.handleLoginStatus,
+		"/api/login/phone/start":      s.handleLoginPhoneStart,
+		"/api/login/code":             s.handleLoginCode,
+		"/api/login/password":         s.handleLoginPassword,
+		"/api/login/cancel":           s.handleLoginCancel,
+		"/api/components":             s.handleComponents,
+		"/api/components/health":      s.handleComponentHealth,
+		"/api/logs":                   s.handleLogs,
+		"/api/config":                 s.handleConfig,
+		"/api/update/check":           s.handleUpdateCheck,
+		"/api/update/apply":           s.handleUpdateApply,
+		"/api/system/reboot":          s.handleReboot,
+		"/api/system/reset":           s.handleReset,
+		"/":                           s.handleAppShell,
+	}
+	for _, route := range application.WebRoutes(s.opts.Catalog) {
+		handler := handlers[route.Path]
+		if route.Port != "" {
+			if handler != nil {
+				panic("duplicate component route adapter: " + route.Path)
+			}
+			handler = s.componentAction(route)
+		}
+		if handler == nil {
+			panic("missing component route adapter: " + route.Path)
+		}
+		if !route.Public {
+			handler = s.authFunc(handler)
+		}
+		mux.HandleFunc(route.Path, handler)
+		delete(handlers, route.Path)
+	}
+	if len(handlers) != 0 {
+		panic("unowned web route adapters")
+	}
 
 	return mux
 }
@@ -214,15 +315,15 @@ func (s *Server) namespace() string {
 	if s.opts.Namespace != "" {
 		return s.opts.Namespace
 	}
-	cfg := config.Get()
+	cfg := config.From(s.opts.Context)
 	if cfg != nil {
 		return cfg.Namespace
 	}
 	return fieldDefault
 }
 
-func (s *Server) internalDownloadController() *watch.InternalDownloadController {
-	return watch.NewInternalDownloadController(s.opts.NamespaceKV)
+func (s *Server) localDownloadController() *local.Controller {
+	return local.NewController(taskhub.NewLocalRepository(s.opts.NamespaceKV))
 }
 
 func (s *Server) watchRunning() bool {
@@ -240,8 +341,8 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{
-		"ok":    false,
-		"error": err.Error(),
+		"ok":       false,
+		fieldError: err.Error(),
 	})
 }
 

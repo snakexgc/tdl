@@ -9,8 +9,8 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/snakexgc/tdl/core/storage"
-	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 )
 
 const cleanKVCommandTimeout = 30 * time.Second
@@ -19,19 +19,18 @@ func handleKVCommand(
 	ctx *th.Context,
 	msg *telego.Message,
 	text string,
-	engine kv.Storage,
-	namespace string,
-	namespaceKV storage.Storage,
+	maintenance ports.KVMaintenance,
+	account types.AccountID,
 ) (bool, error) {
 	cmd, _, _ := tu.ParseCommandPayload(text)
 	if "/"+cmd != "/clean_kv" {
 		return false, nil
 	}
 
-	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanKVCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, cleanKVCommandTimeout)
 	defer cancel()
 
-	result, err := cleanCurrentNamespaceKV(cmdCtx, engine, namespace, namespaceKV)
+	result, err := maintenance.Clean(cmdCtx, account)
 	if err != nil {
 		return true, sendMessage(ctx, msg.Chat.ID, fmt.Sprintf("KV 清理失败：%v", err))
 	}

@@ -1,0 +1,643 @@
+package updater
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-faster/errors"
+	"github.com/shirou/gopsutil/v3/process"
+
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/rte/platform"
+)
+
+const (
+	DefaultRepository      = "snakexgc/tdl"
+	githubAPIBase          = "https://api.github.com"
+	updateTimeout          = 3 * time.Minute
+	goosWindows            = "windows"
+	goosDarwin             = "darwin"
+	archAMD64              = "amd64"
+	runtimeBinary          = "binary"
+	runtimeDocker          = "docker"
+	containerUpdateMessage = "请拉取新镜像并重启容器"
+	flagSource             = "--source"
+	flagTarget             = "--target"
+	flagPID                = "--pid"
+	flagCWD                = "--cwd"
+)
+
+type (
+	Info = types.UpdateInfo
+	Plan = types.UpdatePlan
+)
+
+type githubRelease struct {
+	TagName     string        `json:"tag_name"`
+	Name        string        `json:"name"`
+	HTMLURL     string        `json:"html_url"`
+	Body        string        `json:"body"`
+	PublishedAt time.Time     `json:"published_at"`
+	Assets      []githubAsset `json:"assets"`
+	Draft       bool          `json:"draft"`
+	Prerelease  bool          `json:"prerelease"`
+}
+
+type githubAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Size               int64  `json:"size"`
+}
+
+func CheckLatest(ctx context.Context, proxyURL string) (Info, error) {
+	return CheckLatestFrom(ctx, DefaultRepository, proxyURL)
+}
+
+func CheckLatestFrom(ctx context.Context, repository, proxyURL string) (Info, error) {
+	info := currentInfo(repository)
+	release, err := fetchLatestRelease(ctx, repository, proxyURL)
+	if err != nil {
+		level := slog.LevelWarn
+		if ctx.Err() != nil {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "检查软件更新失败", "component", ID, "error", err)
+		return info, err
+	}
+	info = infoForRelease(info, release)
+	slog.Info("软件更新检查已完成", "component", ID, "current_version", info.CurrentVersion, "latest_version", info.LatestVersion, "needs_update", info.NeedsUpdate)
+	return info, nil
+}
+
+func infoForRelease(info Info, release githubRelease) Info {
+	info.LatestVersion = release.TagName
+	info.LatestName = release.Name
+	info.LatestURL = release.HTMLURL
+	info.ReleaseNotes = release.Body
+	info.PublishedAt = release.PublishedAt
+	info.NeedsUpdate = needsUpdate(info.CurrentVersion, release.TagName)
+
+	if asset, ok := chooseAsset(release.Assets); ok {
+		info.AssetName = asset.Name
+		info.AssetURL = asset.BrowserDownloadURL
+		info.CanUpdate = info.NeedsUpdate
+	} else if info.NeedsUpdate {
+		info.Message = fmt.Sprintf("未找到适用于 %s/%s 的发布资产", runtime.GOOS, runtime.GOARCH)
+	}
+
+	if !info.NeedsUpdate {
+		info.Message = "当前已是最新版本"
+	} else if info.CanUpdate {
+		info.Message = "发现新版本，可以更新"
+	}
+	if info.Docker {
+		info.CanUpdate = false
+		info.Message = containerUpdateMessage
+	}
+	return info
+}
+
+func DownloadLatest(ctx context.Context, proxyURL string) (result Plan, resultInfo Info, resultErr error) {
+	info, err := CheckLatest(ctx, proxyURL)
+	if err != nil {
+		return Plan{}, info, err
+	}
+	if !info.NeedsUpdate {
+		return Plan{}, info, errors.New("current version is already up to date")
+	}
+	if !info.CanUpdate || info.AssetURL == "" {
+		return Plan{}, info, errors.New(info.Message)
+	}
+	client, err := newHTTPClient(proxyURL)
+	if err != nil {
+		return Plan{}, info, err
+	}
+	defer client.CloseIdleConnections()
+	return downloadRelease(ctx, client, info)
+}
+
+func downloadRelease(ctx context.Context, client *http.Client, info Info) (result Plan, resultInfo Info, resultErr error) {
+	started := time.Now()
+	slog.Info("开始下载软件更新", "component", ID, "version", info.LatestVersion)
+	defer func() {
+		level := slog.LevelInfo
+		if resultErr != nil {
+			level = slog.LevelError
+		}
+		if errors.Is(resultErr, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "软件更新准备已结束", "component", ID, "version", info.LatestVersion, "duration", time.Since(started), "error", resultErr)
+	}()
+
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
+	tmpDir, err := os.MkdirTemp("", "tdl-update-*")
+	if err != nil {
+		return Plan{}, info, errors.Wrap(err, "create update directory")
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
+	assetPath := filepath.Join(tmpDir, safeFileName(info.AssetName))
+	if err := downloadFile(ctx, client, info.AssetURL, assetPath); err != nil {
+		return Plan{}, info, err
+	}
+	sourcePath, err := extractExecutable(assetPath, info.AssetName, tmpDir)
+	if err != nil {
+		return Plan{}, info, err
+	}
+	if err := os.Chmod(sourcePath, 0o755); err != nil {
+		return Plan{}, info, errors.Wrap(err, "mark update executable")
+	}
+
+	return Plan{
+		SourcePath: sourcePath,
+		Version:    info.LatestVersion,
+		AssetName:  info.AssetName,
+	}, info, nil
+}
+
+func StartApply(plan Plan, targetPath string, args []string) error {
+	if isContainerRuntime() {
+		return errors.New(containerUpdateMessage)
+	}
+	if plan.SourcePath == "" {
+		return errors.New("update source path is empty")
+	}
+	if targetPath == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return errors.Wrap(err, "get executable path")
+		}
+		targetPath = exe
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(err, "get working directory")
+	}
+	helper, err := copyCurrentExecutableToTemp()
+	if err != nil {
+		return err
+	}
+
+	helperArgs := []string{
+		"__apply-update",
+		flagSource, plan.SourcePath,
+		flagTarget, targetPath,
+		flagPID, fmt.Sprintf("%d", os.Getpid()),
+		flagCWD, cwd,
+		"--",
+	}
+	helperArgs = append(helperArgs, args...)
+	return StartAttached(helper, helperArgs, cwd)
+}
+
+func RunApply(args []string) error {
+	if isContainerRuntime() {
+		return errors.New(containerUpdateMessage)
+	}
+	source, target, pid, cwd, runArgs, err := parseApplyArgs(args)
+	if err != nil {
+		return err
+	}
+	if pid > 0 {
+		if err := waitForPIDExit(context.Background(), pid, 2*time.Minute); err != nil {
+			return err
+		}
+	}
+	if err := replaceExecutable(source, target); err != nil {
+		return err
+	}
+	if cwd == "" {
+		cwd = filepath.Dir(target)
+	}
+	if err := StartAttached(target, runArgs, cwd); err != nil {
+		return err
+	}
+	return nil
+}
+
+func StartAttached(path string, args []string, cwd string) error {
+	procArgs := append([]string{path}, args...)
+	proc, err := os.StartProcess(path, procArgs, &os.ProcAttr{
+		Dir:   cwd,
+		Env:   os.Environ(),
+		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+	})
+	if err != nil {
+		return errors.Wrap(err, "start process")
+	}
+	return proc.Release()
+}
+
+func currentInfo(repository string) Info {
+	docker := isContainerRuntime()
+	runtimeType := runtimeBinary
+	if docker {
+		runtimeType = runtimeDocker
+	}
+	return Info{
+		CurrentVersion: platform.BuildMetadata().Version,
+		CurrentCommit:  platform.BuildMetadata().Commit,
+		CurrentDate:    platform.BuildMetadata().Date,
+		GOOS:           runtime.GOOS,
+		GOARCH:         runtime.GOARCH,
+		Repository:     repository,
+		Runtime:        runtimeType,
+		Docker:         docker,
+	}
+}
+
+func fetchLatestRelease(ctx context.Context, repository, proxyURL string) (githubRelease, error) {
+	client, err := newHTTPClient(proxyURL)
+	if err != nil {
+		return githubRelease{}, err
+	}
+	defer client.CloseIdleConnections()
+	var release githubRelease
+	if _, err := (releaseClient{client, githubAPIBase, repository}).get(ctx, "/latest", &release); err != nil {
+		return githubRelease{}, err
+	}
+	if release.TagName == "" {
+		return githubRelease{}, errors.New("latest release has empty tag")
+	}
+	return release, nil
+}
+
+func newHTTPClient(proxyURL string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL != "" {
+		u, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, errors.Wrap(err, "parse proxy url")
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http", "https":
+			transport.Proxy = http.ProxyURL(u)
+		default:
+			dialer, err := platform.ProxyDialer(proxyURL)
+			if err != nil {
+				return nil, err
+			}
+			transport.DialContext = dialer.DialContext
+		}
+	}
+	return &http.Client{Transport: transport, Timeout: updateTimeout}, nil
+}
+
+func downloadFile(ctx context.Context, client *http.Client, rawURL, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "tdl-updater")
+	resp, err := client.Do(req)
+	if err != nil {
+		return errors.Wrap(err, "download update asset")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download update asset status %d", resp.StatusCode)
+	}
+
+	file, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return errors.Wrap(err, "create update asset")
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return errors.Wrap(err, "write update asset")
+	}
+	return nil
+}
+
+func chooseAsset(assets []githubAsset) (githubAsset, bool) {
+	name := releaseAssetName(runtime.GOOS, runtime.GOARCH, platform.BuildMetadata().GOARM)
+	for _, asset := range assets {
+		if name != "" && asset.Name == name {
+			return asset, true
+		}
+	}
+	return githubAsset{}, false
+}
+
+// releaseAssetName matches the single archive format in .goreleaser.yaml.
+func releaseAssetName(goos, arch, arm string) string {
+	osName, extension := "", tarGzExtension
+	switch goos {
+	case goosLinux:
+		osName = "Linux"
+	case goosDarwin:
+		osName = "MacOS"
+	case goosWindows:
+		osName, extension = "Windows", zipExtension
+	default:
+		return ""
+	}
+	switch arch {
+	case archAMD64:
+		arch = "64bit"
+	case "386":
+		arch = "32bit"
+	case archARM:
+		if arm != "5" && arm != "6" && arm != "7" {
+			return ""
+		}
+		arch += "v" + arm
+	case "arm64", "riscv64", "loong64":
+	default:
+		return ""
+	}
+	return "tdl_" + osName + "_" + arch + extension
+}
+
+func needsUpdate(current, latest string) bool {
+	current, latest = strings.TrimSpace(current), strings.TrimSpace(latest)
+	if _, _, valid := parseDateVersion(latest); !valid {
+		return false
+	}
+	if current == "dev" || current == "unknown" || current == "" {
+		return true
+	}
+	if date, commit, preview := strings.Cut(strings.TrimPrefix(current, "v"), "_dev_"); preview && commit != "" {
+		_, err := time.Parse("20060102", date)
+		return err == nil
+	}
+	result, valid := compareDateVersions(current, latest)
+	return valid && result < 0
+}
+
+func compareDateVersions(current, latest string) (int, bool) {
+	currentDate, currentEdition, currentOK := parseDateVersion(current)
+	latestDate, latestEdition, latestOK := parseDateVersion(latest)
+	if !currentOK || !latestOK {
+		return 0, false
+	}
+	if currentDate < latestDate {
+		return -1, true
+	}
+	if currentDate > latestDate {
+		return 1, true
+	}
+	if currentEdition < latestEdition {
+		return -1, true
+	}
+	if currentEdition > latestEdition {
+		return 1, true
+	}
+	return 0, true
+}
+
+func parseDateVersion(version string) (date, edition int, ok bool) {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if len(version) < 9 || version[8] == '0' {
+		return 0, 0, false
+	}
+	if _, err := time.Parse("20060102", version[:8]); err != nil {
+		return 0, 0, false
+	}
+	date, err := strconv.Atoi(version[:8])
+	if err != nil {
+		return 0, 0, false
+	}
+	edition, err = strconv.Atoi(version[8:])
+	if err != nil || edition < 1 {
+		return 0, 0, false
+	}
+	return date, edition, true
+}
+
+func isContainerRuntime() bool {
+	if runtime.GOOS == goosWindows {
+		return false
+	}
+	for _, marker := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(marker); err == nil {
+			return true
+		}
+	}
+	return strings.TrimSpace(os.Getenv("container")) != ""
+}
+
+func extractExecutable(assetPath, assetName, dir string) (string, error) {
+	lower := strings.ToLower(assetName)
+	switch {
+	case strings.HasSuffix(lower, zipExtension):
+		return extractZipExecutable(assetPath, dir)
+	case strings.HasSuffix(lower, tarGzExtension):
+		return extractTarGzExecutable(assetPath, dir)
+	default:
+		return "", fmt.Errorf("unsupported update archive %q", assetName)
+	}
+}
+
+func extractZipExecutable(assetPath, dir string) (string, error) {
+	reader, err := zip.OpenReader(assetPath)
+	if err != nil {
+		return "", errors.Wrap(err, "open update zip")
+	}
+	defer reader.Close()
+
+	var chosen *zip.File
+	for _, file := range reader.File {
+		if file.Name == executableFileName() && file.Mode().IsRegular() {
+			chosen = file
+			break
+		}
+	}
+	if chosen == nil {
+		return "", errors.New("update zip does not contain a tdl executable")
+	}
+
+	src, err := chosen.Open()
+	if err != nil {
+		return "", errors.Wrap(err, "open executable in zip")
+	}
+	defer src.Close()
+
+	dest := filepath.Join(dir, executableFileName())
+	return writeExecutable(dest, src)
+}
+
+func extractTarGzExecutable(assetPath, dir string) (string, error) {
+	file, err := os.Open(assetPath)
+	if err != nil {
+		return "", errors.Wrap(err, "open update archive")
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return "", errors.Wrap(err, "open gzip stream")
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return "", errors.New("update archive does not contain a tdl executable")
+		}
+		if err != nil {
+			return "", errors.Wrap(err, "read tar archive")
+		}
+		if header.Name == executableFileName() && header.Typeflag == tar.TypeReg {
+			return writeExecutable(filepath.Join(dir, executableFileName()), tr)
+		}
+	}
+}
+
+func writeExecutable(dest string, src io.Reader) (string, error) {
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return "", errors.Wrap(err, "create extracted executable")
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, src); err != nil {
+		return "", errors.Wrap(err, "write extracted executable")
+	}
+	return dest, nil
+}
+
+func executableFileName() string {
+	if runtime.GOOS == goosWindows {
+		return windowsExecutable
+	}
+	return unixExecutable
+}
+
+func copyCurrentExecutableToTemp() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", errors.Wrap(err, "get executable path")
+	}
+	src, err := os.Open(exe)
+	if err != nil {
+		return "", errors.Wrap(err, "open executable")
+	}
+	defer src.Close()
+
+	helper := filepath.Join(os.TempDir(), fmt.Sprintf("tdl-update-helper-%d%s", time.Now().UnixNano(), filepath.Ext(exe)))
+	dst, err := os.OpenFile(helper, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return "", errors.Wrap(err, "create update helper")
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		return "", errors.Wrap(err, "copy update helper")
+	}
+	if err := dst.Close(); err != nil {
+		return "", err
+	}
+	return helper, nil
+}
+
+func replaceExecutable(source, target string) error {
+	backup := target + ".old"
+	_ = os.Remove(backup)
+	if err := os.Rename(target, backup); err != nil && !os.IsNotExist(err) {
+		return errors.Wrap(err, "backup current executable")
+	}
+	if err := os.Rename(source, target); err != nil {
+		if _, statErr := os.Stat(backup); statErr == nil {
+			_ = os.Rename(backup, target)
+		}
+		return errors.Wrap(err, "install update executable")
+	}
+	_ = os.Chmod(target, 0o755)
+	_ = os.Remove(backup)
+	return nil
+}
+
+func parseApplyArgs(args []string) (source, target string, pid int32, cwd string, runArgs []string, err error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			runArgs = append([]string{}, args[i+1:]...)
+			break
+		}
+		if i+1 >= len(args) {
+			err = fmt.Errorf("missing value for %s", args[i])
+			return source, target, pid, cwd, runArgs, err
+		}
+		value := args[i+1]
+		switch args[i] {
+		case flagSource:
+			source = value
+		case flagTarget:
+			target = value
+		case flagPID:
+			var parsed int
+			_, err = fmt.Sscanf(value, "%d", &parsed)
+			pid = int32(parsed)
+		case flagCWD:
+			cwd = value
+		default:
+			err = fmt.Errorf("unknown update helper argument %q", args[i])
+			return source, target, pid, cwd, runArgs, err
+		}
+		i++
+	}
+	if source == "" || target == "" {
+		err = errors.New("update source and target are required")
+	}
+	return source, target, pid, cwd, runArgs, err
+}
+
+func waitForPIDExit(ctx context.Context, pid int32, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		exists, err := process.PidExistsWithContext(ctx, pid)
+		if err != nil {
+			return errors.Wrap(err, "check parent process")
+		}
+		if !exists {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func safeFileName(name string) string {
+	name = filepath.Base(name)
+	name = strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(name)
+	if name == "." || name == "" {
+		return "tdl-update"
+	}
+	return name
+}
+
+const (
+	tarGzExtension = ".tar.gz"
+	zipExtension   = ".zip"
+	goosLinux      = "linux"
+	archARM        = "arm"
+)
+
+const (
+	windowsExecutable = "tdl.exe"
+	unixExecutable    = "tdl"
+)

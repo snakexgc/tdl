@@ -37,9 +37,9 @@ func TestWatchAutoDownloadEnabled(t *testing.T) {
 			},
 		},
 		{
-			name: "internal downloader",
+			name: "local downloader",
 			mutate: func(cfg *config.Config) {
-				cfg.Downloader.Mode = config.DownloaderModeInternal
+				cfg.Downloader.Executors = []string{config.DownloadExecutorLocal}
 			},
 		},
 	}
