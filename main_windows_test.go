@@ -31,16 +31,18 @@ import (
 // The child runs main with temporary configuration and no external services.
 func TestConsoleShutdown(t *testing.T) {
 	const helperEnv = "TDL_TEST_CONSOLE_SHUTDOWN"
+	const interruptMode = "interrupt"
+	const closeMode = "close"
 	if mode := os.Getenv(helperEnv); mode != "" {
 		directory := os.Getenv(consts.EnvHome)
 		kernel := syscall.NewLazyDLL("kernel32.dll")
 		window, _, err := kernel.NewProc("GetConsoleWindow").Call()
 		require.NotZero(t, window, "GetConsoleWindow: %v", err)
 		require.NoError(t, os.WriteFile(filepath.Join(directory, "window"), []byte(strconv.FormatUint(uint64(window), 10)), 0o600))
-		if mode == "interrupt" {
+		if mode == interruptMode {
 			go func() {
 				for {
-					if _, err := os.Stat(filepath.Join(directory, "interrupt")); err == nil {
+					if _, err := os.Stat(filepath.Join(directory, interruptMode)); err == nil {
 						// Group zero targets only this child's separate console.
 						_, _, _ = kernel.NewProc("GenerateConsoleCtrlEvent").Call(0, 0)
 						return
@@ -57,7 +59,7 @@ func TestConsoleShutdown(t *testing.T) {
 		require.NoError(t, err)
 		store, err := engine.Open("default")
 		require.NoError(t, err)
-		if mode != "close" {
+		if mode != closeMode {
 			record, found, err := taskhub.NewLocalRepository(store).Get(context.Background(), "shutdown-fixture")
 			require.NoError(t, err)
 			require.True(t, found)
@@ -69,10 +71,10 @@ func TestConsoleShutdown(t *testing.T) {
 		return
 	}
 
-	for _, mode := range []string{"close", "close-with-watcher", "interrupt"} {
+	for _, mode := range []string{closeMode, "close-with-watcher", interruptMode} {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
-			address := configureConsoleTest(t, directory, mode != "close")
+			address := configureConsoleTest(t, directory, mode != closeMode)
 			executable, err := os.Executable()
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -104,15 +106,15 @@ func TestConsoleShutdown(t *testing.T) {
 				if response.StatusCode != http.StatusOK {
 					return false
 				}
-				if mode != "close" {
+				if mode != closeMode {
 					logs, _ := os.ReadFile(logPath)
 					return strings.Contains(string(logs), "Telegram 监听已断开，稍后重连")
 				}
 				return true
 			}, 8*time.Second, 20*time.Millisecond)
 			started := time.Now()
-			if mode == "interrupt" {
-				require.NoError(t, os.WriteFile(filepath.Join(directory, "interrupt"), nil, 0o600))
+			if mode == interruptMode {
+				require.NoError(t, os.WriteFile(filepath.Join(directory, interruptMode), nil, 0o600))
 			} else {
 				data, err := os.ReadFile(filepath.Join(directory, "window"))
 				require.NoError(t, err)

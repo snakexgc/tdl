@@ -74,7 +74,7 @@ func (m *Manager) initDirectory() error {
 	}
 	observers := map[string]func() rte.Health{}
 	if m.httpCtrl != nil {
-		observers["http"] = m.httpCtrl.Health
+		observers[moduleIDHTTP] = m.httpCtrl.Health
 	}
 	if m.watchCtrl != nil {
 		observers["watch"] = m.watchCtrl.Health

@@ -48,6 +48,7 @@ type interestedForwardRouter struct{}
 func (interestedForwardRouter) Interested(context.Context, types.AccountID, types.MessagePeer) (bool, error) {
 	return true, nil
 }
+
 func (interestedForwardRouter) SubmitMessage(context.Context, types.ForwardMessage) error { return nil }
 
 func TestMissingReactionAndForwardComponentsRemainUnavailable(t *testing.T) {

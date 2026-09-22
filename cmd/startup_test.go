@@ -29,9 +29,10 @@ type startupProbeFunc func(context.Context, string, time.Duration) (types.TimeSa
 
 func TestStartupConfigurationErrorsAreWrittenToLog(t *testing.T) {
 	const helperEnv = "TDL_TEST_INVALID_STARTUP"
+	const httpPortPhase = "http-port"
 	phase := os.Getenv(helperEnv)
 	if phase == "" {
-		for _, phase := range []string{"json", "http-port"} {
+		for _, phase := range []string{"json", httpPortPhase} {
 			t.Run(phase, func(t *testing.T) {
 				executable, err := os.Executable()
 				require.NoError(t, err)
@@ -46,7 +47,7 @@ func TestStartupConfigurationErrorsAreWrittenToLog(t *testing.T) {
 		return
 	}
 	content := `{"version":`
-	if phase == "http-port" {
+	if phase == httpPortPhase {
 		content = `{"version":1,"system":{"namespace":"default"},"components":{"proxy.range":{"enabled":true,"values":{"port":70000}}}}`
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(consts.EnvHome), "tdl_config.json"), []byte(content), 0o600))
@@ -57,7 +58,7 @@ func TestStartupConfigurationErrorsAreWrittenToLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "ERROR")
 	require.Contains(t, string(data), "TDL 配置或初始化失败")
-	if phase == "http-port" {
+	if phase == httpPortPhase {
 		require.Contains(t, string(data), "proxy.range")
 		require.Contains(t, string(data), "port")
 	}

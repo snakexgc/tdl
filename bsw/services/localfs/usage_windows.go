@@ -8,7 +8,7 @@ import (
 
 func volumeUsage(ctx context.Context, path string) (total, free uint64, err error) {
 	if err = ctx.Err(); err != nil {
-		return
+		return 0, 0, err
 	}
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -18,5 +18,5 @@ func volumeUsage(ctx context.Context, path string) (total, free uint64, err erro
 	// API resolves drive letters, mounted directories and UNC shares itself.
 	var allFree uint64
 	err = windows.GetDiskFreeSpaceEx(name, &free, &total, &allFree)
-	return
+	return total, free, err
 }

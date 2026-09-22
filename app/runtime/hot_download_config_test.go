@@ -115,7 +115,7 @@ func TestDownloadMetadataDoesNotRestartTransports(t *testing.T) {
 	next.HTTP.DownloadLinkTTLHours = 72
 	next.Downloader.Executors = []string{config.DownloadExecutorLocal}
 	after := manager.managedUnits(&next)
-	for _, id := range []string{"http", moduleIDAria2, "watch", downloadResource} {
+	for _, id := range []string{moduleIDHTTP, moduleIDAria2, moduleIDWatch, downloadResource} {
 		require.Equal(t, find(before, id).Revision, find(after, id).Revision, id)
 	}
 	require.NoError(t, find(after, moduleIDAria2).Update(ctx))

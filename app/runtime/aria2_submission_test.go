@@ -20,7 +20,7 @@ import (
 )
 
 func TestAria2SubmissionDoesNotRequireManagementProcess(t *testing.T) {
-	for _, mode := range []string{"aria2", "local"} {
+	for _, mode := range []string{config.DownloadExecutorAria2, config.DownloadExecutorLocal} {
 		t.Run(mode, func(t *testing.T) {
 			var calls atomic.Int32
 			rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func TestAria2SubmissionDoesNotRequireManagementProcess(t *testing.T) {
 			}))
 			defer rpc.Close()
 			cfg := config.DefaultConfig()
-			cfg.Downloader.Executors = []string{mode, "http"}
+			cfg.Downloader.Executors = []string{mode, config.DownloadExecutorHTTP}
 			cfg.Aria2.RPCURL = rpc.URL
 			ctx := config.WithSource(context.Background(), config.NewSource(cfg))
 			engine, err := kv.New(kv.DriverFile, filepath.Join(t.TempDir(), "state"))
@@ -51,7 +51,7 @@ func TestAria2SubmissionDoesNotRequireManagementProcess(t *testing.T) {
 			require.NoError(t, err)
 			manager := &Manager{parent: ctx, aria2Mgr: aria2.NewManager(cfg, storage, nil), aria2Process: rte.NewProcess(ctx, types.DefaultAccount, "host.aria2")}
 			result, err := (aria2Submission{manager: manager}).Submit(ctx, types.DownloadSubmission{Account: types.DefaultAccount, TaskID: "document_1", DownloadURL: "http://files.test/download/document_1"})
-			if mode == "local" {
+			if mode == config.DownloadExecutorLocal {
 				require.ErrorIs(t, err, ports.ErrDownloadNotAccepted)
 				require.Zero(t, calls.Load())
 			} else {

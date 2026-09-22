@@ -41,6 +41,7 @@ const (
 	moduleIDBot       = "bot"
 	moduleIDWatch     = "watch"
 	moduleIDAria2     = "aria2"
+	moduleIDHTTP      = "http"
 )
 
 type Options struct {

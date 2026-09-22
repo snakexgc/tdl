@@ -19,15 +19,12 @@ import (
 	"github.com/snakexgc/tdl/rte"
 )
 
-const (
-	testHTTPResource  = "http"
-	testPanelResource = "panel"
-)
+const testPanelResource = "panel"
 
 type offlineStartupSession struct{ calls atomic.Int32 }
 
 func TestHTTPAlwaysStartsAndAria2OnlyRunsWhenSelected(t *testing.T) {
-	for _, mode := range []string{"local", "aria2", "http"} {
+	for _, mode := range []string{config.DownloadExecutorLocal, config.DownloadExecutorAria2, config.DownloadExecutorHTTP} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -41,11 +38,11 @@ func TestHTTPAlwaysStartsAndAria2OnlyRunsWhenSelected(t *testing.T) {
 			cfg.Modules.HTTP = false // Legacy flags cannot suppress the process service.
 			for _, unit := range m.managedUnits(cfg) {
 				switch unit.ID {
-				case "http":
+				case moduleIDHTTP:
 					require.True(t, unit.Enabled)
 					require.Empty(t, unit.Requires, "HTTP must not wait for optional account or downloader modules")
 				case moduleIDAria2:
-					require.Equal(t, mode == "aria2", unit.Enabled)
+					require.Equal(t, mode == config.DownloadExecutorAria2, unit.Enabled)
 				}
 			}
 			m.StartHTTP()
@@ -56,7 +53,7 @@ func TestHTTPAlwaysStartsAndAria2OnlyRunsWhenSelected(t *testing.T) {
 			require.NoError(t, err)
 			response.Body.Close()
 			require.Equal(t, http.StatusNotFound, response.StatusCode)
-			if mode != "aria2" {
+			if mode != config.DownloadExecutorAria2 {
 				m.StartAria2Manager()
 				require.False(t, m.aria2Process.Running())
 			}
@@ -112,7 +109,7 @@ func TestWebUIStartupReportsActualListenerReadiness(t *testing.T) {
 	address := listener.Addr().String()
 	store := newStoppedComponentStore(t)
 	saveComponent(t, store, panelComponentID, true, map[string]any{
-		"address": "127.0.0.1", "port": listener.Addr().(*net.TCPAddr).Port,
+		testAddressField: testLoopbackAddress, testPortField: listener.Addr().(*net.TCPAddr).Port,
 		"username": "admin", "password": "startup-test",
 	})
 	m := NewManager(config.WithSource(ctx, config.NewSource(config.DefaultConfig())), nil, nil, Options{ComponentStore: store})
@@ -139,7 +136,7 @@ func TestBackendStartupFailuresDoNotStopWebUI(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	require.NoError(t, listener.Close())
 	store := newStoppedComponentStore(t)
-	saveComponent(t, store, panelComponentID, true, map[string]any{"address": "127.0.0.1", "port": port})
+	saveComponent(t, store, panelComponentID, true, map[string]any{testAddressField: testLoopbackAddress, testPortField: port})
 	m := NewManager(config.WithSource(ctx, config.NewSource(config.DefaultConfig())), nil, nil, Options{ComponentStore: store})
 	t.Cleanup(m.Shutdown)
 	require.True(t, m.StartWebUI(ctx))
@@ -148,7 +145,7 @@ func TestBackendStartupFailuresDoNotStopWebUI(t *testing.T) {
 	networkError := &net.DNSError{Err: "network unavailable", Name: "offline.invalid", IsTimeout: true}
 	for i := range units {
 		switch units[i].ID {
-		case moduleIDAria2, moduleIDBot, moduleIDWatch, testHTTPResource:
+		case moduleIDAria2, moduleIDBot, moduleIDWatch, moduleIDHTTP:
 			units[i].Enabled = true
 			units[i].Start = func(context.Context) error { return networkError }
 			if units[i].ID == moduleIDAria2 {
@@ -197,7 +194,7 @@ func TestBackendStartupFailuresDoNotStopWebUI(t *testing.T) {
 	check()
 	for _, component := range m.reconciler.Health().Components {
 		switch component.ID {
-		case moduleIDAria2, moduleIDBot, moduleIDWatch, testHTTPResource:
+		case moduleIDAria2, moduleIDBot, moduleIDWatch, moduleIDHTTP:
 			require.Equal(t, rte.Failed, component.State, component.ID)
 		case testPanelResource:
 			require.Equal(t, rte.Running, component.State)

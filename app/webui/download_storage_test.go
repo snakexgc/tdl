@@ -20,7 +20,7 @@ import (
 
 func TestLocalDownloadPageDoesNotQueryAria2(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Downloader.Executors = []string{"local", "aria2", "http"}
+	cfg.Downloader.Executors = []string{config.DownloadExecutorLocal, config.DownloadExecutorAria2, config.DownloadExecutorHTTP}
 	cfg.Downloader.LocalRoot = t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Downloader.LocalRoot, "file.bin"), []byte("downloaded"), 0o600))
 	partial := filepath.Join(cfg.Downloader.LocalRoot, "partial.bin")

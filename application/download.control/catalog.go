@@ -83,7 +83,9 @@ type Catalog struct {
 func NewCatalog(account types.AccountID, source ports.CatalogSource) *Catalog {
 	return &Catalog{account, source}
 }
+
 func validLinkID(id string) bool { return id != "" && id != "index" && !strings.ContainsAny(id, "/\\") }
+
 func (s *Catalog) validate(ctx context.Context, account types.AccountID) error {
 	if account != s.account {
 		return errors.New("download catalog account mismatch")

@@ -62,9 +62,10 @@ func TestHTTPConcurrentRangesRespectConfiguredDCBudgets(t *testing.T) {
 				for n := range requestsPerDC {
 					// Include unaligned starts, cross-fragment ranges and the short EOF.
 					start, end := int64(n*7919+17), int64(n*7919+2067)
-					if n%3 == 0 {
+					switch n % 3 {
+					case 0:
 						start, end = downloadStreamPartSize-17, downloadStreamPartSize+1031
-					} else if n%3 == 1 {
+					case 1:
 						start, end = int64(len(payload)-57), int64(len(payload)-1)
 					}
 					file := 2

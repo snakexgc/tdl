@@ -13,6 +13,12 @@ import (
 	rteconfig "github.com/snakexgc/tdl/rte/config"
 )
 
+const (
+	testLoopbackAddress = "127.0.0.1"
+	testAddressField    = "address"
+	testPortField       = "port"
+)
+
 func TestBotUsesSharedProxy(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Proxy = "socks5://shared:secret@127.0.0.1:1080"
@@ -52,6 +58,6 @@ func newStoppedComponentStore(t *testing.T) *rteconfig.Store {
 	require.NoError(t, err)
 	port := listener.Addr().(*net.TCPAddr).Port
 	require.NoError(t, listener.Close())
-	saveComponent(t, store, rangeComponentID, true, map[string]any{"address": "127.0.0.1", "port": port})
+	saveComponent(t, store, rangeComponentID, true, map[string]any{testAddressField: testLoopbackAddress, testPortField: port})
 	return store
 }

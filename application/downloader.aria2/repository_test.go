@@ -18,6 +18,7 @@ type testRepository struct {
 }
 
 func newTestRepository() *testRepository { return &testRepository{records: map[string]TaskRecord{}} }
+
 func (r *testRepository) Add(_ context.Context, v TaskRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
