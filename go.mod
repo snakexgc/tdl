@@ -25,7 +25,7 @@ require (
 	github.com/yapingcat/gomedia v0.0.0-20240601043430-920523f8e5c7
 	github.com/yuin/goldmark v1.8.6
 	go.etcd.io/bbolt v1.5.0
-	go.uber.org/atomic v1.11.0
+	go.uber.org/atomic v1.12.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5
