@@ -15,6 +15,8 @@ import (
 	"github.com/snakexgc/tdl/rte"
 )
 
+const fieldHTTP = "http"
+
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, "GET")
@@ -112,7 +114,7 @@ func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
 			"telegram_file_errors":     telegramFileErrors,
 			"telegram_file_errors_10s": telegramFileErrors10s,
 		},
-		"http": map[string]any{
+		fieldHTTP: map[string]any{
 			"active_chunk_requests":    activeChunkRequests,
 			"telegram_file_errors":     telegramFileErrors,
 			"telegram_file_errors_10s": telegramFileErrors10s,
@@ -159,7 +161,7 @@ func (s *Server) statusSnapshot() map[string]any {
 			"mode":          config.PrimaryDownloadExecutor(cfg),
 			"aria2_enabled": config.Aria2Enabled(cfg),
 		},
-		"http": map[string]any{
+		fieldHTTP: map[string]any{
 			"listen":          config.HTTPListenAddr(cfg),
 			"address":         cfg.HTTP.Address,
 			"port":            cfg.HTTP.Port,
