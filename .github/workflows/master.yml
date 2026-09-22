@@ -41,7 +41,7 @@ jobs:
       - name: Unit Test
         run: go test -race ./...
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Component UI tests
