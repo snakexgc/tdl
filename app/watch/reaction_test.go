@@ -183,7 +183,7 @@ func TestShouldTriggerForwardReactionRequiresEnabledForward(t *testing.T) {
 	}
 
 	// No forward runtime configured.
-	require.False(t, (reactionTestWatcher(t, &Watcher{})).shouldTriggerForwardReaction(context.Background(), reactions))
+	require.False(t, reactionTestWatcher(t, &Watcher{}).shouldTriggerForwardReaction(context.Background(), reactions))
 
 	// Forward configured but not enabled.
 	disabled := reactionTestWatcher(t, &Watcher{opts: Options{Reaction: testReactionPolicy(t, nil, []string{"🔥"})}})

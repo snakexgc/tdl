@@ -47,7 +47,9 @@ func (d *Dispatcher) Commands() []types.ConsoleCommand {
 	sort.SliceStable(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
 	return commands
 }
+
 func (d *Dispatcher) PrivateCommand(name string) bool { _, exists := d.handlers[name]; return exists }
+
 func (d *Dispatcher) Allowed(account types.AccountID, user int64) bool {
 	return d.policy != nil && d.policy.Allowed(account, user)
 }

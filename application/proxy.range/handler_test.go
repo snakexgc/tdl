@@ -34,6 +34,7 @@ func (s *maintainedSource) CleanupExpired(ctx context.Context) error {
 	<-s.release
 	return nil
 }
+
 func (s *maintainedSource) CleanupSources(context.Context) error { s.cleaned.Store(true); return nil }
 
 func TestRangeMaintenanceDrainsBeforeSourceCleanup(t *testing.T) {
@@ -71,6 +72,7 @@ type testLease struct{}
 
 func (testLease) Release()                                                 {}
 func (*testTransfer) Acquire(context.Context) (ports.DownloadLease, error) { return testLease{}, nil }
+
 func (s *testTransfer) Stream(ctx context.Context, _ ports.DownloadLease, _, _ int64, w io.Writer) error {
 	return s.stream(ctx, w)
 }

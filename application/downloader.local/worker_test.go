@@ -100,6 +100,7 @@ type lease struct{}
 
 func (lease) Release()                                                           {}
 func (source) Acquire(context.Context, string, int) (ports.DownloadLease, error) { return lease{}, nil }
+
 func (s source) Stream(ctx context.Context, _ string, _ ports.DownloadLease, _, _ int64, w io.Writer) error {
 	return s.stream(ctx, w)
 }

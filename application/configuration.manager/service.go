@@ -61,6 +61,7 @@ func Register(registry *rte.Registry, service *Service) error {
 func (s *Service) Init(_ context.Context, k rte.Kernel) error {
 	return k.Provide(ports.ConfigurationManagerName, s)
 }
+
 func (s *Service) Start(ctx context.Context) error              { _, err := s.System(ctx); return err }
 func (*Service) Stop(context.Context) error                     { return nil }
 func (*Service) Reconfigure(context.Context, config.View) error { return nil }
