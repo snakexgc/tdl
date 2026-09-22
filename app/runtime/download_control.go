@@ -114,7 +114,7 @@ func (m *Manager) Control(ctx context.Context, request types.DownloadAction) (ty
 // aria2 does not invalidate the Telegram watcher or the HTTP byte stream.
 type aria2Submission struct{ manager *Manager }
 
-func (aria2Submission) Name() string { return "aria2" }
+func (aria2Submission) Name() string { return config.DownloadExecutorAria2 }
 func (p aria2Submission) Submit(ctx context.Context, request types.DownloadSubmission) (types.DownloadResult, error) {
 	m := p.manager
 	cfg := config.From(m.parent)

@@ -108,7 +108,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 			}),
 		},
 		{
-			ID: "http", Enabled: true, Revision: revision(config.HTTPListenAddr(cfg)), Running: m.httpCtrl.Running,
+			ID: moduleIDHTTP, Enabled: true, Revision: revision(config.HTTPListenAddr(cfg)), Running: m.httpCtrl.Running,
 			Update: func(context.Context) error { m.httpService.UpdateConfig(cfg); return nil },
 			Start: func(context.Context) error {
 				if !m.httpCtrl.Start() && !m.httpCtrl.Running() {
