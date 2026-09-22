@@ -5,6 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"github.com/fatih/color"
+	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/aria2"
 	"github.com/snakexgc/tdl/application"
@@ -23,11 +27,33 @@ func revision(values ...any) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-func stopResource(stop func(context.Context) error) func(context.Context) error {
+func stopResource(name string, stop func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
 		bounded, cancel := context.WithTimeout(ctx, moduleStopTimeout)
 		defer cancel()
-		return stop(bounded)
+		started := time.Now()
+		logger := logctx.From(ctx).With(zap.String("resource", name))
+		logger.Debug("正在停止运行模块")
+		done, reported := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(reported)
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case <-done:
+			case <-timer.C:
+				color.Yellow("⏳ 正在等待%s停止…", name)
+				logger.Info("正在等待运行模块停止")
+			}
+		}()
+		defer func() { close(done); <-reported }()
+		err := stop(bounded)
+		if err != nil {
+			logger.Error("运行模块停止失败", zap.Duration("elapsed", time.Since(started)), zap.Error(err))
+		} else {
+			logger.Debug("运行模块已停止", zap.Duration("elapsed", time.Since(started)))
+		}
+		return err
 	}
 }
 
@@ -64,7 +90,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 				m.mu.Unlock()
 				return nil
 			},
-			Stop: stopResource(func(ctx context.Context) error {
+			Stop: stopResource("时间同步", func(ctx context.Context) error {
 				m.mu.Lock()
 				host := m.timeHost
 				m.mu.Unlock()
@@ -89,7 +115,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 					return m.httpCtrl.LastError()
 				}
 				return nil
-			}, Stop: stopResource(m.httpCtrl.StopContext),
+			}, Stop: stopResource("HTTP 下载服务", m.httpCtrl.StopContext),
 		},
 		{
 			ID: moduleIDAria2, Enabled: config.Aria2Enabled(cfg), Revision: revision(effectiveAria2ManagerConfig(cfg)), Running: m.aria2Process.Running,
@@ -111,7 +137,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 				m.mu.Lock()
 				defer m.mu.Unlock()
 				return m.aria2Err
-			}, Stop: stopResource(m.aria2Process.Stop),
+			}, Stop: stopResource("aria2 管理服务", m.aria2Process.Stop),
 		},
 		{
 			ID: moduleIDBot, Enabled: cfg.Modules.Bot, Requires: []string{accountResource}, Revision: revision(cfg.Bot.Token, m.botProxy(cfg)), Running: m.botProcess.Running,
@@ -131,7 +157,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 				}
 				return nil
 			},
-			Stop: stopResource(func(ctx context.Context) error {
+			Stop: stopResource("Telegram 机器人", func(ctx context.Context) error {
 				if err := m.botProcess.Stop(ctx); err != nil {
 					return err
 				}
@@ -146,13 +172,13 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 					return fmt.Errorf("panel did not start: verify address and credentials")
 				}
 				return nil
-			}, Stop: stopResource(m.panelProcess.Stop),
+			}, Stop: stopResource("Web 管理面板", m.panelProcess.Stop),
 		},
 		{
 			ID: moduleIDWatch, Enabled: m.connectionNeeded(cfg), Requires: []string{accountResource},
 			Revision: revision(config.EffectiveProxy(cfg), cfg.Delay, cfg.ReconnectTimeout), Running: m.watchCtrl.Running,
 			Update: func(context.Context) error { m.watchCtrl.UpdateOptions(m.watchOptions(cfg)); return nil },
-			Start:  m.StartWatch, Stop: stopResource(m.watchCtrl.StopContext),
+			Start:  m.StartWatch, Stop: stopResource("Telegram 监听", m.watchCtrl.StopContext),
 		},
 	}...)
 }

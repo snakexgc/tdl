@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { escapeHTML } from "./utils.js";
 import { initRouter, stopPages, canLeavePage } from "./router.js";
-import { loadStatus, renderStatus, openCredentialSettings } from "./status.js";
+import { loadStatus, renderStatus, showLoginCredentialWarning } from "./status.js";
 import { startRealtime, stopRealtime, observe } from "./events.js";
 import { initShell } from "./shell.js";
 
@@ -15,11 +15,11 @@ document.addEventListener("DOMContentLoaded", () => {
 async function bootstrap() {
   initShell();
   document.getElementById("logout").addEventListener("click", logout);
-  document.getElementById("credential-warning-action")?.addEventListener("click", openCredentialSettings);
   window.addEventListener("configuration-changed", loadStatus);
   observe("status", (data, error) => { if (data && !error) renderStatus(data); });
   startRealtime();
   await Promise.all([initRouter(), loadStatus()]);
+  showLoginCredentialWarning();
 }
 
 async function logout() {

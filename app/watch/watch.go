@@ -6,10 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/fatih/color"
@@ -83,17 +81,12 @@ func Run(ctx context.Context, opts Options) error {
 
 	parentCtx := ctx
 	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(parentCtx))
-	defer cancelRun()
-
-	signalCtx, stopSignalNotify := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stopSignalNotify()
 
 	runtime := newWatchRuntime(opts, kvd, logctx.From(runCtx))
 	var pauseOnShutdownOnce sync.Once
 	pauseOnShutdown := func() {
 		pauseOnShutdownOnce.Do(func() {
 			logctx.From(runCtx).Info("正在停止 Telegram 监听", zap.String("component", "account.telegram"))
-			color.Yellow("⏹ Stopping watcher...")
 			if (opts.Download || opts.FeatureFlags != nil) && runtime.worker != nil {
 				paused, err := runtime.worker.PauseForShutdown(runCtx)
 				if err != nil {
@@ -107,16 +100,23 @@ func Run(ctx context.Context, opts Options) error {
 		})
 	}
 
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		select {
 		case <-runCtx.Done():
 			return
 		case <-parentCtx.Done():
-		case <-signalCtx.Done():
 		}
 
 		pauseOnShutdown()
 		cancelRun()
+	}()
+	defer func() {
+		cancelRun()
+		// The pause operation writes task state. Join it before the caller can
+		// release account storage, including on a concurrent startup failure.
+		<-shutdownDone
 	}()
 
 	if opts.Download && opts.Forward {

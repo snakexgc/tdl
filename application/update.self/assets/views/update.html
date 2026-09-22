@@ -2,17 +2,34 @@
   <header class="page-head">
     <div>
       <h1>检查更新</h1>
-      <p>查看当前版本，发现新版本后可以下载并重启到新版；容器环境请拉取新镜像并重启容器。</p>
+      <p>正式版与预览版各展示最近 5 个版本。点击版本查看发布说明，可升级或切回指定版本。</p>
     </div>
     <div class="actions">
       <button class="btn secondary" id="check-update" type="button">检查更新</button>
-      <button class="btn primary" id="apply-update" type="button" disabled>下载并更新</button>
     </div>
   </header>
-  <div class="notice" id="update-status"></div>
+  <div class="notice" id="update-status" role="status" aria-live="polite"></div>
   <div class="info-grid" id="update-info"></div>
-  <section class="update-notes-shell">
-    <h2>Release Notes</h2>
-    <pre id="update-notes" class="update-notes"></pre>
+  <div class="update-channels">
+    <section class="update-channel" aria-labelledby="update-stable-title">
+      <header><h2 id="update-stable-title">正式发行版本</h2><span>最近 5 个</span></header>
+      <div id="update-stable" class="update-release-list"></div>
+    </section>
+    <section class="update-channel" aria-labelledby="update-preview-title">
+      <header><h2 id="update-preview-title">预览版</h2><span>最近 5 个</span></header>
+      <div id="update-preview" class="update-release-list"></div>
+    </section>
+  </div>
+  <section class="update-notes-shell" id="update-notes-shell" aria-labelledby="update-notes-title">
+    <header class="update-notes-head">
+      <h2 id="update-notes-title">Release Notes</h2>
+      <div class="actions">
+        <a id="update-release-link" target="_blank" rel="noopener noreferrer" hidden>在 GitHub 查看</a>
+        <button class="btn primary" id="apply-update" type="button" disabled>下载并切换</button>
+      </div>
+    </header>
+    <p id="update-selection" class="update-selection"></p>
+    <p id="update-selection-status" class="update-selection-status"></p>
+    <div id="update-notes" class="update-notes" role="region" aria-labelledby="update-notes-title" tabindex="0">点击上方版本查看发布说明。</div>
   </section>
 </section>

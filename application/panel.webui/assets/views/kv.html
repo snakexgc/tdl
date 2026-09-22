@@ -9,10 +9,11 @@
       <button class="btn secondary" id="select-undownloaded" type="button">选中未下载</button>
       <button class="btn primary" id="download-selected" type="button">发送到下载器</button>
       <button class="btn danger" id="delete-selected" type="button">批量删除</button>
+      <button class="btn danger" id="clean-storage" type="button">清理存储</button>
     </div>
   </header>
   <label class="search-field"><span class="sr-only">搜索链接记录</span><input id="kv-search" type="search" placeholder="搜索文件名或链接"></label>
-  <div class="notice" id="kv-status"></div>
+  <div class="notice" id="kv-status" role="status" aria-live="polite"></div>
   <div class="table-shell">
     <table id="kv-table">
       <colgroup>

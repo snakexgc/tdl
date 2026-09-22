@@ -35,6 +35,10 @@ func TestComponentStopCancelsAndWaitsForUpdate(t *testing.T) {
 	require.NoError(t, host.Stop(context.Background()))
 	_, err = service.Check(context.Background())
 	require.ErrorContains(t, err, "stopped")
+	_, err = service.CheckVersions(context.Background())
+	require.ErrorContains(t, err, "stopped")
+	_, _, err = service.DownloadVersion(context.Background(), "preview")
+	require.ErrorContains(t, err, "stopped")
 }
 
 type proxyStub struct {
@@ -74,5 +78,9 @@ func TestUpdaterRequiresSharedProxy(t *testing.T) {
 	require.ErrorIs(t, err, want)
 	_, _, err = service.Download(ctx)
 	require.ErrorIs(t, err, want)
-	require.Equal(t, 2, proxy.calls)
+	_, err = service.CheckVersions(ctx)
+	require.ErrorIs(t, err, want)
+	_, _, err = service.DownloadVersion(ctx, "preview")
+	require.ErrorIs(t, err, want)
+	require.Equal(t, 4, proxy.calls)
 }

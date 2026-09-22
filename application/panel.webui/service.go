@@ -57,7 +57,7 @@ func Register(registry *rte.Registry, opts Options) error {
 
 func Manifest() manifest.Manifest {
 	return manifest.WithSettings(manifest.Manifest{
-		Feature: manifest.Feature{ID: "panel", Title: "面板与数据维护", Order: 70, SettingsURL: "/config?tab=panel"}, ID: ID, Config: []manifest.ConfigField{
+		Feature: manifest.Feature{ID: "panel", Title: "面板与数据维护", Order: 70, SettingsURL: "/config?tab=system"}, ID: ID, Config: []manifest.ConfigField{
 			manifest.FormattedText("username", "登录用户名", "admin", "nonempty", false, true).WithHelp("用于登录此管理面板，不能为空。修改后请使用新用户名登录。"),
 			manifest.Text("password", "登录密码", "admin", true, true).WithHelp("填写新密码以替换原密码；留空保留原值。修改后请使用新密码登录。"),
 			manifest.Text("address", "服务监听地址", "0.0.0.0", false, true).WithHelp("0.0.0.0 监听所有 IPv4 网卡；127.0.0.1 仅允许本机访问。修改后可能需要重新打开面板。"),
@@ -68,7 +68,7 @@ func Manifest() manifest.Manifest {
 			{Path: "/modules", Title: "模块管理", View: "modules", Module: "/static/js/modules.js", Style: "/static/css/modules.css", Order: 50},
 			{Path: "/logs", Title: "日志管理", View: "logs", Module: "/static/js/logs.js", Style: "/static/css/logs.css", Order: 65},
 		},
-	}, "panel", "面板访问")
+	}, "system", "面板访问").SettingsOrder(1)
 }
 
 type service struct {

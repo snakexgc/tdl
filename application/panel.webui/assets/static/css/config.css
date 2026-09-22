@@ -231,10 +231,6 @@
 .settings-editor-field .settings-help {
   margin-top: 16px;
 }
-.settings-namespace {
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-}
 .settings-maintenance-row {
   display: flex;
   justify-content: space-between;

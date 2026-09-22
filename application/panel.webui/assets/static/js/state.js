@@ -27,5 +27,4 @@ export const state = {
   loginMethod: "phone",
   loginPanel: "",
   lastLoginData: null,
-  usingDefaultCredentials: false,
 };

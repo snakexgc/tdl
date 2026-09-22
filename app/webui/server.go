@@ -139,7 +139,8 @@ type Server struct {
 	dashboardLastBytes  int64
 	dashboardLastSample time.Time
 
-	shutdownRequested atomic.Bool
+	shutdownRequested  atomic.Bool
+	maintenanceRunning atomic.Bool
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -248,6 +249,7 @@ func (s *Server) routes() http.Handler {
 		"/api/kv/links":               s.handleKVLinks,
 		"/api/kv/links/actions":       s.handleKVActions,
 		"/api/kv/links/":              s.handleKVLink,
+		"/api/storage/clean":          s.handleStorageClean,
 		"/api/user":                   s.handleUser,
 		"/api/dialogs":                s.handleDialogs,
 		"/api/user/switch":            s.handleUserSwitch,

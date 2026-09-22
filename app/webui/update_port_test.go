@@ -8,18 +8,24 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
-type updatePortStub struct{ checks, downloads int }
+type updatePortStub struct {
+	ports.Updater
+	checks, downloads int
+	version           string
+}
 
-func (u *updatePortStub) Check(context.Context) (types.UpdateInfo, error) {
+func (u *updatePortStub) CheckVersions(context.Context) (types.UpdateInfo, error) {
 	u.checks++
 	return types.UpdateInfo{LatestVersion: "component-release"}, nil
 }
 
-func (u *updatePortStub) Download(context.Context) (types.UpdatePlan, types.UpdateInfo, error) {
+func (u *updatePortStub) DownloadVersion(_ context.Context, version string) (types.UpdatePlan, types.UpdateInfo, error) {
 	u.downloads++
+	u.version = version
 	return types.UpdatePlan{}, types.UpdateInfo{LatestVersion: "component-release"}, nil
 }
 
@@ -31,8 +37,9 @@ func TestUpdateUsesInjectedPort(t *testing.T) {
 	s.handleUpdateCheck(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Contains(t, response.Body.String(), "component-release")
-	_, _, err := s.downloadUpdate(request)
+	_, _, err := s.downloadUpdate(request, "selected-preview")
 	require.NoError(t, err)
 	require.Equal(t, 1, service.checks)
 	require.Equal(t, 1, service.downloads)
+	require.Equal(t, "selected-preview", service.version)
 }

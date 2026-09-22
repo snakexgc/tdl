@@ -34,6 +34,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!response.ok) {
         throw new Error(data.error || "登录失败。");
       }
+      try {
+        window.sessionStorage.setItem(
+          "tdl-default-credentials-warning",
+          data.using_default_credentials ? "1" : "0",
+        );
+      } catch {
+        // Browser storage restrictions must not prevent a successful login.
+      }
       setStatus("登录成功，正在进入面板...", "success");
       window.location.replace("/");
     } catch (error) {

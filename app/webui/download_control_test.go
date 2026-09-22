@@ -90,6 +90,6 @@ func TestMissingComponentPortsRemainUnavailable(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/update/check", nil)
 	_, err = s.checkUpdate(request)
 	require.ErrorContains(t, err, "unavailable")
-	_, _, err = s.downloadUpdate(request)
+	_, _, err = s.downloadUpdate(request, "selected-version")
 	require.ErrorContains(t, err, "unavailable")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/go-faster/errors"
@@ -24,7 +25,9 @@ func main() {
 		return
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Windows console close is delivered as SIGTERM; all services must receive
+	// the same cancellation as Ctrl+C before the OS shutdown deadline expires.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	humanizeErrors := map[error]string{

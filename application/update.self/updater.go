@@ -5,7 +5,6 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -53,6 +52,8 @@ type githubRelease struct {
 	Body        string        `json:"body"`
 	PublishedAt time.Time     `json:"published_at"`
 	Assets      []githubAsset `json:"assets"`
+	Draft       bool          `json:"draft"`
+	Prerelease  bool          `json:"prerelease"`
 }
 
 type githubAsset struct {
@@ -120,6 +121,15 @@ func DownloadLatest(ctx context.Context, proxyURL string) (result Plan, resultIn
 	if !info.CanUpdate || info.AssetURL == "" {
 		return Plan{}, info, errors.New(info.Message)
 	}
+	client, err := newHTTPClient(proxyURL)
+	if err != nil {
+		return Plan{}, info, err
+	}
+	defer client.CloseIdleConnections()
+	return downloadRelease(ctx, client, info)
+}
+
+func downloadRelease(ctx context.Context, client *http.Client, info Info) (result Plan, resultInfo Info, resultErr error) {
 	started := time.Now()
 	slog.Info("开始下载软件更新", "component", ID, "version", info.LatestVersion)
 	defer func() {
@@ -133,11 +143,6 @@ func DownloadLatest(ctx context.Context, proxyURL string) (result Plan, resultIn
 		slog.Log(ctx, level, "软件更新准备已结束", "component", ID, "version", info.LatestVersion, "duration", time.Since(started), "error", resultErr)
 	}()
 
-	client, err := newHTTPClient(proxyURL)
-	if err != nil {
-		return Plan{}, info, err
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
@@ -145,6 +150,11 @@ func DownloadLatest(ctx context.Context, proxyURL string) (result Plan, resultIn
 	if err != nil {
 		return Plan{}, info, errors.Wrap(err, "create update directory")
 	}
+	defer func() {
+		if resultErr != nil {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
 	assetPath := filepath.Join(tmpDir, safeFileName(info.AssetName))
 	if err := downloadFile(ctx, client, info.AssetURL, assetPath); err != nil {
 		return Plan{}, info, err
@@ -256,35 +266,14 @@ func currentInfo(repository string) Info {
 }
 
 func fetchLatestRelease(ctx context.Context, repository, proxyURL string) (githubRelease, error) {
-	if repository == "" {
-		repository = DefaultRepository
-	}
 	client, err := newHTTPClient(proxyURL)
 	if err != nil {
 		return githubRelease{}, err
 	}
-
-	u := fmt.Sprintf("%s/repos/%s/releases/latest", githubAPIBase, strings.Trim(repository, "/"))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return githubRelease{}, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "tdl-updater")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return githubRelease{}, errors.Wrap(err, "request latest release")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return githubRelease{}, fmt.Errorf("github latest release status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
+	defer client.CloseIdleConnections()
 	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return githubRelease{}, errors.Wrap(err, "decode latest release")
+	if _, err := (releaseClient{client, githubAPIBase, repository}).get(ctx, "/latest", &release); err != nil {
+		return githubRelease{}, err
 	}
 	if release.TagName == "" {
 		return githubRelease{}, errors.New("latest release has empty tag")

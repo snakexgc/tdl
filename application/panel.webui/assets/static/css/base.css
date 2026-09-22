@@ -464,16 +464,22 @@ p {
   flex-shrink: 0;
 }
 .credential-warning {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(680px, calc(100% - 32px));
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin: 0 0 24px;
   padding: 16px 20px;
   color: var(--warning);
   background: var(--warning-soft);
   border: 1px solid var(--warning-line);
   border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
 }
 .credential-warning div {
   display: grid;
@@ -485,6 +491,15 @@ p {
 }
 .credential-warning span {
   font-size: 13px;
+}
+.credential-warning .credential-warning-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+.credential-warning .icon-button {
+  color: var(--warning);
 }
 .credential-warning .btn.danger {
   flex: 0 0 auto;

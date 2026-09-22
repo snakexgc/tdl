@@ -26,7 +26,7 @@ func Register(registry *rte.Registry, repository ports.CleanupRepository) error 
 
 func Manifest() manifest.Manifest {
 	return manifest.Manifest{
-		Feature: manifest.Feature{ID: "panel", Title: "面板与数据维护", Order: 70, SettingsURL: "/config?tab=panel"}, ID: ID, Commands: Commands(), Title: "存储维护", Provides: []manifest.Port{manifest.PortOf[ports.KVMaintenance](ports.KVMaintenanceName, 1, 0)},
+		Feature: manifest.Feature{ID: "panel", Title: "面板与数据维护", Order: 70, SettingsURL: "/config?tab=system"}, ID: ID, Commands: Commands(), Title: "存储维护", Provides: []manifest.Port{manifest.PortOf[ports.KVMaintenance](ports.KVMaintenanceName, 1, 0)},
 	}
 }
 

@@ -105,7 +105,7 @@ async function reload() {
     $("settings-readonly").hidden = Boolean(data.editable);
     renderSearch();
     await redrawPanels();
-    message("已从 tdl_config.json 重新读取配置。", "success");
+    message("");
   } finally {
     busy.delete("reload");
     updateDraft();
@@ -210,7 +210,9 @@ function renderPending() {
     title.href =
       change.name === "enabled"
         ? "/modules"
-        : `/config?tab=${change.tab}#${encodeURIComponent(`setting-${change.id}-${change.name}`)}`;
+        : change.id === "system" && change.name === "namespace"
+          ? "/user"
+          : `/config?tab=${change.tab}#${encodeURIComponent(`setting-${change.id}-${change.name}`)}`;
     title.dataset.appLink = "";
     name.append(title, element("small", change.section, "subtle"));
     name.append(
@@ -318,9 +320,8 @@ async function mountTab(tab) {
     element("p", settingsTabs.find(([id]) => id === tab)[2], "subtle"),
   );
   const related = {
-    account: ["/user", "登录与切换账号"],
+    system: ["/user", "登录与切换账号"],
     notifications: ["/config?tab=bot", "设置机器人"],
-    download: ["/config?tab=links", "设置下载链接地址"],
   }[tab];
   if (related) {
     const link = element("a", related[1]);
@@ -329,6 +330,19 @@ async function mountTab(tab) {
     intro.append(link);
   }
   host.append(intro);
+  const groups = settingsGroups([...store.components.values()], tab);
+  for (const group of groups) {
+    const slot = element("div");
+    host.append(slot);
+    const block = await renderSettingsBlock(slot, group, {
+      store,
+      editable: data.editable,
+      busy,
+      update: updateDraft,
+      save: saveBlock,
+    });
+    blocks.push({ ...block, tab });
+  }
   if (tab === "system") {
     const block = await renderSystem(host, {
       store,
@@ -351,19 +365,6 @@ async function mountTab(tab) {
         else busy.delete("runtime");
         updateDraft();
       },
-    });
-    blocks.push({ ...block, tab });
-  }
-  const groups = settingsGroups([...store.components.values()], tab);
-  for (const group of groups) {
-    const slot = element("div");
-    host.append(slot);
-    const block = await renderSettingsBlock(slot, group, {
-      store,
-      editable: data.editable,
-      busy,
-      update: updateDraft,
-      save: saveBlock,
     });
     blocks.push({ ...block, tab });
   }

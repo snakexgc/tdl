@@ -78,6 +78,10 @@ func TestUnavailableProductionPortsDoNotFallBack(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = m.Download(context.Background())
 	require.Error(t, err)
+	_, err = m.CheckVersions(context.Background())
+	require.Error(t, err)
+	_, _, err = m.DownloadVersion(context.Background(), "preview")
+	require.Error(t, err)
 }
 
 func TestDisabledFilterPreservesIndependentAccountPort(t *testing.T) {

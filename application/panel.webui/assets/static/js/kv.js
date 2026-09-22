@@ -5,9 +5,15 @@ import { collator, escapeHTML, escapeAttr, formatBytes, formatTime } from "./uti
 import { statusClass, statusLabel } from "./download-model.js";
 import { loadStatus } from "./status.js";
 import { element, openDrawer } from "./ui.js";
+import { cleanStorage } from "./storage-maintenance.js";
 export function initKV() {
   document.getElementById("kv-search").addEventListener("input", () => { state.selectedKV.clear(); renderKVTable(); });
   document.getElementById("refresh-kv").addEventListener("click", loadKV);
+  const cleanButton = document.getElementById("clean-storage");
+  cleanButton.addEventListener("click", () => cleanStorage(cleanButton, {
+    refresh: loadKV,
+    notify: setKVStatus,
+  }));
 
   document.getElementById("select-all-kv").addEventListener("change", (event) => {
     if (event.target.checked) {

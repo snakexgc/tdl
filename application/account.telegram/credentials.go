@@ -26,9 +26,9 @@ const (
 func Manifest() manifest.Manifest {
 	zero := int64(0)
 	return manifest.WithSettings(manifest.Manifest{
-		Feature: manifest.Feature{ID: "account", Title: "账号管理", Order: 40, SettingsURL: "/config?tab=account"},
+		Feature: manifest.Feature{ID: "account", Title: "账号管理", Order: 40, SettingsURL: "/config?tab=system#setting-account.telegram-use_builtin"},
 		ID:      ID, Commands: Commands(), Title: "Telegram 账号",
-		Pages:    []manifest.Page{{Path: "/user", Title: "账号管理", View: "user", Module: "/static/js/user.js", Style: "/static/css/user.css", Order: 40, KeepVisible: true, SettingsURL: "/config?tab=account"}},
+		Pages:    []manifest.Page{{Path: "/user", Title: "账号管理", View: "user", Module: "/static/js/user.js", Style: "/static/css/user.css", Order: 40, KeepVisible: true, SettingsURL: "/config?tab=system#setting-account.telegram-use_builtin"}},
 		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0), manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0)},
 		Config: []manifest.ConfigField{
 			manifest.FormattedText("proxy", "统一网络代理", "", "proxy", true, true).InSettings("network", "网络代理与连接").WithHelp("Telegram、机器人和软件更新共用此代理。选择协议后填写 IP 或域名加端口，例如 127.0.0.1:1080；需要认证时展开填写。整体留空保留已保存的代理，修改时请同时填写所需的认证信息。"),
@@ -42,7 +42,7 @@ func Manifest() manifest.Manifest {
 			{Name: fieldAPIHash, Title: "API Hash", Type: manifest.String, Default: "", Secret: true, Help: "留空保持不变。填写自定义 API ID 时需同时提供对应的 API Hash。"},
 			{Name: fieldBuiltinPreset, Title: "内置预设", Type: manifest.String, Default: presetDesktop, Choices: []string{presetDesktop, presetBuiltin}, ChoiceLabels: map[string]string{presetDesktop: "desktop（推荐）", presetBuiltin: presetBuiltin}, Help: "默认 desktop，不建议修改。更换预设可能需要重新登录。"},
 		},
-	}, "account", "Telegram API 凭据", "reconnect_timeout_seconds", "dc_pool_size", fieldBuiltinPreset).SettingsOrder(30)
+	}, "system", "Telegram API 凭据", "reconnect_timeout_seconds", "dc_pool_size", fieldBuiltinPreset).SettingsOrder(30)
 }
 
 func Register(registry *rte.Registry) error {

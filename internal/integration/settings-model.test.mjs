@@ -55,7 +55,7 @@ test("settings search locates advanced fields and system settings without indexi
     models.searchSettings(items, "CONNECT_RETRY_MS")[0].target,
     "setting-downloader.aria2-connect_retry_ms",
   );
-  assert.equal(models.searchSettings(items, "namespace")[0].tab, "system");
+  assert.equal(models.searchSettings(items, "namespace").length, 0);
   assert.equal(
     models.searchSettings(items, "debug")[0].target,
     "setting-system-debug",

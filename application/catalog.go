@@ -61,7 +61,7 @@ func definitions(commandSets ...[]types.ConsoleCommand) ([]rte.Definition, error
 		{reaction.Register, rte.Definition{Scope: rte.AccountScope}},
 		{update.Register, ui(rte.AccountScope, update.Assets(), update.Routes())},
 		{nil, rte.Definition{Manifest: panel.Manifest(), Scope: rte.ProcessScope, Assets: panel.Assets(), Routes: panel.Routes()}},
-		{nil, rte.Definition{Manifest: maintenance.Manifest(), Scope: rte.AccountScope}},
+		{nil, rte.Definition{Manifest: maintenance.Manifest(), Scope: rte.AccountScope, Routes: maintenance.Routes()}},
 		{nil, rte.Definition{Manifest: downloadtrigger.Manifest(), Scope: rte.ConnectionScope}},
 		{nil, rte.Definition{Manifest: forwardtrigger.Manifest(), Scope: rte.ConnectionScope}},
 		{nil, rte.Definition{Manifest: aria2.Manifest(), Scope: rte.AccountScope, Validate: aria2.ValidateConfiguration, Assets: aria2.Assets(), Routes: aria2.Routes()}},

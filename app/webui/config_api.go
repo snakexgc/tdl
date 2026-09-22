@@ -3,8 +3,10 @@ package webui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-faster/errors"
 
@@ -81,11 +83,28 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("update is not available in this mode"))
 		return
 	}
+	var req struct {
+		Version string `json:"version"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.Wrap(err, "decode selected version"))
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		writeError(w, http.StatusBadRequest, errors.New("request must contain one JSON object"))
+		return
+	}
+	if req.Version == "" || strings.TrimSpace(req.Version) != req.Version || len(req.Version) > 256 {
+		writeError(w, http.StatusBadRequest, errors.New("请选择有效的目标版本"))
+		return
+	}
 	if !s.shutdownRequested.CompareAndSwap(false, true) {
 		writeError(w, http.StatusConflict, errors.New(shutdownInProgressMessage))
 		return
 	}
-	plan, info, err := s.downloadUpdate(r)
+	plan, info, err := s.downloadUpdate(r, req.Version)
 	if err != nil {
 		s.shutdownRequested.Store(false)
 		writeError(w, http.StatusBadGateway, err)
@@ -94,7 +113,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"update":     info,
-		fieldMessage: fmt.Sprintf("更新包已下载，准备更新到 %s 并重启。", info.LatestVersion),
+		fieldMessage: fmt.Sprintf("更新包已下载，准备切换到 %s 并重启。", plan.Version),
 	})
 	_ = http.NewResponseController(w).Flush()
 	s.opts.RequestUpdate(plan)
@@ -102,14 +121,14 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) checkUpdate(r *http.Request) (types.UpdateInfo, error) {
 	if s.opts.Updater != nil {
-		return s.opts.Updater.Check(r.Context())
+		return s.opts.Updater.CheckVersions(r.Context())
 	}
 	return types.UpdateInfo{}, errors.New("update service is unavailable")
 }
 
-func (s *Server) downloadUpdate(r *http.Request) (types.UpdatePlan, types.UpdateInfo, error) {
+func (s *Server) downloadUpdate(r *http.Request, version string) (types.UpdatePlan, types.UpdateInfo, error) {
 	if s.opts.Updater != nil {
-		return s.opts.Updater.Download(r.Context())
+		return s.opts.Updater.DownloadVersion(r.Context(), version)
 	}
 	return types.UpdatePlan{}, types.UpdateInfo{}, errors.New("update service is unavailable")
 }

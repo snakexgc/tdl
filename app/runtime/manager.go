@@ -557,9 +557,13 @@ func (m *Manager) Shutdown() { _ = m.shutdown() }
 
 func (m *Manager) shutdown() error {
 	m.scheduleMu.Lock()
-	m.closing.Store(true)
+	first := !m.closing.Swap(true)
 	m.applyVersion.Add(1)
 	m.scheduleMu.Unlock()
+	if first {
+		color.Yellow("⏹ 正在停止 TDL：保存任务状态并关闭服务…")
+		logctx.From(m.parent).Info("TDL 正在停止")
+	}
 	m.transitionWG.Wait()
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
@@ -567,7 +571,7 @@ func (m *Manager) shutdown() error {
 	for i := range units {
 		units[i].Enabled = false
 	}
-	if err := m.reconciler.Reconcile(context.Background(), units); err != nil {
+	if err := m.reconciler.Reconcile(context.WithoutCancel(m.parent), units); err != nil {
 		logctx.From(m.parent).Error("stop component resources; instances retained for retry", zap.Error(err))
 		return err
 	}

@@ -80,43 +80,28 @@ export const settingsTabs = [
   ],
   [
     "download",
-    "下载",
-    "先选择下载方式和保存位置，再调整并发、文件过滤与命名。以下目录均指服务所在机器上的路径。",
+    "下载设置",
+    "先设置下载链接的访问地址，再选择下载方式和保存位置，调整并发、文件过滤与命名。以下目录均指服务所在机器上的路径。",
   ],
   [
     "forward",
-    "转发",
+    "转发设置",
     "用规则指定从哪里转发到哪里，再设置自动监听范围。启用或停用自动转发请前往模块管理。",
   ],
   [
-    "account",
-    "账号",
-    "通常使用内置 API 凭据即可。登录、退出和切换 Telegram 账号请前往账号管理。",
-  ],
-  [
-    "links",
-    "下载链接",
-    "让 aria2 或其他下载工具通过链接读取 Telegram 文件。请填写下载者实际能够访问的地址。",
-  ],
-  [
     "bot",
-    "机器人",
+    "机器人设置",
     "连接 Telegram 机器人，并指定哪些用户可以执行机器人命令。网络代理在「网络连接」中统一设置。",
   ],
   [
     "notifications",
-    "通知",
+    "通知设置",
     "先配置机器人和接收者，再选择需要通知的下载事件。通知接收者与机器人命令的允许用户分别设置。",
   ],
   [
-    "panel",
-    "面板访问",
-    "管理此 WebUI 的登录凭据和访问地址。更改凭据后需重新登录，更改监听地址或端口后需重新访问。",
-  ],
-  [
     "system",
-    "系统",
-    "查看当前账号数据空间、调整日志，以及重启或重置应用。所有业务配置由各账号共用。",
+    "系统设置",
+    "管理此 WebUI 的登录凭据和访问地址、Telegram API 凭据、运行日志，以及重启或重置应用。更改面板凭据后需重新登录，更改监听地址或端口后需重新访问。",
   ],
 ];
 export function fieldTab(field) {
@@ -140,8 +125,10 @@ export function settingsGroups(components, tab) {
   // The rule editor is the primary entry in forwarding settings.
   return groups.sort(
     (a, b) =>
-      Number(!a.fields.some((f) => f.editor)) -
-        Number(!b.fields.some((f) => f.editor)) ||
+      (tab === "forward"
+        ? Number(!a.fields.some((f) => f.editor)) -
+          Number(!b.fields.some((f) => f.editor))
+        : 0) ||
       Math.min(...a.fields.map((f) => f.settings_order ?? 100)) -
         Math.min(...b.fields.map((f) => f.settings_order ?? 100)),
   );
@@ -324,21 +311,12 @@ export function searchSettings(components, query) {
   entries.push(
     {
       tab: "system",
-      category: "系统",
+      category: "系统设置",
       section: "日志",
       title: "详细日志",
       help: "排查问题 debug",
       key: "system.debug",
       target: "setting-system-debug",
-    },
-    {
-      tab: "system",
-      category: "系统",
-      section: "当前账号",
-      title: "账号数据空间",
-      help: "namespace 登录会话与历史任务，在账号管理中切换",
-      key: "system.namespace",
-      target: "setting-system-namespace",
     },
   );
   return entries.filter((entry) => {

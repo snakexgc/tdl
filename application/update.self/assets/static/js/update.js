@@ -1,93 +1,188 @@
-// Update view: shows current/latest version and triggers self-update.
+// Browse releases first; downloading always uses the explicitly selected tag.
 import { state } from "./state.js";
 import { api } from "./api.js";
 import { infoItem } from "./utils.js";
 
+let selectedVersion = "";
+let checkController = null;
+let checking = false;
+let applying = false;
+let restarting = false;
+let releaseButtons = [];
+
+const element = id => document.getElementById(id);
+const releases = () => [...(state.update?.stable_releases || []), ...(state.update?.preview_releases || [])];
+const selectedRelease = () => releases().find(release => release.version === selectedVersion);
+
 export function initUpdate() {
-  document.getElementById("check-update").addEventListener("click", loadUpdateStatus);
-  document.getElementById("apply-update").addEventListener("click", applyUpdate);
+  element("check-update").addEventListener("click", loadUpdateStatus);
+  element("apply-update").addEventListener("click", applyUpdate);
+}
+
+function notice(message, kind = "") {
+  element("update-status").className = `notice ${kind}`.trim();
+  element("update-status").textContent = message;
 }
 
 export async function loadUpdateStatus() {
-  const status = document.getElementById("update-status");
-  const target = document.getElementById("update-info");
-  const notes = document.getElementById("update-notes");
-  status.className = "notice";
-  status.textContent = "正在检查更新...";
-  target.innerHTML = "";
-  notes.textContent = "";
+  if (applying || restarting) return;
+  checkController?.abort();
+  const controller = new AbortController();
+  checkController = controller;
+  checking = true;
+  state.update = null;
+  renderUpdateInfo();
+  notice("正在获取正式发行版本和预览版...");
   try {
-    const data = await api("/api/update/check");
+    const data = await api("/api/update/check", { signal: controller.signal });
+    if (controller !== checkController) return;
     state.update = data.update;
-    renderUpdateInfo(data.update);
+    if (!selectedRelease()) selectedVersion = releases()[0]?.version || "";
+    checking = false;
+    renderUpdateInfo();
+    notice(data.update.message || "选择版本查看 Release Notes，确认后可下载并切换。", data.update.docker ? "warn" : "");
   } catch (error) {
-    status.className = "notice error";
-    status.textContent = error.message;
+    if (controller !== checkController || controller.signal.aborted) return;
+    checking = false;
+    renderUpdateInfo();
+    notice(error.message, "error");
+  } finally {
+    if (controller === checkController) {
+      checkController = null;
+      checking = false;
+      setControls();
+    }
   }
 }
 
-function renderUpdateInfo(update) {
-  const status = document.getElementById("update-status");
-  const target = document.getElementById("update-info");
-  const notes = document.getElementById("update-notes");
-  if (!update) {
-    status.className = "notice";
-    status.textContent = "";
-    target.innerHTML = "";
-    notes.textContent = "";
-    return;
-  }
-  const runtimeLabel = update.docker
-    ? "Docker 容器"
-    : (update.runtime === "binary" ? "本机二进制" : (update.runtime || "本机二进制"));
-  const rows = [
+function renderUpdateInfo() {
+  const update = state.update;
+  const rows = update ? [
     ["当前版本", update.current_version || "-"],
     ["当前提交", update.current_commit || "-"],
     ["构建日期", update.current_date || "-"],
     ["运行平台", `${update.goos || "-"} / ${update.goarch || "-"}`],
-    ["运行方式", runtimeLabel],
-    ["最新版本", update.latest_version || "-"],
-    ["发布名称", update.latest_name || "-"],
-    ["更新文件", update.asset_name || "-"],
-    ["发布地址", update.latest_url || "-"],
-  ];
-  if (update.docker) {
-    rows.push(["更新方式", "请拉取新镜像并重启容器"]);
+    ["运行方式", update.docker ? "Docker 容器" : "本机二进制"],
+  ] : [];
+  element("update-info").innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
+  releaseButtons = [];
+  renderChannel("update-stable", update?.stable_releases || []);
+  renderChannel("update-preview", update?.preview_releases || []);
+  renderSelection();
+}
+
+function formatDate(value) {
+  const date = new Date(value);
+  return value && Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN") : "发布日期未知";
+}
+
+function renderChannel(id, versions) {
+  const target = element(id);
+  target.replaceChildren();
+  if (!versions.length) {
+    const empty = document.createElement("p");
+    empty.className = "update-empty";
+    empty.textContent = checking ? "正在加载..." : (state.update ? "暂无已发布的版本" : "请检查更新以获取版本列表");
+    target.append(empty);
+    return;
   }
-  target.innerHTML = rows.map(([label, value]) => infoItem(label, value)).join("");
-  notes.textContent = update.release_notes || "";
-  const kind = update.needs_update ? (update.can_update ? "success" : "warn") : "";
-  status.className = `notice ${kind}`.trim();
-  status.textContent = update.message || (update.needs_update ? "发现新版本。" : "当前已是最新版本。");
-  const applyBtn = document.getElementById("apply-update");
-  applyBtn.disabled = !update.needs_update || !update.can_update;
-  applyBtn.textContent = update.docker ? "请更新容器镜像" : "下载并更新";
+  versions.slice(0, 5).forEach(release => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "update-release";
+    button.setAttribute("aria-controls", "update-notes-shell");
+    const title = document.createElement("span");
+    title.className = "update-release-title";
+    const version = document.createElement("strong");
+    version.textContent = release.version;
+    const badge = document.createElement("span");
+    badge.className = "update-release-badge";
+    badge.textContent = release.current ? "当前版本" : (release.can_install ? "可切换" : "仅查看");
+    title.append(version, badge);
+    const date = document.createElement("span");
+    date.className = "update-release-date";
+    date.textContent = formatDate(release.published_at);
+    button.append(title, date);
+    button.addEventListener("click", () => {
+      if (checking || applying || restarting) return;
+      selectedVersion = release.version;
+      renderSelection();
+      element("update-notes-shell").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    target.append(button);
+    releaseButtons.push({ button, release });
+  });
+}
+
+function renderSelection() {
+  const release = selectedRelease();
+  element("update-notes-title").textContent = release ? `Release Notes · ${release.version}` : "Release Notes";
+  const notes = element("update-notes");
+  if (release?.release_notes_html) {
+    // Only insert HTML rendered by the server's safe Markdown renderer.
+    notes.innerHTML = release.release_notes_html;
+    notes.querySelectorAll("a").forEach(link => {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    });
+  } else {
+    notes.textContent = release ? (release.release_notes || "此版本未提供 Release Notes。") : "点击上方版本查看发布说明。";
+  }
+  notes.scrollTop = 0;
+  element("update-selection").textContent = release ? `${release.prerelease ? "预览版" : "正式版"} · ${release.name || release.version} · ${formatDate(release.published_at)}` : "";
+  element("update-selection-status").textContent = release ? `${release.message || ""}${release.asset_name ? ` · ${release.asset_name}` : ""}` : "";
+  const link = element("update-release-link");
+  link.hidden = true;
+  link.removeAttribute("href");
+  if (release?.url) {
+    try {
+      const url = new URL(release.url);
+      if (["https:", "http:"].includes(url.protocol)) {
+        link.href = url.href;
+        link.hidden = false;
+      }
+    } catch { /* A missing or invalid release URL does not prevent viewing notes. */ }
+  }
+  setControls();
+}
+
+function setControls() {
+  const release = selectedRelease();
+  const busy = checking || applying || restarting;
+  element("check-update").disabled = busy;
+  const applyButton = element("apply-update");
+  applyButton.disabled = busy || !release?.can_install || release.current || !!state.update?.docker;
+  applyButton.textContent = applying ? "正在下载..." : restarting ? "正在重启..." : state.update?.docker ? "请更新容器镜像" : release?.current ? "当前版本" : "下载并切换";
+  releaseButtons.forEach(({ button, release: choice }) => {
+    button.disabled = busy;
+    button.setAttribute("aria-pressed", String(choice.version === selectedVersion));
+  });
 }
 
 async function applyUpdate() {
-  if (!state.update) {
-    await loadUpdateStatus();
-  }
-  if (!state.update || !state.update.needs_update || !state.update.can_update) {
-    return;
-  }
-  const restartHint = "程序会自动重启。";
-  if (!confirm(`确认更新到 ${state.update.latest_version}？${restartHint}`)) return;
-  const status = document.getElementById("update-status");
-  status.className = "notice";
-  status.textContent = "正在下载更新...";
+  const release = selectedRelease();
+  if (checking || applying || restarting || !release?.can_install || release.current || state.update?.docker) return;
+  const channel = release.prerelease ? "预览版" : "正式版";
+  if (!confirm(`确认从 ${state.update.current_version || "当前版本"} 切换到${channel} ${release.version}？程序会下载所选版本并自动重启。`)) return;
+  applying = true;
+  setControls();
+  notice(`正在下载 ${release.version}...`);
   try {
-    const data = await api("/api/update/apply", { method: "POST", body: "{}" });
-    if (data.update) {
-      state.update = data.update;
-      renderUpdateInfo(data.update);
-    }
-    status.className = "notice success";
-    status.textContent = data.message || "更新包已下载，正在重启。";
+    const data = await api("/api/update/apply", { method: "POST", body: JSON.stringify({ version: release.version }) });
+    restarting = true;
+    notice(data.message || `更新包已下载，正在切换到 ${release.version} 并重启。`, "success");
   } catch (error) {
-    status.className = "notice error";
-    status.textContent = error.message;
+    notice(error.message, "error");
+  } finally {
+    applying = false;
+    setControls();
   }
 }
 
-export const page = { init: initUpdate, load: loadUpdateStatus };
+function stopUpdate() {
+  checkController?.abort();
+  checkController = null;
+  checking = false;
+}
+
+export const page = { init: initUpdate, load: loadUpdateStatus, stop: stopUpdate };

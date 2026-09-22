@@ -62,7 +62,7 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 				m.mu.Unlock()
 				return nil
 			},
-			Stop: stopResource(func(ctx context.Context) error {
+			Stop: stopResource("本地规则服务", func(ctx context.Context) error {
 				m.mu.Lock()
 				host := m.policies
 				m.mu.Unlock()
@@ -105,7 +105,7 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 				m.mu.Unlock()
 				return nil
 			},
-			Stop: stopResource(func(ctx context.Context) error {
+			Stop: stopResource("Telegram 账号连接", func(ctx context.Context) error {
 				m.mu.Lock()
 				host, connections := m.accountHost, m.connections
 				m.mu.Unlock()
@@ -127,7 +127,7 @@ func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 			ID: downloadResource, Enabled: m.componentEnabled("download.control"),
 			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.downloadHost != nil },
 			Start:   func(context.Context) error { return m.initDownloadControl(m.parent) },
-			Stop: stopResource(func(ctx context.Context) error {
+			Stop: stopResource("下载任务控制", func(ctx context.Context) error {
 				m.mu.Lock()
 				host := m.downloadHost
 				m.mu.Unlock()

@@ -42,7 +42,7 @@ func TestWebUISettingsCoverageAndNavigation(t *testing.T) {
 	catalog, err := Catalog()
 	require.NoError(t, err)
 	tabs := map[string]bool{}
-	for _, tab := range strings.Fields("network download forward account links bot notifications panel system") {
+	for _, tab := range strings.Fields("network download forward bot notifications system") {
 		tabs[tab] = true
 	}
 	visible := map[string]string{}

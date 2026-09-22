@@ -1,4 +1,4 @@
-// Runtime status shown in the sidebar plus the default-credentials warning banner.
+// Sidebar runtime status and the one-time default-credentials warning after login.
 import { state } from "./state.js";
 import { api } from "./api.js";
 import { loadCurrentAccount } from "./account-profile.js";
@@ -36,24 +36,39 @@ export function renderStatus(data) {
   document.getElementById("runtime-version").textContent =
     `版本：${version.version || "-"}`;
   void loadCurrentAccount(data.namespace);
-  state.usingDefaultCredentials = Boolean(
-    data.webui && data.webui.using_default_credentials,
-  );
-  renderCredentialWarning();
   if (previous !== state.downloaderMode)
     window.dispatchEvent(
       new CustomEvent("downloader-changed", { detail: data.downloader }),
     );
 }
 
-function renderCredentialWarning() {
-  const banner = document.getElementById("credential-warning");
-  if (!banner) return;
-  banner.hidden = !state.usingDefaultCredentials;
+export function showLoginCredentialWarning() {
+  const warning = document.getElementById("credential-warning");
+  if (!warning) return;
+  try {
+    const pending = window.sessionStorage.getItem("tdl-default-credentials-warning");
+    window.sessionStorage.removeItem("tdl-default-credentials-warning");
+    if (pending !== "1") return;
+  } catch {
+    return;
+  }
+  const dismiss = () => {
+    clearTimeout(timer);
+    if (warning.contains(document.activeElement))
+      document.getElementById("view-host")?.focus({ preventScroll: true });
+    warning.hidden = true;
+  };
+  document.getElementById("credential-warning-close").addEventListener("click", dismiss);
+  document.getElementById("credential-warning-action").addEventListener("click", () => {
+    dismiss();
+    void openCredentialSettings();
+  });
+  warning.hidden = false;
+  const timer = setTimeout(dismiss, 8000);
 }
 
-export async function openCredentialSettings() {
-  await navigate("/config?tab=panel#setting-panel.webui-username");
+async function openCredentialSettings() {
+  await navigate("/config?tab=system#setting-panel.webui-username");
   requestAnimationFrame(() => {
     const input = document.getElementById("setting-panel.webui-username");
     if (input) {

@@ -121,3 +121,29 @@ func (s *Service) Download(ctx context.Context) (Plan, Info, error) {
 	}
 	return DownloadLatest(call, proxy)
 }
+
+func (s *Service) CheckVersions(ctx context.Context) (Info, error) {
+	call, done, err := s.begin(ctx)
+	if err != nil {
+		return Info{}, err
+	}
+	defer done()
+	proxy, err := s.proxy.Proxy(call)
+	if err != nil {
+		return Info{}, err
+	}
+	return CheckVersions(call, proxy)
+}
+
+func (s *Service) DownloadVersion(ctx context.Context, version string) (Plan, Info, error) {
+	call, done, err := s.begin(ctx)
+	if err != nil {
+		return Plan{}, Info{}, err
+	}
+	defer done()
+	proxy, err := s.proxy.Proxy(call)
+	if err != nil {
+		return Plan{}, Info{}, err
+	}
+	return DownloadVersion(call, proxy, version)
+}

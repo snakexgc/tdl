@@ -80,6 +80,22 @@ func (m *Manager) Download(ctx context.Context) (types.UpdatePlan, types.UpdateI
 	return value.(ports.Updater).Download(ctx)
 }
 
+func (m *Manager) CheckVersions(ctx context.Context) (types.UpdateInfo, error) {
+	value, err := m.componentPort(ports.UpdaterName)
+	if err != nil {
+		return types.UpdateInfo{}, err
+	}
+	return value.(ports.Updater).CheckVersions(ctx)
+}
+
+func (m *Manager) DownloadVersion(ctx context.Context, version string) (types.UpdatePlan, types.UpdateInfo, error) {
+	value, err := m.componentPort(ports.UpdaterName)
+	if err != nil {
+		return types.UpdatePlan{}, types.UpdateInfo{}, err
+	}
+	return value.(ports.Updater).DownloadVersion(ctx, version)
+}
+
 func (m *Manager) Destinations(ctx context.Context, source types.ChatRef) []types.ForwardDestination {
 	value, err := m.componentPort(ports.ForwardRulesName)
 	if err != nil {

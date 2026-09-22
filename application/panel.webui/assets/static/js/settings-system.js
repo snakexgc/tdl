@@ -4,24 +4,6 @@ import { confirmReset } from "./system-reset.js";
 
 export async function renderSystem(host, context) {
   const { configData, onChanged, markDirty, busy, data } = context;
-  const account = element("section", null, "settings-block");
-  account.id = "setting-system-namespace";
-  account.tabIndex = -1;
-  const link = element("a", "前往账号管理");
-  link.href = "/user";
-  link.dataset.appLink = "";
-  account.append(
-    element("h2", "当前账号数据空间"),
-    element("p", configData.config?.namespace || "—", "settings-namespace"),
-    element(
-      "p",
-      "每个数据空间保存各自的登录会话与历史任务；切换账号在账号管理中进行，需要重启 TDL。代理、下载规则等设置由所有账号共用。",
-      "subtle",
-    ),
-    link,
-  );
-  host.append(account);
-
   const form = element("form", null, "settings-block"),
     label = element("label", "记录详细日志"),
     input = element("input"),

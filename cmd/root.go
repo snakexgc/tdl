@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/fatih/color"
 	"github.com/go-faster/errors"
 	"github.com/ivanpirog/coloredcobra"
 	"github.com/spf13/cobra"
@@ -80,7 +81,11 @@ func New() *cobra.Command {
 				logctx.From(cmd.Context()).Info("TDL 已停止")
 			}
 			// Cobra skips post-run hooks on errors, so close sinks here as well.
-			return multierr.Combine(err, cleanup())
+			err = multierr.Combine(err, cleanup())
+			if err == nil {
+				color.Green("✓ TDL 已停止")
+			}
+			return err
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			pathsReady := false
