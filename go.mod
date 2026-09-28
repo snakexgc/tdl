@@ -3,7 +3,7 @@ module github.com/snakexgc/tdl
 go 1.26.7
 
 require (
-	github.com/beevik/ntp v1.5.0
+	github.com/beevik/ntp v1.6.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.19.0
