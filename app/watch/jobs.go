@@ -23,7 +23,7 @@ type downloadJob struct {
 }
 
 const (
-	downloadJobSourceReaction    = "reaction"
+	downloadJobSourceReaction    = types.DownloadSourceReaction
 	downloadJobSourceMessageLink = "message_link"
 	localExecutorName            = "local"
 )
@@ -142,6 +142,9 @@ func (w *Watcher) processDownloadIntent(ctx context.Context, request types.Downl
 			RemoteRoot: cfg.Aria2.Dir, SkipSame: w.opts.SkipSame, Limit: effectiveWatchOptionLimit(w.opts.Limit, cfg),
 		},
 	})
+	if request.Source == types.DownloadSourceListen || request.Source == types.DownloadSourceListenComment {
+		return result, err
+	}
 	for _, link := range result.Links {
 		w.notify(ctx, "已生成临时 HTTP 下载链接。\n文件：%s\n链接：%s", link.FileName, link.URL)
 	}

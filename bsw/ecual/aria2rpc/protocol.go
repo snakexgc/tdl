@@ -91,7 +91,7 @@ func (c *Client) callString(ctx context.Context, method string, params []any) (s
 }
 
 func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (string, error) {
-	params := make([]any, 0, 2)
+	params := make([]any, 0, 3)
 	params = append(params, []string{uri})
 
 	options := map[string]any{}
@@ -109,6 +109,9 @@ func (c *Client) AddURI(ctx context.Context, uri string, opts AddURIOptions) (st
 	options["user-agent"] = tdlAria2UserAgent
 	if len(options) > 0 {
 		params = append(params, options)
+	}
+	if opts.Position != nil {
+		params = append(params, *opts.Position)
 	}
 
 	result, err := c.callString(ctx, "aria2.addUri", params)

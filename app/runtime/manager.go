@@ -114,6 +114,8 @@ type Manager struct {
 	downloadAccount   types.AccountID
 	downloadHost      *rte.Runtime
 	downloadPort      ports.DownloadControl
+	listenHost        *rte.Runtime
+	listener          ports.DownloadListener
 
 	kvEngine    kv.Storage
 	namespaceKV storage.Storage
@@ -650,6 +652,7 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts.HTTPService = m.httpService
 	opts.DownloadRouting = m
 	opts.DownloadPipeline = m
+	opts.Listener = listenPort{manager: m}
 	opts.ForwardQueue = m.forwardQueue
 	opts.ForwardRules = m
 	opts.DownloadSubmitter = aria2Submission{manager: m}

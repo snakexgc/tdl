@@ -39,7 +39,14 @@ func (s localSource) Acquire(ctx context.Context, id string, dc int) (ports.Down
 	if s.scheduler == nil {
 		return nil, fmt.Errorf("download limiter is unavailable")
 	}
-	return s.scheduler.Acquire(ctx, id, dc)
+	task, ok, err := s.proxy.Tasks().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("download source disappeared")
+	}
+	return s.scheduler.AcquireWithPriority(ctx, id, dc, task.Priority)
 }
 
 func (s localSource) Stream(ctx context.Context, id string, lease ports.DownloadLease, start, end int64, w io.Writer) error {

@@ -111,14 +111,14 @@ func (c *Controller) retryTask(ctx context.Context, record TaskRecord, task Down
 	if dir == "" && out == "" {
 		dir, out = maybeAria2PathOptions(task)
 	}
-	gid, err := c.client.AddURI(call, downloadURL, AddURIOptions{Dir: dir, Out: out, Connections: c.transferConnections()})
+	gid, err := c.client.AddURI(call, downloadURL, AddURIOptions{Dir: dir, Out: out, Connections: c.transferConnections(), Position: priorityPosition(record.Priority)})
 	if err != nil {
 		return false, err
 	}
 	if gid == "" {
 		return false, errors.New("aria2 returned empty gid")
 	}
-	next := TaskRecord{GID: gid, TaskID: record.TaskID, DownloadURL: downloadURL, Dir: dir, Out: out, CreatedAt: ports.Now(ctx), Status: aria2StatusWaiting}
+	next := TaskRecord{GID: gid, TaskID: record.TaskID, DownloadURL: downloadURL, Dir: dir, Out: out, CreatedAt: ports.Now(ctx), Status: aria2StatusWaiting, Priority: record.Priority}
 	if err := c.store.Add(call, next); err != nil {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()

@@ -63,7 +63,7 @@ func (t rangeTransfer) Ready(ctx context.Context) error {
 }
 
 func (t rangeTransfer) Acquire(ctx context.Context) (ports.DownloadLease, error) {
-	return t.proxy.scheduler.Acquire(ctx, t.task.ID, t.task.Media.DC)
+	return t.proxy.scheduler.AcquireWithPriority(ctx, t.task.ID, t.task.Media.DC, t.task.Priority)
 }
 
 func (t rangeTransfer) Stream(ctx context.Context, lease ports.DownloadLease, start, end int64, w io.Writer) error {

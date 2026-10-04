@@ -310,6 +310,10 @@ func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
 }
 
 func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media, botFileIDs ...string) (*downloadTask, error) {
+	return p.NewTaskWithPriority(ctx, peerID, msgID, peer, fileName, fileSize, media, 0, botFileIDs...)
+}
+
+func (p *downloadProxy) NewTaskWithPriority(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media, priority int, botFileIDs ...string) (*downloadTask, error) {
 	id, err := downloadTaskID(media)
 	if err != nil {
 		return nil, errors.Wrap(err, "build persistent download task id")
@@ -317,6 +321,7 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 
 	now := rte.Now(ctx)
 	task := &downloadTask{
+		Priority:     priority,
 		ID:           id,
 		PeerID:       peerID,
 		MessageID:    msgID,
@@ -333,6 +338,7 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 	if err := p.tasks.Add(ctx, task); err != nil {
 		return nil, err
 	}
+	p.scheduler.Prioritize(id, priority)
 
 	return task, nil
 }

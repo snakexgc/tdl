@@ -4,6 +4,17 @@ const DownloadRequested = "download.requested"
 
 const DownloadSourceBotForward = "bot_forward"
 
+const DownloadSourceReaction = "reaction"
+
+const DownloadPriorityReaction = 1
+
+func DownloadPriority(source string) int {
+	if source == DownloadSourceReaction {
+		return DownloadPriorityReaction
+	}
+	return 0
+}
+
 const ForwardRequested = "forward.requested"
 
 type ForwardIntent struct {
@@ -22,14 +33,15 @@ type MessagePeer struct {
 }
 
 type DownloadIntent struct {
-	RequestID string `json:"request_id,omitempty"`
-	Account   AccountID
-	Peer      MessagePeer
-	PeerID    int64
-	MessageID int
-	Link      string
-	Source    string
-	Forwarded *ForwardedMedia
+	RequestID       string `json:"request_id,omitempty"`
+	Account         AccountID
+	Peer            MessagePeer
+	PeerID          int64
+	MessageID       int
+	Link            string
+	Source          string
+	ExpectedMediaID string
+	Forwarded       *ForwardedMedia
 }
 
 // ForwardedMedia carries the Bot API file reference and metadata for a

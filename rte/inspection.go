@@ -10,6 +10,7 @@ import (
 // Configuration describes a running component for a schema-driven HMI.
 // Sensitive values are omitted; callers never receive references to live data.
 type Configuration struct {
+	LiveValues     bool                   `json:"live_values,omitempty"`
 	ActiveEnabled  *bool                  `json:"active_enabled,omitempty"`
 	Changes        []ConfigurationChange  `json:"changes,omitempty"`
 	Feature        manifest.Feature       `json:"feature"`

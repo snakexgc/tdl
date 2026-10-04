@@ -220,6 +220,21 @@ func TestAria2SubmissionRejectsAnotherAccountBeforeRPC(t *testing.T) {
 	require.Equal(t, types.AccountID("alice"), result.Account)
 }
 
+func TestReactionSubmissionIsInsertedBeforeWaitingListenerDownloads(t *testing.T) {
+	client := &fakeAria2ControlClient{addedGID: testGIDNew}
+	store := newTestRepository()
+	controller := &Controller{client: client, store: store, connections: 3, logger: zap.NewNop()}
+	_, err := controller.Submit(context.Background(), types.DownloadSubmission{TaskID: testDocument1, DownloadURL: testDownloadURL1, Priority: types.DownloadPriorityReaction})
+	require.NoError(t, err)
+	require.Len(t, client.addedOptions, 1)
+	require.Equal(t, 3, client.addedOptions[0].Connections)
+	require.NotNil(t, client.addedOptions[0].Position)
+	require.Zero(t, *client.addedOptions[0].Position)
+	records, err := store.Records(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, types.DownloadPriorityReaction, records[testGIDNew].Priority)
+}
+
 func TestTaskNamePrefersBittorrentInfoPathThenURI(t *testing.T) {
 	t.Parallel()
 

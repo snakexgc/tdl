@@ -48,6 +48,32 @@ func TestLocalModeUsesConfiguredPoolSize(t *testing.T) {
 	lease.Release()
 }
 
+func TestListeningAndReactionDownloadsShareConfiguredFileAndDCLimits(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Limit, cfg.PoolSize = 1, 2
+	ctx := config.WithSource(context.Background(), config.NewSource(cfg))
+	runtime := newTestWatchRuntime(cfg, DefaultOptions(cfg), newMemoryTaskStorage(), nil)
+	source := localSource{proxy: runtime.proxy, scheduler: runtime.proxy.Scheduler()}
+	newTask := func(id int64, priority int) *httpdl.Task {
+		task, err := runtime.proxy.NewTaskWithPriority(ctx, 1, int(id), &tg.InputPeerUser{UserID: 1, AccessHash: 2}, testDocument1, 4, &tmedia.Media{DC: 2, Name: testDocument1, Size: 4, InputFileLoc: &tg.InputDocumentFileLocation{ID: id}}, priority)
+		require.NoError(t, err)
+		return task
+	}
+	reaction, listen := newTask(501, types.DownloadPriorityReaction), newTask(502, 0)
+	lease, err := source.Acquire(ctx, reaction.ID, 2)
+	require.NoError(t, err)
+	require.Equal(t, 2, lease.(*transfer.TaskLease).Capacity())
+	wait, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer cancel()
+	_, err = source.Acquire(wait, listen.ID, 2)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "listening cannot obtain a separate file budget")
+	lease.Release()
+	lease, err = source.Acquire(ctx, listen.ID, 2)
+	require.NoError(t, err)
+	require.Equal(t, 2, lease.(*transfer.TaskLease).Capacity())
+	lease.Release()
+}
+
 func TestLocalRuntimeKeepsDownloadTasksWithoutTTL(t *testing.T) {
 	t.Parallel()
 

@@ -51,13 +51,14 @@ func (s watchDownloadSource) Collect(ctx context.Context, request types.Download
 		return nil, nil, fmt.Errorf("download message does not match its source")
 	}
 	messages := []*tg.Message{msg}
-	if _, grouped := msg.GetGroupedID(); grouped {
+	automatic := request.Source == types.DownloadSourceListen || request.Source == types.DownloadSourceListenComment
+	if _, grouped := msg.GetGroupedID(); grouped && !automatic {
 		messages, err = tutil.GetGroupedMessages(ctx, w.pool.Default(ctx), peer, msg)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
-	registration := &watchDownloadRegistration{watcher: w, files: make(map[string]fileTask, len(messages))}
+	registration := &watchDownloadRegistration{watcher: w, priority: types.DownloadPriority(request.Source), files: make(map[string]fileTask, len(messages))}
 	var items []ports.DownloadMedia
 	for _, message := range messages {
 		if message == nil {
@@ -69,6 +70,12 @@ func (s watchDownloadSource) Collect(ctx context.Context, request types.Download
 		}
 		media, ok := tmedia.GetMedia(message)
 		if !ok {
+			continue
+		}
+		if request.ExpectedMediaID != "" && tmedia.Identity(media) != request.ExpectedMediaID {
+			return nil, nil, fmt.Errorf("监听媒体身份已变化")
+		}
+		if request.Source == types.DownloadSourceListenComment && !tmedia.IsVideo(message) {
 			continue
 		}
 		file := fileTask{msg: message, triggerMsg: msg, media: media, peer: peer, peerID: expected.ID}
@@ -160,8 +167,9 @@ func forwardedFileExtension(kind fileid.Type, mimeType string) string {
 // Each immutable collection keeps SDK media alive only for its batch. The
 // durable proxy repository owns media after Register succeeds.
 type watchDownloadRegistration struct {
-	watcher *Watcher
-	files   map[string]fileTask
+	watcher  *Watcher
+	priority int
+	files    map[string]fileTask
 }
 
 func (s *watchDownloadRegistration) Register(ctx context.Context, token, name string) (string, error) {
@@ -175,7 +183,7 @@ func (s *watchDownloadRegistration) Register(ctx context.Context, token, name st
 	if !ok {
 		return "", fmt.Errorf("download source token is unavailable")
 	}
-	task, err := s.watcher.runtime.proxy.NewTask(ctx, file.peerID, file.msg.ID, file.peer, name, file.media.Size, file.media, file.botFileID)
+	task, err := s.watcher.runtime.proxy.NewTaskWithPriority(ctx, file.peerID, file.msg.ID, file.peer, name, file.media.Size, file.media, s.priority, file.botFileID)
 	if err != nil {
 		return "", err
 	}

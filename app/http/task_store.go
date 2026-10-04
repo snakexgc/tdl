@@ -17,6 +17,7 @@ import (
 )
 
 type downloadTask struct {
+	Priority  int
 	ID        string
 	PeerID    int64
 	MessageID int
@@ -34,6 +35,7 @@ type downloadTask struct {
 }
 
 type persistentDownloadTask struct {
+	Priority     int                     `json:"priority,omitempty"`
 	ID           string                  `json:"id"`
 	PeerID       int64                   `json:"peer_id"`
 	MessageID    int                     `json:"message_id"`
@@ -84,6 +86,7 @@ func persistentDownloadTaskFromTask(task *downloadTask) (persistentDownloadTask,
 	}
 
 	return persistentDownloadTask{
+		Priority:  task.Priority,
 		ID:        task.ID,
 		PeerID:    task.PeerID,
 		MessageID: task.MessageID,
@@ -117,6 +120,7 @@ func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
 	}
 
 	return &downloadTask{
+		Priority:     p.Priority,
 		ID:           p.ID,
 		PeerID:       p.PeerID,
 		MessageID:    p.MessageID,
@@ -258,6 +262,9 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		copy := *task
+		if previous := s.tasks[task.ID]; previous != nil {
+			copy.Priority = max(copy.Priority, previous.Priority)
+		}
 		s.tasks[task.ID] = &copy
 		return nil
 	}

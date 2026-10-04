@@ -92,6 +92,7 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 		Dir:         submission.Dir,
 		Out:         submission.Out,
 		Connections: c.transferConnections(),
+		Position:    priorityPosition(submission.Priority),
 	})
 	if err != nil {
 		return types.DownloadResult{}, errors.Wrap(err, "add aria2 uri")
@@ -100,6 +101,7 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 		return types.DownloadResult{}, errors.New("aria2 returned empty gid")
 	}
 	if err := c.store.Add(ctx, TaskRecord{
+		Priority:    submission.Priority,
 		GID:         gid,
 		TaskID:      submission.TaskID,
 		DownloadURL: submission.DownloadURL,
@@ -117,6 +119,14 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 		zap.String("task_id", submission.TaskID),
 		zap.String("target_path", submission.FullPath))
 	return types.DownloadResult{Account: account, Target: c.Name(), ID: gid}, nil
+}
+
+func priorityPosition(priority int) *int {
+	if priority <= 0 {
+		return nil
+	}
+	position := 0
+	return &position
 }
 
 func (c *Controller) Overview(ctx context.Context) (Overview, error) {

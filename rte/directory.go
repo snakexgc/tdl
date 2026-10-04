@@ -128,6 +128,7 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 			entry = Configuration{ID: m.ID, Title: m.Title, State: Stopped, Fields: m.Config, Pages: m.Pages, Values: map[string]any{}}
 		}
 		entry.Feature = m.Feature
+		entry.LiveValues = definition.LiveValues
 		entry.Scope, entry.Enabled = definition.Scope, true
 		if d.store != nil {
 			entry.Revision, _ = d.store.Revision(ctx, m.ID)
@@ -151,6 +152,9 @@ func (d *Directory) Configurations(ctx context.Context) []Configuration {
 							entry.Error = err.Error()
 						} else {
 							entry.ActiveEnabled = &before.Enabled
+							if definition.LiveValues && active && entry.State == Running {
+								baseline = views[m.ID]
+							}
 							entry.Changes = configurationChanges(m.Config, baseline, view)
 							if before.Enabled != document.Enabled {
 								entry.Changes = append(entry.Changes, ConfigurationChange{Name: "enabled", Before: before.Enabled, After: document.Enabled})
@@ -263,6 +267,25 @@ func (d *Directory) PatchWithRevision(ctx context.Context, id string, patch map[
 	view, err := d.catalog.View(ctx, id, values)
 	if err != nil {
 		return err
+	}
+	if definition.LiveValues {
+		for _, host := range d.runtimes() {
+			entries, snapshots := host.configurationSnapshots()
+			if _, ok := snapshots[id]; ok {
+				running := false
+				for _, entry := range entries {
+					if entry.ID == id && entry.State == Running {
+						running = true
+					}
+				}
+				if !running {
+					continue
+				}
+				return host.reconfigureBatch(ctx, map[string]map[string]any{id: view.Values()}, func(views map[string]config.View) error {
+					return d.store.Save(ctx, id, document.Enabled, views[id])
+				})
+			}
+		}
 	}
 	return d.store.Save(ctx, id, document.Enabled, view)
 }

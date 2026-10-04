@@ -6,6 +6,7 @@ type Aria2AddURIOptions struct {
 	Dir         string
 	Out         string
 	Connections int
+	Position    *int
 }
 
 type Aria2DownloadStatus struct {
@@ -41,6 +42,7 @@ type Aria2URI struct {
 }
 
 type Aria2TaskRecord struct {
+	Priority     int           `json:"priority,omitempty"`
 	PauseOwner   string        `json:"pause_owner,omitempty"`
 	Deleted      bool          `json:"deleted,omitempty"`
 	ControlUntil time.Time     `json:"control_until,omitzero"`

@@ -36,6 +36,12 @@
         "local_root": ""
       }
     },
+    "download.listen": {
+      "enabled": true,
+      "values": {
+        "rules": []
+      }
+    },
     "downloader.aria2": {
       "enabled": true,
       "values": {

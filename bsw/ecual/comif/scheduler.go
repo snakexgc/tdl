@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 // Scheduler limits the number of active files globally and distributes a
@@ -13,14 +14,16 @@ type Scheduler struct {
 	fileTokens *fileLimiter
 	capacity   int
 
-	mu    sync.Mutex
-	files map[string]*taskState
-	dcs   map[int]*dcState
+	mu         sync.Mutex
+	files      map[string]*taskState
+	dcs        map[int]*dcState
+	priorities map[string]int
 }
 
 type taskState struct {
-	taskID string
-	dc     int
+	taskID   string
+	dc       int
+	priority atomic.Int64
 
 	refs       int
 	active     bool
@@ -73,6 +76,7 @@ func NewScheduler(maxFiles, perDCCapacity int) *Scheduler {
 		capacity:   perDCCapacity,
 		files:      make(map[string]*taskState),
 		dcs:        make(map[int]*dcState),
+		priorities: make(map[string]int),
 	}
 	return s
 }
@@ -94,6 +98,10 @@ func (s *Scheduler) Capacity() int {
 }
 
 func (s *Scheduler) Acquire(ctx context.Context, taskID string, dc int) (*TaskLease, error) {
+	return s.AcquireWithPriority(ctx, taskID, dc, 0)
+}
+
+func (s *Scheduler) AcquireWithPriority(ctx context.Context, taskID string, dc, priority int) (*TaskLease, error) {
 	if s == nil {
 		return nil, fmt.Errorf("download scheduler is not initialized")
 	}
@@ -101,14 +109,29 @@ func (s *Scheduler) Acquire(ctx context.Context, taskID string, dc int) (*TaskLe
 		return nil, fmt.Errorf("download task id is empty")
 	}
 
-	state, err := s.acquireTask(ctx, taskID, dc)
+	state, err := s.acquireTask(ctx, taskID, dc, priority)
 	if err != nil {
 		return nil, err
 	}
 	return &TaskLease{scheduler: s, state: state}, nil
 }
 
-func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc int) (*taskState, error) {
+// Prioritize promotes an existing or soon-to-be acquired media task. A later
+// listener replay cannot downgrade a task that was explicitly requested.
+func (s *Scheduler) Prioritize(taskID string, priority int) {
+	if s == nil || taskID == "" || priority <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.priorities[taskID] = max(s.priorities[taskID], priority)
+	if state := s.files[taskID]; state != nil {
+		state.priority.Store(int64(max(int(state.priority.Load()), priority)))
+		s.dispatchLocked(state.dc)
+	}
+}
+
+func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc, priority int) (*taskState, error) {
 	registered := false
 	var state *taskState
 	for {
@@ -122,6 +145,7 @@ func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc int) (*ta
 		state = s.files[taskID]
 		if state == nil {
 			state = &taskState{taskID: taskID, dc: dc}
+			state.priority.Store(int64(max(priority, s.priorities[taskID])))
 			s.files[taskID] = state
 		} else if state.dc != dc {
 			s.mu.Unlock()
@@ -130,6 +154,7 @@ func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc int) (*ta
 			}
 			return nil, fmt.Errorf("download task %q changed dc from %d to %d", taskID, state.dc, dc)
 		}
+		state.priority.Store(int64(max(int(state.priority.Load()), priority, s.priorities[taskID])))
 		if !registered {
 			state.refs++
 			registered = true
@@ -153,7 +178,7 @@ func (s *Scheduler) acquireTask(ctx context.Context, taskID string, dc int) (*ta
 			state.activating = ready
 			s.mu.Unlock()
 
-			err := s.fileTokens.acquire(ctx)
+			err := s.fileTokens.acquire(ctx, &state.priority)
 			s.completeActivation(state, ready, err == nil)
 			if err != nil {
 				s.releaseTask(state)
@@ -282,6 +307,7 @@ func (s *Scheduler) releaseTask(state *taskState) {
 				releaseFile = true
 			} else if !state.active && state.activating == nil {
 				delete(s.files, state.taskID)
+				delete(s.priorities, state.taskID)
 			}
 		}
 	}
@@ -318,6 +344,7 @@ func (s *Scheduler) removeActiveTaskLocked(state *taskState) {
 	}
 	state.active = false
 	delete(s.files, state.taskID)
+	delete(s.priorities, state.taskID)
 	s.dispatchLocked(state.dc)
 }
 
@@ -336,11 +363,9 @@ func (s *Scheduler) dispatchLocked(dcID int) {
 		return
 	}
 
-	// Schedule by file in FIFO order. All queued Range requests for the oldest
-	// file are granted before requests for later files, allowing one normal
-	// download to use as many DC connections as it requested. The scan continues
-	// to later files whenever an earlier file has no pending request, so the DC
-	// remains work-conserving without round-robin switching between files.
+	// Prioritize explicit requests, retaining file FIFO within each priority.
+	// Granted chunks keep their permits until they finish; active transfers are
+	// never canceled to make room for a higher-priority download.
 	for dc.inFlight < s.capacity {
 		state, waiter := firstFileWaiter(dc)
 		if waiter == nil {
@@ -358,11 +383,15 @@ func firstFileWaiter(dc *dcState) (*taskState, *chunkWaiter) {
 		return nil, nil
 	}
 
+	var selected *taskState
 	for _, state := range dc.tasks {
 		pruneCanceledWaiters(state)
-		if len(state.waiters) > 0 {
-			return state, popWaiter(state)
+		if len(state.waiters) > 0 && (selected == nil || state.priority.Load() > selected.priority.Load()) {
+			selected = state
 		}
+	}
+	if selected != nil {
+		return selected, popWaiter(selected)
 	}
 	return nil, nil
 }

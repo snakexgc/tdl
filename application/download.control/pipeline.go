@@ -87,7 +87,7 @@ func (s *Service) SubmitBatch(ctx context.Context, request types.DownloadIntent,
 		go func() {
 			defer workers.Done()
 			for index := range indexes {
-				outcomes[index] = s.submitPrepared(ctx, plans[index], route, resources, registration)
+				outcomes[index] = s.submitPrepared(ctx, plans[index], route, resources, registration, types.DownloadPriority(request.Source))
 			}
 		}()
 	}
@@ -208,7 +208,7 @@ func (s *Service) prepareBatch(ctx context.Context, media []ports.DownloadMedia,
 	return plans, failures
 }
 
-func (s *Service) submitPrepared(ctx context.Context, plan downloadPlan, route ports.DownloadRoute, r ports.DownloadResources, source ports.DownloadRegistration) (out submissionOutcome) {
+func (s *Service) submitPrepared(ctx context.Context, plan downloadPlan, route ports.DownloadRoute, r ports.DownloadResources, source ports.DownloadRegistration, priority int) (out submissionOutcome) {
 	// Preserve partial results if an adapter panics. After entering an executor
 	// acceptance is uncertain and must not be retried through another backend.
 	enteredExecutor := false
@@ -283,7 +283,7 @@ func (s *Service) submitPrepared(ctx context.Context, plan downloadPlan, route p
 			return types.DownloadResult{}, ports.ErrDownloadNotAccepted
 		}})
 	}
-	out.result, out.err = NewRouter(s.account, executors...).Submit(ctx, types.DownloadSubmission{Account: s.account, TaskID: id, DownloadURL: downloadURL})
+	out.result, out.err = NewRouter(s.account, executors...).Submit(ctx, types.DownloadSubmission{Account: s.account, TaskID: id, DownloadURL: downloadURL, Priority: priority})
 	if out.err != nil && !enteredExecutor {
 		out.err = errors.Join(out.err, ports.ErrDownloadNotAccepted)
 	}

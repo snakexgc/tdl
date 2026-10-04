@@ -8,6 +8,7 @@ type DownloadSubmission struct {
 	Dir         string
 	Out         string
 	FullPath    string
+	Priority    int
 }
 
 type DownloadResult struct {

@@ -15,6 +15,28 @@ const (
 
 type filterPort struct{ manager *Manager }
 
+type listenPort struct{ manager *Manager }
+
+func (p listenPort) Observe(ctx context.Context, message types.ListenMessage) error {
+	p.manager.mu.Lock()
+	listener := p.manager.listener
+	p.manager.mu.Unlock()
+	if listener == nil {
+		return nil
+	}
+	return listener.Observe(ctx, message)
+}
+
+func (p listenPort) Serve(ctx context.Context, resources ports.ListenResources) error {
+	p.manager.mu.Lock()
+	listener := p.manager.listener
+	p.manager.mu.Unlock()
+	if listener == nil {
+		return nil
+	}
+	return listener.Serve(ctx, resources)
+}
+
 func (p filterPort) ShouldHandle(ctx context.Context, in ports.FilterInput) (bool, ports.Reason) {
 	value, err := p.manager.componentPort(ports.FilterRulesName)
 	if err != nil {
