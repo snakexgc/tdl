@@ -34,6 +34,7 @@ type fileTask struct {
 	media      *tmedia.Media
 	peer       tg.InputPeerClass
 	peerID     int64
+	botFileID  string
 }
 
 func (w *Watcher) dispatcher(ctx context.Context) {
@@ -50,12 +51,35 @@ func (w *Watcher) dispatcher(ctx context.Context) {
 					cancel()
 				}
 			}
-			result, err := w.submitMessageLink(call, submission.link)
+			var result MessageLinkSubmissionResult
+			var err error
+			if submission.intent != nil {
+				result, err = w.submitForwardedMedia(call, *submission.intent)
+			} else {
+				result, err = w.submitMessageLink(call, submission.link)
+			}
 			unlink()
 			cancel()
 			submission.reply <- messageLinkSubmissionResponse{result: result, err: err}
 		}
 	}
+}
+
+func (w *Watcher) submitForwardedMedia(ctx context.Context, request types.DownloadIntent) (MessageLinkSubmissionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return MessageLinkSubmissionResult{Link: request.Link}, err
+	}
+	if request.Account != w.reactionAccount() || request.Forwarded == nil || request.Forwarded.FileID == "" {
+		return MessageLinkSubmissionResult{Link: request.Link}, fmt.Errorf("invalid forwarded media request")
+	}
+	w.intentMu.RLock()
+	intents := w.intents
+	w.intentMu.RUnlock()
+	requests, ok := intents.(ports.DownloadRequests)
+	if !ok {
+		return MessageLinkSubmissionResult{Link: request.Link}, fmt.Errorf("download requests are unavailable")
+	}
+	return requests.Submit(ctx, request)
 }
 
 func (w *Watcher) submitMessageLink(ctx context.Context, link string) (MessageLinkSubmissionResult, error) {

@@ -23,6 +23,7 @@ type downloadTask struct {
 	FileName  string
 	FileSize  int64
 	Media     *tmedia.Media
+	BotFileID string
 	CreatedAt time.Time
 	// LastActiveAt is the sliding expiry clock: the link stays valid until
 	// LastActiveAt+TTL. It is refreshed whenever the link is downloaded or while
@@ -39,6 +40,7 @@ type persistentDownloadTask struct {
 	FileName     string                  `json:"file_name"`
 	FileSize     int64                   `json:"file_size"`
 	Media        persistentDownloadMedia `json:"media"`
+	BotFileID    string                  `json:"bot_file_id,omitempty"`
 	CreatedAt    time.Time               `json:"created_at"`
 	LastActiveAt time.Time               `json:"last_active_at"`
 }
@@ -94,6 +96,7 @@ func persistentDownloadTaskFromTask(task *downloadTask) (persistentDownloadTask,
 			Date:     task.Media.Date,
 			Location: location,
 		},
+		BotFileID:    task.BotFileID,
 		CreatedAt:    task.CreatedAt,
 		LastActiveAt: task.LastActiveAt,
 	}, nil
@@ -120,6 +123,7 @@ func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
 		FileName:     p.FileName,
 		FileSize:     p.FileSize,
 		Media:        media,
+		BotFileID:    p.BotFileID,
 		CreatedAt:    p.CreatedAt,
 		LastActiveAt: p.LastActiveAt,
 	}, nil

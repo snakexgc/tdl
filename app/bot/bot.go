@@ -55,6 +55,7 @@ type Options struct {
 	ComponentStore        *rteconfig.Store
 	SetComponentHost      func(*rte.Runtime)
 	SetComponentRefresh   func(func(context.Context) error)
+	SetBotFileRefresher   func(func(context.Context, string) (string, error))
 	Token                 string
 	AllowedUsers          []int64
 	Proxy                 string
@@ -74,6 +75,7 @@ type watchControl interface {
 	UpdateOptions(watch.Options)
 	Running() bool
 	SubmitMessageLink(context.Context, string) (watch.MessageLinkSubmissionResult, error)
+	SubmitForwardedMedia(context.Context, types.DownloadIntent) (watch.MessageLinkSubmissionResult, error)
 }
 
 func RebootRequested() bool {
@@ -127,6 +129,19 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		account = types.DefaultAccount
 	}
 	botLogger.logger = botLogger.logger.With("account", account)
+	if opts.SetBotFileRefresher != nil {
+		opts.SetBotFileRefresher(func(ctx context.Context, fileID string) (string, error) {
+			file, err := bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
+			if err != nil {
+				return "", err
+			}
+			if file == nil || file.FileID == "" {
+				return "", errors.New("bot returned an empty file ID")
+			}
+			return file.FileID, nil
+		})
+		defer opts.SetBotFileRefresher(nil)
+	}
 	slog.Info("机器人身份验证成功", "component", "console.bot", "account", account, "bot_id", botUser.ID)
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
 	transport := &botNotificationTransport{sender: bot, editor: bot}
@@ -571,6 +586,9 @@ func handleAllowedMessage(
 		if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, localFactory); handled || err != nil {
 			return err
 		}
+	}
+	if handled, err := handleForwardedMediaSubmission(ctx, msg, watchCtrl, account); handled || err != nil {
+		return err
 	}
 	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
 		return err

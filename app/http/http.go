@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"github.com/gotd/td/fileid"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
@@ -107,8 +108,10 @@ type downloadProxy struct {
 	scheduler      *transfer.Scheduler
 	logger         *zap.Logger
 
-	reporterMu sync.RWMutex
-	reporter   TelegramFileErrorReporter
+	reporterMu       sync.RWMutex
+	reporter         TelegramFileErrorReporter
+	botFileMu        sync.RWMutex
+	botFileRefresher func(context.Context, string) (string, error)
 
 	clientWaitTimeout time.Duration
 }
@@ -305,7 +308,7 @@ func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
 	return p.tasks.CleanupExpired(ctx, time.Now())
 }
 
-func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
+func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media, botFileIDs ...string) (*downloadTask, error) {
 	id, err := downloadTaskID(media)
 	if err != nil {
 		return nil, errors.Wrap(err, "build persistent download task id")
@@ -322,6 +325,9 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 		Media:        media,
 		CreatedAt:    now,
 		LastActiveAt: now,
+	}
+	if len(botFileIDs) > 0 {
+		task.BotFileID = botFileIDs[0]
 	}
 	if err := p.tasks.Add(ctx, task); err != nil {
 		return nil, err
@@ -394,6 +400,9 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 }
 
 func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask) error {
+	if task.BotFileID != "" {
+		return p.refreshBotTaskMedia(ctx, task)
+	}
 	if task.Peer == nil {
 		return errors.New("download task peer is empty")
 	}
@@ -429,6 +438,50 @@ func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask
 		return err
 	}
 	return nil
+}
+
+// SetBotFileRefresher binds the active bot transport to file-reference refresh.
+// It is cleared when the bot stops; no bot token is stored with download tasks.
+func (p *downloadProxy) SetBotFileRefresher(refresh func(context.Context, string) (string, error)) {
+	p.botFileMu.Lock()
+	p.botFileRefresher = refresh
+	p.botFileMu.Unlock()
+}
+
+func (p *downloadProxy) refreshBotTaskMedia(ctx context.Context, task *downloadTask) error {
+	p.botFileMu.RLock()
+	refresh := p.botFileRefresher
+	p.botFileMu.RUnlock()
+	if refresh == nil {
+		return errors.New("bot file reference refresh is unavailable")
+	}
+	fileID, err := refresh(ctx, task.BotFileID)
+	if err != nil {
+		return errors.Wrap(err, "refresh bot file ID")
+	}
+	decoded, err := fileid.DecodeFileID(fileID)
+	if err != nil {
+		return errors.Wrap(err, "decode refreshed bot file ID")
+	}
+	location, ok := decoded.AsInputFileLocation()
+	if !ok || decoded.DC <= 0 {
+		return errors.New("refreshed bot file has no supported Telegram location")
+	}
+	media := *task.Media
+	media.InputFileLoc, media.DC = location, decoded.DC
+	if media.DC != task.Media.DC {
+		return fmt.Errorf("refreshed media changed dc from %d to %d", task.Media.DC, media.DC)
+	}
+	id, err := downloadTaskID(&media)
+	if err != nil {
+		return err
+	}
+	if id != task.ID {
+		return fmt.Errorf("refreshed bot file changed media identity from %q to %q", task.ID, id)
+	}
+	updated := *task
+	updated.Media, updated.BotFileID = &media, fileID
+	return p.tasks.Add(ctx, &updated)
 }
 
 func isRefreshableFileReferenceError(err error) bool {

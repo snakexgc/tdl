@@ -442,9 +442,14 @@ func (m *Manager) StartBot() {
 			Connections:     m.connections,
 			SessionChecker:  m.sessionPort,
 			Credentials:     m, Updater: m,
-			ComponentStore:        m.componentStore,
-			SetComponentHost:      func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
-			SetComponentRefresh:   func(refresh func(context.Context) error) { m.mu.Lock(); m.botRefresh = refresh; m.mu.Unlock() },
+			ComponentStore:      m.componentStore,
+			SetComponentHost:    func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
+			SetComponentRefresh: func(refresh func(context.Context) error) { m.mu.Lock(); m.botRefresh = refresh; m.mu.Unlock() },
+			SetBotFileRefresher: func(refresh func(context.Context, string) (string, error)) {
+				if m.httpService != nil && m.httpService.Proxy() != nil {
+					m.httpService.Proxy().SetBotFileRefresher(refresh)
+				}
+			},
 			Token:                 cfg.Bot.Token,
 			AllowedUsers:          cfg.Bot.AllowedUsers,
 			Proxy:                 m.botProxy(cfg),

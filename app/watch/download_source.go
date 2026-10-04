@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/gotd/td/fileid"
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
@@ -22,6 +25,9 @@ func (s watchDownloadSource) Collect(ctx context.Context, request types.Download
 	}
 	if request.Account != w.reactionAccount() || !w.downloadEnabled() {
 		return nil, nil, fmt.Errorf("download source account is unavailable")
+	}
+	if request.Forwarded != nil {
+		return s.collectForwarded(ctx, request)
 	}
 	peer := protocolPeer(request.Peer)
 	if peer == nil {
@@ -78,6 +84,80 @@ func (s watchDownloadSource) Collect(ctx context.Context, request types.Download
 	return items, registration, nil
 }
 
+func (s watchDownloadSource) collectForwarded(ctx context.Context, request types.DownloadIntent) ([]ports.DownloadMedia, ports.DownloadRegistration, error) {
+	forwarded := request.Forwarded
+	if request.Source != types.DownloadSourceBotForward || forwarded.FileID == "" || forwarded.FileSize <= 0 {
+		return nil, nil, fmt.Errorf("forwarded media metadata is incomplete")
+	}
+	decoded, err := fileid.DecodeFileID(forwarded.FileID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode forwarded media: %w", err)
+	}
+	location, ok := decoded.AsInputFileLocation()
+	if !ok || decoded.DC <= 0 || decoded.ID == 0 {
+		return nil, nil, fmt.Errorf("forwarded media has no supported Telegram file location")
+	}
+	switch location.(type) {
+	case *tg.InputDocumentFileLocation, *tg.InputPhotoFileLocation:
+	default:
+		return nil, nil, fmt.Errorf("forwarded media location %T is unsupported", location)
+	}
+	name := strings.TrimSpace(forwarded.FileName)
+	if name == "" {
+		name = strconv.FormatInt(decoded.ID, 10) + forwardedFileExtension(decoded.Type, forwarded.MIMEType)
+	}
+	media := &tmedia.Media{InputFileLoc: location, Name: name, Size: forwarded.FileSize, DC: decoded.DC, Date: forwarded.Date}
+	message := &tg.Message{ID: request.MessageID, Date: int(forwarded.Date), Message: forwarded.Caption}
+	if message.Date == 0 {
+		message.Date = int(time.Now().Unix())
+	}
+	peerName := safePathSegment(forwarded.PeerName)
+	if peerName == "" {
+		peerName = strconv.FormatInt(request.PeerID, 10)
+	}
+	directoryID := strconv.FormatInt(request.PeerID, 10)
+	data := namingMetadata(directoryID, request.PeerID, peerName, time.Now(), message, message, media)
+	data.AlbumID = forwarded.AlbumID
+	file := fileTask{msg: message, triggerMsg: message, media: media, peerID: request.PeerID, botFileID: forwarded.FileID}
+	registration := &watchDownloadRegistration{watcher: s.watcher, files: map[string]fileTask{"forwarded": file}}
+	return []ports.DownloadMedia{{Token: "forwarded", Data: data}}, registration, nil
+}
+
+func forwardedFileExtension(kind fileid.Type, mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "audio/ogg", "application/ogg":
+		return ".ogg"
+	case "audio/mpeg":
+		return ".mp3"
+	case "application/x-tgsticker":
+		return ".tgs"
+	}
+	switch kind {
+	case fileid.Photo:
+		return ".jpg"
+	case fileid.Video, fileid.VideoNote, fileid.Animation:
+		return ".mp4"
+	case fileid.Voice:
+		return ".ogg"
+	case fileid.Audio:
+		return ".mp3"
+	case fileid.Sticker:
+		return ".webp"
+	default:
+		return ".unknown"
+	}
+}
+
 // Each immutable collection keeps SDK media alive only for its batch. The
 // durable proxy repository owns media after Register succeeds.
 type watchDownloadRegistration struct {
@@ -96,7 +176,7 @@ func (s *watchDownloadRegistration) Register(ctx context.Context, token, name st
 	if !ok {
 		return "", fmt.Errorf("download source token is unavailable")
 	}
-	task, err := s.watcher.runtime.proxy.NewTask(ctx, file.peerID, file.msg.ID, file.peer, name, file.media.Size, file.media)
+	task, err := s.watcher.runtime.proxy.NewTask(ctx, file.peerID, file.msg.ID, file.peer, name, file.media.Size, file.media, file.botFileID)
 	if err != nil {
 		return "", err
 	}

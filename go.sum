@@ -77,6 +77,8 @@ github.com/ivanpirog/coloredcobra v1.0.1 h1:aURSdEmlR90/tSiWS0dMjdwOvCVUeYLfltLf
 github.com/ivanpirog/coloredcobra v1.0.1/go.mod h1:iho4nEKcnwZFiniGSdcgdvRgZNjxm+h20acv8vqmN6Q=
 github.com/iyear/connectproxy v0.1.1 h1:JZOF/62vvwRGBWcgSyWRb0BpKD4FSs0++B5/y5pNE4c=
 github.com/iyear/connectproxy v0.1.1/go.mod h1:yD4zOmSMQCmwHIT4fk8mg4k2M15z8VoMSoeY6NNJdsA=
+github.com/k0kubun/pp/v3 v3.5.1 h1:fS8Xt0MWVVSiKwfXeIdE0WJlktdA87/gt0Hs0+j2R2s=
+github.com/k0kubun/pp/v3 v3.5.1/go.mod h1:s7qPOSp65uuilpprLJs2yDi9DNd7JGyWJPtPvDFpG9w=
 github.com/klauspost/compress v1.19.1 h1:VsB4HPswih7mmZ8WleSFQ75c/Ui1M4trX5oAsJnhSlk=
 github.com/klauspost/compress v1.19.1/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/klauspost/cpuid/v2 v2.2.11 h1:0OwqZRYI2rFrjS4kvkDnqJkKHdHaRnCm68/DY4OxRzU=
