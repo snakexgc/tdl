@@ -72,10 +72,10 @@ func (m *Manager) connectionNeeded(cfg *config.Config) bool {
 func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 	return append(m.foundationUnits(cfg), []rte.ManagedUnit{
 		{
-			ID: timesync.ID, Enabled: m.componentEnabled(timesync.ID),
+			ID: timesync.ID, Enabled: m.componentEnabled(timesync.ID), Requires: []string{policyResource},
 			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.timeHost != nil },
 			Start: func(context.Context) error {
-				host, err := application.TimeHost(m.parent, m.downloadAccount, m.componentStore, m.timeProbe)
+				host, err := application.TimeHost(m.parent, m.downloadAccount, m.componentStore, m.timeProbe, m)
 				if err != nil {
 					return err
 				}

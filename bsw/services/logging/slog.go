@@ -4,22 +4,30 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
 // Handler routes slog through the same level gate and sinks as Zap.
 type Handler struct {
 	logger *zap.Logger
 	groups []string // Delay opening empty groups until an attribute is added.
+	clock  ports.Clock
 }
 
-func Slog(logger *zap.Logger) *slog.Logger {
+func Slog(logger *zap.Logger, clocks ...ports.Clock) *slog.Logger {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return slog.New(&Handler{logger: logger})
+	handler := &Handler{logger: logger}
+	if len(clocks) > 0 {
+		handler.clock = clocks[0]
+	}
+	return slog.New(handler)
 }
 
 // Custom slog levels must never invoke Zap's panic or process-exit behavior.
@@ -46,6 +54,9 @@ func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 		return nil
 	}
 	checked.Time = record.Time
+	if h.clock != nil {
+		checked.Time = h.clock.Now().In(time.Local)
+	}
 	checked.Caller = zapcore.EntryCaller{}
 	if record.PC != 0 {
 		frame, _ := runtime.CallersFrames([]uintptr{record.PC}).Next()
@@ -95,14 +106,14 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(fields) == 0 {
 		return h
 	}
-	return &Handler{logger: h.logger.With(h.grouped(fields)...)}
+	return &Handler{logger: h.logger.With(h.grouped(fields)...), clock: h.clock}
 }
 
 func (h *Handler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
-	return &Handler{logger: h.logger, groups: append(append([]string{}, h.groups...), name)}
+	return &Handler{logger: h.logger, groups: append(append([]string{}, h.groups...), name), clock: h.clock}
 }
 
 func (h *Handler) grouped(fields []zap.Field) []zap.Field {

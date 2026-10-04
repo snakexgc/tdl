@@ -444,7 +444,7 @@ func (q *Queue) pickNext(ctx context.Context, store ports.ForwardRepository) (Jo
 	}
 	q.pruneTerminal(ctx, store, jobs)
 
-	now := time.Now()
+	now := ports.Now(ctx)
 	var best *Job
 	for i := range jobs {
 		job := jobs[i]
@@ -485,7 +485,7 @@ func (q *Queue) pruneTerminal(ctx context.Context, store ports.ForwardRepository
 	if len(terminal) > settings.history {
 		overCap = len(terminal) - settings.history
 	}
-	now := time.Now()
+	now := ports.Now(ctx)
 	for idx, job := range terminal {
 		drop := idx < overCap || now.Sub(terminalTime(job)) > settings.retention
 		if drop {
@@ -512,7 +512,7 @@ func (q *Queue) runJob(ctx context.Context, rt ports.ForwardTransport, store por
 		if current.Status != StatusQueued && current.Status != StatusRetrying {
 			return false
 		}
-		now := time.Now()
+		now := ports.Now(jobCtx)
 		current.Status = StatusRunning
 		current.StartedAt = &now
 		current.Error = ""
@@ -561,7 +561,7 @@ func (q *Queue) runJob(ctx context.Context, rt ports.ForwardTransport, store por
 		return
 	}
 
-	fin := time.Now()
+	fin := ports.Now(ctx)
 	switch {
 	case runErr == nil:
 		job.Status = StatusDone

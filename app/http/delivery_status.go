@@ -9,6 +9,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
 const httpDeliveryField = "http_delivery"
@@ -72,7 +73,7 @@ func (s *taskStore) recordHTTPDelivery(ctx context.Context, id string, fileSize 
 		return false, errors.New("invalid HTTP delivery file size")
 	}
 	if completedAt.IsZero() {
-		completedAt = time.Now()
+		completedAt = ports.Now(ctx)
 	}
 
 	complete := false

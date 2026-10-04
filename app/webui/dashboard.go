@@ -90,7 +90,7 @@ func (s *Server) dashboardSnapshot(ctx context.Context) (any, error) {
 	telegramFileErrors10s := httpdl.TelegramFileErrorCountSince(10 * time.Second)
 
 	response := map[string]any{
-		"sampled_at": now.UTC().Format(time.RFC3339Nano),
+		"sampled_at": rte.Now(s.opts.Context).UTC().Format(time.RFC3339Nano),
 		"process": map[string]any{
 			"cpu_percent": cpuPercent,
 			"memory_rss":  rss,

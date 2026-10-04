@@ -7,12 +7,48 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/bsw/services/logging"
+	"github.com/snakexgc/tdl/interfaces/types"
+	"github.com/snakexgc/tdl/rte"
 )
+
+type fixedLogClock struct{ at time.Time }
+
+func (c fixedLogClock) Now() time.Time          { return c.at }
+func (fixedLogClock) Status() types.ClockStatus { return types.ClockStatus{Synchronized: true} }
+
+func TestAllLogSinksFollowSharedClockAfterLateBinding(t *testing.T) {
+	binding := new(rte.ClockBinding)
+	dir := t.TempDir()
+	logger, store, closeLog := NewSession(zap.InfoLevel, filepath.Join(dir, "latest.log"), "alice", binding)
+	t.Cleanup(func() { require.NoError(t, closeLog()) })
+	child := logger.Named("clock").With(zap.String("component", "time.sync"))
+	child.Info("before calibration")
+	entries, _ := store.Snapshot()
+	require.WithinDuration(t, time.Now(), entries[0].At, time.Second)
+	first := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	binding.Bind(fixedLogClock{first})
+	child.Info("zap calibrated")
+	logging.Slog(child, binding).WithGroup("transport").With("request", "clock").Info("slog calibrated")
+	require.NoError(t, store.Write(logging.Entry{Message: "implicit timestamp"}))
+	entries, _ = store.Snapshot()
+	require.Len(t, entries, 4)
+	for _, entry := range entries[:3] {
+		require.Equal(t, first, entry.At)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "latest.log"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), first.In(time.Local).Format("2006-01-02 15:04:05"))
+	binding.Bind(nil)
+	child.Info("system fallback")
+	entries, _ = store.Snapshot()
+	require.WithinDuration(t, time.Now(), entries[0].At, time.Second)
+}
 
 func TestCloseReleasesLogFileForReset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "latest.log")

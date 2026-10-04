@@ -163,7 +163,7 @@ func (d *Worker) Add(ctx context.Context, task types.LocalDownloadSource, prepar
 		Path:      prepared.FullPath,
 		Total:     task.FileSize,
 		Status:    types.LocalDownloadStatusQueued,
-		CreatedAt: time.Now(),
+		CreatedAt: ports.Now(ctx),
 	}
 	var err error
 	record, err = d.store.Create(ctx, record)
@@ -361,7 +361,7 @@ func (d *Worker) Execute(ctx context.Context, id string) {
 	}
 	defer lease.Release()
 
-	now := time.Now()
+	now := ports.Now(ctx)
 	claimed, err := d.store.Update(ctx, record.ID, func(current *types.LocalDownloadRecord) bool {
 		if !sameExecution(*current, record) || !shouldRunLocalDownload(current.Status) {
 			return false

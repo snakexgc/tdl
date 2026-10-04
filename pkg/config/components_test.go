@@ -37,7 +37,7 @@ func TestComponentConfigurationOwnsEveryAdapterSetting(t *testing.T) {
 	store := newComponentStore(t)
 	inputs := map[string]manager.Component{
 		accountComponentID:        {Enabled: true, Values: map[string]any{"proxy": original.Proxy, fileLimitField: 2, poolSizeField: 4}},
-		"time.sync":               {Enabled: true, Values: map[string]any{"server": "time.example.org"}},
+		"time.sync":               {Enabled: true, Values: map[string]any{"sync_interval_seconds": 60}},
 		consoleComponentID:        {Enabled: false, Values: map[string]any{"token": "bot-secret", "allowed_users": []string{"123"}}},
 		"downloader.aria2":        {Enabled: true, Values: map[string]any{"rpc_url": "http://localhost:7001/jsonrpc", "secret": "rpc-secret", directoryField: "/remote"}},
 		proxyComponentID:          {Enabled: true, Values: map[string]any{portField: 31111}},

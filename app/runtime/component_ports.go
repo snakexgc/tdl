@@ -64,6 +64,14 @@ func (m *Manager) Resolve(ctx context.Context, account types.AccountID) (types.T
 	return value.(ports.TelegramCredentials).Resolve(ctx, account)
 }
 
+func (m *Manager) Proxy(ctx context.Context) (string, error) {
+	value, err := m.componentPort(ports.NetworkProxyName)
+	if err != nil {
+		return "", err
+	}
+	return value.(ports.NetworkProxy).Proxy(ctx)
+}
+
 func (m *Manager) Check(ctx context.Context) (types.UpdateInfo, error) {
 	value, err := m.componentPort(ports.UpdaterName)
 	if err != nil {

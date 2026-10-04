@@ -105,7 +105,7 @@ func (c *Controller) Submit(ctx context.Context, submission types.DownloadSubmis
 		DownloadURL: submission.DownloadURL,
 		Dir:         submission.Dir,
 		Out:         submission.Out,
-		CreatedAt:   time.Now(),
+		CreatedAt:   ports.Now(ctx),
 	}); err != nil {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()

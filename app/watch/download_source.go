@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gotd/td/fileid"
 	"github.com/gotd/td/tg"
@@ -109,14 +108,14 @@ func (s watchDownloadSource) collectForwarded(ctx context.Context, request types
 	media := &tmedia.Media{InputFileLoc: location, Name: name, Size: forwarded.FileSize, DC: decoded.DC, Date: forwarded.Date}
 	message := &tg.Message{ID: request.MessageID, Date: int(forwarded.Date), Message: forwarded.Caption}
 	if message.Date == 0 {
-		message.Date = int(time.Now().Unix())
+		message.Date = int(ports.Now(ctx).Unix())
 	}
 	peerName := safePathSegment(forwarded.PeerName)
 	if peerName == "" {
 		peerName = strconv.FormatInt(request.PeerID, 10)
 	}
 	directoryID := strconv.FormatInt(request.PeerID, 10)
-	data := namingMetadata(directoryID, request.PeerID, peerName, time.Now(), message, message, media)
+	data := namingMetadata(directoryID, request.PeerID, peerName, ports.Now(ctx), message, message, media)
 	data.AlbumID = forwarded.AlbumID
 	file := fileTask{msg: message, triggerMsg: message, media: media, peerID: request.PeerID, botFileID: forwarded.FileID}
 	registration := &watchDownloadRegistration{watcher: s.watcher, files: map[string]fileTask{"forwarded": file}}

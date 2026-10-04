@@ -6,7 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
@@ -59,7 +58,7 @@ func (s SavedLinks) Submit(ctx context.Context, in types.DownloadSubmission) (ty
 		directory = task.ID
 	}
 	target, err := s.Naming.Render(ctx, ports.NamingInput{Account: s.Account, BaseDir: root, RenderedName: task.FileName, Data: ports.NamingData{
-		DialogID: task.PeerID, DirectoryID: directory, PeerName: targetpath.SafePathSegment(directory), MessageID: task.MessageID, TriggerMessageID: task.MessageID, FileName: task.FileName, FileSize: task.FileSize, DownloadedAt: time.Now(),
+		DialogID: task.PeerID, DirectoryID: directory, PeerName: targetpath.SafePathSegment(directory), MessageID: task.MessageID, TriggerMessageID: task.MessageID, FileName: task.FileName, FileSize: task.FileSize, DownloadedAt: ports.Now(ctx),
 	}})
 	if err != nil {
 		return types.DownloadResult{}, err
@@ -67,7 +66,7 @@ func (s SavedLinks) Submit(ctx context.Context, in types.DownloadSubmission) (ty
 	if err := ctx.Err(); err != nil {
 		return types.DownloadResult{}, err
 	}
-	record, err := s.Repository.CreateLinked(ctx, source, types.LocalDownloadRecord{ID: id, TaskID: id, FileName: task.FileName, Dir: target.Dir, Out: target.Out, Path: target.FullPath, Total: task.FileSize, Status: types.LocalDownloadStatusQueued, CreatedAt: time.Now()})
+	record, err := s.Repository.CreateLinked(ctx, source, types.LocalDownloadRecord{ID: id, TaskID: id, FileName: task.FileName, Dir: target.Dir, Out: target.Out, Path: target.FullPath, Total: task.FileSize, Status: types.LocalDownloadStatusQueued, CreatedAt: ports.Now(ctx)})
 	if err != nil {
 		return types.DownloadResult{}, err
 	}

@@ -69,9 +69,9 @@ func (s *LocalRepository) create(ctx context.Context, record types.LocalDownload
 			record.Status = types.LocalDownloadStatusQueued
 		}
 		if record.CreatedAt.IsZero() {
-			record.CreatedAt = time.Now()
+			record.CreatedAt = ports.Now(ctx)
 		}
-		record.UpdatedAt = time.Now()
+		record.UpdatedAt = ports.Now(ctx)
 		record.State = types.NormalizeDownloadState(record.Status)
 		record.Revision = 1
 		data, err = json.Marshal(record)
@@ -107,7 +107,7 @@ func (s *LocalRepository) Update(ctx context.Context, id string, change func(*ty
 		}
 		record.Revision = revision + 1
 		record.ID = id
-		record.UpdatedAt = time.Now()
+		record.UpdatedAt = ports.Now(ctx)
 		next, err := json.Marshal(record)
 		changed = err == nil
 		return next, stamp, err

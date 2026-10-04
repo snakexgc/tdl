@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -117,7 +118,7 @@ func (c *Controller) retryTask(ctx context.Context, record TaskRecord, task Down
 	if gid == "" {
 		return false, errors.New("aria2 returned empty gid")
 	}
-	next := TaskRecord{GID: gid, TaskID: record.TaskID, DownloadURL: downloadURL, Dir: dir, Out: out, CreatedAt: time.Now(), Status: aria2StatusWaiting}
+	next := TaskRecord{GID: gid, TaskID: record.TaskID, DownloadURL: downloadURL, Dir: dir, Out: out, CreatedAt: ports.Now(ctx), Status: aria2StatusWaiting}
 	if err := c.store.Add(call, next); err != nil {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()

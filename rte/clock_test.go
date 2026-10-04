@@ -2,6 +2,7 @@ package rte_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -38,4 +39,20 @@ func TestKernelAndAdapterShareClockAcrossLateBinding(t *testing.T) {
 	require.True(t, componentClock.Status().Synchronized)
 	binding.Bind(nil)
 	require.WithinDuration(t, time.Now(), componentClock.Now(), time.Second)
+}
+
+func TestRuntimeLifecycleDiagnosticsUseInjectedClock(t *testing.T) {
+	corrected := fixedClock{time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
+	ctx := rte.WithClock(context.Background(), corrected)
+	registry := rte.NewRegistry()
+	require.NoError(t, registry.Register(manifest.Manifest{ID: "clock.failure"}, func() rte.Component {
+		return &component{start: func() error { return errors.New("start failed") }}
+	}))
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
+	require.NoError(t, err)
+	host.Start(ctx)
+	t.Cleanup(func() { require.NoError(t, host.Stop(ctx)) })
+	events := host.Health().Events
+	require.Len(t, events, 1)
+	require.Equal(t, corrected.Now(), events[0].At)
 }

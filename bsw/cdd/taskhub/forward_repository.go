@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/go-faster/errors"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
@@ -50,7 +50,7 @@ func (s *ForwardRepository) Update(ctx context.Context, id string, change func(*
 			return nil
 		}
 		job.ID = id
-		job.UpdatedAt = time.Now()
+		job.UpdatedAt = ports.Now(ctx)
 		data, err = json.Marshal(job)
 		if err != nil {
 			return err
@@ -74,7 +74,7 @@ func (s *ForwardRepository) Save(ctx context.Context, job types.ForwardJob) erro
 	if job.Status == "" {
 		job.Status = types.StatusQueued
 	}
-	now := time.Now()
+	now := ports.Now(ctx)
 	if job.CreatedAt.IsZero() {
 		job.CreatedAt = now
 	}

@@ -4,11 +4,11 @@
 
 ## 配置清单
 
-唯一配置文件为 `<TDL_HOME>/tdl_config.json`，格式版本为 `1`。顶层包含 `version`、`system.namespace`、`system.debug` 和 `components`。18 个业务组件各有 `enabled` 开关，共声明 75 个 `values` 字段；`configuration.manager` 固定启用。字段类型、默认值、范围、敏感性与重启要求见自动生成的 [配置参考](configuration.md)，完整模板见 [examples/tdl_config.json](../examples/tdl_config.json)。
+唯一配置文件为 `<TDL_HOME>/tdl_config.json`，格式版本为 `1`。顶层包含 `version`、`system.namespace`、`system.debug` 和 `components`。业务组件各有 `enabled` 开关，配置通过所属组件的 `values` 字段声明；`configuration.manager` 固定启用。字段类型、默认值、范围、敏感性与重启要求见自动生成的 [配置参考](configuration.md)，完整模板见 [examples/tdl_config.json](../examples/tdl_config.json)。
 
 | 组件 | 字段数 | 配置职责 |
 | --- | ---: | --- |
-| `account.telegram` | 10 | 凭据、代理、时间校准、并发、连接容量、任务与重连间隔 |
+| `account.telegram` | 9 | 凭据、代理、并发、连接容量、任务与重连间隔 |
 | `console.bot` | 2 | Bot token、允许的用户 |
 | `download.control` | 2 | 所选下载器、本地根目录 |
 | `downloader.aria2` | 17 | RPC、下载目录、超时、重试、状态采样、停滞与错误处理 |
@@ -20,6 +20,7 @@
 | `notify.telegram` | 8 | 接收者、事件开关、进度间隔、通知超时 |
 | `panel.webui` | 4 | 监听地址、端口、登录凭据 |
 | `proxy.range` | 8 | 监听、公网地址、链接有效期、等待/保存超时、清理周期 |
+| `time.sync` | 2 | 内置 NTP 池的同步间隔、每轮探测超时 |
 | `trigger.forward` | 2 | 监听来源、评论监听 |
 | `trigger.reaction` | 2 | 下载与转发表情 |
 | `storage.maintenance`、`trigger.download`、`trigger.messagelink`、`update.self` | 0 | 仅启停开关 |
@@ -46,6 +47,7 @@ HTTP 下载服务固定随程序启动，本地下载、自动添加 aria2 任�
 
 - 配置默认值统一由组件声明生成。删除平面配置的重复默认值、宽松校验、运行时数值修正，以及缺失仓库时回用旧快照的路径；策略组件直接读取统一仓库。原 `internal/componentconfig` 投影合并到 `pkg/config`，快照仅用于传输适配器。删除独立组件文件遗留的版本字段，只保留统一文件版本。
 - 重连间隔必须为正数，默认 3 秒，删除 `0 → 5 秒` 的隐式替代。未知组件、字段、嵌套规则字段及无效组合直接报错；停用组件同样校验。
+- 时间同步删除服务器偏好及其迁移，统一使用内置 NTP 池；历史配置中的废弃偏好加载时丢弃，下一次显式保存时清除。
 - HTTP 下载记录必须携带有效的 `last_active_at`。删除向创建时间和索引时间的回退；缺失或损坏的记录读取、续期、清理均报错，拒绝时保留原记录。
 - 存储初始化采用明确的驱动与路径，删除配置字典、弱类型转换、驱动名称解析和动态注册。移除 `mapstructure`、`validator` 及其不再使用的间接依赖。
 - 更新器按 `.goreleaser.yaml` 的当前包名精确匹配系统、架构及 ARM 版本；删除旧包名别名、模糊评分、`.tgz`、裸二进制及包内旧文件名匹配。
@@ -57,7 +59,7 @@ HTTP 下载服务固定随程序启动，本地下载、自动添加 aria2 任�
 
 设置页在有修改时显示“尚未保存的修改”框，对比当前运行值与修改后的值；用户点击框内“保存并重启”一次保存全部分类的草稿后重启，也可先单独保存区块。运行组件及重连使用只读启动快照。保存不触发热更新或自动重启。敏感项的差异只标记修改，不回显值。
 
-以下机制属于当前功能，不是历史兼容分支：组件 schema 对省略字段提供默认值；连接重试与资源排空；启动时自动选择并持久化 NTP 服务器；下载执行器按配置顺序降级；官方转发失败后按当前模式复制；WebSocket 不可用时轮询；日志将当前 `host.*` 进程和协议适配器映射到业务组件；命名模板缩写、Telegram/HTTP/aria2 协议处理及跨平台存储。
+以下机制属于当前功能，不是历史兼容分支：组件 schema 对省略字段提供默认值；连接重试与资源排空；NTP 池并发校时、代理重试及系统时间回落，校准只更新运行状态；下载执行器按配置顺序降级；官方转发失败后按当前模式复制；WebSocket 不可用时轮询；日志将当前 `host.*` 进程和协议适配器映射到业务组件；命名模板缩写、Telegram/HTTP/aria2 协议处理及跨平台存储。
 
 新增配置应先在所属组件声明 schema 和校验，再运行 `go run ./cmd/swc-docs -config-out examples/tdl_config.json`。适配器确实需要的设置才加入快照投影；不要重新增加另一套默认值、旧字段别名或静默纠错。更改持久化格式应明确拒绝不支持的数据。
 

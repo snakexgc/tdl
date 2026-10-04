@@ -209,7 +209,10 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	}
 	source := config.NewSource(cfg)
 	ctx = config.WithSource(ctx, source)
-	clock := new(rte.ClockBinding)
+	clock, ok := rte.ClockFrom(ctx).(*rte.ClockBinding)
+	if !ok {
+		clock = new(rte.ClockBinding)
+	}
 	ctx = rte.WithClock(ctx, clock)
 	if opts.TimeProbe == nil {
 		opts.TimeProbe = ntpclient.Client{}

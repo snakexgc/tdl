@@ -314,6 +314,7 @@ func (r *Runtime) Start(ctx context.Context) []Status {
 func (r *Runtime) startLocked(ctx context.Context) []Status {
 	if !r.started {
 		r.context = ctx
+		r.diagnostics.SetClock(ClockFrom(ctx))
 	}
 	ctx = r.context
 	r.started = true

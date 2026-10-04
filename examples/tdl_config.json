@@ -145,7 +145,6 @@
     "time.sync": {
       "enabled": true,
       "values": {
-        "server": "",
         "sync_interval_seconds": 300,
         "timeout_seconds": 3
       }

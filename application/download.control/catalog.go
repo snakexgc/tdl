@@ -9,7 +9,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
@@ -26,7 +25,7 @@ func (s *Catalog) List(ctx context.Context, account types.AccountID) ([]types.Do
 	snapshot.Records = slices.Clone(snapshot.Records)
 	sort.Slice(snapshot.Records, func(i, j int) bool { return snapshot.Records[i].Key < snapshot.Records[j].Key })
 	items := make([]types.DownloadLinkItem, 0, len(snapshot.Records))
-	now := time.Now()
+	now := ports.Now(ctx)
 	for _, record := range snapshot.Records {
 		if err := ctx.Err(); err != nil {
 			return nil, snapshot.StatusError, err
@@ -193,7 +192,7 @@ func (s *Catalog) Submit(ctx context.Context, account types.AccountID, ids []str
 			DownloadURL: link,
 			Dir:         resources.RemoteDir,
 			Out:         task.FileName,
-			CreatedAt:   time.Now(),
+			CreatedAt:   ports.Now(ctx),
 		}); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: aria2 accepted gid %s but persist aria2 record failed: %v", id, gid, err))
 			continue

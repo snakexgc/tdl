@@ -66,7 +66,8 @@ func (*Service) Stop(context.Context) error                     { return nil }
 func (*Service) Reconfigure(context.Context, config.View) error { return nil }
 
 // Complete validates global settings, including disabled components, and fills
-// omitted settings from the catalog. Unknown fields are errors, never discarded.
+// omitted settings from the catalog. Retired time preferences are removed;
+// other unknown fields are errors.
 func (s *Service) Complete(ctx context.Context, input Document) (Document, error) {
 	if err := ctx.Err(); err != nil {
 		return Document{}, err
@@ -77,7 +78,7 @@ func (s *Service) Complete(ctx context.Context, input Document) (Document, error
 	if !namespaceName.MatchString(input.System.Namespace) {
 		return Document{}, fmt.Errorf("system.namespace must contain English letters only")
 	}
-	input = s.migrateTimeConfiguration(input)
+	input = s.discardRetiredTimePreferences(input)
 	result := Document{Version: Version, System: input.System, Components: map[string]Component{}}
 	for _, definition := range s.catalog.Definitions() {
 		id := definition.Manifest.ID

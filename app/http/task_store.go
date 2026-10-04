@@ -11,6 +11,7 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 )
@@ -260,7 +261,7 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 		s.tasks[task.ID] = &copy
 		return nil
 	}
-	if err := s.CleanupExpired(ctx, time.Now()); err != nil {
+	if err := s.CleanupExpired(ctx, ports.Now(ctx)); err != nil {
 		return err
 	}
 	persisted, err := persistentDownloadTaskFromTask(task)
@@ -275,7 +276,7 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 }
 
 func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, error) {
-	now := time.Now()
+	now := ports.Now(ctx)
 	ttl := s.TTL()
 	if s.kv == nil {
 		s.mu.Lock()

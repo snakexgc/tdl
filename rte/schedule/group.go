@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
 type Group struct {
@@ -29,6 +31,7 @@ type Status struct {
 	LastError  string        `json:"last_error,omitempty"`
 	Period     time.Duration `json:"period_ns"`
 	Overdue    bool          `json:"overdue"`
+	started    time.Time
 }
 
 func New(ctx context.Context) *Group {
@@ -46,7 +49,7 @@ func (g *Group) Statuses() []Status {
 	defer g.mu.Unlock()
 	result := make([]Status, 0, len(g.states))
 	for _, state := range g.states {
-		state.Overdue = state.Running && state.Period > 0 && time.Since(state.StartedAt) > state.Period
+		state.Overdue = state.Running && state.Period > 0 && time.Since(state.started) > state.Period
 		result = append(result, state)
 	}
 	return result
@@ -104,12 +107,12 @@ func (g *Group) run(name string, delay, period time.Duration, currentPeriod func
 			g.mu.Lock()
 			state := g.states[name]
 			state.Period = period
-			state.Running, state.StartedAt = true, time.Now()
+			state.Running, state.StartedAt, state.started = true, ports.Now(g.ctx), time.Now()
 			g.states[name] = state
 			g.mu.Unlock()
 			err := invoke(func() error { return fn(g.ctx) })
 			g.mu.Lock()
-			state.Running, state.FinishedAt = false, time.Now()
+			state.Running, state.FinishedAt = false, ports.Now(g.ctx)
 			state.Runs++
 			state.LastError = ""
 			if err != nil {

@@ -79,7 +79,7 @@ func (t rangeTransfer) Report(ctx context.Context, spans []types.ByteRange) erro
 	for _, span := range spans {
 		ranges = append(ranges, downloadRange{start: span.Start, end: span.End})
 	}
-	_, err := t.proxy.tasks.recordHTTPDelivery(ctx, t.task.ID, t.task.FileSize, ranges, time.Now())
+	_, err := t.proxy.tasks.recordHTTPDelivery(ctx, t.task.ID, t.task.FileSize, ranges, ports.Now(ctx))
 	return err
 }
 

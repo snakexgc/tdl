@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
@@ -39,7 +40,7 @@ func (s *Aria2Repository) ReserveControl(ctx context.Context, expected types.Ari
 		raw[fieldControlUntil], _ = json.Marshal(until)
 		next, err := json.Marshal(raw)
 		reserved = err == nil
-		return next, time.Now(), err
+		return next, ports.Now(ctx), err
 	})
 	if errors.Is(err, storage.ErrNotFound) {
 		return lease, false, nil
@@ -82,7 +83,7 @@ func (s *Aria2Repository) FinishControl(ctx context.Context, lease types.Aria2Ta
 		raw[fieldRevision], _ = json.Marshal(current.Revision + 1)
 		next, err := json.Marshal(raw)
 		changed = err == nil
-		return next, time.Now(), err
+		return next, ports.Now(ctx), err
 	})
 	if errors.Is(err, storage.ErrNotFound) {
 		return false, nil

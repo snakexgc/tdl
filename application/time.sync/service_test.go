@@ -16,7 +16,7 @@ import (
 	"github.com/snakexgc/tdl/rte/config"
 )
 
-const preferredServer = "preferred.test"
+const sampleServer = "ntp.aliyun.com"
 
 type probeFunc func(context.Context, string, time.Duration) (types.TimeSample, error)
 
@@ -38,39 +38,44 @@ func TestConfigurationSupportsMinutesAndRejectsInvalidPeriods(t *testing.T) {
 		require.Equal(t, time.Duration(seconds)*time.Second, s.configuration.Load().interval)
 	}
 	for _, values := range []map[string]any{
-		{intervalField: 0}, {intervalField: 59}, {intervalField: 86401}, {timeoutField: 0},
+		{intervalField: 0}, {intervalField: 59}, {intervalField: 86401}, {timeoutField: 0}, {"server": "retired.test"},
 	} {
 		_, err := config.New(Manifest().Config, values)
 		require.Error(t, err)
 	}
 }
 
-func TestClockKeepsLastSuccessfulOffsetAndRecovers(t *testing.T) {
+func TestClockFallsBackToSystemAndRecovers(t *testing.T) {
 	var available atomic.Bool
 	var offset atomic.Int64
-	s := New(probeFunc(func(context.Context, string, time.Duration) (types.TimeSample, error) {
-		if !available.Load() {
+	s := New(probeFunc(func(_ context.Context, host string, _ time.Duration) (types.TimeSample, error) {
+		if !available.Load() || host != sampleServer {
 			return types.TimeSample{}, errors.New("offline")
 		}
 		return types.TimeSample{Offset: time.Duration(offset.Load())}, nil
 	}))
-	configure(t, s, map[string]any{serverField: preferredServer})
+	configure(t, s, nil)
 	require.Equal(t, 5*time.Minute, s.configuration.Load().interval)
 	require.Error(t, s.synchronize(context.Background()))
 	require.False(t, s.Status().Synchronized)
+	require.Equal(t, types.ClockSourceSystem, s.Status().Source)
 	require.WithinDuration(t, time.Now(), s.Now(), time.Second)
 	available.Store(true)
 	offset.Store(int64(time.Hour))
 	require.NoError(t, s.synchronize(context.Background()))
 	first := s.Status()
 	require.True(t, first.Synchronized)
-	require.Equal(t, preferredServer, first.Server)
+	require.Equal(t, sampleServer, first.Server)
 	require.WithinDuration(t, time.Now().Add(time.Hour), s.Now(), time.Second)
 	available.Store(false)
 	require.Error(t, s.synchronize(context.Background()))
 	require.NotEmpty(t, s.Status().LastError)
 	require.Equal(t, first.LastSuccess, s.Status().LastSuccess)
-	require.Equal(t, time.Hour, s.Status().Offset)
+	require.Zero(t, s.Status().Offset)
+	require.Empty(t, s.Status().Server)
+	require.False(t, s.Status().Synchronized)
+	require.Equal(t, types.ClockSourceSystem, s.Status().Source)
+	require.WithinDuration(t, time.Now(), s.Now(), time.Second)
 	available.Store(true)
 	offset.Store(int64(-time.Hour))
 	require.NoError(t, s.synchronize(context.Background()))
@@ -92,7 +97,10 @@ func TestPeriodicSynchronizationNeverBlocksClockReadersOrOverlaps(t *testing.T) 
 	entered := make(chan struct{}, 8)
 	release := make(chan struct{})
 	var calls, active, maximum atomic.Int32
-	s := New(probeFunc(func(ctx context.Context, _ string, _ time.Duration) (types.TimeSample, error) {
+	s := New(probeFunc(func(ctx context.Context, host string, _ time.Duration) (types.TimeSample, error) {
+		if host != sampleServer {
+			return types.TimeSample{}, errors.New("offline")
+		}
 		calls.Add(1)
 		count := active.Add(1)
 		defer active.Add(-1)
@@ -109,7 +117,7 @@ func TestPeriodicSynchronizationNeverBlocksClockReadersOrOverlaps(t *testing.T) 
 	}))
 	registry := rte.NewRegistry()
 	require.NoError(t, registry.Register(Manifest(), func() rte.Component { return quickService{s} }))
-	host, err := registry.Build(types.DefaultAccount, nil, map[string]map[string]any{ID: {serverField: preferredServer}})
+	host, err := registry.Build(types.DefaultAccount, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, rte.Running, host.Start(context.Background())[0].State)
 	t.Cleanup(func() { require.NoError(t, host.Stop(context.Background())) })
@@ -143,48 +151,66 @@ func TestPeriodicSynchronizationNeverBlocksClockReadersOrOverlaps(t *testing.T) 
 	require.EqualValues(t, 2, calls.Load())
 }
 
-func TestSelectionPrefersConfiguredAndFallsBackConcurrently(t *testing.T) {
-	for _, configuredWorks := range []bool{true, false} {
-		t.Run(map[bool]string{true: "configured", false: "fallback"}[configuredWorks], func(t *testing.T) {
-			var calls atomic.Int32
-			var wg sync.WaitGroup
-			wg.Add(2)
-			allStarted := make(chan struct{})
-			go func() { wg.Wait(); close(allStarted) }()
-			if configuredWorks {
-				wg.Done()
-				wg.Done()
-			}
-			probe := probeFunc(func(ctx context.Context, host string, _ time.Duration) (types.TimeSample, error) {
-				if host == preferredServer {
-					calls.Add(1)
-					if configuredWorks {
-						return types.TimeSample{Offset: time.Hour}, nil
-					}
-					return types.TimeSample{}, errors.New("offline")
-				}
-				wg.Done()
-				select {
-				case <-allStarted:
-				case <-ctx.Done():
-					return types.TimeSample{}, ctx.Err()
-				}
-				if host == "fast.test" {
-					return types.TimeSample{Offset: -time.Hour, Elapsed: time.Millisecond}, nil
-				}
-				return types.TimeSample{Elapsed: time.Second}, nil
-			})
-			host, sample, err := selectServer(context.Background(), preferredServer, []string{"slow.test", "fast.test"}, probe, time.Second)
-			require.NoError(t, err)
-			if configuredWorks {
-				require.Equal(t, preferredServer, host)
-				require.Equal(t, time.Hour, sample.Offset)
-				require.EqualValues(t, 1, calls.Load())
-			} else {
-				require.Equal(t, "fast.test", host)
-				require.Equal(t, -time.Hour, sample.Offset)
-				require.EqualValues(t, 3, calls.Load())
-			}
-		})
-	}
+func TestSelectionUsesFirstValidResponseAndCancelsTheRest(t *testing.T) {
+	var started sync.WaitGroup
+	started.Add(4)
+	allStarted := make(chan struct{})
+	go func() { started.Wait(); close(allStarted) }()
+	var cancelled atomic.Int32
+	probe := probeFunc(func(ctx context.Context, host string, _ time.Duration) (types.TimeSample, error) {
+		started.Done()
+		select {
+		case <-allStarted:
+		case <-ctx.Done():
+			return types.TimeSample{}, ctx.Err()
+		}
+		if host == "invalid.test" {
+			return types.TimeSample{}, errors.New("invalid response")
+		}
+		if host == "first.test" {
+			// Selection follows arrival, irrespective of a reported RTT.
+			return types.TimeSample{Offset: -time.Hour, Elapsed: time.Second}, nil
+		}
+		<-ctx.Done()
+		cancelled.Add(1)
+		return types.TimeSample{Elapsed: time.Nanosecond}, ctx.Err()
+	})
+	begin := time.Now()
+	host, sample, err := selectServer(context.Background(), []string{"slow.test", "other-slow.test", "invalid.test", "first.test"}, probe, 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "first.test", host)
+	require.Equal(t, -time.Hour, sample.Offset)
+	require.EqualValues(t, 2, cancelled.Load(), "losers must be drained before the round ends")
+	require.Less(t, time.Since(begin), time.Second, "winner must not wait for slow servers to time out")
+}
+
+func TestSelectionBoundsOneRoundAndDeduplicatesServers(t *testing.T) {
+	var calls atomic.Int32
+	probe := probeFunc(func(ctx context.Context, _ string, _ time.Duration) (types.TimeSample, error) {
+		calls.Add(1)
+		<-ctx.Done()
+		return types.TimeSample{}, ctx.Err()
+	})
+	begin := time.Now()
+	_, _, err := selectServer(context.Background(), []string{sampleServer, "NTP.ALIYUN.COM", "other.test", ""}, probe, 30*time.Millisecond)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.EqualValues(t, 2, calls.Load())
+	require.Less(t, time.Since(begin), time.Second)
+}
+
+func TestSelectionToleratesPanicsAndCancelledRoundsDoNotChangeClock(t *testing.T) {
+	_, _, err := selectServer(context.Background(), []string{"panic.test"}, probeFunc(func(context.Context, string, time.Duration) (types.TimeSample, error) {
+		panic("probe failed")
+	}), time.Second)
+	require.ErrorContains(t, err, "probe panic")
+	s := New(probeFunc(func(context.Context, string, time.Duration) (types.TimeSample, error) {
+		return types.TimeSample{Offset: time.Hour}, nil
+	}))
+	configure(t, s, nil)
+	require.NoError(t, s.synchronize(context.Background()))
+	previous := s.Status()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, s.synchronize(ctx))
+	require.Equal(t, previous, s.Status())
 }

@@ -270,6 +270,7 @@ func (p *downloadProxy) start(ctx context.Context, ready func()) error {
 	p.cfgMu.Unlock()
 	defer func() { _ = host.Stop(context.Background()) }()
 	server := p.newServer()
+	server.BaseContext = func(net.Listener) context.Context { return runCtx }
 	listener, err := (&net.ListenConfig{}).Listen(runCtx, "tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("HTTP 下载服务监听 %s 失败: %w", server.Addr, err)
@@ -305,7 +306,7 @@ func (p *downloadProxy) Host() *rte.Runtime {
 }
 
 func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
-	return p.tasks.CleanupExpired(ctx, time.Now())
+	return p.tasks.CleanupExpired(ctx, rte.Now(ctx))
 }
 
 func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media, botFileIDs ...string) (*downloadTask, error) {
@@ -314,7 +315,7 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 		return nil, errors.Wrap(err, "build persistent download task id")
 	}
 
-	now := time.Now()
+	now := rte.Now(ctx)
 	task := &downloadTask{
 		ID:           id,
 		PeerID:       peerID,

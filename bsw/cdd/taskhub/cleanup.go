@@ -56,7 +56,7 @@ func CleanupLinksAndAria2(ctx context.Context, s storage.Storage, now time.Time,
 				if err := json.Unmarshal(data, &record); err != nil {
 					return err
 				}
-				if record.ControlUntil.After(now) {
+				if record.ControlUntil.After(time.Now()) {
 					continue
 				}
 				if !remove && record.TaskID != "" && !record.Deleted {

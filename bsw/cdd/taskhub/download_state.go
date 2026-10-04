@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -64,7 +65,7 @@ func (s *Aria2Repository) Report(ctx context.Context, observation types.Aria2Tas
 			raw[field], _ = json.Marshal(value)
 		}
 		if types.NormalizeDownloadState(observation.Status) != types.DownloadComplete {
-			stamp = time.Now()
+			stamp = ports.Now(ctx)
 		}
 		next, err := json.Marshal(raw)
 		changed = err == nil

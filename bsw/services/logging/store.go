@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
 const Capacity = 2000
@@ -35,9 +37,16 @@ type Store struct {
 	sequence   uint64
 	writer     io.Writer
 	sinkErrors map[string]string
+	clock      ports.Clock
 }
 
-func New(writer io.Writer) *Store { return &Store{writer: writer} }
+func New(writer io.Writer, clocks ...ports.Clock) *Store {
+	clock := ports.ClockFrom(context.Background())
+	if len(clocks) > 0 && clocks[0] != nil {
+		clock = clocks[0]
+	}
+	return &Store{writer: writer, clock: clock}
+}
 
 func (s *Store) append(entry Entry) {
 	if len(s.entries) < Capacity {
@@ -54,7 +63,7 @@ func (s *Store) Write(entry Entry) error {
 	s.sequence++
 	entry.ID = s.sequence
 	if entry.At.IsZero() {
-		entry.At = time.Now()
+		entry.At = s.clock.Now()
 	}
 	entry.At = entry.At.UTC()
 	entry = sanitizeEntry(entry)
