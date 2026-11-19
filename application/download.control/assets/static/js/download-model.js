@@ -43,4 +43,5 @@ export function groupActions(tasks, action) {
   return [...groups.values()];
 }
 
-export const statusClass = (status) => status === "error" ? "bad" : status === "complete" ? "" : "warn";
+export const statusClass = (status) =>
+  ({ active: "info", complete: "", error: "bad", paused: "warn" })[status] ?? "muted";

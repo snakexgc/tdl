@@ -300,8 +300,40 @@
   font-size: 12px;
 }
 @media (max-width: 600px) {
+  #view-config > .page-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px 12px;
+  }
+  #view-config > .page-head > div:first-child {
+    display: contents;
+  }
+  #view-config > .page-head p {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
+  }
+  .settings-header-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .settings-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .settings-search input {
+    min-height: 44px;
+  }
+  .settings-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .settings-tabs .tab-button {
-    padding: 8px 10px;
+    justify-content: center;
+    padding: 8px 4px;
   }
   .settings-block-status {
     flex-basis: 100%;

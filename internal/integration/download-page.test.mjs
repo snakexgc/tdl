@@ -33,8 +33,10 @@ test("download page queries only the selected downloader and shows local storage
   };
   const model = new vm.SourceTextModule(await readFile(new URL("../../application/download.control/assets/static/js/download-model.js", import.meta.url), "utf8"), { context });
   await model.link(() => { throw new Error("unexpected model import"); });
+  const shared = new vm.SourceTextModule(await readFile(new URL("../../application/panel.webui/assets/static/js/state.js", import.meta.url), "utf8"), { context });
+  await shared.link(() => { throw new Error("unexpected state import"); });
   const module = new vm.SourceTextModule(await readFile(new URL("../../application/download.control/assets/static/js/downloads.js", import.meta.url), "utf8"), { context });
-  await module.link(name => name === "./download-model.js" ? model : new vm.SyntheticModule(Object.keys(definitions[name]), function () {
+  await module.link(name => name === "./download-model.js" ? model : name === "./state.js" ? shared : new vm.SyntheticModule(Object.keys(definitions[name]), function () {
     for (const [key, value] of Object.entries(definitions[name])) this.setExport(key, value);
   }, { context }));
   await module.evaluate();
@@ -49,9 +51,17 @@ test("download page queries only the selected downloader and shows local storage
   assert.equal(node("download-storage-free").textContent, "400 B");
   assert.equal(node("download-storage-bytes").textContent, "100 B");
   assert.equal(node("download-storage-count").textContent, "2");
+  assert.match(node("download-body").innerHTML, /暂无下载任务/);
+  node("download-search").value = "missing";
+  node("download-search").events.input();
+  assert.match(node("download-body").innerHTML, /清除筛选/);
+  node("download-search").value = "";
+  node("download-search").events.input();
+  assert.equal(node("download-storage-alert").hidden, true);
   subscriptions.get("download-storage")(null, "permission denied");
   assert.equal(node("download-storage-free").textContent, "—");
   assert.match(node("download-storage-message").textContent, /permission denied/);
+  assert.equal(node("download-storage-alert").hidden, false);
   requests.length = 0;
   mode = "aria2";
   await page.load(new URL("http://panel.test/downloads"));
@@ -60,6 +70,11 @@ test("download page queries only the selected downloader and shows local storage
   assert.deepEqual([...subscriptions.keys()], ["download-tasks-aria2"]);
   assert.equal(node("advanced-download").hidden, false);
   assert.equal(node("download-storage").hidden, true);
+  requests.length = 0;
+  mode = "http";
+  await page.load(new URL("http://panel.test/downloads"));
+  assert(!requests.some(url => url.includes("/api/download-tasks")));
+  assert.match(node("download-body").innerHTML, /HTTP 直链/);
   page.stop();
   assert.equal(subscriptions.size, 0);
 });

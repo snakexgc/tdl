@@ -37,7 +37,7 @@ export async function initRouter() {
       window.history.pushState({}, "", currentURL);
       return;
     }
-    void show(target);
+    void show(target, { focusContent: true });
   });
   window.addEventListener("pagehide", stopPages);
   window.addEventListener("pageshow", (event) => {
@@ -53,6 +53,7 @@ export async function initRouter() {
     const link = event.target.closest?.("a[data-app-link]");
     if (
       !link ||
+      event.defaultPrevented ||
       event.button ||
       event.ctrlKey ||
       event.metaKey ||
@@ -61,7 +62,7 @@ export async function initRouter() {
     )
       return;
     event.preventDefault();
-    void navigate(link.getAttribute("href"));
+    void navigate(link.getAttribute("href"), { focusContent: true });
   });
   await show(resolve(locationURL()));
 }
@@ -101,6 +102,7 @@ function reconcileNavigation(data) {
     );
   const host = document.getElementById("view-host"),
     nav = document.querySelector("nav.nav");
+  const focusedLink = document.activeElement?.closest("nav.nav .nav-item");
   nav.replaceChildren();
   for (const page of pages.values()) page.enabled = false;
   for (const declaration of declarations) {
@@ -131,24 +133,19 @@ function reconcileNavigation(data) {
       }
       if (page.view) {
         link.dataset.view = page.view || "";
-        link.addEventListener("click", (event) => {
-          if (
-            event.button ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.shiftKey ||
-            event.altKey
-          )
-            return;
-          event.preventDefault();
-          void navigate(path);
-        });
+        link.dataset.appLink = "";
       }
       pages.set(path, page);
     }
     page.enabled = true;
     page.ownerEnabled = declaration.ownerEnabled;
     if (!page.nav_hidden) nav.append(page.link);
+  }
+  if (focusedLink) {
+    const target = focusedLink.isConnected
+      ? focusedLink
+      : nav.querySelector(".nav-item") || document.getElementById("logout");
+    target.focus({ preventScroll: true });
   }
 }
 function resolve(value) {
@@ -170,15 +167,15 @@ export function stopPages() {
   ++generation;
   for (const page of pages.values()) page.hooks?.stop?.();
 }
-export async function navigate(value) {
+export async function navigate(value, options) {
   const url = resolve(value.startsWith("/") ? value : `/${value}`);
   if (!canLeavePage(url.pathname)) return false;
   if (relative(url) !== locationURL())
     window.history.pushState({}, "", relative(url));
-  await show(url);
+  await show(url, options);
   return true;
 }
-async function show(url) {
+async function show(url, { focusContent = false } = {}) {
   const candidate = pages.get(url.pathname),
     page = candidate?.enabled && candidate.section ? candidate : null;
   if (current !== page) {
@@ -198,8 +195,11 @@ async function show(url) {
     entry.link.classList.toggle("active", entry === page);
     entry.link.ariaCurrent = entry === page ? "page" : null;
   }
+  const title = page?.title || "页面不可用";
   const breadcrumb = document.getElementById("current-page");
-  if (breadcrumb) breadcrumb.textContent = page?.title || "页面不可用";
+  if (breadcrumb) breadcrumb.textContent = title;
+  document.title = `${title} · TDL 管理面板`;
+  if (focusContent) window.dispatchEvent(new Event("page-selected"));
   let unavailable = document.getElementById("page-unavailable");
   if (!page) {
     if (!unavailable) {
@@ -213,7 +213,6 @@ async function show(url) {
     return;
   }
   if (unavailable) unavailable.hidden = true;
-  document.title = `${page.title} · TDL 管理面板`;
   if (!page.ownerEnabled) {
     page.hooks?.stop?.();
     if (page.ready) {

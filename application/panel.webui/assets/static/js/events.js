@@ -15,7 +15,8 @@ function indicator(value) {
     element.title = { online: "已连接，实时接收更新", offline: "连接已断开，正在自动重连", checking: "正在建立连接", fallback: "已连接，定时获取更新" }[value];
   }
   const label = document.getElementById("heartbeat-label");
-  if (label) label.textContent = value === "online" || value === "fallback" ? "已连接" : "断开连接";
+  const text = { online: "已连接", fallback: "已连接", checking: "正在连接", offline: "连接已断开" }[value];
+  if (label && label.textContent !== text) label.textContent = text;
 }
 
 function publish(topic, packet) {

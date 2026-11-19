@@ -24,7 +24,8 @@ test("declared pages mount lazily, preserve query and guide disabled features", 
   }
   const host = new Element(), nav = new Element(), head = new Element();
   const find = (node, id) => node.id === id ? node : node.children.map(child => find(child, id)).find(Boolean);
-  const calls = [], fetched = [];
+  const calls = [], fetched = [], events = [];
+  let onClick, allowLeave = true;
   const components = [
     { id: "example", enabled: true, pages: [
       { path: "/example", title: "Example", view: "example", module: "/static/js/example.js" },
@@ -35,16 +36,18 @@ test("declared pages mount lazily, preserve query and guide disabled features", 
     { id: "sleeping", enabled: false, pages: [{ path: "/sleeping", title: "Sleeping", view: "sleeping", keep_visible: true, settings_url: "/example?tab=settings" }] },
   ];
   const context = vm.createContext({
-    URL, Intl,
+    URL, Intl, Event,
     window: {
       location: { origin: "http://panel.test", pathname: "/example" },
       history: { pushState() {} }, addEventListener() {},
+      dispatchEvent: event => events.push(event.type),
     },
     document: {
       head,
       createElement: () => new Element(),
       getElementById: id => id === "view-host" ? host : find(host, id),
       querySelector: selector => selector === "nav.nav" ? nav : undefined,
+      addEventListener(name, callback) { if (name === "click") onClick = callback; },
     },
     fetch: async url => {
       fetched.push(url);
@@ -63,6 +66,7 @@ test("declared pages mount lazily, preserve query and guide disabled features", 
             init: () => calls.push([specifier, "init"]),
             load: url => calls.push([specifier, "load", url?.search, url?.hash]),
             stop: () => calls.push([specifier, "stop"]),
+            beforeLeave: () => allowLeave,
           });
         }, { context });
         await feature.link(() => {});
@@ -79,13 +83,28 @@ test("declared pages mount lazily, preserve query and guide disabled features", 
   await router.namespace.initRouter();
   assert.equal(nav.children.length, 4);
   assert.deepEqual(fetched, ["/api/components", "/views/example.html"]);
-  await router.namespace.navigate("other");
+  const link = nav.children.find(child => child.href === "/other");
+  assert.equal(link.dataset.appLink, "");
+  link.getAttribute = name => link[name];
+  let prevented = false;
+  const click = { target: { closest: () => link }, preventDefault() { prevented = true; } };
+  onClick({ ...click, ctrlKey: true });
+  assert.equal(prevented, false);
+  allowLeave = false;
+  onClick(click);
+  assert(prevented);
+  assert(!events.includes("page-selected"));
+  allowLeave = true;
+  onClick(click);
+  assert(events.includes("page-selected"));
+  await new Promise(setImmediate);
   assert(calls.some(([module, action]) => module.endsWith("example.js") && action === "stop"));
   assert(calls.some(([module, action]) => module.endsWith("other.js") && action === "load"));
   await router.namespace.navigate("example");
   assert.equal(calls.filter(([module, action]) => module.endsWith("example.js") && action === "init").length, 1);
   await router.namespace.navigate("disabled");
   assert.equal(find(host, "page-unavailable").hidden, false);
+  assert.equal(context.document.title, "页面不可用 · TDL 管理面板");
   assert(!fetched.includes("/views/disabled.html"));
   await router.namespace.navigate("/other?tab=links#details");
   assert(calls.some(([module, action, query, hash]) => module.endsWith("other.js") && action === "load" && query === "?tab=links" && hash === "#details"));

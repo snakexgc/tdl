@@ -7,6 +7,15 @@ import { navigate } from "./router.js";
 let configurationVersion;
 let accountNamespace;
 
+// A page can mount before the shell's initial status response arrives.
+export async function currentDownloader() {
+  if (!state.downloader) {
+    const status = await api("/api/status", { signal: AbortSignal.timeout(5000) });
+    state.downloader ??= status.downloader;
+  }
+  return state.downloader;
+}
+
 export async function loadStatus() {
   try {
     const data = await api("/api/status");
@@ -30,13 +39,15 @@ export function renderStatus(data) {
     window.dispatchEvent(new CustomEvent("components-changed"));
   configurationVersion = data.configuration_version;
   const previous = state.downloaderMode;
+  const previousAria2Enabled = state.downloader?.aria2_enabled;
+  state.downloader = data.downloader || null;
   state.downloaderMode =
     data.downloader && data.downloader.mode ? data.downloader.mode : "aria2";
   const version = data.version || {};
   document.getElementById("runtime-version").textContent =
     `版本：${version.version || "-"}`;
   void loadCurrentAccount(data.namespace);
-  if (previous !== state.downloaderMode)
+  if (previous !== state.downloaderMode || previousAria2Enabled !== state.downloader?.aria2_enabled)
     window.dispatchEvent(
       new CustomEvent("downloader-changed", { detail: data.downloader }),
     );

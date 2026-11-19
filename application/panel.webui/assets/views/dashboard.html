@@ -2,106 +2,82 @@
   <header class="page-head">
     <div>
       <h1>总览</h1>
-      <p>掌握资源使用、下载表现与任务运行状态。</p>
+      <p id="dashboard-updated">正在读取运行数据…</p>
     </div>
     <button class="btn secondary" id="refresh-dashboard" type="button">刷新</button>
   </header>
-  <div class="summary-grid" id="task-overview">
-    <a class="summary-card" data-app-link href="/downloads?tab=tasks"><span>下载任务</span><strong id="overview-downloads">—</strong><small id="overview-downloads-note">正在读取</small></a>
-    <a class="summary-card" data-app-link href="/downloads?tab=tasks&state=error"><span>下载异常</span><strong id="overview-download-errors">—</strong><small>查看需要处理的任务</small></a>
-    <a class="summary-card" data-app-link href="/forwards"><span>转发任务</span><strong id="overview-forwards">—</strong><small id="overview-forwards-note">正在读取</small></a>
-    <a class="summary-card" data-app-link href="/forwards?state=error"><span>转发异常</span><strong id="overview-forward-errors">—</strong><small>查看失败任务</small></a>
-  </div>
-  <div class="dashboard-section-head">
-    <h2>运行概览 <span class="pill muted">最近 30 秒</span></h2>
-    <div class="notice" id="dashboard-status" role="status"></div>
-  </div>
-  <div class="dashboard-grid">
-    <section class="dashboard-card dashboard-speed-card">
-      <div class="dashboard-card-head">
-        <div>
-          <h2>下载速度</h2>
-          <p id="dashboard-speed-meta">gotd</p>
-        </div>
-        <strong id="dashboard-speed-value">-</strong>
-      </div>
-      <div class="dashboard-chart-shell">
-        <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" role="img" aria-label="下载速度最近 30 秒曲线"></svg>
-      </div>
-      <div class="dashboard-legend">
-        <span><i class="legend-gotd"></i>gotd</span>
-      </div>
-    </section>
-    <section class="dashboard-card">
-      <div class="dashboard-card-head">
-        <div>
-          <h2>CPU 使用率</h2>
-          <p id="dashboard-cpu-meta">最近 30 秒</p>
-        </div>
-        <strong id="dashboard-cpu-value">-</strong>
-      </div>
-      <div class="dashboard-chart-shell">
-        <svg class="dashboard-chart" id="dashboard-cpu-chart" viewBox="0 0 640 160" role="img" aria-label="CPU 最近 30 秒曲线"></svg>
-      </div>
-      <div class="dashboard-legend"><span><i class="legend-cpu"></i>CPU 使用率</span></div>
-    </section>
-    <section class="dashboard-card">
-      <div class="dashboard-card-head">
-        <div>
-          <h2>内存使用</h2>
-          <p id="dashboard-memory-meta">总用量 / 软件用量 / 保留堆</p>
-        </div>
-        <strong id="dashboard-memory-value">-</strong>
-      </div>
-      <div class="dashboard-chart-shell">
-        <svg class="dashboard-chart" id="dashboard-memory-chart" viewBox="0 0 640 160" role="img" aria-label="内存最近 30 秒曲线"></svg>
-      </div>
-      <div class="dashboard-legend">
-        <span><i class="legend-total"></i>总用量</span>
-        <span><i class="legend-software"></i>软件用量</span>
-        <span><i class="legend-retained"></i>保留堆</span>
-      </div>
-    </section>
 
-  </div>
+  <nav class="summary-grid" id="task-overview" aria-label="当前账号任务概况">
+    <a class="summary-card" data-app-link href="/downloads?tab=tasks">
+      <span>下载任务</span><strong id="overview-downloads">—</strong>
+      <small id="overview-downloads-note">正在读取…</small>
+    </a>
+    <a class="summary-card" data-app-link href="/downloads?tab=tasks&state=error">
+      <span>下载异常</span><strong id="overview-download-errors">—</strong>
+      <small id="overview-download-errors-note">正在读取…</small>
+    </a>
+    <a class="summary-card" data-app-link href="/forwards">
+      <span>转发任务</span><strong id="overview-forwards">—</strong>
+      <small id="overview-forwards-note">正在读取…</small>
+    </a>
+    <a class="summary-card" data-app-link href="/forwards?state=error">
+      <span>转发异常</span><strong id="overview-forward-errors">—</strong>
+      <small id="overview-forward-errors-note">正在读取…</small>
+    </a>
+  </nav>
+
+  <section aria-labelledby="dashboard-metrics-title">
+    <header class="dashboard-section-head">
+      <h2 id="dashboard-metrics-title">运行指标</h2>
+      <span>最近 30 秒</span>
+    </header>
+    <div class="notice" id="dashboard-status" role="status"></div>
+    <div class="dashboard-grid">
+      <section class="dashboard-card dashboard-speed-card">
+        <h3>下载速度</h3>
+        <strong class="dashboard-reading" id="dashboard-speed-value">—</strong>
+        <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" role="img" aria-label="最近 30 秒的 gotd 下载速度"></svg>
+        <p class="dashboard-meta" id="dashboard-speed-meta">正在读取…</p>
+      </section>
+      <section class="dashboard-card">
+        <h3>CPU 使用率</h3>
+        <strong class="dashboard-reading" id="dashboard-cpu-value">—</strong>
+        <svg class="dashboard-chart" id="dashboard-cpu-chart" viewBox="0 0 640 160" role="img" aria-label="最近 30 秒的 CPU 使用率"></svg>
+        <p class="dashboard-meta" id="dashboard-cpu-meta">正在读取…</p>
+      </section>
+      <section class="dashboard-card">
+        <h3>进程内存</h3>
+        <strong class="dashboard-reading" id="dashboard-memory-value">—</strong>
+        <svg class="dashboard-chart" id="dashboard-memory-chart" viewBox="0 0 640 160" role="img" aria-label="最近 30 秒的进程内存、软件用量和保留堆"></svg>
+        <div class="dashboard-legend">
+          <span><i class="legend-total"></i>总用量</span>
+          <span><i class="legend-software"></i>软件用量</span>
+          <span><i class="legend-retained"></i>保留堆</span>
+        </div>
+      </section>
+    </div>
+    <details class="dashboard-history" id="dashboard-history">
+      <summary>查看采样明细</summary>
+      <div class="dashboard-history-scroll" tabindex="0" role="region" aria-label="最近 30 秒的采样明细">
+        <table aria-label="最近 30 秒的采样明细">
+          <thead><tr><th scope="col">采样时间</th><th scope="col">下载速度</th><th scope="col">CPU 使用率</th><th scope="col">进程内存</th><th scope="col">软件用量</th><th scope="col">保留堆</th></tr></thead>
+          <tbody id="dashboard-history-body"><tr><td colspan="6">正在等待采样…</td></tr></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
   <section class="dashboard-diagnostics" aria-labelledby="dashboard-diagnostics-title">
-    <h2 id="dashboard-diagnostics-title">下载调度与诊断指标</h2>
-    <section class="dashboard-card dashboard-pull-card">
-      <div class="dashboard-card-head dashboard-card-head-plain">
-        <div>
-          <h2>下载状态</h2>
-          <p id="dashboard-dc-schedulers-meta">DC 调度器：暂无活动</p>
-        </div>
-      </div>
-      <div class="dashboard-stat-bars">
-        <div class="dashboard-stat-row">
-          <div class="dashboard-stat-line">
-            <span>活跃分片请求数</span>
-            <strong id="dashboard-active-chunks-value">-</strong>
-          </div>
-          <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill" id="dashboard-active-chunks-bar"></i>
-          </div>
-        </div>
-        <div class="dashboard-stat-row">
-          <div class="dashboard-stat-line">
-            <span>近 10 秒错误请求数</span>
-            <strong id="dashboard-file-errors-10s-value">-</strong>
-          </div>
-          <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill dashboard-stat-fill-danger" id="dashboard-file-errors-10s-bar"></i>
-          </div>
-        </div>
-        <div class="dashboard-stat-row">
-          <div class="dashboard-stat-line">
-            <span>错误总数</span>
-            <strong id="dashboard-file-errors-value">-</strong>
-          </div>
-          <div class="dashboard-stat-track">
-            <i class="dashboard-stat-fill dashboard-stat-fill-warning" id="dashboard-file-errors-bar"></i>
-          </div>
-        </div>
-      </div>
-    </section>
+    <header class="dashboard-section-head">
+      <h2 id="dashboard-diagnostics-title">下载调度</h2>
+    </header>
+    <div class="dashboard-diagnostic-panel">
+      <dl class="dashboard-counts">
+        <div><dt>活跃分片请求</dt><dd id="dashboard-active-chunks-value">—</dd></div>
+        <div><dt>近 10 秒错误请求</dt><dd id="dashboard-file-errors-10s-value">—</dd></div>
+        <div><dt>累计错误请求</dt><dd id="dashboard-file-errors-value">—</dd></div>
+      </dl>
+      <p class="dashboard-schedulers" id="dashboard-dc-schedulers-meta">正在读取 DC 调度器…</p>
+    </div>
   </section>
 </section>

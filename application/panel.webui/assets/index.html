@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/css/workspace.css">
 </head>
 <body>
-  <a class="skip-link" href="#view-host">跳到主要内容</a>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
   <div class="app-shell">
     <aside class="sidebar" id="app-sidebar" aria-label="工作空间导航">
       <div class="brand">
@@ -27,16 +27,16 @@
         <div class="sidebar-foot-title">TDL 状态</div>
         <div class="heartbeat" id="heartbeat-indicator" data-state="checking" role="status" aria-live="polite">
           <span class="heartbeat-dot" aria-hidden="true"></span>
-          <span id="heartbeat-label">断开连接</span>
+          <span id="heartbeat-label">正在连接</span>
         </div>
         <div id="runtime-version">版本：—</div>
         <button class="sidebar-logout" id="logout" type="button">退出登录</button>
       </div>
     </aside>
-    <button class="sidebar-backdrop" id="sidebar-backdrop" type="button" aria-label="关闭导航" tabindex="-1" hidden></button>
+    <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true" hidden></div>
     <header class="topbar">
       <div class="topbar-location">
-        <button class="icon-button menu-toggle" id="menu-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false" aria-label="打开导航">
+        <button class="icon-button menu-toggle" id="menu-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false" aria-haspopup="dialog" aria-label="打开导航">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
         </button>
         <span class="topbar-workspace">工作空间</span>
@@ -49,7 +49,7 @@
         <svg class="account-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
       </a>
     </header>
-    <main class="main">
+    <main class="main" id="main-content" tabindex="-1" aria-labelledby="current-page">
       <div id="view-host" tabindex="-1">
         <div class="view-loading">正在载入管理面板...</div>
       </div>

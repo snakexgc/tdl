@@ -51,6 +51,13 @@
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
   font-weight: 500;
 }
+.page-tabs .tab-button:not(.active):hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+.page-tabs .tab-button:focus-visible {
+  outline-offset: -2px;
+}
 .task-toolbar,
 .bulk-toolbar {
   display: flex;
@@ -78,7 +85,7 @@
 .rule-editor input:not([type="checkbox"]),
 .rule-editor select {
   min-height: 38px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: 8px;
   padding: 8px 12px;
   background: var(--panel);
@@ -94,7 +101,7 @@
 .settings-input > select:hover,
 .proxy-editor input:hover,
 .proxy-editor select:hover {
-  border-color: var(--line-strong);
+  border-color: var(--muted);
 }
 .settings-input > input[type="checkbox"] {
   accent-color: var(--primary);
@@ -169,6 +176,96 @@
 .task-progress progress::-moz-progress-bar {
   background: var(--chart-2);
   border-radius: 8px;
+}
+.task-mobile-label {
+  display: none;
+}
+.task-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.task-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.table-shell:has(.task-table) {
+  container: task-list / inline-size;
+}
+/* Use the available table width, including when a sidebar is present. */
+@container task-list (max-width: 760px) {
+  #view-host .task-table,
+  .task-table thead,
+  .task-table tbody {
+    display: block;
+    min-width: 0;
+  }
+  .task-table thead tr {
+    display: flex;
+    background: var(--panel-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  .task-table:has(td.empty) thead {
+    display: none;
+  }
+  .task-table thead th:first-child {
+    position: static;
+    padding: 0 12px;
+    border: 0;
+  }
+  .task-table thead th:not(:first-child) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .task-check {
+    min-width: 44px;
+    min-height: 44px;
+    gap: 10px;
+  }
+  .task-table thead .task-check {
+    padding-inline-start: 13px;
+  }
+  .task-mobile-label {
+    display: inline;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .task-table tbody tr {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px 4px;
+    padding: 10px 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .task-table tbody tr:last-child {
+    border: 0;
+  }
+  .task-table td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+  .task-table .empty {
+    grid-column: 1 / -1;
+    padding: 28px 8px;
+  }
+  .task-table .task-wide {
+    grid-column: 1 / -1;
+  }
+  .task-table .row-actions {
+    margin-top: 4px;
+  }
+  .task-table .row-actions .btn {
+    min-height: 44px;
+  }
 }
 .detail-drawer {
   position: fixed;
@@ -384,54 +481,6 @@
 #download-links-panel .page-head p {
   margin-top: 0;
 }
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
-}
-.summary-card {
-  display: grid;
-  gap: 10px;
-  padding: 20px 24px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  color: var(--text);
-  text-decoration: none;
-  background: var(--panel);
-}
-.summary-card span,
-.summary-card small {
-  color: var(--muted);
-}
-.summary-card strong {
-  font-size: 30px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.summary-card:hover {
-  background: var(--panel-soft);
-}
-.dashboard-diagnostics {
-  margin-top: 24px;
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-}
-.dashboard-diagnostics > h2 {
-  font-size: 14px;
-  font-weight: 600;
-}
-.dashboard-diagnostics .dashboard-pull-card {
-  margin-top: 20px;
-  min-height: 0;
-  box-shadow: none;
-  border: 0;
-  padding: 0;
-}
-.dashboard-grid .dashboard-speed-card {
-  grid-column: 1 / -1;
-}
 @media (max-width: 1200px) {
   .settings-field {
     grid-template-columns: 180px minmax(0, 1fr);
@@ -440,9 +489,6 @@
   .settings-field > small {
     grid-column: 2;
     padding-top: 0;
-  }
-  .summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 900px) {
@@ -486,8 +532,10 @@
   .drawer-head {
     padding: 16px;
   }
-  .summary-card {
-    padding: 16px;
+  .page-tabs .tab-button,
+  .task-toolbar select,
+  .task-toolbar input {
+    min-height: 44px;
   }
   #current-account {
     max-width: 88px;
@@ -497,11 +545,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-}
-@media (max-width: 360px) {
-  .summary-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -527,8 +570,8 @@
   height: 34px;
   flex: 0 0 34px;
   border-radius: 50%;
-  background: #e5e5e5;
-  color: #262626;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
   font-size: 12px;
   font-weight: 600;
 }
@@ -583,6 +626,7 @@
 }
 @media (max-width: 600px) {
   #current-account.account-profile {
+    min-height: 44px;
     max-width: 170px;
     gap: 8px;
     padding: 4px;

@@ -4,6 +4,7 @@ export const state = {
   config: null,
   aria2Loaded: false,
   downloaderMode: "aria2",
+  downloader: null,
   localDownloads: [],
   selectedLocalDownloads: new Set(),
   localDownloadSamples: new Map(),
@@ -28,3 +29,9 @@ export const state = {
   loginPanel: "",
   lastLoginData: null,
 };
+
+export function trackedExecutor(downloader) {
+  if (downloader?.mode === "local") return "local";
+  if (downloader?.mode === "aria2" && downloader.aria2_enabled !== false) return "aria2";
+  return "";
+}

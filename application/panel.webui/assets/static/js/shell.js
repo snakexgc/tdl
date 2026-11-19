@@ -5,8 +5,14 @@ export function initShell() {
   const backdrop = document.getElementById("sidebar-backdrop");
   const close = document.getElementById("sidebar-close");
   const content = document.querySelector("main.main");
+  const background = document.querySelectorAll(".skip-link, .topbar, main.main, .credential-warning");
   const mobile = window.matchMedia("(max-width: 900px)");
   let open = false;
+
+  function focusNavigation() {
+    const link = sidebar.querySelector(".nav-item.active") || sidebar.querySelector(".nav-item");
+    (link || close).focus();
+  }
 
   function setOpen(value, restoreFocus = false) {
     open = mobile.matches && value;
@@ -16,17 +22,18 @@ export function initShell() {
     sidebar.inert = mobile.matches && !open;
     sidebar.role = open ? "dialog" : "complementary";
     sidebar.ariaModal = open ? "true" : null;
-    content.inert = open;
+    for (const element of background) element.inert = open;
     backdrop.hidden = !open;
-    if (open) sidebar.querySelector(".nav-item.active, .nav-item")?.focus();
+    if (open) focusNavigation();
     else if (restoreFocus) toggle.focus();
   }
 
   toggle.addEventListener("click", () => setOpen(!open));
   backdrop.addEventListener("click", () => setOpen(false, true));
   close.addEventListener("click", () => setOpen(false, true));
-  sidebar.addEventListener("click", event => {
-    if (event.target.closest("a.nav-item") && open) setOpen(false, true);
+  document.querySelector(".skip-link").addEventListener("click", event => {
+    event.preventDefault();
+    content.focus();
   });
   document.addEventListener("keydown", event => {
     if (!open) return;
@@ -35,13 +42,26 @@ export function initShell() {
       setOpen(false, true);
     }
     if (event.key === "Tab") {
-      const items = [...sidebar.querySelectorAll("a[href], button:not(:disabled)")];
-      const index = items.indexOf(document.activeElement);
-      event.preventDefault();
-      items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length]?.focus();
+      const items = sidebar.querySelectorAll("a[href], button:not(:disabled)");
+      const first = items[0], last = items[items.length - 1];
+      const boundary = event.shiftKey ? first : last;
+      if (document.activeElement === boundary || !sidebar.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+      }
     }
   });
-  mobile.addEventListener("change", () => setOpen(false));
-  window.addEventListener("popstate", () => setOpen(false));
+  mobile.addEventListener("change", () => {
+    const active = document.activeElement;
+    setOpen(false);
+    if (mobile.matches && sidebar.contains(active)) toggle.focus();
+    else if (!mobile.matches && (active === toggle || active === close)) {
+      (sidebar.querySelector(".nav-item.active") || document.getElementById("logout")).focus();
+    }
+  });
+  window.addEventListener("page-selected", () => {
+    if (open) setOpen(false);
+    content.focus();
+  });
   setOpen(false);
 }

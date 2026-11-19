@@ -1,0 +1,99 @@
+.auth-page {
+  background: var(--panel-soft);
+}
+.auth-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px;
+}
+.auth-panel {
+  width: min(420px, 100%);
+  padding: 32px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.auth-panel header p {
+  margin-top: 12px;
+}
+.auth-form {
+  display: grid;
+  gap: 20px;
+  margin-top: 28px;
+}
+.auth-form .field-inline {
+  margin-bottom: 0;
+}
+.auth-form label {
+  font-weight: 500;
+}
+.auth-form .field-inline input,
+.auth-submit {
+  min-height: 44px;
+}
+.auth-submit {
+  width: 100%;
+}
+.auth-form .field-inline input {
+  border-color: var(--control-line);
+  font-size: 16px;
+}
+.auth-secret {
+  display: flex;
+}
+.auth-secret:has(.auth-reveal:not([hidden])) input {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+.auth-secret input::-ms-reveal {
+  display: none;
+}
+.auth-reveal {
+  flex: 0 0 auto;
+  min-width: 52px;
+  border: 1px solid var(--control-line);
+  border-inline-start: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--panel-soft);
+  color: var(--text);
+  cursor: pointer;
+}
+.auth-reveal:hover {
+  background: var(--bg-strong);
+}
+.auth-secret :focus-visible {
+  z-index: 1;
+}
+.auth-form input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.auth-submit[aria-disabled="true"] {
+  cursor: wait;
+  background: var(--primary-light);
+}
+.auth-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.auth-status:not(:empty) {
+  margin-top: 12px;
+}
+.auth-status[data-kind="error"] {
+  color: var(--danger);
+}
+@media (max-width: 560px) {
+  .auth-shell {
+    padding: 16px;
+  }
+  .auth-panel {
+    padding: 24px;
+  }
+}

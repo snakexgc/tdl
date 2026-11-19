@@ -2,12 +2,14 @@ import { api } from "./api.js";
 import { element, button, openDrawer, closeDrawer } from "./ui.js";
 import { formatTime, formatBytes } from "./utils.js";
 import { statusLabel, statusClass } from "./download-model.js";
+import { trackedExecutor } from "./state.js";
+import { currentDownloader } from "./status.js";
 import { cloneRules, rulesEqual, matchingDialogs, hasChannel, sourceName, sourceKinds, validateRules, listenTasks, listenSourceGroups } from "./listen-model.js";
 
 const ID = "download.listen";
 let component, rules = [], dialogs = [], editable = false, busy = false, active = false,
   generation = 0, timer, catalogError = "", statusError = "", dialogRequest, statusRequest,
-  lastStatus, downloadTasks = [], downloadError = "";
+  lastStatus, downloadTasks = [], downloadError = "", downloadExecutor = "";
 const $ = id => document.getElementById(id);
 const dirty = () => !rulesEqual(rules, component?.values?.rules || []);
 
@@ -195,12 +197,15 @@ function renderTasks(host, tasks) {
     const label = ({ pending: "待处理", submitting: "正在提交", accepted: "已提交", filtered: "已过滤", uncertain: "待确认", obsolete: "已停止", failed: "提交失败" })[task.state] || statusLabel(task.state);
     const badge = element("span", label, `badge ${statusClass(task.state)}`);
     head.append(name, badge); row.append(head);
-    row.append(element("small", `${task.comment ? "频道评论视频" : "消息文件"} · 消息 #${task.message_id} · ${task.date ? formatTime(task.date * 1000) : "—"}${task.executor ? ` · ${task.executor === "local" ? "本地下载" : "aria2"}` : ""}`));
-    const percent = task.total > 0 ? Math.min(100, Math.max(0, task.completed / task.total * 100)) : 0;
-    const progress = element("progress"); progress.max = 100; progress.value = percent; progress.setAttribute("aria-label", `${task.file_name} 下载进度`);
-    const details = element("div", null, "listen-task-progress");
-    details.append(progress, element("span", `${percent.toFixed(1)}% · ${formatBytes(task.completed)} / ${task.total ? formatBytes(task.total) : "大小未知"}${task.download_speed > 0 ? ` · ${formatBytes(task.download_speed)}/s` : ""}`));
-    row.append(details);
+    const transferInfo = task.executor ? (task.executor === "local" ? "本地下载" : "aria2") : task.total ? formatBytes(task.total) : "";
+    row.append(element("small", `${task.comment ? "频道评论视频" : "消息文件"} · 消息 #${task.message_id} · ${task.date ? formatTime(task.date * 1000) : "—"}${transferInfo ? ` · ${transferInfo}` : ""}`));
+    if (task.executor) {
+      const percent = task.total > 0 ? Math.min(100, Math.max(0, task.completed / task.total * 100)) : 0;
+      const progress = element("progress"); progress.max = 100; progress.value = percent; progress.setAttribute("aria-label", `${task.file_name} 下载进度`);
+      const details = element("div", null, "listen-task-progress");
+      details.append(progress, element("span", `${percent.toFixed(1)}% · ${formatBytes(task.completed)} / ${task.total ? formatBytes(task.total) : "大小未知"}${task.download_speed > 0 ? ` · ${formatBytes(task.download_speed)}/s` : ""}`));
+      row.append(details);
+    }
     if (task.error) row.append(element("p", task.error, "notice error"));
     list.append(row);
   }
@@ -209,15 +214,27 @@ function renderTasks(host, tasks) {
 
 function validTime(value) { return !value || value.startsWith("0001-") ? "尚未补齐" : formatTime(value); }
 
+async function refreshTransfers(version) {
+  const downloader = await currentDownloader();
+  if (!active || version !== generation) return;
+  const executor = trackedExecutor(downloader);
+  if (executor !== downloadExecutor) {
+    downloadExecutor = executor;
+    downloadTasks = [];
+  }
+  if (!executor) return;
+  const result = await api(`/api/download-tasks?executor=${executor}`);
+  if (active && version === generation) downloadTasks = result.items || [];
+}
+
 async function refreshStatus() {
   if (statusRequest) return statusRequest;
   const version = generation;
   const call = (async () => {
   try {
-    const [status, transfers] = await Promise.allSettled([api("/api/listen-downloads/status"), api("/api/download-tasks")]);
+    const [status, transfers] = await Promise.allSettled([api("/api/listen-downloads/status"), refreshTransfers(version)]);
     if (!active || version !== generation) return;
-    if (transfers.status === "fulfilled") { downloadTasks = transfers.value.items || []; downloadError = ""; }
-    else downloadError = transfers.reason.message;
+    downloadError = transfers.status === "rejected" ? transfers.reason.message : "";
     if (status.status === "rejected") throw status.reason;
     statusError = ""; lastStatus = status.value; renderStatus(lastStatus);
   } catch (error) {
@@ -269,5 +286,5 @@ async function load() {
   if (active && version === generation) timer = setInterval(() => { void refreshStatus(); }, 5000);
 }
 
-function stop() { active = false; ++generation; clearInterval(timer); closeDrawer(); }
+function stop() { active = false; ++generation; statusRequest = null; clearInterval(timer); closeDrawer(); }
 export const page = { init, load, stop, dirty };

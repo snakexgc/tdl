@@ -1,6 +1,7 @@
-// Dashboard view: live CPU/memory/speed charts and download stat bars.
-import { state } from "./state.js";
+// Dashboard view: live process metrics and task counts.
+import { state, trackedExecutor } from "./state.js";
 import { api } from "./api.js";
+import { currentDownloader } from "./status.js";
 import {
   setText,
   formatBytes,
@@ -8,52 +9,87 @@ import {
   formatCount,
   formatTime,
   escapeHTML,
-  clampNumber,
 } from "./utils.js";
 
 import { observe } from "./events.js";
+const historyWindow = 30_000;
+const sampleClock = new Intl.DateTimeFormat("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const speedText = value => `${formatBytes(value)}/s`;
+const reading = (value, formatter) => value == null ? "—" : formatter(value);
+const chartPointers = new WeakMap();
 let unobserve;
-let overviewReleases = [], overviewData = {}, overviewErrors = {}, overviewActive = false, overviewGeneration = 0;
+let dashboardGeneration = 0;
+let overviewReleases = [];
+let overviewGeneration = 0;
 
 export function initDashboard() {
   document.getElementById("refresh-dashboard").addEventListener("click", () => loadDashboard({ force: true }));
+  document.getElementById("dashboard-history").addEventListener("toggle", renderDashboardHistory);
 }
 
 export async function loadDashboard(options = {}) {
   startDashboardPolling();
-  void loadOverview();
   if (state.dashboardLoading) return;
+  void loadOverview();
+  const generation = ++dashboardGeneration;
+  const previousSample = state.dashboardSamples.at(-1);
   state.dashboardLoading = true;
   const silent = Boolean(options.silent);
-  if (!silent) setDashboardStatus("正在刷新...");
+  const button = document.getElementById("refresh-dashboard");
+  if (button) button.disabled = true;
+  if (!silent) setDashboardStatus("正在刷新…");
   try {
     const data = await api("/api/dashboard");
-    receiveDashboard(data);
+    if (generation === dashboardGeneration) receiveDashboard(data);
   } catch (error) {
-    setDashboardStatus(error.message, "error");
+    if (generation === dashboardGeneration && previousSample === state.dashboardSamples.at(-1)) receiveDashboard(null, error.message);
   } finally {
-    state.dashboardLoading = false;
+    if (generation === dashboardGeneration) {
+      state.dashboardLoading = false;
+      if (button) button.disabled = false;
+    }
   }
 }
 
 function receiveDashboard(data, error) {
-  if (error) { setDashboardStatus(error, "error"); return; }
-    pushDashboardSample(data);
-    renderDashboard();
-    const sampledAt = data.sampled_at ? formatTime(data.sampled_at) : formatTime(new Date().toISOString());
-    const errors = data.errors ? Object.values(data.errors).filter(Boolean) : [];
-    setDashboardStatus(errors.length ? `部分指标读取失败：${errors.join("；")}` : `更新于 ${sampledAt}`, errors.length ? "warn" : "");
+  if (error) {
+    const hasHistory = state.dashboardSamples.length > 0;
+    if (!hasHistory) {
+      setText("dashboard-updated", "尚未收到采样");
+      setText("dashboard-cpu-meta", "协程数未获取");
+      setText("dashboard-speed-meta", "累计下载量未获取");
+      setText("dashboard-dc-schedulers-meta", "DC 调度器状态未获取");
+    }
+    const message = hasHistory ? "采样更新中断，显示上次结果" : "运行指标读取失败";
+    setDashboardStatus(`${message}：${error}`, "error");
+    return;
+  }
+  if (!pushDashboardSample(data)) return;
+  renderDashboard();
+  const latest = state.dashboardSamples.at(-1);
+  setText("dashboard-updated", `最近采样 ${formatTime(latest.at)}`);
+  const errors = Object.values(data.errors || {}).filter(Boolean);
+  setDashboardStatus(errors.length ? `部分指标读取失败：${errors.join("；")}` : "", errors.length ? "warn" : "");
 }
 function startDashboardPolling() {
   unobserve ||= observe("dashboard", receiveDashboard);
+  window.addEventListener("downloader-changed", loadOverview);
 }
 export function stopDashboardPolling() {
+  window.removeEventListener("downloader-changed", loadOverview);
   unobserve?.();
   unobserve = null;
-  overviewActive = false; ++overviewGeneration; overviewReleases.forEach(release => release()); overviewReleases = [];
+  ++dashboardGeneration;
+  state.dashboardLoading = false;
+  stopOverview();
 }
 
 function pushDashboardSample(data) {
+  const at = Date.parse(data.sampled_at) || Date.now();
+  const samples = state.dashboardSamples;
+  // A manual snapshot can arrive after the next realtime sample.
+  if (samples.length && samples.at(-1).at > at) return false;
+  if (samples.at(-1)?.at === at) samples.pop();
   const process = data.process || {};
   const memory = data.memory || {};
   const download = data.download || {};
@@ -64,12 +100,12 @@ function pushDashboardSample(data) {
   const softwareMemory = Number(memory.software_bytes ?? totalMemory);
   const gotdSpeed = Number(download.gotd_speed_bps ?? download.speed_bps ?? 0);
 
-  state.dashboardSamples.push({
-    at: data.sampled_at ? new Date(data.sampled_at).getTime() : Date.now(),
-    cpu: Number(process.cpu_percent || 0),
+  samples.push({
+    at,
+    cpu: data.errors?.cpu ? null : Number(process.cpu_percent || 0),
     goroutines: Number(process.goroutines || 0),
-    memoryTotal: totalMemory,
-    memorySoftware: softwareMemory,
+    memoryTotal: data.errors?.memory ? null : totalMemory,
+    memorySoftware: data.errors?.memory ? null : softwareMemory,
     memoryRetained: retainedMemory,
     memoryPercent: Number(memory.total_percent || process.memory_percent || 0),
     gotdSpeed,
@@ -79,40 +115,54 @@ function pushDashboardSample(data) {
     fileErrors: Number(httpMetrics.telegram_file_errors ?? download.telegram_file_errors ?? 0),
     fileErrors10s: Number(httpMetrics.telegram_file_errors_10s ?? download.telegram_file_errors_10s ?? 0),
   });
-  if (state.dashboardSamples.length > 30) {
-    state.dashboardSamples.splice(0, state.dashboardSamples.length - 30);
-  }
+  while (samples[0].at < at - historyWindow) samples.shift();
+  return true;
 }
 
 function renderDashboard() {
   const latest = state.dashboardSamples[state.dashboardSamples.length - 1];
   if (!latest) return;
 
-  setText("dashboard-cpu-value", formatPercent(latest.cpu));
-  setText("dashboard-cpu-meta", `${latest.goroutines} goroutines`);
-  setText("dashboard-memory-value", formatBytes(latest.memoryTotal));
-  setText("dashboard-memory-meta", `软件 ${formatBytes(latest.memorySoftware)} · 保留堆 ${formatBytes(latest.memoryRetained)}`);
-  setText("dashboard-speed-value", `${formatBytes(latest.gotdSpeed)}/s`);
+  setText("dashboard-cpu-value", reading(latest.cpu, formatPercent));
+  setText("dashboard-cpu-meta", `Go 协程 ${formatCount(latest.goroutines)}`);
+  setText("dashboard-memory-value", reading(latest.memoryTotal, formatBytes));
+  setText("dashboard-speed-value", speedText(latest.gotdSpeed));
   setText("dashboard-speed-meta", `gotd 累计 ${formatBytes(latest.gotdTotal)}`);
   setText("dashboard-active-chunks-value", formatCount(latest.activeChunks));
   setText("dashboard-dc-schedulers-meta", formatDCSchedulers(latest.dcSchedulers));
   setText("dashboard-file-errors-value", formatCount(latest.fileErrors));
-  setText("dashboard-file-errors-10s-value", formatCount(latest.fileErrors10s));
-  renderDashboardStatBars(latest);
+  setErrorCount("dashboard-file-errors-10s-value", latest.fileErrors10s);
 
-  renderSmoothChart("dashboard-cpu-chart", "dashboard-cpu-axis", [
+  renderChart("dashboard-cpu-chart", [
     { key: "cpu", label: "CPU", color: "var(--chart-1)" },
   ], { min: 0, formatter: formatPercent });
 
-  renderSmoothChart("dashboard-memory-chart", "dashboard-memory-axis", [
+  renderChart("dashboard-memory-chart", [
     { key: "memoryTotal", label: "总用量", color: "var(--chart-1)" },
-    { key: "memorySoftware", label: "软件用量", color: "var(--chart-2)" },
-    { key: "memoryRetained", label: "保留堆", color: "var(--chart-3)" },
+    { key: "memorySoftware", label: "软件用量", color: "var(--chart-2)", dash: "6 4" },
+    { key: "memoryRetained", label: "保留堆", color: "var(--chart-3)", dash: "1 3" },
   ], { min: 0, formatter: formatBytes });
 
-  renderSmoothChart("dashboard-speed-chart", "dashboard-speed-axis", [
+  renderChart("dashboard-speed-chart", [
     { key: "gotdSpeed", label: "gotd", color: "var(--chart-1)" },
-  ], { min: 0, formatter: (value) => `${formatBytes(value)}/s` });
+  ], { min: 0, formatter: speedText });
+  renderDashboardHistory();
+}
+
+function renderDashboardHistory() {
+  if (!document.getElementById("dashboard-history")?.open) return;
+  const rows = state.dashboardSamples.slice().reverse().map(sample => {
+    const values = [sampleClock.format(sample.at), speedText(sample.gotdSpeed), reading(sample.cpu, formatPercent),
+      reading(sample.memoryTotal, formatBytes), reading(sample.memorySoftware, formatBytes), formatBytes(sample.memoryRetained)];
+    return `<tr>${values.map(value => `<td>${escapeHTML(value)}</td>`).join("")}</tr>`;
+  });
+  document.getElementById("dashboard-history-body").innerHTML = rows.join("") || '<tr><td colspan="6">尚未收到采样</td></tr>';
+}
+
+function setErrorCount(id, count) {
+  const element = document.getElementById(id);
+  element.textContent = reading(count, formatCount);
+  element.toggleAttribute("data-attention", count > 0);
 }
 
 function formatDCSchedulers(schedulers) {
@@ -127,58 +177,37 @@ function formatDCSchedulers(schedulers) {
   }).join("；");
 }
 
-function renderDashboardStatBars(latest) {
-  const max = Math.max(
-    1,
-    Number(latest.activeChunks || 0),
-    Number(latest.fileErrors10s || 0),
-    Number(latest.fileErrors || 0)
-  );
-  setDashboardStatBar("dashboard-active-chunks-bar", latest.activeChunks, max);
-  setDashboardStatBar("dashboard-file-errors-10s-bar", latest.fileErrors10s, max);
-  setDashboardStatBar("dashboard-file-errors-bar", latest.fileErrors, max);
-}
-
-function setDashboardStatBar(id, value, max) {
-  const target = document.getElementById(id);
-  if (!target) return;
-  const numeric = Math.max(0, Number(value || 0));
-  const percent = max > 0 ? Math.min(100, Math.max(2, (numeric / max) * 100)) : 0;
-  target.style.width = numeric > 0 ? `${percent}%` : "0";
-}
-
-function renderSmoothChart(svgID, axisID, series, options = {}) {
+function renderChart(svgID, series, options = {}) {
   const svg = document.getElementById(svgID);
-  const axis = document.getElementById(axisID);
   if (!svg) return;
-  if (axis) axis.textContent = "";
 
   const bounds = svg.getBoundingClientRect();
   const width = Math.max(1, Math.round(bounds.width || 640));
-  const height = Math.max(140, Math.round(bounds.height || 160));
+  const height = Math.max(1, Math.round(bounds.height || 160));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.removeAttribute("preserveAspectRatio");
 
-  const padding = { top: 10, right: 12, bottom: 24, left: 74 };
+  const range = dashboardChartRange(series, options);
+  const formatter = options.formatter || String;
+  const axisValues = [range.max, (range.min + range.max) / 2, range.min];
+  const labelWidth = Math.max(...axisValues.map(value => estimatedTextWidth(formatter(value))));
+  const padding = { top: 10, right: 6, bottom: 22, left: Math.ceil(labelWidth) + 10 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const range = dashboardChartRange(series, options);
-  const slotCount = 30;
-  const slotOffset = Math.max(0, slotCount - state.dashboardSamples.length);
-  const formatter = options.formatter || ((value) => String(value));
+  const samples = state.dashboardSamples;
+  const start = samples.at(-1).at - historyWindow;
 
   const yFor = (value) => {
     const ratio = (Number(value || 0) - range.min) / (range.max - range.min);
     return padding.top + (1 - Math.min(1, Math.max(0, ratio))) * plotHeight;
   };
-  const xFor = (index) => padding.left + ((slotOffset + index) / (slotCount - 1)) * plotWidth;
+  const xFor = (index) => padding.left + (samples[index].at - start) / historyWindow * plotWidth;
 
-  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+  const grid = [0, 0.5].map((ratio) => {
     const y = padding.top + ratio * plotHeight;
     return `<line class="grid-line" x1="${padding.left}" y1="${y.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${y.toFixed(2)}"></line>`;
   }).join("");
 
-  const axisValues = [range.max, range.min + (range.max - range.min) / 2, range.min];
   const yAxisLabels = axisValues.map((value) => {
     const y = yFor(value);
     return [
@@ -192,19 +221,23 @@ function renderSmoothChart(svgID, axisID, series, options = {}) {
     `<line class="axis-line" x1="${padding.left}" y1="${xAxisY.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${xAxisY.toFixed(2)}"></line>`,
     `<line class="axis-tick" x1="${padding.left}" y1="${xAxisY.toFixed(2)}" x2="${padding.left}" y2="${(xAxisY + 5).toFixed(2)}"></line>`,
     `<line class="axis-tick" x1="${(width - padding.right).toFixed(2)}" y1="${xAxisY.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${(xAxisY + 5).toFixed(2)}"></line>`,
-    `<text class="axis-label" x="${padding.left}" y="${(height - 5).toFixed(2)}" text-anchor="start">30s</text>`,
-    `<text class="axis-label" x="${(width - padding.right).toFixed(2)}" y="${(height - 5).toFixed(2)}" text-anchor="end">现在</text>`,
+    `<text class="axis-label" x="${padding.left}" y="${(height - 5).toFixed(2)}" text-anchor="start">30 秒前</text>`,
+    `<text class="axis-label" x="${(width - padding.right).toFixed(2)}" y="${(height - 5).toFixed(2)}" text-anchor="end">最新采样</text>`,
   ].join("");
 
   const paths = series.map((item) => {
-    const points = state.dashboardSamples.map((sample, index) => ({
-      x: xFor(index),
-      y: yFor(sample[item.key]),
-    }));
-    if (!points.length) return "";
-    const d = smoothDashboardPath(points);
-    const point = points.length === 1 ? `<circle cx="${points[0].x.toFixed(2)}" cy="${points[0].y.toFixed(2)}" r="3.5" fill="${item.color}"></circle>` : "";
-    return `<path class="series-line" d="${d}" stroke="${item.color}"></path>${point}`;
+    let markers = "";
+    const d = samples.map((sample, index) => {
+      if (sample[item.key] == null) return "";
+      const x = xFor(index).toFixed(2);
+      const y = yFor(sample[item.key]).toFixed(2);
+      const first = samples[index - 1]?.[item.key] == null;
+      if (first && samples[index + 1]?.[item.key] == null) {
+        markers += `<circle cx="${x}" cy="${y}" r="3" fill="${item.color}"></circle>`;
+      }
+      return `${first ? "M" : "L"}${x} ${y}`;
+    }).join(" ");
+    return `<path class="series-line" d="${d}" stroke="${item.color}" stroke-dasharray="${item.dash || "none"}"></path>${markers}`;
   }).join("");
   const hoverLayer = `<g class="chart-hover-layer"></g><rect class="chart-hit-area" x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight}"></rect>`;
 
@@ -216,8 +249,7 @@ function renderSmoothChart(svgID, axisID, series, options = {}) {
     plotHeight,
     plotWidth,
     series,
-    slotCount,
-    slotOffset,
+    start,
     width,
     xAxisY,
     xFor,
@@ -230,17 +262,24 @@ function bindDashboardChartHover(svg, chart) {
   const hoverLayer = svg.querySelector(".chart-hover-layer");
   if (!hitArea || !hoverLayer || !state.dashboardSamples.length) return;
 
-  hitArea.addEventListener("mousemove", (event) => {
+  function showPoint(clientX) {
     const rect = svg.getBoundingClientRect();
-    const rawX = (event.clientX - rect.left) * chart.width / rect.width;
+    const rawX = (clientX - rect.left) * chart.width / rect.width;
     const x = Math.min(chart.width - chart.padding.right, Math.max(chart.padding.left, rawX));
-    const virtualIndex = ((x - chart.padding.left) / chart.plotWidth) * (chart.slotCount - 1) - chart.slotOffset;
-    const index = Math.min(state.dashboardSamples.length - 1, Math.max(0, Math.round(virtualIndex)));
+    const time = chart.start + (x - chart.padding.left) / chart.plotWidth * historyWindow;
+    const index = state.dashboardSamples.reduce((nearest, sample, i, samples) =>
+      Math.abs(sample.at - time) < Math.abs(samples[nearest].at - time) ? i : nearest, 0);
     renderDashboardChartHover(hoverLayer, chart, index);
-  });
-  hitArea.addEventListener("mouseleave", () => {
+  }
+  svg.onpointermove = event => {
+    chartPointers.set(svg, event.clientX);
+    showPoint(event.clientX);
+  };
+  svg.onpointerleave = svg.onpointercancel = () => {
+    chartPointers.delete(svg);
     hoverLayer.innerHTML = "";
-  });
+  };
+  if (chartPointers.has(svg)) showPoint(chartPointers.get(svg));
 }
 
 function renderDashboardChartHover(layer, chart, index) {
@@ -251,8 +290,8 @@ function renderDashboardChartHover(layer, chart, index) {
   const rows = chart.series.map((item) => ({
     color: item.color,
     label: item.label || item.key,
-    value: chart.formatter(sample[item.key] || 0),
-    y: chart.yFor(sample[item.key]),
+    value: reading(sample[item.key], chart.formatter),
+    y: sample[item.key] == null ? null : chart.yFor(sample[item.key]),
   }));
   const title = dashboardSampleLabel(sample);
   const labels = [title, ...rows.map((row) => `${row.label}: ${row.value}`)];
@@ -265,7 +304,7 @@ function renderDashboardChartHover(layer, chart, index) {
   tooltipX = Math.max(6, tooltipX);
   const tooltipY = chart.padding.top + 6;
 
-  const points = rows.map((row) => (
+  const points = rows.filter(row => row.y != null).map((row) => (
     `<circle class="hover-point" cx="${pointX.toFixed(2)}" cy="${row.y.toFixed(2)}" r="4.2" fill="${row.color}"></circle>`
   )).join("");
   const tooltipRows = rows.map((row, rowIndex) => {
@@ -291,7 +330,7 @@ function dashboardSampleLabel(sample) {
   const latest = state.dashboardSamples[state.dashboardSamples.length - 1];
   if (!latest || !sample.at || !latest.at) return "采样点";
   const seconds = Math.max(0, Math.round((latest.at - sample.at) / 1000));
-  return seconds === 0 ? "现在" : `${seconds}s 前`;
+  return seconds === 0 ? "最新采样" : `${seconds} 秒前`;
 }
 
 function estimatedTextWidth(text) {
@@ -309,7 +348,7 @@ function dashboardChartRange(series, options = {}) {
   const configuredMin = Number(options.min ?? 0);
   const min = Number.isFinite(configuredMin) ? configuredMin : 0;
   const maxValue = Math.max(...values, min);
-  const max = niceCeil(Math.max(maxValue * 1.15, min + 1));
+  const max = niceCeil(Math.max(maxValue * 1.15, min + 2));
   return { min, max: max <= min ? min + 1 : max };
 }
 
@@ -324,68 +363,71 @@ function niceCeil(value) {
   return nice * power;
 }
 
-function smoothDashboardPath(points) {
-  const formatPoint = (point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-  if (points.length === 1) return `M ${formatPoint(points[0])}`;
-  if (points.length === 2) {
-    const [a, b] = points;
-    const midX = (a.x + b.x) / 2;
-    return `M ${formatPoint(a)} C ${midX.toFixed(2)} ${a.y.toFixed(2)}, ${midX.toFixed(2)} ${b.y.toFixed(2)}, ${formatPoint(b)}`;
-  }
-
-  let d = `M ${formatPoint(points[0])}`;
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const p0 = points[index - 1] || points[index];
-    const p1 = points[index];
-    const p2 = points[index + 1];
-    const p3 = points[index + 2] || p2;
-    const cp1 = {
-      x: p1.x + (p2.x - p0.x) / 6,
-      y: p1.y + (p2.y - p0.y) / 6,
-    };
-    const cp2 = {
-      x: p2.x - (p3.x - p1.x) / 6,
-      y: p2.y - (p3.y - p1.y) / 6,
-    };
-    const minY = Math.min(p1.y, p2.y);
-    const maxY = Math.max(p1.y, p2.y);
-    cp1.y = clampNumber(cp1.y, minY, maxY);
-    cp2.y = clampNumber(cp2.y, minY, maxY);
-    d += ` C ${formatPoint(cp1)}, ${formatPoint(cp2)}, ${formatPoint(p2)}`;
-  }
-  return d;
-}
-
 function setDashboardStatus(message, kind = "") {
   const status = document.getElementById("dashboard-status");
   if (!status) return;
   status.className = `notice ${kind}`.trim();
-  status.textContent = message || "";
+  if (status.textContent !== message) status.textContent = message;
 }
 
 export const page = { init: initDashboard, load: loadDashboard, stop: stopDashboardPolling };
 
-const overviewSources = { local: ["download-tasks-local", "/api/download-tasks?executor=local"], aria2: ["download-tasks-aria2", "/api/download-tasks?executor=aria2"], forward: ["forwards", "/api/forwards"] };
-async function loadOverview() {
-  overviewActive = true;
-  const generation = ++overviewGeneration;
-  if (!overviewReleases.length) for (const [name, [topic]] of Object.entries(overviewSources)) overviewReleases.push(observe(topic, (data, error) => receiveOverview(name, data, error)));
-  await Promise.all(Object.entries(overviewSources).map(async ([name, [, endpoint]]) => {
-    try { const data = await api(endpoint, { signal: AbortSignal.timeout(5000) }); if (generation === overviewGeneration && overviewActive) receiveOverview(name, data); }
-    catch (error) { if (generation === overviewGeneration && overviewActive) receiveOverview(name, null, error.message); }
-  }));
+function stopOverview() {
+  ++overviewGeneration;
+  for (const release of overviewReleases) release();
+  overviewReleases = [];
 }
-function receiveOverview(name, data, error) {
-  if (!overviewActive) return;
-  overviewErrors[name] = error;
-  if (!error) overviewData[name] = data?.items || [];
-  const downloads = ["local", "aria2"].flatMap(key => overviewErrors[key] ? [] : overviewData[key] || []);
-  const known = ["local", "aria2"].some(key => overviewData[key] && !overviewErrors[key]);
-  setText("overview-downloads", known ? downloads.filter(task => !["complete", "removed"].includes(task.state)).length : "—");
-  setText("overview-download-errors", known ? downloads.filter(task => task.state === "error").length : "—");
-  setText("overview-downloads-note", ["local", "aria2"].every(key => overviewData[key] && !overviewErrors[key]) ? "当前账号未结束任务" : "部分执行器尚不可用，统计可用数据");
-  const forwards = overviewData.forward;
-  setText("overview-forwards", forwards && !overviewErrors.forward ? forwards.filter(task => !["done", "error"].includes(task.status)).length : "—");
-  setText("overview-forward-errors", forwards && !overviewErrors.forward ? forwards.filter(task => task.status === "error").length : "—");
-  setText("overview-forwards-note", overviewErrors.forward ? "转发服务暂不可用" : "等待、运行及暂停中的任务");
+
+async function loadOverview() {
+  stopOverview();
+  const generation = overviewGeneration;
+  void observeOverview("forwards", "/api/forwards", generation, receiveForwardOverview);
+  try {
+    const downloader = await currentDownloader();
+    if (generation !== overviewGeneration) return;
+    const mode = trackedExecutor(downloader);
+    if (!mode) {
+      showDownloadCounts(null, "未启用任务下载器");
+      return;
+    }
+    const label = mode === "local" ? "本地" : "aria2";
+    await observeOverview(`download-tasks-${mode}`, `/api/download-tasks?executor=${mode}`, generation, (data, error) =>
+      showDownloadCounts(error ? null : data.items || [], error ? `${label}下载器不可用` : `${label} · 未结束`));
+  } catch {
+    if (generation === overviewGeneration) showDownloadCounts(null, "下载配置不可用");
+  }
+}
+
+async function observeOverview(topic, endpoint, generation, receive) {
+  let eventReceived = false;
+  overviewReleases.push(observe(topic, (data, error) => {
+    if (generation !== overviewGeneration) return;
+    eventReceived = true;
+    receive(data, error);
+  }));
+  try {
+    const data = await api(endpoint, { signal: AbortSignal.timeout(5000) });
+    if (generation === overviewGeneration && !eventReceived) receive(data);
+  } catch (error) {
+    if (generation === overviewGeneration && !eventReceived) receive(null, error.message);
+  }
+}
+
+function showDownloadCounts(items, note) {
+  const active = items?.filter(task => !["complete", "removed"].includes(task.state)).length;
+  const errors = items?.filter(task => task.state === "error").length;
+  setText("overview-downloads", reading(active, formatCount));
+  setText("overview-downloads-note", note);
+  setErrorCount("overview-download-errors", errors);
+  setText("overview-download-errors-note", items ? (errors ? "查看失败任务" : "无失败任务") : note);
+}
+
+function receiveForwardOverview(data, error) {
+  const items = error ? null : data.items || [];
+  const active = items?.filter(task => !["done", "error"].includes(task.status)).length;
+  const errors = items?.filter(task => task.status === "error").length;
+  setText("overview-forwards", reading(active, formatCount));
+  setText("overview-forwards-note", error ? "转发服务不可用" : "当前账号未结束任务");
+  setErrorCount("overview-forward-errors", errors);
+  setText("overview-forward-errors-note", error ? "转发服务不可用" : errors ? "查看失败任务" : "无失败任务");
 }

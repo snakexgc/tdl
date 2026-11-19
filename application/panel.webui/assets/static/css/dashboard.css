@@ -1,154 +1,141 @@
-/* Dashboard view: metric cards, stat bars, and SVG charts. */
-.dashboard-grid {
+/* Dashboard view: task shortcuts, sampled process metrics and download diagnostics. */
+#view-dashboard {
+  container-type: inline-size;
+}
+
+.summary-grid,
+.dashboard-diagnostic-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+
+.summary-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 16px 20px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.summary-card + .summary-card,
+.dashboard-counts > div + div {
+  border-inline-start: 1px solid var(--line);
+}
+
+.summary-card:hover,
+.summary-card:focus-visible {
+  background: var(--panel-soft);
+}
+
+.summary-card:focus-visible {
+  outline-offset: -3px;
+}
+
+.summary-card span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.summary-card span::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: 2px;
+  border: solid var(--muted);
+  border-width: 1.5px 1.5px 0 0;
+  transform: rotate(45deg);
+}
+
+.summary-card strong,
+.dashboard-reading,
+.dashboard-counts dd {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.summary-card strong {
+  font-size: 32px;
+}
+
+.summary-card small,
+.dashboard-section-head > span,
+.dashboard-meta,
+.dashboard-legend,
+.dashboard-schedulers,
+.dashboard-history summary {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.summary-card strong[data-attention],
+.dashboard-counts dd[data-attention] {
+  color: var(--danger);
 }
 
 .dashboard-section-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.dashboard-section-head h2 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 14px;
-}
-.dashboard-section-head .notice {
-  margin: 0;
-  font-size: 12px;
-}
-
-.dashboard-card {
-  min-height: 340px;
-  padding: 24px;
-  display: grid;
-  grid-template-rows: auto minmax(200px, 1fr) auto;
-  gap: 24px;
-}
-
-.dashboard-card-wide {
-  grid-column: 1 / -1;
-}
-
-.dashboard-pull-card {
-  grid-template-rows: auto 1fr;
-}
-
-.dashboard-card-head-plain {
-  justify-content: flex-start;
-}
-
-.dashboard-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.dashboard-card-head h2 {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--text);
-  line-height: 24px;
-}
-
-.dashboard-card-head p {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.dashboard-card-head strong {
-  color: var(--text);
-  font-size: 30px;
-  line-height: 36px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-/* ── Stat bars (download status card) ── */
-.dashboard-stat-bars {
-  display: grid;
-  gap: 16px;
-  align-content: center;
-}
-
-.dashboard-stat-row {
-  min-width: 0;
-}
-
-.dashboard-stat-line {
-  display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 12px;
 }
 
-.dashboard-stat-line span {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-.dashboard-stat-line strong {
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.1;
+.dashboard-section-head h2 {
+  font-size: 17px;
+  line-height: 24px;
   font-weight: 600;
-  text-align: right;
-  overflow-wrap: anywhere;
-  letter-spacing: -0.02em;
 }
 
-.dashboard-stat-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--bg-strong);
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1.12fr 1fr 1.12fr;
+  gap: 12px;
 }
 
-.dashboard-stat-fill {
+.dashboard-card {
+  min-width: 0;
+  padding: 18px 18px 12px;
+  box-shadow: none;
+}
+
+.dashboard-card h3,
+.dashboard-counts dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.dashboard-reading {
   display: block;
-  width: 0;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--chart-2);
-  transition: width 220ms ease;
-}
-
-.dashboard-stat-fill-danger {
-  background: var(--danger);
-}
-.dashboard-stat-fill-warning {
-  background: var(--chart-4);
-}
-
-/* ── SVG charts ── */
-.dashboard-chart-shell {
-  position: relative;
-  width: 100%;
-  min-height: 200px;
-  overflow: visible;
+  margin: 4px 0 12px;
+  font-size: 26px;
 }
 
 .dashboard-chart {
   display: block;
   width: 100%;
-  height: 220px;
-  min-height: 200px;
+  height: 136px;
 }
 
 .dashboard-chart .grid-line {
@@ -158,12 +145,7 @@
   vector-effect: non-scaling-stroke;
 }
 
-.dashboard-chart .axis-line {
-  stroke: var(--line);
-  stroke-width: 1.2;
-  vector-effect: non-scaling-stroke;
-}
-
+.dashboard-chart .axis-line,
 .dashboard-chart .axis-tick {
   stroke: var(--line);
   stroke-width: 1;
@@ -172,7 +154,8 @@
 
 .dashboard-chart .axis-label {
   fill: var(--muted);
-  font-size: 10.5px;
+  font: 11px var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 
 .dashboard-chart .series-line {
@@ -187,31 +170,28 @@
   stroke: var(--muted);
   stroke-width: 1;
   stroke-dasharray: 4 4;
-  vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .hover-point {
-  stroke: #ffffff;
+  stroke: var(--panel);
   stroke-width: 2;
-  vector-effect: non-scaling-stroke;
 }
 
 .dashboard-chart .hover-tooltip-bg {
-  fill: rgba(255, 255, 255, 0.97);
+  fill: var(--panel);
   stroke: var(--line-strong);
   stroke-width: 1;
-  filter: drop-shadow(0 4px 8px rgb(0 0 0 / 0.08));
 }
 
 .dashboard-chart .hover-tooltip-title {
   fill: var(--text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .dashboard-chart .hover-tooltip-text {
-  fill: var(--muted);
-  font-size: 11.5px;
+  fill: var(--text);
+  font-size: 12px;
 }
 
 .dashboard-chart .chart-hit-area {
@@ -220,79 +200,167 @@
   pointer-events: all;
 }
 
-/* ── Chart legends ── */
+.dashboard-meta,
+.dashboard-legend {
+  margin: 10px 0 0;
+}
+
 .dashboard-legend {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 4px 12px;
 }
 
 .dashboard-legend span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .dashboard-legend i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 8px;
+  width: 14px;
+  border-block-start: 2px solid var(--chart-1);
 }
 
-.legend-cpu,
-.legend-total,
-.legend-gotd {
-  background: var(--chart-1);
+.dashboard-legend .legend-software {
+  border-block-start: 2px dashed var(--chart-2);
 }
 
-.legend-software {
-  background: var(--chart-2);
+.dashboard-legend .legend-retained {
+  border-block-start: 2px dotted var(--chart-3);
 }
 
-.legend-retained {
-  background: var(--chart-3);
+.dashboard-history summary {
+  display: list-item;
+  width: fit-content;
+  padding: 10px 2px;
+  cursor: pointer;
 }
 
-@media (min-width: 1200px) {
+.dashboard-history summary:hover {
+  color: var(--text);
+}
+
+.dashboard-history-scroll {
+  overflow: auto;
+  max-height: 272px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.dashboard-history table {
+  min-width: 600px;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-history th,
+.dashboard-history td {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.dashboard-history th:first-child,
+.dashboard-history td:first-child {
+  text-align: start;
+}
+
+.dashboard-history th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-soft);
+}
+
+.dashboard-diagnostics {
+  margin-top: 16px;
+}
+
+.dashboard-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.dashboard-counts > div {
+  min-width: 0;
+  padding: 14px 18px;
+}
+
+.dashboard-counts dd {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.dashboard-schedulers {
+  margin: 0;
+  border-block-start: 1px solid var(--line);
+  padding: 10px 18px;
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 870px) {
   .dashboard-grid {
-    grid-template-columns: repeat(12, minmax(0, 1fr));
-  }
-  .dashboard-card {
-    grid-column: span 6;
-  }
-  .dashboard-pull-card {
-    grid-column: span 5;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .dashboard-speed-card {
-    grid-column: span 7;
+    grid-column: 1 / -1;
   }
 }
 
-@media (max-width: 1100px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
+@container (max-width: 640px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 20px;
   }
-
-  .dashboard-card-wide {
-    grid-column: auto;
+  .summary-card {
+    padding: 12px 14px;
   }
-}
-
-@media (max-width: 560px) {
-  .dashboard-card {
-    padding: 20px 16px;
-    gap: 20px;
+  .summary-card:nth-child(odd) {
+    border-inline-start: 0;
   }
-  .dashboard-card-head {
-    flex-wrap: wrap;
-    gap: 12px;
+  .summary-card:nth-child(n + 3) {
+    border-block-start: 1px solid var(--line);
   }
-  .dashboard-card-head strong {
+  .summary-card strong {
     font-size: 26px;
-    line-height: 32px;
+  }
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dashboard-card {
+    padding: 14px;
+  }
+  .dashboard-chart {
+    height: 112px;
+  }
+  .dashboard-counts > div {
+    padding: 12px 10px;
+  }
+  .dashboard-counts dt {
+    font-size: 13px;
+  }
+}
+
+@container (max-width: 400px) {
+  .dashboard-counts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dashboard-counts > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 14px;
+  }
+  .dashboard-counts > div + div {
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--line);
+  }
+  .dashboard-counts dd {
+    margin: 0;
+    font-size: 18px;
+  }
+  .dashboard-schedulers {
+    padding-inline: 14px;
   }
 }

@@ -71,7 +71,8 @@ export async function loadForwards(options = {}) {
     if (!silent) {
       state.forwardTasks = [];
       state.selectedForwards.clear();
-      setRunningBadge(0);
+      setRunningBadge(null);
+      for (const stat of document.querySelectorAll(".forward-stat dd")) stat.textContent = "—";
       body.innerHTML = `<tr><td colspan="7" class="empty">加载失败</td></tr>`;
       updateForwardSelectionState();
     }
@@ -83,10 +84,10 @@ export async function loadForwards(options = {}) {
 
 function receiveForwards(data, error) {
   if (error) { setForwardStatus(error, "error"); return; }
-    state.forwardTasks = Array.isArray(data.items) ? data.items : [];
-    setRunningBadge(Number(data.running || 0));
-    pruneForwardSelection();
-    renderForwards();
+  state.forwardTasks = Array.isArray(data.items) ? data.items : [];
+  setRunningBadge(Number(data.running || 0));
+  pruneForwardSelection();
+  renderForwards();
 }
 function startForwardPolling() { unobserve ||= observe("forwards", receiveForwards); }
 export function stopForwardPolling() { unobserve?.(); unobserve = null; }
@@ -94,12 +95,20 @@ export function stopForwardPolling() { unobserve?.(); unobserve = null; }
 function renderForwards() {
   renderForwardSummary();
   const body = document.getElementById("forward-body");
-  if (!filteredTasks().length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">暂无转发任务</td></tr>`;
-    updateForwardSelectionState();
-    return;
+  const focused = body.contains(document.activeElement) ? document.activeElement.dataset : null;
+  const tasks = filteredTasks();
+  if (tasks.length) {
+    body.innerHTML = tasks.map(renderForwardRow).join("");
+  } else {
+    const empty = state.forwardTasks.length ? "当前状态下没有转发任务" : "暂无转发任务";
+    body.innerHTML = `<tr><td colspan="7" class="empty">${empty}</td></tr>`;
   }
-  body.innerHTML = filteredTasks().map(renderForwardRow).join("");
+  if (focused) {
+    const id = CSS.escape(focused.forwardCheck || focused.forwardId || "");
+    const checkbox = body.querySelector(`[data-forward-check="${id}"]`);
+    const action = focused.forwardAction && body.querySelector(`[data-forward-id="${id}"][data-forward-action="${CSS.escape(focused.forwardAction)}"]`);
+    (action || checkbox || document.getElementById("forward-state-filter")).focus({ preventScroll: true });
+  }
   updateForwardSelectionState();
 }
 
@@ -138,8 +147,9 @@ function setSummaryValue(id, value) {
 function setRunningBadge(running) {
   const badge = document.getElementById("forward-running-badge");
   if (!badge) return;
-  badge.textContent = `进行中 ${running}`;
+  badge.textContent = `进行中 ${running ?? "—"}`;
   badge.classList.toggle("warn", running > 0);
+  badge.classList.toggle("muted", !running);
 }
 
 export function forwardID(item) {
@@ -161,29 +171,26 @@ function renderForwardRow(item) {
 
   return `
     <tr>
-      <td class="select-col"><input type="checkbox" data-forward-check="${escapeAttr(id)}" ${selected} aria-label="选择任务 ${escapeAttr(id)}"></td>
+      <td class="select-col"><label class="task-check"><input type="checkbox" data-forward-check="${escapeAttr(id)}" ${selected} aria-label="选择任务 ${escapeAttr(id)}"></label></td>
       <td>
         <div class="forward-path">${renderForwardPath(item)}</div>
         <div class="mono subtle">${escapeHTML(id)}</div>
       </td>
-      <td>
+      <td class="forward-mode task-wide">
         <div>${escapeHTML(forwardSourceLabel(item.source))}</div>
         <div class="subtle">${escapeHTML(forwardModeLabel(item.mode))}</div>
       </td>
-      <td><span class="pill ${forwardStatusClass(status)}">${escapeHTML(forwardStatusLabel(status))}</span>${note}</td>
-      <td>
-        <div class="download-progress">
-          <div class="download-progress-meta">
-            <span>${progress.pct.toFixed(1)}%</span>
-            <span>${escapeHTML(progress.label)}</span>
-          </div>
-          <div class="download-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.pct.toFixed(1)}">
-            <span style="width: ${progress.pct.toFixed(2)}%"></span>
-          </div>
+      <td class="forward-state"><span class="pill ${forwardStatusClass(status)}">${escapeHTML(forwardStatusLabel(status))}</span></td>
+      <td class="task-progress task-wide">
+        <div class="forward-progress-meta">
+          <strong>${progress.pct.toFixed(1)}%</strong>
+          <span>${escapeHTML(progress.label)}</span>
         </div>
+        <progress max="100" value="${progress.pct.toFixed(1)}" aria-label="转发进度"></progress>
+        ${note}
       </td>
-      <td class="time-cell">${formatTime(item.updated_at || item.created_at)}</td>
-      <td>
+      <td class="time-cell task-wide"><span class="task-mobile-label" aria-hidden="true">更新于 </span>${formatTime(item.updated_at || item.created_at)}</td>
+      <td class="task-wide">
         <div class="row-actions">
           ${forwardRowActions(status, id)}
         </div>
@@ -285,7 +292,7 @@ async function runForwardAction(action, ids) {
     if (action === "delete") {
       uniqueIDs.forEach((id) => state.selectedForwards.delete(id));
     }
-    await loadForwards();
+    await loadForwards({ silent: true });
     const result = data.result || {};
     const errors = result.errors && result.errors.length ? `；失败 ${result.errors.length} 项：${result.errors.join("；")}` : "";
     setForwardStatus(`已处理 ${result.changed || 0} 个任务，跳过 ${result.skipped || 0} 个${errors}`, errors ? "error" : "success");
@@ -377,6 +384,7 @@ function updateForwardSelectionState() {
   const selectedVisible = ids.filter((id) => state.selectedForwards.has(id)).length;
   const selectVisible = document.getElementById("forward-select-visible");
   if (selectVisible) {
+    selectVisible.disabled = !ids.length;
     selectVisible.checked = ids.length > 0 && selectedVisible === ids.length;
     selectVisible.indeterminate = selectedVisible > 0 && selectedVisible < ids.length;
   }

@@ -61,3 +61,83 @@ test("listen tasks join live downloads by media ID and stay under their selected
   assert.equal(groups[1].tasks[0].comment, true);
   assert.equal(groups[1].enabled, false, "disabled sources retain all historical tasks");
 });
+
+test("listen status follows the runtime downloader and keeps admission history in link-only mode", async () => {
+  class Element {
+    constructor(tag, text = "") { this.tag = tag; this.textContent = text || ""; this.children = []; this.dataset = {}; }
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+    addEventListener() {}
+    setAttribute() {}
+    descendants() { return [this, ...this.children.flatMap(child => child.descendants())]; }
+  }
+  const nodes = new Map(), calls = [];
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, new Element("div"));
+    return nodes.get(id);
+  };
+  const media = { task_id: "media-1", source: "chat:1", message_id: 10, state: "accepted", file_name: "historical.mp4", total: 100 };
+  let tick, transferFailure = false;
+  const context = vm.createContext({
+    document: { getElementById: node }, structuredClone, AbortSignal,
+    setInterval: action => { tick = action; return 1; }, clearInterval() {},
+  });
+  const definitions = {
+    "./api.js": { api: async url => {
+      calls.push(url);
+      if (url === "/api/components") return { components: [{ id: "download.listen", values: { rules: [] } }] };
+      if (url === "/api/status") return { downloader: { mode: "local" } };
+      if (url === "/api/dialogs") return { items: [] };
+      if (url === "/api/listen-downloads/status") return { tasks: [media] };
+      if (url.startsWith("/api/download-tasks?executor=")) {
+        if (transferFailure) throw new Error("offline");
+        return { items: [{ task_id: "media-1", state: "active", executor: url.split("=").pop(), total: 100, completed: 40 }] };
+      }
+      throw new Error("unexpected request " + url);
+    } },
+    "./account-profile.js": { loadCurrentAccount() {} },
+    "./router.js": { navigate() {} },
+    "./ui.js": { element: (tag, text) => new Element(tag, text), button() {}, openDrawer() {}, closeDrawer() {} },
+    "./utils.js": { formatBytes: n => n + " B", formatTime: String },
+  };
+  const modules = {};
+  for (const [name, directory] of [["listen-model", "download.listen"], ["download-model", "download.control"], ["state", "panel.webui"], ["status", "panel.webui"], ["listen-downloads", "download.listen"]]) {
+    const path = new URL(`../../application/${directory}/assets/static/js/${name}.js`, import.meta.url);
+    modules["./" + name + ".js"] = new vm.SourceTextModule(await readFile(path, "utf8"), { context });
+  }
+  const pageModule = modules["./listen-downloads.js"];
+  await pageModule.link(name => modules[name] ||= new vm.SyntheticModule(Object.keys(definitions[name]), function () {
+    for (const [key, value] of Object.entries(definitions[name])) this.setExport(key, value);
+  }, { context }));
+  await pageModule.evaluate();
+  const page = pageModule.namespace.page;
+  const sharedState = modules["./state.js"].namespace.state;
+  const poll = async () => { tick(); await new Promise(resolve => setImmediate(resolve)); };
+  const history = () => node("listen-sources").descendants();
+  const taskCalls = () => calls.filter(url => url.startsWith("/api/download-tasks"));
+  await page.load();
+  assert.deepEqual(taskCalls(), ["/api/download-tasks?executor=local"]);
+  assert(history().some(child => child.tag === "progress" && child.value === 40));
+  transferFailure = true;
+  await poll();
+  assert.equal(node("listen-task-error").hidden, false);
+  assert.match(node("listen-task-error").textContent, /上次取得/);
+  assert(history().some(child => child.tag === "progress" && child.value === 40));
+  for (const downloader of [{ mode: "http" }, { mode: "aria2", aria2_enabled: false }]) {
+    sharedState.downloader = downloader;
+    const previousCount = taskCalls().length;
+    await poll();
+    assert.equal(taskCalls().length, previousCount);
+    assert(node("listen-task-error").hidden);
+    assert(history().some(child => child.textContent === "historical.mp4"));
+    assert(history().some(child => child.textContent === "已提交"));
+    assert(!history().some(child => child.tag === "progress"));
+  }
+  sharedState.downloader = { mode: "aria2", aria2_enabled: true };
+  transferFailure = false;
+  await poll();
+  assert.equal(taskCalls().at(-1), "/api/download-tasks?executor=aria2");
+  assert(history().some(child => child.tag === "progress" && child.value === 40));
+  assert.equal(calls.filter(url => url === "/api/status").length, 1);
+  page.stop();
+});
