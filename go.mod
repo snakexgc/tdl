@@ -8,7 +8,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.19.0
 	github.com/flytam/filenamify v1.2.0
-	github.com/gabriel-vasile/mimetype v1.4.15
+	github.com/gabriel-vasile/mimetype v1.4.16
 	github.com/go-faster/errors v0.8.0
 	github.com/gotd/contrib v0.25.0
 	github.com/gotd/log/logzap v0.1.1
