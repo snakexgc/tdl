@@ -124,7 +124,7 @@ func (s watchDownloadSource) collectForwarded(ctx context.Context, request types
 	directoryID := strconv.FormatInt(request.PeerID, 10)
 	data := namingMetadata(directoryID, request.PeerID, peerName, ports.Now(ctx), message, message, media)
 	data.AlbumID = forwarded.AlbumID
-	file := fileTask{msg: message, triggerMsg: message, media: media, peerID: request.PeerID, botFileID: forwarded.FileID}
+	file := fileTask{msg: message, triggerMsg: message, media: media, peerID: request.PeerID, forwarded: forwarded}
 	registration := &watchDownloadRegistration{watcher: s.watcher, files: map[string]fileTask{"forwarded": file}}
 	return []ports.DownloadMedia{{Token: "forwarded", Data: data}}, registration, nil
 }
@@ -183,7 +183,7 @@ func (s *watchDownloadRegistration) Register(ctx context.Context, token, name st
 	if !ok {
 		return "", fmt.Errorf("download source token is unavailable")
 	}
-	task, err := s.watcher.runtime.proxy.NewTaskWithPriority(ctx, file.peerID, file.msg.ID, file.peer, name, file.media.Size, file.media, s.priority, file.botFileID)
+	task, err := s.watcher.runtime.proxy.NewTaskWithPriority(ctx, file.peerID, file.msg.ID, file.peer, name, file.media.Size, file.media, s.priority, file.forwarded)
 	if err != nil {
 		return "", err
 	}

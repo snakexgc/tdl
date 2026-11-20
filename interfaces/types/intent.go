@@ -47,6 +47,7 @@ type DownloadIntent struct {
 // ForwardedMedia carries the Bot API file reference and metadata for a
 // forwarded message. The file bytes remain on the Telegram data path.
 type ForwardedMedia struct {
+	BotID    int64
 	FileID   string
 	FileName string
 	FileSize int64
