@@ -9,14 +9,20 @@ updates:
     directories:
       - "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
     assignees:
       - "snakexgc"
-    open-pull-requests-limit: 99
+    open-pull-requests-limit: 1
+    groups:
+      go-modules:
+        patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
     assignees:
       - "snakexgc"
-    open-pull-requests-limit: 99
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]

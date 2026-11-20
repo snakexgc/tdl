@@ -2,10 +2,15 @@ name: master builder
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
     branches: [master]
   push:
     branches: [master]
+
+concurrency:
+  # A newer commit supersedes earlier checks on the same PR. Each master push runs independently.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
