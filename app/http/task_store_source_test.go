@@ -19,10 +19,11 @@ func TestTaskStoreSelectsWholeDownloadSource(t *testing.T) {
 	now := time.Now().UTC()
 	makeSource := func(peerID int64, messageID int, botID int64) downloadTask {
 		task := downloadTask{
-			ID: "document_42", PeerID: peerID, MessageID: messageID,
+			PeerID: peerID, MessageID: messageID,
 			FileName: "media.bin", FileSize: 12, LastActiveAt: now, CreatedAt: now,
 			Media: &tmedia.Media{Size: 12, DC: 2, InputFileLoc: &tg.InputDocumentFileLocation{ID: 42, AccessHash: peerID}},
 		}
+		task.ID = tmedia.Identity(task.Media)
 		if botID == 0 {
 			task.Peer = &tg.InputPeerChat{ChatID: peerID}
 		} else {
