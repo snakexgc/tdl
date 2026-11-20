@@ -10,7 +10,7 @@ require (
 	github.com/flytam/filenamify v1.2.0
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/go-faster/errors v0.8.0
-	github.com/gotd/contrib v0.25.0
+	github.com/gotd/contrib v0.26.0
 	github.com/gotd/log/logzap v0.1.1
 	github.com/gotd/td v0.166.1
 	github.com/iancoleman/strcase v0.3.0
