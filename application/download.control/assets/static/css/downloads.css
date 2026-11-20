@@ -4,22 +4,103 @@
 
 .storage-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px 24px;
+  margin: 16px 0;
 }
 .storage-metrics dt {
   color: var(--muted);
 }
 .storage-metrics dd {
-  margin: .4rem 0 0;
-  font-size: 1.4rem;
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 #download-storage {
-  margin-bottom: 1rem;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+#download-storage summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-radius: inherit;
+  cursor: pointer;
+  list-style: none;
+}
+#download-storage summary::-webkit-details-marker {
+  display: none;
+}
+#download-storage summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 3px auto;
+  border: solid var(--muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+#download-storage[open] summary::after {
+  transform: rotate(225deg);
+}
+.storage-preview {
+  color: var(--muted);
+  font-size: 13px;
+}
+.storage-preview b {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.storage-details {
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--line);
 }
 #download-storage-path {
   overflow-wrap: anywhere;
+  margin: 0;
+}
+#view-downloads > .page-head {
+  align-items: center;
+}
+@media (max-width: 560px) {
+  #view-downloads > .page-head .actions {
+    width: auto;
+  }
+  #download-tasks-panel .task-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  #download-tasks-panel .search-field {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+}
+@container task-list (max-width: 760px) {
+  #download-table .task-name,
+  #download-table .task-progress {
+    min-width: 0;
+    max-width: none;
+  }
+  #download-table .task-name .text-button {
+    min-height: 44px;
+  }
+  #download-table .task-executor,
+  #download-table .task-created {
+    display: none;
+  }
+  #download-table .task-progress,
+  #download-table .task-speed {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
 }
 .frame-wrap {
   height: calc(100dvh - 260px);

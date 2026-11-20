@@ -16,7 +16,7 @@ const messageLinkSubmissionTimeout = 2 * time.Minute
 
 func handleMessageLinkSubmission(ctx *th.Context, msg *telego.Message, text string, watchCtrl watchControl) (bool, error) {
 	if msg.Document != nil && isTorrentDocument(msg.Document) {
-		return true, sendMessage(ctx, msg.Chat.ID, "已不再支持直接提交 .torrent 文件。请发送包含目标文件的 Telegram 消息链接。")
+		return true, sendMessage(ctx, msg.Chat.ID, "已不再支持直接发送 .torrent 文件。请转发原消息或发送包含目标文件的 Telegram 消息链接。")
 	}
 
 	links := extractHTTPLinks(text)

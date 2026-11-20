@@ -10,6 +10,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/snakexgc/tdl/bsw/services/logging"
+	"github.com/snakexgc/tdl/interfaces/ports"
 )
 
 func New(level zapcore.LevelEnabler, path string) *zap.Logger {
@@ -23,7 +24,7 @@ func NewWithClose(level zapcore.LevelEnabler, path string) (*zap.Logger, func() 
 	return logger, closeLog
 }
 
-func NewSession(level zapcore.LevelEnabler, path, account string) (*zap.Logger, *logging.Store, func() error) {
+func NewSession(level zapcore.LevelEnabler, path, account string, clocks ...ports.Clock) (*zap.Logger, *logging.Store, func() error) {
 	rotate := &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    10,
@@ -38,7 +39,7 @@ func NewSession(level zapcore.LevelEnabler, path, account string) (*zap.Logger, 
 	config.EncodeLevel = zapcore.CapitalLevelEncoder
 
 	journal := &lumberjack.Logger{Filename: filepath.Join(filepath.Dir(path), "events.jsonl"), MaxSize: 10, MaxAge: 7, MaxBackups: 3, LocalTime: true, Compress: true}
-	store := logging.New(journal)
+	store := logging.New(journal, clocks...)
 	restoreErr := store.Restore(journal.Filename)
 	// Separate a possible incomplete final record left by an interrupted write.
 	_, separatorErr := journal.Write([]byte("\n"))
@@ -49,6 +50,9 @@ func NewSession(level zapcore.LevelEnabler, path, account string) (*zap.Logger, 
 		logging.NewCore(store, level),
 	)
 	logger := zap.New(logging.NewRedactingCore(core), zap.AddCaller()).With(zap.String("account", account))
+	if len(clocks) > 0 && clocks[0] != nil {
+		logger = logging.WithClock(logger, clocks[0])
+	}
 	if restoreErr != nil {
 		logger.Warn("读取日志历史失败", zap.Error(restoreErr))
 	}

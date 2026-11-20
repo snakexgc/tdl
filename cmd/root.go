@@ -27,6 +27,7 @@ import (
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/consts"
 	"github.com/snakexgc/tdl/pkg/kv"
+	"github.com/snakexgc/tdl/rte"
 )
 
 type (
@@ -119,6 +120,8 @@ func New() *cobra.Command {
 			}
 			cmd.SetContext(context.WithValue(cmd.Context(), startupConfigurationKey{}, startupConfiguration{service}))
 			cfg := config.Get()
+			clock := new(rte.ClockBinding)
+			cmd.SetContext(rte.WithClock(cmd.Context(), clock))
 			// init logger
 			level := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
 				if config.Get().Debug {
@@ -126,9 +129,9 @@ func New() *cobra.Command {
 				}
 				return level >= zap.InfoLevel
 			})
-			logger, logs, closeFile := logutil.NewSession(level, filepath.Join(consts.LogPath, "latest.log"), cfg.Namespace)
+			logger, logs, closeFile := logutil.NewSession(level, filepath.Join(consts.LogPath, "latest.log"), cfg.Namespace, clock)
 			previous := slog.Default()
-			slog.SetDefault(logging.Slog(logger))
+			slog.SetDefault(logging.Slog(logger, clock))
 			closeLog = func() error {
 				slog.SetDefault(previous)
 				return multierr.Combine(logger.Sync(), closeFile())

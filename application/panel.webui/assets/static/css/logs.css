@@ -5,12 +5,14 @@
   gap: 8px;
 }
 .log-table-wrap {
+  container: log-list / inline-size;
   max-width: 100%;
   overflow: auto;
   max-height: max(360px, calc(100dvh - 440px));
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
+  background: var(--panel);
 }
 .log-table thead th {
   position: sticky;
@@ -37,7 +39,7 @@
   min-height: 38px;
   max-width: 100%;
   min-width: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: 8px;
   padding: 8px 12px;
   background: var(--panel);
@@ -81,6 +83,65 @@
 .log-table .log-message {
   white-space: pre-wrap;
   line-height: 1.6;
+}
+@container log-list (max-width: 760px) {
+  .log-table,
+  .log-table tbody {
+    display: block;
+    min-width: 0;
+  }
+  .log-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .log-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "time level" "source action" "message message";
+    gap: 4px 12px;
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+    padding: 12px 16px;
+  }
+  .log-table tbody tr:last-child {
+    border: 0;
+  }
+  .log-table td {
+    min-width: 0;
+    border: 0;
+    padding: 0;
+  }
+  .log-table td:first-child {
+    grid-area: time;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .log-table td:nth-child(2) {
+    grid-area: level;
+    justify-self: end;
+  }
+  .log-table td:nth-child(3) {
+    grid-area: source;
+    font-weight: 600;
+  }
+  .log-table td small {
+    margin-top: 0;
+    font-weight: 400;
+  }
+  .log-table .log-message {
+    grid-area: message;
+  }
+  .log-table td:last-child {
+    grid-area: action;
+  }
+  .log-table td.empty {
+    grid-area: auto / 1 / auto / -1;
+    padding: 20px 0;
+    text-align: center;
+  }
 }
 .log-level {
   display: inline-block;

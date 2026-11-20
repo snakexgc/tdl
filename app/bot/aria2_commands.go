@@ -197,7 +197,7 @@ func sendAria2Menu(ctx *th.Context, chatID int64, userID int64) error {
 	menu := aria2ReplyKeyboard()
 	_, err := ctx.Bot().SendMessage(ctx, tu.Message(
 		tu.ID(chatID),
-		fmt.Sprintf("aria2 控制机器人已就绪。\n您的用户 ID：%d\n\n发送 Telegram 消息链接即可按 watch 流程下载消息中的文件。", userID),
+		fmt.Sprintf("aria2 控制机器人已就绪。\n您的用户 ID：%d\n\n发送 Telegram 消息链接，或直接转发含文件的消息，即可提交下载。", userID),
 	).WithReplyMarkup(menu))
 	return err
 }
@@ -312,12 +312,12 @@ func aria2HelpMessage() string {
 		"/downloads_pause_all 暂停全部 TDL 任务",
 		"/downloads_start_all 开始全部已暂停的 TDL 任务",
 		"/aria2_retry 重试已停止且未完成的 TDL 任务",
-		"发送 Telegram 消息链接，按 watch 流程下载消息中的文件",
+		"发送 Telegram 消息链接，或直接转发含文件的消息以下载",
 	}, "\n")
 }
 
 func aria2BotHelpMessage(userID int64) string {
-	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击\"%s\"\n系统信息：/info\n提交下载：发送 Telegram 消息链接\nADMIN_ID：%d", aria2MenuClose, userID)
+	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击\"%s\"\n系统信息：/info\n提交下载：发送 Telegram 消息链接或直接转发文件消息\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
 func formatAria2GlobalOptions(options map[string]string) string {

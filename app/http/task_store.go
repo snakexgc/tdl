@@ -11,11 +11,13 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/snakexgc/tdl/bsw/cdd/taskhub"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/internal/core/storage"
 	"github.com/snakexgc/tdl/internal/core/tmedia"
 )
 
 type downloadTask struct {
+	Priority  int
 	ID        string
 	PeerID    int64
 	MessageID int
@@ -23,6 +25,8 @@ type downloadTask struct {
 	FileName  string
 	FileSize  int64
 	Media     *tmedia.Media
+	BotFileID string
+	BotID     int64
 	CreatedAt time.Time
 	// LastActiveAt is the sliding expiry clock: the link stays valid until
 	// LastActiveAt+TTL. It is refreshed whenever the link is downloaded or while
@@ -32,6 +36,7 @@ type downloadTask struct {
 }
 
 type persistentDownloadTask struct {
+	Priority     int                     `json:"priority,omitempty"`
 	ID           string                  `json:"id"`
 	PeerID       int64                   `json:"peer_id"`
 	MessageID    int                     `json:"message_id"`
@@ -39,6 +44,8 @@ type persistentDownloadTask struct {
 	FileName     string                  `json:"file_name"`
 	FileSize     int64                   `json:"file_size"`
 	Media        persistentDownloadMedia `json:"media"`
+	BotFileID    string                  `json:"bot_file_id"`
+	BotID        int64                   `json:"bot_id"`
 	CreatedAt    time.Time               `json:"created_at"`
 	LastActiveAt time.Time               `json:"last_active_at"`
 }
@@ -81,6 +88,7 @@ func persistentDownloadTaskFromTask(task *downloadTask) (persistentDownloadTask,
 	}
 
 	return persistentDownloadTask{
+		Priority:  task.Priority,
 		ID:        task.ID,
 		PeerID:    task.PeerID,
 		MessageID: task.MessageID,
@@ -94,6 +102,8 @@ func persistentDownloadTaskFromTask(task *downloadTask) (persistentDownloadTask,
 			Date:     task.Media.Date,
 			Location: location,
 		},
+		BotFileID:    task.BotFileID,
+		BotID:        task.BotID,
 		CreatedAt:    task.CreatedAt,
 		LastActiveAt: task.LastActiveAt,
 	}, nil
@@ -113,6 +123,7 @@ func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
 	}
 
 	return &downloadTask{
+		Priority:     p.Priority,
 		ID:           p.ID,
 		PeerID:       p.PeerID,
 		MessageID:    p.MessageID,
@@ -120,6 +131,8 @@ func (p persistentDownloadTask) ToTask() (*downloadTask, error) {
 		FileName:     p.FileName,
 		FileSize:     p.FileSize,
 		Media:        media,
+		BotFileID:    p.BotFileID,
+		BotID:        p.BotID,
 		CreatedAt:    p.CreatedAt,
 		LastActiveAt: p.LastActiveAt,
 	}, nil
@@ -253,25 +266,52 @@ func (s *taskStore) Add(ctx context.Context, task *downloadTask) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		copy := *task
+		if previous := s.tasks[task.ID]; previous != nil {
+			if task.isBotFile() && previous.Peer != nil && previous.Media != nil {
+				copy = *previous
+				copy.BotID, copy.BotFileID = 0, ""
+			}
+			copy.Priority = max(task.Priority, previous.Priority)
+			copy.LastActiveAt = maxActivity(task.LastActiveAt, previous.LastActiveAt)
+		}
 		s.tasks[task.ID] = &copy
 		return nil
 	}
-	if err := s.CleanupExpired(ctx, time.Now()); err != nil {
+	if err := s.CleanupExpired(ctx, ports.Now(ctx)); err != nil {
 		return err
 	}
 	persisted, err := persistentDownloadTaskFromTask(task)
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(persisted)
-	if err != nil {
-		return err
+	return taskhub.Links(s.kv).MergeMetadata(ctx, task.ID, task.LastActiveAt, func(old []byte) ([]byte, error) {
+		if len(old) != 0 {
+			var previous persistentDownloadTask
+			if err := json.Unmarshal(old, &previous); err != nil {
+				return nil, err
+			}
+			// The link is keyed by media ID, so a duplicate forwarded by a bot
+			// must not make an existing user download depend on that bot.
+			if task.isBotFile() && previous.Peer.Kind != "" && previous.Media.Location.Kind != "" {
+				persisted = previous
+				persisted.BotID, persisted.BotFileID = 0, ""
+			}
+			persisted.Priority = max(task.Priority, previous.Priority)
+			persisted.LastActiveAt = maxActivity(task.LastActiveAt, previous.LastActiveAt)
+		}
+		return json.Marshal(persisted)
+	})
+}
+
+func maxActivity(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
 	}
-	return taskhub.Links(s.kv).Merge(ctx, task.ID, data, task.LastActiveAt)
+	return a
 }
 
 func (s *taskStore) Get(ctx context.Context, id string) (*downloadTask, bool, error) {
-	now := time.Now()
+	now := ports.Now(ctx)
 	ttl := s.TTL()
 	if s.kv == nil {
 		s.mu.Lock()

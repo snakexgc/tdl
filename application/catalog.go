@@ -8,6 +8,7 @@ import (
 	configuration "github.com/snakexgc/tdl/application/configuration.manager"
 	console "github.com/snakexgc/tdl/application/console.bot"
 	downloadcontrol "github.com/snakexgc/tdl/application/download.control"
+	downloadlisten "github.com/snakexgc/tdl/application/download.listen"
 	aria2 "github.com/snakexgc/tdl/application/downloader.aria2"
 	local "github.com/snakexgc/tdl/application/downloader.local"
 	filter "github.com/snakexgc/tdl/application/filter.rules"
@@ -69,6 +70,10 @@ func definitions(commandSets ...[]types.ConsoleCommand) ([]rte.Definition, error
 		{nil, rte.Definition{Manifest: forwarder.Manifest(), Scope: rte.ConnectionScope, Validate: forwarder.ValidateConfiguration, Assets: forwarder.Assets(), Routes: forwarder.Routes()}},
 		{nil, rte.Definition{Manifest: proxy.Manifest(), Scope: rte.ProcessScope, Validate: proxy.ValidateConfiguration}},
 		{nil, rte.Definition{Manifest: downloadcontrol.Manifest(), Scope: rte.AccountScope, Validate: downloadcontrol.ValidateConfiguration, Assets: downloadcontrol.Assets(), Routes: downloadcontrol.Routes()}},
+		{nil, rte.Definition{Manifest: downloadlisten.Manifest(), Scope: rte.AccountScope, Host: "listen", LiveValues: true, Assets: downloadlisten.Assets(), Routes: downloadlisten.Routes(), Validate: func(ctx context.Context, view config.View) error {
+			_, err := downloadlisten.New(nil, types.ListenFilters{}).PrepareConfig(ctx, view)
+			return err
+		}}},
 	}
 	result := make([]rte.Definition, 0, len(declarations))
 	for _, item := range declarations {

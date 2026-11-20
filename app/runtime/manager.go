@@ -114,6 +114,8 @@ type Manager struct {
 	downloadAccount   types.AccountID
 	downloadHost      *rte.Runtime
 	downloadPort      ports.DownloadControl
+	listenHost        *rte.Runtime
+	listener          ports.DownloadListener
 
 	kvEngine    kv.Storage
 	namespaceKV storage.Storage
@@ -209,7 +211,10 @@ func NewManager(ctx context.Context, engine kv.Storage, namespaceKV storage.Stor
 	}
 	source := config.NewSource(cfg)
 	ctx = config.WithSource(ctx, source)
-	clock := new(rte.ClockBinding)
+	clock, ok := rte.ClockFrom(ctx).(*rte.ClockBinding)
+	if !ok {
+		clock = new(rte.ClockBinding)
+	}
 	ctx = rte.WithClock(ctx, clock)
 	if opts.TimeProbe == nil {
 		opts.TimeProbe = ntpclient.Client{}
@@ -442,9 +447,14 @@ func (m *Manager) StartBot() {
 			Connections:     m.connections,
 			SessionChecker:  m.sessionPort,
 			Credentials:     m, Updater: m,
-			ComponentStore:        m.componentStore,
-			SetComponentHost:      func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
-			SetComponentRefresh:   func(refresh func(context.Context) error) { m.mu.Lock(); m.botRefresh = refresh; m.mu.Unlock() },
+			ComponentStore:      m.componentStore,
+			SetComponentHost:    func(host *rte.Runtime) { m.mu.Lock(); m.botComponents = host; m.mu.Unlock() },
+			SetComponentRefresh: func(refresh func(context.Context) error) { m.mu.Lock(); m.botRefresh = refresh; m.mu.Unlock() },
+			SetBotMedia: func(botID int64, pool func(context.Context) (*httpdl.BotMediaConnection, error)) {
+				if m.httpService != nil && m.httpService.Proxy() != nil {
+					m.httpService.Proxy().SetBotMedia(botID, pool)
+				}
+			},
 			Token:                 cfg.Bot.Token,
 			AllowedUsers:          cfg.Bot.AllowedUsers,
 			Proxy:                 m.botProxy(cfg),
@@ -642,6 +652,7 @@ func (m *Manager) watchOptions(cfg *config.Config) watch.Options {
 	opts.HTTPService = m.httpService
 	opts.DownloadRouting = m
 	opts.DownloadPipeline = m
+	opts.Listener = listenPort{manager: m}
 	opts.ForwardQueue = m.forwardQueue
 	opts.ForwardRules = m
 	opts.DownloadSubmitter = aria2Submission{manager: m}

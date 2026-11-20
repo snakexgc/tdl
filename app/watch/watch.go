@@ -185,12 +185,12 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 	// so it needs these handlers regardless of how many triggers are configured.
 	if opts.Download || opts.Forward || opts.FeatureFlags != nil {
 		d.OnMessageReactions(w.onReaction)
-		d.OnEditMessage(w.onEditMessage)
-		d.OnEditChannelMessage(w.onEditChannelMessage)
+		d.OnEditMessage(w.onEditMessageUpdate)
+		d.OnEditChannelMessage(w.onEditChannelMessageUpdate)
 	}
-	if opts.Forward || opts.FeatureFlags != nil {
-		d.OnNewMessage(w.onNewMessageForward)
-		d.OnNewChannelMessage(w.onNewChannelMessageForward)
+	if opts.Download || opts.Forward || opts.FeatureFlags != nil {
+		d.OnNewMessage(w.onNewMessage)
+		d.OnNewChannelMessage(w.onNewChannelMessage)
 	}
 	d.OnFallback(func(ctx context.Context, e tg.Entities, update tg.UpdateClass) error {
 		updateType := fmt.Sprintf("%T", update)
@@ -285,6 +285,19 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 				defer opts.SetIntentHost(nil)
 			}
 		}
+		listenCtx, listenCancel := context.WithCancel(ctx)
+		listenDone := make(chan struct{})
+		if opts.Listener != nil {
+			go func() {
+				defer close(listenDone)
+				if err := opts.Listener.Serve(listenCtx, ports.ListenResources{Transport: listenTransport{w}, Downloads: listenDownloads{w}, Enabled: w.downloadEnabled, Accepted: w.listenAccepted}); err != nil && !errors.Is(err, context.Canceled) {
+					logctx.From(ctx).Error("监听下载工作器停止", zap.String("component", "download.listen"), zap.Error(err))
+				}
+			}()
+		} else {
+			close(listenDone)
+		}
+		defer func() { listenCancel(); <-listenDone }()
 		// Bind the forwarding component before accepting Telegram updates. Its
 		// router and worker share this connection and are drained before the pool.
 		forwardCtx, forwardCancel := context.WithCancel(ctx)
@@ -337,6 +350,8 @@ func runOnce(ctx context.Context, opts Options, kvd storage.Storage, reconnectDe
 		// Both request adapters and the component consumer drain submissions
 		// before this connection's pool is released.
 		<-dispatchDone
+		listenCancel()
+		<-listenDone
 		if intentHost != nil {
 			_ = intentHost.Stop(context.Background())
 		}

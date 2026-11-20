@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { trackedExecutor } from "./state.js";
 import { observe } from "./events.js";
 import { navigate } from "./router.js";
 import {
@@ -104,6 +105,13 @@ function init() {
     selection();
   });
   $("download-body").addEventListener("click", (event) => {
+    if (event.target.closest("[data-clear-filters]")) {
+      $("download-search").value = "";
+      $("download-state").value = "all";
+      $("download-search").focus();
+      render();
+      return;
+    }
     const action = event.target.closest("[data-task-action]");
     if (!action) return;
     const task = allTasks().find(
@@ -134,9 +142,8 @@ async function load(url) {
   const status = await api("/api/status");
   if (!active || version !== generation) return;
   mode = status.downloader?.mode || "http";
-  executors = mode === "local" ? ["local"] :
-    mode === "aria2" && status.downloader?.aria2_enabled !== false
-      ? ["aria2"] : [];
+  const executor = trackedExecutor(status.downloader);
+  executors = executor ? [executor] : [];
   snapshots = {};
   errors = {};
   selected.clear();
@@ -238,6 +245,7 @@ function receiveStorage(data, error) {
     errors.disk && `磁盘信息：${errors.disk}`,
     errors.directory && `目录统计：${errors.directory}`,
   ].filter(Boolean);
+  $("download-storage-alert").hidden = !problems.length;
   $("download-storage-message").textContent = problems.length
     ? problems.join("；")
     : data && !data.exists ? "保存目录尚未创建，首次下载时自动创建。" : "";
@@ -260,10 +268,8 @@ function receive(executor, data, error) {
 }
 function render() {
   const focus = document.activeElement?.closest?.(
-    "#download-body [data-task-key], #download-body [data-task-check]",
+    "#download-body :is(a[href], button, input)",
   );
-  const focusKey = focus?.dataset.taskKey || focus?.dataset.taskCheck,
-    focusAction = focus?.dataset.taskAction;
   $("download-health").innerHTML = executors
     .map(
       (executor) =>
@@ -275,20 +281,41 @@ function render() {
   );
   $("download-body").innerHTML = tasks.length
     ? tasks.map(row).join("")
-    : '<tr><td colspan="8" class="empty">没有符合条件的任务。<p>通过 Telegram 触发下载，或在「链接记录」中提交下载。</p></td></tr>';
-  if (focusKey)
-    [
-      ...$("download-body").querySelectorAll(
-        "[data-task-key], [data-task-check]",
-      ),
-    ]
-      .find(
-        (node) =>
-          (node.dataset.taskKey || node.dataset.taskCheck) === focusKey &&
-          node.dataset.taskAction === focusAction,
-      )
-      ?.focus({ preventScroll: true });
+    : `<tr><td colspan="8" class="empty">${emptyTasks()}</td></tr>`;
   selection();
+  restoreListFocus(focus);
+}
+function restoreListFocus(previous) {
+  if (!previous || previous.isConnected) return;
+  const body = $("download-body");
+  let target;
+  if (previous.matches("a[href]")) {
+    target = [...body.querySelectorAll("a[href]")].find((link) => link.href === previous.href);
+  } else if (previous.hasAttribute("data-clear-filters")) {
+    target = body.querySelector("[data-clear-filters]");
+  } else {
+    const key = previous.dataset.taskKey || previous.dataset.taskCheck;
+    target = [...body.querySelectorAll("[data-task-key], [data-task-check]")].find(
+      (node) =>
+        !node.disabled &&
+        (node.dataset.taskKey || node.dataset.taskCheck) === key &&
+        node.dataset.taskAction === previous.dataset.taskAction &&
+        node.matches(".text-button") === previous.matches(".text-button"),
+    );
+  }
+  (target || $("download-search")).focus({ preventScroll: true });
+}
+function emptyTasks() {
+  const links = '<a data-app-link href="/downloads?tab=links">查看链接记录</a>';
+  if (!executors.length)
+    return mode === "http"
+      ? `当前使用 HTTP 直链，可在链接记录中查看下载地址。<p>${links}</p>`
+      : '下载执行器未启用。<p><a data-app-link href="/config?tab=download">查看下载设置</a></p>';
+  if (executors.some((executor) => !snapshots[executor]))
+    return Object.keys(errors).length ? "任务列表暂时无法读取，请刷新重试。" : "正在读取下载任务…";
+  if ($("download-search").value.trim() || $("download-state").value !== "all")
+    return '没有符合筛选条件的任务。<p><button class="btn secondary compact" type="button" data-clear-filters>清除筛选</button></p>';
+  return `暂无下载任务<p>可从 Telegram 发起下载，或在链接记录中提交任务。</p><p>${links}</p>`;
 }
 function row(task) {
   const key = escapeAttr(taskKey(task)),
@@ -310,12 +337,12 @@ function row(task) {
   const controls = action
     ? `<button class="btn secondary compact" data-task-key="${key}" data-task-action="${action}" ${busy || errors[task.executor] ? "disabled" : ""}>${action === "pause" ? "暂停" : "恢复"}</button>`
     : "";
-  return `<tr><td><input type="checkbox" data-task-check="${key}" aria-label="选择 ${escapeAttr(task.file_name || task.id)}" ${selected.has(taskKey(task)) ? "checked" : ""}></td>
+  return `<tr><td class="select-col"><label class="task-check"><input type="checkbox" data-task-check="${key}" aria-label="选择 ${escapeAttr(task.file_name || task.id)}" ${selected.has(taskKey(task)) ? "checked" : ""}></label></td>
     <td class="task-name"><button class="text-button" data-task-key="${key}" data-task-action="details">${esc(task.file_name || task.id)}</button>${errors[task.executor] ? '<small class="bad-text">数据已过期</small>' : ""}</td>
-    <td>${executorLabel(task.executor)}</td><td><span class="pill ${statusClass(value)}">${esc(statusLabel(value))}</span></td>
-    <td class="task-progress"><div>${task.total > 0 ? `${formatBytes(task.completed || 0)} / ${formatBytes(task.total)}` : "—"}</div><progress max="100" value="${percent}" aria-label="${escapeAttr(statusLabel(value))}进度"></progress></td>
-    <td class="time-cell">${task.download_speed != null ? `${formatBytes(task.download_speed)}/s` : "—"}</td><td class="time-cell">${time(task.created_at)}</td>
-    <td><div class="row-actions">${controls}<button class="btn secondary compact" data-task-key="${key}" data-task-action="details">详情</button><button class="btn danger compact" data-task-key="${key}" data-task-action="delete" ${busy || errors[task.executor] ? "disabled" : ""}>删除</button></div></td></tr>`;
+    <td class="task-executor">${executorLabel(task.executor)}</td><td><span class="pill ${statusClass(value)}">${esc(statusLabel(value))}</span></td>
+    <td class="task-progress task-wide">${task.total > 0 ? `<div>${formatBytes(task.completed || 0)} / ${formatBytes(task.total)}</div><progress max="100" value="${percent}" aria-label="下载进度"></progress>` : "文件大小未知"}</td>
+    <td class="task-speed task-wide"><span class="task-mobile-label">速度 </span>${task.download_speed != null ? `${formatBytes(task.download_speed)}/s` : "—"}</td><td class="task-created time-cell">${time(task.created_at)}</td>
+    <td class="task-wide"><div class="row-actions">${controls}<button class="btn secondary compact" data-task-key="${key}" data-task-action="details">详情</button><button class="btn danger compact" data-task-key="${key}" data-task-action="delete" ${busy || errors[task.executor] ? "disabled" : ""}>删除</button></div></td></tr>`;
 }
 function selection() {
   const tasks = visible(),
@@ -365,7 +392,13 @@ function details(task) {
       element("dt", "重新下载"),
       element("dd", "此 aria2 任务已终止，可在「链接记录」中重新提交下载。"),
     );
-  openDrawer("下载任务详情", content);
+  const origin = document.activeElement;
+  const pageURL = location.href;
+  const dialog = openDrawer("下载任务详情", content, () => {
+    const focus = document.activeElement;
+    if (!active || location.href !== pageURL) return;
+    if (focus === document.body || dialog.contains(focus)) restoreListFocus(origin);
+  });
 }
 async function control(action, tasks) {
   if (busy) return;

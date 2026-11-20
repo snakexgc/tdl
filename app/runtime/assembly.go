@@ -67,15 +67,25 @@ func (m *Manager) connectionNeeded(cfg *config.Config) bool {
 	return cfg != nil && (cfg.Modules.Watch || cfg.Modules.Forward || m.componentEnabled("downloader.local") || m.componentEnabled("forwarder"))
 }
 
+func (m *Manager) watchRequirements() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	dependencies := []string{accountResource}
+	if m.listenHost != nil {
+		dependencies = append(dependencies, listenResource)
+	}
+	return dependencies
+}
+
 // managedUnits is the production composition boundary. Generic lifecycle code
 // knows neither module configuration. Backend factories stay here.
 func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 	return append(m.foundationUnits(cfg), []rte.ManagedUnit{
 		{
-			ID: timesync.ID, Enabled: m.componentEnabled(timesync.ID),
+			ID: timesync.ID, Enabled: m.componentEnabled(timesync.ID), Requires: []string{policyResource},
 			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.timeHost != nil },
 			Start: func(context.Context) error {
-				host, err := application.TimeHost(m.parent, m.downloadAccount, m.componentStore, m.timeProbe)
+				host, err := application.TimeHost(m.parent, m.downloadAccount, m.componentStore, m.timeProbe, m)
 				if err != nil {
 					return err
 				}
@@ -175,7 +185,7 @@ func (m *Manager) managedUnits(cfg *config.Config) []rte.ManagedUnit {
 			}, Stop: stopResource("Web 管理面板", m.panelProcess.Stop),
 		},
 		{
-			ID: moduleIDWatch, Enabled: m.connectionNeeded(cfg), Requires: []string{accountResource},
+			ID: moduleIDWatch, Enabled: m.connectionNeeded(cfg), Requires: m.watchRequirements(),
 			Revision: revision(config.EffectiveProxy(cfg), cfg.Delay, cfg.ReconnectTimeout), Running: m.watchCtrl.Running,
 			Update: func(context.Context) error { m.watchCtrl.UpdateOptions(m.watchOptions(cfg)); return nil },
 			Start:  m.StartWatch, Stop: stopResource("Telegram 监听", m.watchCtrl.StopContext),

@@ -77,7 +77,7 @@ func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadSt
 			if id == "" {
 				continue
 			}
-			record = types.Aria2TaskRecord{GID: gid, TaskID: id, DownloadURL: uri, CreatedAt: time.Now()}
+			record = types.Aria2TaskRecord{GID: gid, TaskID: id, DownloadURL: uri, CreatedAt: ports.Now(ctx)}
 			if len(status.Files) > 0 {
 				record.Dir, record.Out = targetpath.SplitRenderedNameLeaf(status.Files[0].Path)
 				record.Dir = strings.TrimRight(record.Dir, `/\`)
@@ -88,7 +88,7 @@ func (o Observer) Observe(ctx context.Context) (map[string]types.Aria2DownloadSt
 		info := aria2TaskInfo(status)
 		record.Total, record.Completed = info.TotalLength, info.CompletedLength
 		record.Error = strings.TrimSpace(status.ErrorCode + " " + status.ErrorMessage)
-		applied, applyErr := o.Repository.Apply(ctx, snapshot.Links[record.TaskID], record, !exists, time.Now(), o.TTL)
+		applied, applyErr := o.Repository.Apply(ctx, snapshot.Links[record.TaskID], record, !exists, ports.Now(ctx), o.TTL)
 		result = errors.Join(result, applyErr)
 		if applied && applyErr == nil && previousStatus != record.Status && o.Logger != nil {
 			level := zap.InfoLevel
@@ -110,7 +110,7 @@ func (o Observer) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return o.Repository.Cleanup(ctx, time.Now(), o.TTL)
+	return o.Repository.Cleanup(ctx, ports.Now(ctx), o.TTL)
 }
 
 func (o Observer) match(status types.Aria2DownloadStatus, links map[string]ports.ObservedLink) (string, string) {

@@ -102,6 +102,35 @@ type requestCapability struct {
 	ports.DownloadRequests
 }
 
+type forwardedRequestCapability struct {
+	ports.DownloadIntents
+	requests chan types.DownloadIntent
+}
+
+func (p forwardedRequestCapability) Submit(_ context.Context, request types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+	p.requests <- request
+	return types.DownloadSubmissionSummary{Link: request.Link, Total: 1, Queued: 1}, nil
+}
+
+func TestControllerSubmitsForwardedMediaToDownloadRequests(t *testing.T) {
+	previous := runControllerWatch
+	t.Cleanup(func() { runControllerWatch = previous })
+	requests := make(chan types.DownloadIntent, 1)
+	runControllerWatch = func(ctx context.Context, opts Options) error {
+		w := &Watcher{opts: opts, messageLinks: opts.messageLinks, intents: forwardedRequestCapability{requests: requests}}
+		w.dispatcher(ctx)
+		return nil
+	}
+	controller := NewController(context.Background(), controllerTestOptions(t, Options{Account: types.DefaultAccount, Template: controllerTestTemplate}), nil)
+	require.True(t, controller.Start())
+	t.Cleanup(controller.Stop)
+	request := types.DownloadIntent{Account: types.DefaultAccount, PeerID: 42, MessageID: 17, Link: "转发消息 17", Source: types.DownloadSourceBotForward, Forwarded: &types.ForwardedMedia{FileID: "bot-id"}}
+	result, err := controller.SubmitForwardedMedia(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Queued)
+	require.Equal(t, request, <-requests)
+}
+
 func TestControllerCancellationReachesDispatcher(t *testing.T) {
 	previous := runControllerWatch
 	t.Cleanup(func() { runControllerWatch = previous })

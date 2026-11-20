@@ -111,11 +111,13 @@ func TestStartupKeepsWebUIAvailableDuringNetworkFailure(t *testing.T) {
 	rangePort := rangeListener.Addr().(*net.TCPAddr).Port
 	require.NoError(t, rangeListener.Close())
 	require.NoError(t, directory.Patch(ctx, "proxy.range", map[string]any{"address": "127.0.0.1", "port": rangePort}))
-	require.NoError(t, directory.Patch(ctx, "time.sync", map[string]any{"server": "selected.ntp"}))
 
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	startupTimeProbe = startupProbeFunc(func(ctx context.Context, _ string, _ time.Duration) (types.TimeSample, error) {
+	startupTimeProbe = startupProbeFunc(func(ctx context.Context, host string, _ time.Duration) (types.TimeSample, error) {
+		if host != "ntp.aliyun.com" {
+			return types.TimeSample{}, errors.New("offline")
+		}
 		once.Do(func() { close(entered) })
 		select {
 		case <-release:
@@ -182,7 +184,7 @@ func TestStartupKeepsWebUIAvailableDuringNetworkFailure(t *testing.T) {
 	// discovery finishes. Discovery must never reinstall all saved settings.
 	request(http.MethodPatch, "/api/config", `{"values":{"debug":true}}`)
 	request(http.MethodPatch, "/api/components", `{"id":"account.telegram","values":{"file_limit":3}}`)
-	request(http.MethodPatch, "/api/components", `{"id":"time.sync","values":{"server":"edited.ntp"}}`)
+	request(http.MethodPatch, "/api/components", `{"id":"time.sync","values":{"sync_interval_seconds":60}}`)
 	if phase == "cancel" {
 		return // Cleanup cancels the still-pending discovery and drains the listener.
 	}
@@ -221,9 +223,15 @@ func TestStartupKeepsWebUIAvailableDuringNetworkFailure(t *testing.T) {
 			require.Equal(t, "file_limit", component.Changes[0].Name)
 		}
 		if component.ID == "time.sync" {
+			require.Len(t, component.Fields, 2)
+			for _, field := range component.Fields {
+				require.Contains(t, []string{"sync_interval_seconds", "timeout_seconds"}, field.Name)
+			}
 			require.True(t, component.PendingRestart)
 			require.Len(t, component.Changes, 1)
-			require.Equal(t, "edited.ntp", component.Values["server"])
+			require.Equal(t, "sync_interval_seconds", component.Changes[0].Name)
+			require.EqualValues(t, 60, component.Values["sync_interval_seconds"])
+			require.NotContains(t, component.Values, "server")
 		}
 	}
 	var live struct {
@@ -232,8 +240,23 @@ func TestStartupKeepsWebUIAvailableDuringNetworkFailure(t *testing.T) {
 	require.NoError(t, json.Unmarshal(request(http.MethodGet, "/api/status", ""), &live))
 	require.Equal(t, phase == successPhase, live.Clock.Synchronized)
 	if phase == successPhase {
-		require.Equal(t, "selected.ntp", live.Clock.Server)
+		require.Equal(t, "ntp.aliyun.com", live.Clock.Server)
 		require.Equal(t, time.Minute, live.Clock.Offset)
+		var logResponse struct {
+			Items []struct {
+				At      time.Time `json:"at"`
+				Message string    `json:"message"`
+			} `json:"items"`
+		}
+		require.NoError(t, json.Unmarshal(request(http.MethodGet, "/api/logs", ""), &logResponse))
+		found := false
+		for _, entry := range logResponse.Items {
+			if entry.Message == message {
+				found = true
+				require.WithinDuration(t, live.Clock.LastSuccess, entry.At, time.Second, "process logger must share the runtime calibration")
+			}
+		}
+		require.True(t, found)
 	} else {
 		require.NotEmpty(t, live.Clock.LastError)
 	}

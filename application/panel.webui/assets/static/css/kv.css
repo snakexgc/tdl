@@ -3,6 +3,13 @@
   table-layout: fixed;
   min-width: 1544px;
 }
+/* A wide set of sortable columns must not push the only message off screen. */
+#kv-table:has(td.empty) {
+  min-width: 0;
+}
+#kv-table:has(td.empty) :is(colgroup, thead) {
+  display: none;
+}
 
 .sort-button {
   border: 0;

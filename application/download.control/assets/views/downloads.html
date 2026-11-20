@@ -2,7 +2,6 @@
   <header class="page-head">
     <div>
       <h1>下载管理</h1>
-      <p>查看下载进度，管理任务与下载链接。</p>
     </div>
     <div class="actions">
       <a class="btn secondary" data-app-link href="/config?tab=download"
@@ -40,18 +39,23 @@
       链接记录
     </button>
   </div>
-  <section id="download-storage" class="card" hidden aria-label="本地存储统计">
-    <h2>本地存储</h2>
-    <p id="download-storage-path" class="mono"></p>
-    <dl class="storage-metrics">
-      <div><dt>磁盘可用空间</dt><dd id="download-storage-free">—</dd></div>
-      <div><dt>磁盘总容量</dt><dd id="download-storage-total">—</dd></div>
-      <div><dt>已下载文件大小</dt><dd id="download-storage-bytes">—</dd></div>
-      <div><dt>已下载文件数量</dt><dd id="download-storage-count">—</dd></div>
-    </dl>
-    <p class="subtle">统计保存目录及子目录内的普通文件，不含已知未完成任务和符号链接；每 30 秒更新。文件大小为逻辑大小。</p>
-    <p id="download-storage-message" class="subtle" role="status"></p>
-  </section>
+  <details id="download-storage" hidden>
+    <summary>
+      <strong>本地存储</strong>
+      <span class="storage-preview">可用空间 <b id="download-storage-free">—</b></span>
+      <span class="bad-text" id="download-storage-alert" hidden>读取异常</span>
+    </summary>
+    <div class="storage-details">
+      <p id="download-storage-path" class="mono"></p>
+      <dl class="storage-metrics">
+        <div><dt>磁盘总容量</dt><dd id="download-storage-total">—</dd></div>
+        <div><dt>已下载文件大小</dt><dd id="download-storage-bytes">—</dd></div>
+        <div><dt>已下载文件数量</dt><dd id="download-storage-count">—</dd></div>
+      </dl>
+      <p class="subtle">每 30 秒统计保存目录和子目录中的文件数量与逻辑大小，跳过已知未完成任务和符号链接。</p>
+      <p id="download-storage-message" class="subtle" role="status"></p>
+    </div>
+  </details>
   <section
     id="download-tasks-panel"
     role="tabpanel"
@@ -124,15 +128,14 @@
       </button>
     </div>
     <div class="table-shell">
-      <table id="download-table">
+      <table id="download-table" class="task-table" aria-label="下载任务">
         <thead>
           <tr>
             <th class="select-col">
-              <input
-                id="download-check-all"
-                type="checkbox"
-                aria-label="选择当前列表"
-              />
+              <label class="task-check">
+                <input id="download-check-all" type="checkbox" aria-label="选择当前列表" />
+                <span class="task-mobile-label">全选当前列表</span>
+              </label>
             </th>
             <th>文件名</th>
             <th>执行器</th>

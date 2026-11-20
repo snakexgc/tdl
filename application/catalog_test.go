@@ -68,7 +68,9 @@ func TestWebUISettingsCoverageAndNavigation(t *testing.T) {
 		}
 	}
 	require.Equal(t, []string{"account.telegram.proxy"}, proxyEditors)
-	require.Equal(t, map[string]string{"/dashboard": "总览", "/downloads": "下载管理", "/forwards": "转发管理", "/user": "账号管理", "/config": "设置", "/modules": "模块管理", logsPath: "日志管理", "/update": "检查更新"}, visible)
+	require.Equal(t, map[string]string{"/dashboard": "总览", "/downloads": "下载管理", "/listen-downloads": "监听下载", "/forwards": "转发管理", "/user": "账号管理", "/config": "设置", "/modules": "模块管理", logsPath: "日志管理", "/update": "检查更新"}, visible)
+	require.Greater(t, orders["/listen-downloads"], orders["/downloads"])
+	require.Less(t, orders["/listen-downloads"], orders["/forwards"])
 	require.Greater(t, orders[logsPath], orders["/config"])
 	require.Less(t, orders[logsPath], orders["/update"])
 }

@@ -25,13 +25,16 @@ const (
 // Definition is available even when a component's resources are not running.
 // Validate must be side-effect free: no resources, goroutines, or configuration writes.
 type Definition struct {
-	Host     string
-	Factory  Factory
-	Assets   fs.FS
-	Routes   []types.WebRoute
-	Manifest manifest.Manifest
-	Scope    Scope
-	Validate func(context.Context, config.View) error
+	// LiveValues explicitly opts values into prepared, persisted runtime updates.
+	// Component enablement continues to use the startup configuration.
+	LiveValues bool
+	Host       string
+	Factory    Factory
+	Assets     fs.FS
+	Routes     []types.WebRoute
+	Manifest   manifest.Manifest
+	Scope      Scope
+	Validate   func(context.Context, config.View) error
 }
 
 // Definitions describes registered factories without constructing or starting them.

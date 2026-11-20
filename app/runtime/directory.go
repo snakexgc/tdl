@@ -53,6 +53,7 @@ func (m *Manager) initDirectory() error {
 			return m.forwardQueue.Host()
 		}},
 		{"downloads", func() *rte.Runtime { return m.downloadHost }},
+		{"listen", func() *rte.Runtime { return m.listenHost }},
 	} {
 		resolve := binding.resolve
 		if err := directory.Bind(binding.name, func() *rte.Runtime {

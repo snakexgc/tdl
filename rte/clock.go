@@ -9,11 +9,6 @@ import (
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
-type systemClock struct{}
-
-func (systemClock) Now() time.Time            { return time.Now() }
-func (systemClock) Status() types.ClockStatus { return types.ClockStatus{} }
-
 // ClockBinding forwards the process time port across independently owned hosts.
 // Its zero value uses system time, so neither startup nor disabled time sync
 // prevents consumers from reading the clock. Bind is for the composition root.
@@ -31,25 +26,18 @@ func (b *ClockBinding) clock() ports.Clock {
 	if source := b.source.Load(); source != nil {
 		return *source
 	}
-	return systemClock{}
+	return ports.ClockFrom(context.Background())
 }
 func (b *ClockBinding) Now() time.Time            { return b.clock().Now() }
 func (b *ClockBinding) Status() types.ClockStatus { return b.clock().Status() }
 
-type clockKey struct{}
-
 func WithClock(ctx context.Context, clock ports.Clock) context.Context {
-	return context.WithValue(ctx, clockKey{}, clock)
+	return ports.WithClock(ctx, clock)
 }
 
 // ClockFrom is the adapter entry point to the same port exposed as Kernel.Clock.
 func ClockFrom(ctx context.Context) ports.Clock {
-	if ctx != nil {
-		if clock, ok := ctx.Value(clockKey{}).(ports.Clock); ok && clock != nil {
-			return clock
-		}
-	}
-	return systemClock{}
+	return ports.ClockFrom(ctx)
 }
 
 func Now(ctx context.Context) time.Time { return ClockFrom(ctx).Now() }

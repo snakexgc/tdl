@@ -30,6 +30,7 @@ type Options struct {
 	Credentials       ports.TelegramCredentials
 	DownloadRouting   ports.DownloadRouting
 	DownloadPipeline  ports.DownloadPipeline
+	Listener          ports.DownloadListener
 	Dir               string
 	Template          string
 	FilenameMaxLength int

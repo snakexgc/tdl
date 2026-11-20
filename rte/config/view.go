@@ -50,6 +50,18 @@ func New(schema []manifest.ConfigField, values map[string]any) (View, error) {
 		if err := validate(f, raw); err != nil {
 			return View{}, fmt.Errorf("%s: %w", f.Name, err)
 		}
+		// Objects may arrive as typed structs or decoded maps. Canonical key
+		// order keeps equivalent persisted and running rule lists comparable.
+		if f.Type == manifest.Objects {
+			var objects []map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &objects); err != nil {
+				return View{}, err
+			}
+			raw, err = json.Marshal(objects)
+			if err != nil {
+				return View{}, err
+			}
+		}
 		v.values[f.Name] = raw
 		v.secrets[f.Name] = f.Secret
 	}

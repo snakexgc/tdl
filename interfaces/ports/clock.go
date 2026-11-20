@@ -20,3 +20,9 @@ type Clock interface {
 type TimeProbe interface {
 	Query(context.Context, string, time.Duration) (types.TimeSample, error)
 }
+
+// ProxyTimeProbe retries a measurement through the configured outbound proxy.
+// Implementations must not silently bypass the proxy or expose its credentials.
+type ProxyTimeProbe interface {
+	QueryViaProxy(context.Context, string, string, time.Duration) (types.TimeSample, error)
+}

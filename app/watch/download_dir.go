@@ -9,6 +9,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/peers"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/internal/core/util/tutil"
 	"github.com/snakexgc/tdl/pkg/config"
 )
@@ -62,7 +63,7 @@ func (w *Watcher) downloadDirData(ctx context.Context, file fileTask) downloadDi
 		}
 	}
 
-	return downloadDirData{ID: id, Name: safePathSegment(name), Time: time.Now()}
+	return downloadDirData{ID: id, Name: safePathSegment(name), Time: ports.Now(ctx)}
 }
 
 func peerTemplateName(peer peers.Peer) string {

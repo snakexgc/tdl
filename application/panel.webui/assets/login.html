@@ -5,32 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 TDL 管理面板</title>
   <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/login.css">
 </head>
 <body class="auth-page">
   <main class="auth-shell">
     <section class="auth-panel" aria-labelledby="auth-title">
-      <div class="auth-brand">
-        <div class="brand-mark">TDL</div>
-        <div>
-          <div class="brand-title">管理面板</div>
-          <div class="brand-subtitle">安全登录</div>
+      <header>
+        <div class="auth-brand">
+          <div class="brand-mark">TDL</div>
+          <h1 id="auth-title">登录管理面板</h1>
         </div>
-      </div>
-      <form id="webui-login-form" class="auth-form">
-        <div>
-          <h1 id="auth-title">登录</h1>
-          <p>请输入 WebUI 用户名和密码。</p>
+        <p>使用此 TDL 实例的 WebUI 用户名和密码。</p>
+      </header>
+      <form id="webui-login-form" class="auth-form" method="post" action="/api/auth/login">
+        <div class="field-inline">
+          <label for="webui-username">用户名</label>
+          <input id="webui-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
         </div>
-        <label class="field-inline">
-          <span>用户名</span>
-          <input id="webui-username" name="username" type="text" autocomplete="username" required autofocus>
-        </label>
-        <label class="field-inline">
-          <span>密码</span>
-          <input id="webui-password" name="password" type="password" autocomplete="current-password" required>
-        </label>
-        <button class="btn primary auth-submit" id="webui-login-submit" type="submit">进入面板</button>
-        <div class="notice" id="webui-login-status" role="status" aria-live="polite"></div>
+        <div class="field-inline">
+          <label for="webui-password">密码</label>
+          <div class="auth-secret">
+            <input id="webui-password" name="password" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required>
+            <button id="webui-password-toggle" class="auth-reveal" type="button" aria-controls="webui-password" aria-label="显示密码" hidden>显示</button>
+          </div>
+        </div>
+        <div>
+          <button class="btn primary auth-submit" id="webui-login-submit" type="submit">登录</button>
+          <p class="auth-status" id="webui-login-status" role="status" aria-atomic="true"></p>
+          <noscript><p>请启用 JavaScript 后再登录。</p></noscript>
+        </div>
       </form>
     </section>
   </main>

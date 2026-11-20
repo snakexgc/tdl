@@ -6,8 +6,11 @@ import (
 
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/application"
+	downloadlisten "github.com/snakexgc/tdl/application/download.listen"
+	listenstore "github.com/snakexgc/tdl/bsw/cdd/listen"
 	"github.com/snakexgc/tdl/bsw/cdd/tgauth"
 	"github.com/snakexgc/tdl/interfaces/ports"
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/rte"
 )
@@ -16,12 +19,39 @@ const (
 	policyResource   = "host.policies"
 	accountResource  = "host.account"
 	downloadResource = "host.downloads"
+	listenResource   = "host.listen"
 )
 
 // The long-lived owners use the same stop graph as their transport consumers.
 // A failed drain retains both the host pointer and every required provider.
 func (m *Manager) foundationUnits(cfg *config.Config) []rte.ManagedUnit {
 	return []rte.ManagedUnit{
+		{
+			ID: listenResource, Enabled: m.namespaceKV != nil && m.componentEnabled(downloadlisten.ID),
+			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.listenHost != nil },
+			Start: func(ctx context.Context) error {
+				host, listener, err := application.DownloadListenHost(ctx, m.downloadAccount, listenstore.New(m.namespaceKV), types.ListenFilters{Include: cfg.Include, Exclude: cfg.Exclude, MinMB: cfg.FileSizeMinMB, MaxMB: cfg.FileSizeMaxMB, DownloadEnabled: cfg.Modules.Watch, Limit: cfg.Limit, DCConnections: cfg.PoolSize}, m.savedStore)
+				m.mu.Lock()
+				m.listenHost, m.listener = host, listener
+				m.mu.Unlock()
+				return err
+			},
+			Stop: stopResource("监听下载规则服务", func(ctx context.Context) error {
+				m.mu.Lock()
+				host := m.listenHost
+				m.mu.Unlock()
+				if host == nil {
+					return nil
+				}
+				if err := host.Stop(ctx); err != nil {
+					return err
+				}
+				m.mu.Lock()
+				m.listenHost, m.listener = nil, nil
+				m.mu.Unlock()
+				return nil
+			}),
+		},
 		{
 			ID: policyResource, Enabled: true,
 			Running: func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.policies != nil },

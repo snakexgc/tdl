@@ -31,7 +31,7 @@ func Manifest() manifest.Manifest {
 		Pages:    []manifest.Page{{Path: "/user", Title: "账号管理", View: "user", Module: "/static/js/user.js", Style: "/static/css/user.css", Order: 40, KeepVisible: true, SettingsURL: "/config?tab=system#setting-account.telegram-use_builtin"}},
 		Provides: []manifest.Port{manifest.PortOf[ports.TelegramCredentials](ports.TelegramCredentialsName, 1, 0), manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0)},
 		Config: []manifest.ConfigField{
-			manifest.FormattedText("proxy", "统一网络代理", "", "proxy", true, true).InSettings("network", "网络代理与连接").WithHelp("Telegram、机器人和软件更新共用此代理。选择协议后填写 IP 或域名加端口，例如 127.0.0.1:1080；需要认证时展开填写。整体留空保留已保存的代理，修改时请同时填写所需的认证信息。"),
+			manifest.FormattedText("proxy", "统一网络代理", "", "proxy", true, true).InSettings("network", "网络代理与连接").WithHelp("Telegram、机器人、软件更新和时间同步重试共用此代理。选择协议后填写 IP 或域名加端口，例如 127.0.0.1:1080；需要认证时展开填写。整体留空保留已保存的代理，修改时请同时填写所需的认证信息。"),
 			manifest.Number("file_limit", "同时下载的文件数", 1, 1, 10000, false).InSettings("download", "下载并发与节奏").WithHelp("限制同时下载的 Telegram 文件数。调大前请确认网络带宽和账号连接稳定。"),
 			manifest.Number("dc_pool_size", "每个数据中心的连接数", 8, 1, 10000, false).InSettings("download", "下载并发与节奏").WithHelp("每个 Telegram 数据中心的下载连接容量及分片请求并发上限。HTTP 多线程请求与本地下载器共享此额度，超出时排队；HTTP 直读已完成的本地文件不受此限制。"),
 			manifest.Number("delay_seconds", "任务间隔（秒）", 0, 0, 3600, true).InSettings("download", "下载并发与节奏").WithHelp("任务之间的等待时间；0 表示不额外等待。"),

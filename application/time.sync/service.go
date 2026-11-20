@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -19,13 +18,11 @@ import (
 
 const (
 	ID            = "time.sync"
-	serverField   = "server"
 	intervalField = "sync_interval_seconds"
 	timeoutField  = "timeout_seconds"
 )
 
 type policy struct {
-	server            string
 	interval, timeout time.Duration
 }
 
@@ -33,10 +30,10 @@ func Manifest() manifest.Manifest {
 	return manifest.WithSettings(manifest.Manifest{
 		ID: ID, Title: "时间同步", Feature: manifest.Feature{ID: "time", Title: "时间同步", Order: 75, SettingsURL: "/config?tab=network"},
 		Provides: []manifest.Port{manifest.PortOf[ports.Clock](ports.ClockName, 1, 0)},
+		Requires: []manifest.Require{{Port: manifest.PortOf[ports.NetworkProxy](ports.NetworkProxyName, 1, 0), Optional: true}},
 		Config: []manifest.ConfigField{
-			manifest.Text(serverField, "首选 NTP 服务器", "", false, true).WithHelp("优先使用此服务器；留空或不可达时从内置候选中选择。同步结果只更新运行状态，不改写此配置。"),
-			manifest.Number(intervalField, "同步间隔（秒）", 300, 60, 86400, true).WithHelp("默认每 5 分钟同步，可设为 60 秒。首次启动立即在后台同步；失败保留上次成功的时间偏移，下个周期重试。"),
-			manifest.Number(timeoutField, "单次探测超时（秒）", 3, 1, 30, true),
+			manifest.Number(intervalField, "同步间隔（秒）", 300, 60, 86400, true).WithHelp("并发查询内置 NTP 池，采用最先返回的有效时间。默认每 5 分钟同步，可设为 60 秒，首次启动立即在后台同步。直连全部失败后通过统一代理重试，仍失败则回落到系统时间，下个周期重试。"),
+			manifest.Number(timeoutField, "每轮探测超时（秒）", 3, 1, 30, true).WithHelp("直连和代理重试各使用此超时；收到首个有效时间即取消本轮其余请求。"),
 		},
 	}, "network", "时间同步").SettingsOrder(40)
 }
@@ -47,10 +44,17 @@ func Register(registry *rte.Registry, probe ports.TimeProbe) error {
 
 type Service struct {
 	probe         ports.TimeProbe
+	proxy         ports.NetworkProxy
 	configuration atomic.Pointer[policy]
-	status        atomic.Pointer[types.ClockStatus]
+	state         atomic.Pointer[clockState]
 	runnables     *schedule.Group
 	changed       chan struct{}
+}
+
+type clockState struct {
+	status     types.ClockStatus
+	anchor     time.Time
+	calibrated time.Time
 }
 
 func New(probe ports.TimeProbe) *Service {
@@ -65,6 +69,9 @@ func (s *Service) Init(ctx context.Context, k rte.Kernel) error {
 		return err
 	}
 	s.runnables = k.Runnables
+	if value, err := k.Resolve(ports.NetworkProxyName); err == nil {
+		s.proxy = value.(ports.NetworkProxy)
+	}
 	return k.Provide(ports.ClockName, s)
 }
 
@@ -77,18 +84,13 @@ func (s *Service) PrepareConfig(ctx context.Context, view config.View) (func(), 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var server string
 	var interval, timeout int64
-	for name, value := range map[string]any{serverField: &server, intervalField: &interval, timeoutField: &timeout} {
+	for name, value := range map[string]any{intervalField: &interval, timeoutField: &timeout} {
 		if err := view.Get(name, value); err != nil {
 			return nil, err
 		}
 	}
-	server = strings.TrimSpace(server)
-	if strings.ContainsAny(server, " \r\n\t/\\") {
-		return nil, fmt.Errorf("server must be a hostname or IP address, optionally with a port")
-	}
-	next := &policy{server: server, interval: time.Duration(interval) * time.Second, timeout: time.Duration(timeout) * time.Second}
+	next := &policy{interval: time.Duration(interval) * time.Second, timeout: time.Duration(timeout) * time.Second}
 	return func() {
 		previous := s.configuration.Swap(next)
 		if previous != nil && s.changed != nil {
@@ -109,31 +111,79 @@ func (s *Service) Reconfigure(ctx context.Context, view config.View) error {
 	return nil
 }
 
-func (s *Service) Now() time.Time { return time.Now().Add(s.Status().Offset) }
-func (s *Service) Status() types.ClockStatus {
-	if status := s.status.Load(); status != nil {
-		return *status
+func (s *Service) Now() time.Time {
+	if state := s.state.Load(); state != nil && state.status.Synchronized {
+		return state.calibrated.Add(time.Since(state.anchor))
 	}
-	return types.ClockStatus{}
+	return time.Now()
+}
+
+func (s *Service) Status() types.ClockStatus {
+	if state := s.state.Load(); state != nil {
+		return state.status
+	}
+	return types.ClockStatus{Source: types.ClockSourceSystem}
+}
+
+type proxyProbe struct {
+	probe ports.ProxyTimeProbe
+	url   string
+}
+
+func (p proxyProbe) Query(ctx context.Context, host string, timeout time.Duration) (types.TimeSample, error) {
+	return p.probe.QueryViaProxy(ctx, host, p.url, timeout)
 }
 
 func (s *Service) synchronize(ctx context.Context) error {
 	p := s.configuration.Load()
-	server, sample, err := selectServer(ctx, p.server, builtinServers, s.probe, p.timeout)
+	server, sample, err := selectServer(ctx, builtinServers, s.probe, p.timeout)
+	viaProxy := false
+	if err != nil && ctx.Err() == nil && s.proxy != nil {
+		proxyURL, proxyErr := s.proxy.Proxy(ctx)
+		if proxyErr != nil {
+			err = fmt.Errorf("direct time query failed; shared proxy unavailable")
+		} else if proxyURL != "" {
+			if probe, ok := s.probe.(ports.ProxyTimeProbe); ok {
+				server, sample, err = selectServer(ctx, builtinServers, proxyProbe{probe, proxyURL}, p.timeout)
+				viaProxy = true
+				if err != nil {
+					// Proxy errors may contain URLs and authentication details.
+					err = fmt.Errorf("direct and proxied time queries failed")
+				}
+			} else {
+				err = fmt.Errorf("direct time query failed; time probe does not support proxy retry")
+			}
+		}
+	}
 	if ctx.Err() != nil {
 		return nil // Normal shutdown must not overwrite the last calibration.
 	}
 	status := s.Status()
 	status.LastAttempt = time.Now()
 	if err != nil {
+		status.Server, status.Source, status.Offset = "", types.ClockSourceSystem, 0
+		status.Synchronized, status.ViaProxy = false, false
 		status.LastError = err.Error()
-		s.status.Store(&status)
-		slog.Warn("NTP 同步失败，将在下个周期重试", "component", ID, "synchronized", status.Synchronized, "error", err)
+		s.state.Store(&clockState{status: status})
+		slog.Warn("NTP 同步失败，使用系统时间并在下个周期重试", "component", ID, "source", status.Source, "error", err)
 		return err
 	}
+	anchor := sample.MeasuredAt
+	if anchor.IsZero() {
+		anchor = time.Now()
+	}
+	calibrated := anchor.Add(sample.Offset).Round(0)
+	if sample.Source == "" {
+		sample.Source = types.ClockSourceNTP
+	}
+	if sample.Server != "" {
+		server = sample.Server
+	}
 	status.Server, status.Offset, status.Synchronized = server, sample.Offset, true
-	status.LastSuccess, status.LastError = time.Now(), ""
-	s.status.Store(&status)
-	slog.Info("NTP 时间已同步", "component", ID, serverField, server, "offset", sample.Offset, "elapsed", sample.Elapsed)
+	status.Source, status.ViaProxy = sample.Source, viaProxy
+	status.LastSuccess, status.LastError = calibrated.Add(time.Since(anchor)), ""
+	status.LastAttempt = status.LastSuccess
+	s.state.Store(&clockState{status: status, anchor: anchor, calibrated: calibrated})
+	slog.Info("NTP 时间已同步", "component", ID, "server", server, "source", sample.Source, "via_proxy", viaProxy, "offset", sample.Offset, "elapsed", sample.Elapsed)
 	return nil
 }

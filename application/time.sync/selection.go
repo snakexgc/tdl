@@ -2,7 +2,9 @@ package timesync
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,67 +13,61 @@ import (
 )
 
 var builtinServers = []string{
-	"cn.pool.ntp.org", "ntp.aliyun.com", "ntp.tencent.com", "ntp.sjtu.edu.cn", "ntp.nju.edu.cn",
-	"time1.google.com", "time1.apple.com", "time.cloudflare.com", "time.windows.com",
+	"ntp.aliyun.com", "time1.cloud.tencent.com", "ntp.ntsc.ac.cn",
+	"time.apple.com", "time.google.com", "time.windows.com",
+	"time.cloudflare.com", "cn.pool.ntp.org", "ntp.sjtu.edu.cn", "ntp.nju.edu.cn",
 }
 
-func selectServer(ctx context.Context, preferred string, candidates []string, probe ports.TimeProbe, timeout time.Duration) (string, types.TimeSample, error) {
-	query := func(host string) (sample types.TimeSample, err error) {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				err = fmt.Errorf("NTP probe panic: %v", recovered)
-			}
-		}()
-		bounded, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		sample, err = probe.Query(bounded, host, timeout)
-		if bounded.Err() != nil {
-			return types.TimeSample{}, bounded.Err()
-		}
-		return sample, err
-	}
-	if preferred != "" {
-		for range 3 {
-			if err := ctx.Err(); err != nil {
-				return "", types.TimeSample{}, err
-			}
-			if sample, err := query(preferred); err == nil {
-				return preferred, sample, nil
-			}
-		}
-	}
+func selectServer(ctx context.Context, candidates []string, probe ports.TimeProbe, timeout time.Duration) (string, types.TimeSample, error) {
 	if err := ctx.Err(); err != nil {
 		return "", types.TimeSample{}, err
 	}
+	// One deadline bounds the whole concurrent round, including DNS and dialing.
+	round, cancel := context.WithTimeout(ctx, timeout)
+	var wg sync.WaitGroup
+	defer func() { cancel(); wg.Wait() }()
 	type result struct {
 		host   string
 		sample types.TimeSample
+		err    error
 	}
-	results := make(chan result, len(candidates))
-	var wg sync.WaitGroup
+	hosts := make([]string, 0, len(candidates))
+	seen := map[string]bool{}
 	for _, host := range candidates {
-		if host == preferred {
-			continue
+		host = strings.TrimSpace(host)
+		key := strings.ToLower(host)
+		if host != "" && !seen[key] {
+			seen[key] = true
+			hosts = append(hosts, host)
 		}
+	}
+	results := make(chan result, len(hosts))
+	for _, host := range hosts {
 		wg.Go(func() {
-			if sample, err := query(host); err == nil {
-				results <- result{host, sample}
-			}
+			next := result{host: host}
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					next.err = fmt.Errorf("NTP probe panic: %v", recovered)
+				}
+				results <- next
+			}()
+			next.sample, next.err = probe.Query(round, host, timeout)
 		})
 	}
-	wg.Wait()
-	close(results)
-	if err := ctx.Err(); err != nil {
-		return "", types.TimeSample{}, err
-	}
-	var best result
-	for next := range results {
-		if best.host == "" || next.sample.Elapsed < best.sample.Elapsed || (next.sample.Elapsed == best.sample.Elapsed && next.host < best.host) {
-			best = next
+	var failures []error
+	for range hosts {
+		select {
+		case <-round.Done():
+			return "", types.TimeSample{}, fmt.Errorf("NTP pool: %w", round.Err())
+		case next := <-results:
+			if err := round.Err(); err != nil {
+				return "", types.TimeSample{}, err
+			}
+			if next.err == nil {
+				return next.host, next.sample, nil
+			}
+			failures = append(failures, fmt.Errorf("%s: %w", next.host, next.err))
 		}
 	}
-	if best.host == "" {
-		return "", types.TimeSample{}, fmt.Errorf("no NTP server is reachable")
-	}
-	return best.host, best.sample, nil
+	return "", types.TimeSample{}, fmt.Errorf("no valid NTP response: %w", errors.Join(failures...))
 }

@@ -109,6 +109,8 @@ type downloadProxy struct {
 
 	reporterMu sync.RWMutex
 	reporter   TelegramFileErrorReporter
+	botFileMu  sync.RWMutex
+	botMedia   *botMediaBinding
 
 	clientWaitTimeout time.Duration
 }
@@ -267,6 +269,7 @@ func (p *downloadProxy) start(ctx context.Context, ready func()) error {
 	p.cfgMu.Unlock()
 	defer func() { _ = host.Stop(context.Background()) }()
 	server := p.newServer()
+	server.BaseContext = func(net.Listener) context.Context { return runCtx }
 	listener, err := (&net.ListenConfig{}).Listen(runCtx, "tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("HTTP 下载服务监听 %s 失败: %w", server.Addr, err)
@@ -302,17 +305,22 @@ func (p *downloadProxy) Host() *rte.Runtime {
 }
 
 func (p *downloadProxy) CleanupExpiredTasks(ctx context.Context) error {
-	return p.tasks.CleanupExpired(ctx, time.Now())
+	return p.tasks.CleanupExpired(ctx, rte.Now(ctx))
 }
 
 func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media) (*downloadTask, error) {
+	return p.NewTaskWithPriority(ctx, peerID, msgID, peer, fileName, fileSize, media, 0)
+}
+
+func (p *downloadProxy) NewTaskWithPriority(ctx context.Context, peerID int64, msgID int, peer tg.InputPeerClass, fileName string, fileSize int64, media *tmedia.Media, priority int, forwarded ...*types.ForwardedMedia) (*downloadTask, error) {
 	id, err := downloadTaskID(media)
 	if err != nil {
 		return nil, errors.Wrap(err, "build persistent download task id")
 	}
 
-	now := time.Now()
+	now := rte.Now(ctx)
 	task := &downloadTask{
+		Priority:     priority,
 		ID:           id,
 		PeerID:       peerID,
 		MessageID:    msgID,
@@ -323,9 +331,13 @@ func (p *downloadProxy) NewTask(ctx context.Context, peerID int64, msgID int, pe
 		CreatedAt:    now,
 		LastActiveAt: now,
 	}
+	if len(forwarded) > 0 && forwarded[0] != nil {
+		task.BotFileID, task.BotID = forwarded[0].FileID, forwarded[0].BotID
+	}
 	if err := p.tasks.Add(ctx, task); err != nil {
 		return nil, err
 	}
+	p.scheduler.Prioritize(id, priority)
 
 	return task, nil
 }
@@ -349,6 +361,9 @@ func (p *downloadProxy) streamTaskParallel(ctx context.Context, task *downloadTa
 }
 
 func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTask, lease *transfer.TaskLease, start, end int64, w io.Writer, parallel bool) error {
+	if task.isBotFile() {
+		return p.streamBotFile(ctx, task, lease, start, end, w, parallel)
+	}
 	pool := p.pools.Get()
 	if pool == nil {
 		err := errors.New("telegram client unavailable")
@@ -372,17 +387,7 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 			zap.String("task_id", task.ID),
 			zap.Int64("peer_id", task.PeerID),
 			zap.Int("msg_id", task.MessageID))
-		if err := p.refreshTaskMedia(ctx, task); err != nil {
-			return nil, errors.Wrap(err, "refresh expired file reference")
-		}
-		refreshed, ok, err := p.tasks.Get(ctx, task.ID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, errors.New("download task disappeared after media refresh")
-		}
-		return refreshed.Media, nil
+		return p.refreshTaskMedia(ctx, task)
 	}
 
 	handle := p.sources.Acquire(task, refresh)
@@ -393,42 +398,42 @@ func (p *downloadProxy) streamTaskWithMode(ctx context.Context, task *downloadTa
 	return streamTelegramMedia(streamCtx, pool, handle.Source(), lease, p.telegramFileErrorReporter(), start, end, w)
 }
 
-func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask) error {
+func (p *downloadProxy) refreshTaskMedia(ctx context.Context, task *downloadTask) (*tmedia.Media, error) {
 	if task.Peer == nil {
-		return errors.New("download task peer is empty")
+		return nil, errors.New("download task peer is empty")
 	}
 
 	pool := p.pools.Get()
 	if pool == nil {
-		return errors.New("telegram client unavailable")
+		return nil, errors.New("telegram client unavailable")
 	}
 
 	msg, err := tutil.GetSingleMessage(ctx, pool.Default(ctx), task.Peer, task.MessageID)
 	if err != nil {
-		return errors.Wrap(err, "get message for media refresh")
+		return nil, errors.Wrap(err, "get message for media refresh")
 	}
 	media, ok := tmedia.GetMedia(msg)
 	if !ok {
-		return errors.New("message no longer has media")
+		return nil, errors.New("message no longer has media")
 	}
 	if task.Media != nil && media.DC != task.Media.DC {
-		return fmt.Errorf("refreshed media changed dc from %d to %d", task.Media.DC, media.DC)
+		return nil, fmt.Errorf("refreshed media changed dc from %d to %d", task.Media.DC, media.DC)
 	}
 	id, err := downloadTaskID(media)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if id != task.ID {
-		return fmt.Errorf("refreshed media id changed from %q to %q", task.ID, id)
+		return nil, fmt.Errorf("refreshed media id changed from %q to %q", task.ID, id)
 	}
 
 	refreshed := *task
 	refreshed.Media = media
 	refreshed.FileSize = media.Size
 	if err := p.tasks.Add(ctx, &refreshed); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return media, nil
 }
 
 func isRefreshableFileReferenceError(err error) bool {

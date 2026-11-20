@@ -106,7 +106,7 @@ func handleLocalDownloadCommand(
 func sendLocalDownloadMenu(ctx *th.Context, chatID int64, userID int64) error {
 	_, err := ctx.Bot().SendMessage(ctx, tu.Message(
 		tu.ID(chatID),
-		fmt.Sprintf("本地下载器控制面板已就绪。\n您的用户 ID：%d\n\n这里可查看、暂停、恢复和删除 watch 创建的本地下载任务；发送 Telegram 消息链接可直接按 watch 流程提交下载。", userID),
+		fmt.Sprintf("本地下载器控制面板已就绪。\n您的用户 ID：%d\n\n这里可查看、暂停、恢复和删除 watch 创建的本地下载任务；发送 Telegram 消息链接或直接转发含文件的消息即可提交下载。", userID),
 	).WithReplyMarkup(aria2ReplyKeyboard()))
 	return err
 }
@@ -121,12 +121,12 @@ func localDownloadHelpMessage() string {
 		"/downloads_stopped 查看已完成/停止任务",
 		"/downloads_pause_all 暂停全部未完成任务",
 		"/downloads_start_all 开始全部已暂停/错误任务",
-		"发送 Telegram 消息链接，按 watch 流程下载消息中的文件",
+		"发送 Telegram 消息链接，或直接转发含文件的消息以下载",
 	}, "\n")
 }
 
 func localDownloadBotHelpMessage(userID int64) string {
-	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n任务总览：/info\n提交下载：发送 Telegram 消息链接\n当前下载器：local\nADMIN_ID：%d", aria2MenuClose, userID)
+	return fmt.Sprintf("开启菜单：/start 或 /menu\n关闭菜单：点击“%s”\n任务总览：/info\n提交下载：发送 Telegram 消息链接或直接转发文件消息\n当前下载器：local\nADMIN_ID：%d", aria2MenuClose, userID)
 }
 
 func runLocalDownloadList(ctx context.Context, factory localDownloadControllerFactory) ([]types.DownloadTask, error) {

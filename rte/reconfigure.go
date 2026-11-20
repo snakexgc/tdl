@@ -16,6 +16,12 @@ type PreparedConfig interface {
 	PrepareConfig(context.Context, config.View) (commit func(), err error)
 }
 
+// ConfigStager journals recovery metadata before saving a live configuration.
+// Abort removes an uncommitted stage; the saved configuration decides recovery.
+type ConfigStager interface {
+	StageConfig(context.Context, config.View) (abort func(), err error)
+}
+
 // ReconfigureBatch prepares every changed component before publishing any of
 // them. Invalid input cannot leave half of a policy update applied. Commits are
 // individually atomic; this does not promise a cross-port reader transaction.
@@ -86,9 +92,30 @@ func (r *Runtime) reconfigureLocked(ctx context.Context, values map[string]map[s
 		return err
 	}
 	if persist != nil {
+		aborts := []func(){}
+		committed := false
+		defer func() {
+			if !committed {
+				for i := len(aborts) - 1; i >= 0; i-- {
+					aborts[i]()
+				}
+			}
+		}()
+		for _, next := range changes {
+			if stager, ok := next.item.component.(ConfigStager); ok {
+				abort, err := stager.StageConfig(ctx, next.view)
+				if err != nil {
+					return err
+				}
+				if abort != nil {
+					aborts = append(aborts, abort)
+				}
+			}
+		}
 		if err := persist(views); err != nil {
 			return err
 		}
+		committed = true
 	}
 	for _, next := range changes {
 		next.commit()

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte"
 )
 
@@ -144,10 +145,32 @@ func (c *Controller) SubmitMessageLink(ctx context.Context, link string) (Messag
 	if err != nil {
 		return MessageLinkSubmissionResult{}, err
 	}
+	return c.submitRequest(ctx, messageLinkSubmission{link: link})
+}
+
+func (c *Controller) SubmitForwardedMedia(ctx context.Context, request types.DownloadIntent) (MessageLinkSubmissionResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if request.Forwarded == nil || request.Forwarded.FileID == "" || request.MessageID <= 0 {
+		return MessageLinkSubmissionResult{}, stderrors.New("转发消息缺少可下载文件")
+	}
+	c.mu.Lock()
+	opts := c.opts
+	c.mu.Unlock()
+	if opts.FeatureFlags != nil {
+		download, _ := opts.FeatureFlags()
+		if !download {
+			return MessageLinkSubmissionResult{}, stderrors.New("监听下载已停用")
+		}
+	}
+	if request.Account != opts.Account {
+		return MessageLinkSubmissionResult{}, stderrors.New("转发消息账号不匹配")
+	}
+	return c.submitRequest(ctx, messageLinkSubmission{intent: &request})
+}
 
+func (c *Controller) submitRequest(ctx context.Context, req messageLinkSubmission) (MessageLinkSubmissionResult, error) {
 	c.mu.Lock()
 	submit := c.submit
 	done := c.done
@@ -157,11 +180,8 @@ func (c *Controller) SubmitMessageLink(ctx context.Context, link string) (Messag
 		return MessageLinkSubmissionResult{}, stderrors.New("监听下载未运行")
 	}
 
-	req := messageLinkSubmission{
-		ctx:   ctx,
-		link:  link,
-		reply: make(chan messageLinkSubmissionResponse, 1),
-	}
+	req.ctx = ctx
+	req.reply = make(chan messageLinkSubmissionResponse, 1)
 	select {
 	case submit <- req:
 	case <-done:

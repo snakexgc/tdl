@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
@@ -47,7 +48,7 @@ func (s *Aria2Repository) Add(ctx context.Context, record Aria2Record) error {
 		return errors.New("aria2 gid is empty")
 	}
 	if record.CreatedAt.IsZero() {
-		record.CreatedAt = time.Now()
+		record.CreatedAt = ports.Now(ctx)
 	}
 	if err := s.cleanup(ctx); err != nil {
 		return err
@@ -108,13 +109,13 @@ func (s *Aria2Repository) cleanup(ctx context.Context) error {
 	if ttl <= 0 {
 		return nil
 	}
-	now := time.Now()
+	now := ports.Now(ctx)
 	return Aria2(s.kv).Sweep(ctx, func(data []byte, stamp time.Time) (bool, error) {
 		var record Aria2Record
 		if err := json.Unmarshal(data, &record); err != nil {
 			return false, err
 		}
-		if record.ControlUntil.After(now) {
+		if record.ControlUntil.After(time.Now()) {
 			return false, nil
 		}
 		return isAria2TaskExpired(stamp, now, ttl), nil

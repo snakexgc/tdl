@@ -11,6 +11,7 @@ import (
 )
 
 type watchRuntime struct {
+	store  storage.Storage
 	local  ports.DownloadExecutor
 	proxy  *httpdl.Proxy
 	worker *local.Worker
@@ -22,6 +23,7 @@ func newWatchRuntime(opts Options, kvd storage.Storage, logger *zap.Logger) *wat
 	proxy := service.Proxy()
 	pools := service.Pools()
 	runtime := &watchRuntime{
+		store: kvd,
 		proxy: proxy,
 		pools: pools,
 	}

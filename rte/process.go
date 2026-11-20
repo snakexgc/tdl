@@ -43,7 +43,9 @@ func NewProcess(parent context.Context, account types.AccountID, id string) *Pro
 	if account == "" {
 		account = types.DefaultAccount
 	}
-	return &Process{parent: parent, account: account, id: id, state: Stopped, diagnostics: dem.New(account, 128)}
+	diagnostics := dem.New(account, 128)
+	diagnostics.SetClock(ClockFrom(parent))
+	return &Process{parent: parent, account: account, id: id, state: Stopped, diagnostics: diagnostics}
 }
 
 func (p *Process) Start(run func(context.Context) error, recovery Recovery) (bool, error) {
@@ -62,7 +64,7 @@ func (p *Process) Start(run func(context.Context) error, recovery Recovery) (boo
 	ctx, cancel := context.WithCancel(p.parent)
 	p.cancel = cancel
 	p.done = make(chan struct{})
-	p.runnable = schedule.Status{Name: p.id, Running: true, StartedAt: time.Now()}
+	p.runnable = schedule.Status{Name: p.id, Running: true, StartedAt: Now(ctx)}
 	go func() {
 		p.mu.Lock()
 		if p.state == Starting {
@@ -80,7 +82,7 @@ func (p *Process) Start(run func(context.Context) error, recovery Recovery) (boo
 			defer p.mu.Unlock()
 			p.active = false
 			p.runnable.Running = false
-			p.runnable.FinishedAt = time.Now()
+			p.runnable.FinishedAt = Now(ctx)
 			if err != nil {
 				p.runnable.LastError = err.Error()
 			}

@@ -162,7 +162,7 @@ function updateDraft() {
   const count = (store?.count || 0) + Number(runtimeDraft !== undefined);
   $("settings-draft-status").textContent = count
     ? `${count} 项修改尚未保存，可在顶部保存并重启。切换分类会保留输入。`
-    : "没有未保存的输入。";
+    : "";
   $("settings-draft-status").classList.toggle("has-drafts", count > 0);
   $("settings-reload").disabled = busy.size > 0;
   $("settings-reload").textContent = busy.has("reload") ? "正在刷新…" : "刷新";

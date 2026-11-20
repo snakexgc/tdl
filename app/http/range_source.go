@@ -32,7 +32,15 @@ func (s rangeSource) CleanupSources(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.proxy.sources.CleanupIdle(time.Now(), sourceRegistryIdleTTL)
+	now := time.Now()
+	s.proxy.sources.CleanupIdle(now, sourceRegistryIdleTTL)
+	s.proxy.botFileMu.RLock()
+	if bot := s.proxy.botMedia; bot != nil {
+		if conn := bot.active.Load(); conn != nil {
+			conn.sources.CleanupIdle(now, sourceRegistryIdleTTL)
+		}
+	}
+	s.proxy.botFileMu.RUnlock()
 	return nil
 }
 
@@ -58,12 +66,20 @@ func rangeResource(task *downloadTask) types.RangeResource {
 }
 
 func (t rangeTransfer) Ready(ctx context.Context) error {
+	if t.task.isBotFile() {
+		binding, err := t.proxy.botMediaFor(t.task)
+		if err != nil {
+			return err
+		}
+		_, err = binding.connect(ctx)
+		return err
+	}
 	_, err := t.proxy.pools.Wait(ctx)
 	return err
 }
 
 func (t rangeTransfer) Acquire(ctx context.Context) (ports.DownloadLease, error) {
-	return t.proxy.scheduler.Acquire(ctx, t.task.ID, t.task.Media.DC)
+	return t.proxy.scheduler.AcquireWithPriority(ctx, t.task.ID, t.task.Media.DC, t.task.Priority)
 }
 
 func (t rangeTransfer) Stream(ctx context.Context, lease ports.DownloadLease, start, end int64, w io.Writer) error {
@@ -79,7 +95,7 @@ func (t rangeTransfer) Report(ctx context.Context, spans []types.ByteRange) erro
 	for _, span := range spans {
 		ranges = append(ranges, downloadRange{start: span.Start, end: span.End})
 	}
-	_, err := t.proxy.tasks.recordHTTPDelivery(ctx, t.task.ID, t.task.FileSize, ranges, time.Now())
+	_, err := t.proxy.tasks.recordHTTPDelivery(ctx, t.task.ID, t.task.FileSize, ranges, ports.Now(ctx))
 	return err
 }
 

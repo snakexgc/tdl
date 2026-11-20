@@ -20,6 +20,22 @@ const (
 	testGID1        = "gid-1"
 )
 
+func TestAria2AddURIPriorityIncludesWaitingQueuePosition(t *testing.T) {
+	var request Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"tdl-watch","result":"gid-1"}`))
+	}))
+	defer server.Close()
+	position := 0
+	client := NewClient(types.Aria2Config{RPCURL: server.URL, TimeoutSeconds: 5})
+	_, err := client.AddURI(context.Background(), "http://example.com/file", AddURIOptions{Position: &position, Connections: 3})
+	require.NoError(t, err)
+	require.Len(t, request.Params, 3)
+	require.Equal(t, float64(0), request.Params[2])
+	require.Equal(t, "3", request.Params[1].(map[string]any)["split"])
+}
+
 func TestAria2AddURIWithoutSecret(t *testing.T) {
 	t.Parallel()
 

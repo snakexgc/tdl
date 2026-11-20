@@ -30,7 +30,9 @@ test("one websocket multiplexes views and HTTP fallback stops after recovery", a
   const leave = mod.namespace.observe("download-tasks-local", () => {});
   mod.namespace.startRealtime(); mod.namespace.startRealtime();
   assert.equal(sockets.length, 1);
+  assert.equal(label.textContent, "正在连接");
   sockets[0].open();
+  assert.equal(label.textContent, "已连接");
   assert.deepEqual(Array.from(sockets[0].sent.at(-1).topics), ["status", "download-tasks-local"]);
   const receivedTasks = [];
   const leaveTasks = mod.namespace.observe("download-tasks-aria2", (data, error) => receivedTasks.push({data, error}));
@@ -45,6 +47,7 @@ test("one websocket multiplexes views and HTTP fallback stops after recovery", a
   leave();
   assert.deepEqual(Array.from(sockets[0].sent.at(-1).topics), ["status"]);
   sockets[0].close();
+  assert.equal(label.textContent, "连接已断开");
   await new Promise(setImmediate);
   assert.deepEqual(requests, ["/api/status"]);
   assert.equal(received.at(-1).mode, "local");

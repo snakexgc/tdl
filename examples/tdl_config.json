@@ -36,6 +36,12 @@
         "local_root": ""
       }
     },
+    "download.listen": {
+      "enabled": true,
+      "values": {
+        "rules": []
+      }
+    },
     "downloader.aria2": {
       "enabled": true,
       "values": {
@@ -145,7 +151,6 @@
     "time.sync": {
       "enabled": true,
       "values": {
-        "server": "",
         "sync_interval_seconds": 300,
         "timeout_seconds": 3
       }

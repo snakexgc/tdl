@@ -21,6 +21,7 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
+	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
@@ -55,6 +56,7 @@ type Options struct {
 	ComponentStore        *rteconfig.Store
 	SetComponentHost      func(*rte.Runtime)
 	SetComponentRefresh   func(func(context.Context) error)
+	SetBotMedia           func(int64, func(context.Context) (*httpdl.BotMediaConnection, error))
 	Token                 string
 	AllowedUsers          []int64
 	Proxy                 string
@@ -74,6 +76,7 @@ type watchControl interface {
 	UpdateOptions(watch.Options)
 	Running() bool
 	SubmitMessageLink(context.Context, string) (watch.MessageLinkSubmissionResult, error)
+	SubmitForwardedMedia(context.Context, types.DownloadIntent) (watch.MessageLinkSubmissionResult, error)
 }
 
 func RebootRequested() bool {
@@ -127,6 +130,12 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		account = types.DefaultAccount
 	}
 	botLogger.logger = botLogger.logger.With("account", account)
+	if opts.SetBotMedia != nil {
+		media := newBotMediaSession(ctx, opts, account, botUser.ID)
+		defer media.close()
+		opts.SetBotMedia(botUser.ID, media.pool)
+		defer opts.SetBotMedia(0, nil)
+	}
 	slog.Info("机器人身份验证成功", "component", "console.bot", "account", account, "bot_id", botUser.ID)
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)
 	transport := &botNotificationTransport{sender: bot, editor: bot}
@@ -571,6 +580,9 @@ func handleAllowedMessage(
 		if handled, err := handleDownloadCommand(ctx, msg, text, aria2Factory, localFactory); handled || err != nil {
 			return err
 		}
+	}
+	if handled, err := handleForwardedMediaSubmission(ctx, msg, watchCtrl, account); handled || err != nil {
+		return err
 	}
 	if handled, err := handleMessageLinkSubmission(ctx, msg, text, watchCtrl); handled || err != nil {
 		return err

@@ -105,7 +105,7 @@ func (r Aria2Observations) Apply(ctx context.Context, source ports.ObservedLink,
 			if err != nil {
 				return err
 			}
-			if current.Deleted || current.Revision != observed.Revision || current.ControlUntil.After(now) || current.TaskID != observed.TaskID || !types.DownloadTransition(types.NormalizeDownloadState(current.Status), types.NormalizeDownloadState(observed.Status)) {
+			if current.Deleted || current.Revision != observed.Revision || current.ControlUntil.After(time.Now()) || current.TaskID != observed.TaskID || !types.DownloadTransition(types.NormalizeDownloadState(current.Status), types.NormalizeDownloadState(observed.Status)) {
 				return nil
 			}
 			if err := json.Unmarshal(data, &raw); err != nil {

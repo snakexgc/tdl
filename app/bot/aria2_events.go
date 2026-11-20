@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/snakexgc/tdl/app/aria2"
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/internal/core/logctx"
 	"github.com/snakexgc/tdl/pkg/config"
 	"github.com/snakexgc/tdl/pkg/utils"
@@ -249,7 +250,7 @@ func handleAria2Event(ctx context.Context, notifier *botNotifier, factory aria2C
 		if err != nil {
 			return
 		}
-		text := formatAria2ProgressMessage(task)
+		text := formatAria2ProgressMessage(ctx, task)
 		tracked := notifier.SendAndTrack(ctx, text)
 		if cfg.Bot.Notify.LiveProgress && len(tracked) > 0 {
 			intervalSec := cfg.Bot.Notify.LiveProgressIntervalSec
@@ -336,7 +337,7 @@ func runAria2ProgressLoop(
 			if status == "complete" || status == "error" || status == "removed" {
 				return
 			}
-			notifier.EditTracked(ctx, tracked, formatAria2ProgressMessage(task))
+			notifier.EditTracked(ctx, tracked, formatAria2ProgressMessage(ctx, task))
 		}
 	}
 }
@@ -357,7 +358,7 @@ func notifyAria2DownloadComplete(ctx context.Context, notifier *botNotifier, tas
 }
 
 // formatAria2ProgressMessage formats a live-updating progress message.
-func formatAria2ProgressMessage(task aria2.DownloadStatus) string {
+func formatAria2ProgressMessage(ctx context.Context, task aria2.DownloadStatus) string {
 	info := aria2.TaskInfoFromStatus(task)
 	speed := parseAria2Int(task.DownloadSpeed)
 	bar := buildAria2ProgressBar(info.CompletedLength, info.TotalLength, aria2ProgressBarWidth)
@@ -367,7 +368,7 @@ func formatAria2ProgressMessage(task aria2.DownloadStatus) string {
 		"进度: " + bar,
 		"大小: " + formatAria2Size(info.TotalLength),
 		"速度: " + utils.Byte.FormatBinaryBytes(speed) + "/s",
-		"更新: " + time.Now().Format("15:04:05"),
+		"更新: " + ports.Now(ctx).Format("15:04:05"),
 	}
 	return strings.Join(lines, "\n")
 }

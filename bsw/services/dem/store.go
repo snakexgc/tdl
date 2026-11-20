@@ -2,10 +2,11 @@
 package dem
 
 import (
+	"context"
 	"log/slog"
 	"sync"
-	"time"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 )
 
@@ -15,13 +16,23 @@ type Store struct {
 	capacity int
 	sequence uint64
 	events   []types.DiagnosticEvent
+	clock    ports.Clock
 }
 
 func New(account types.AccountID, capacity int) *Store {
 	if capacity < 1 {
 		capacity = 128
 	}
-	return &Store{account: account, capacity: capacity}
+	return &Store{account: account, capacity: capacity, clock: ports.ClockFrom(context.Background())}
+}
+
+func (s *Store) SetClock(clock ports.Clock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if clock == nil {
+		clock = ports.ClockFrom(context.Background())
+	}
+	s.clock = clock
 }
 
 func (s *Store) Report(component, operation string, err error) {
@@ -31,7 +42,7 @@ func (s *Store) Report(component, operation string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sequence++
-	event := types.DiagnosticEvent{Sequence: s.sequence, Account: s.account, Component: component, Operation: operation, Message: err.Error(), At: time.Now()}
+	event := types.DiagnosticEvent{Sequence: s.sequence, Account: s.account, Component: component, Operation: operation, Message: err.Error(), At: s.clock.Now()}
 	slog.Error("组件诊断事件", "kind", "diagnostic", "component", component, "account", s.account, "operation", operation, "error", err)
 	if len(s.events) == s.capacity {
 		copy(s.events, s.events[1:])

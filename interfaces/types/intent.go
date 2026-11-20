@@ -2,6 +2,19 @@ package types
 
 const DownloadRequested = "download.requested"
 
+const DownloadSourceBotForward = "bot_forward"
+
+const DownloadSourceReaction = "reaction"
+
+const DownloadPriorityReaction = 1
+
+func DownloadPriority(source string) int {
+	if source == DownloadSourceReaction {
+		return DownloadPriorityReaction
+	}
+	return 0
+}
+
 const ForwardRequested = "forward.requested"
 
 type ForwardIntent struct {
@@ -20,13 +33,29 @@ type MessagePeer struct {
 }
 
 type DownloadIntent struct {
-	RequestID string `json:"request_id,omitempty"`
-	Account   AccountID
-	Peer      MessagePeer
-	PeerID    int64
-	MessageID int
-	Link      string
-	Source    string
+	RequestID       string `json:"request_id,omitempty"`
+	Account         AccountID
+	Peer            MessagePeer
+	PeerID          int64
+	MessageID       int
+	Link            string
+	Source          string
+	ExpectedMediaID string
+	Forwarded       *ForwardedMedia
+}
+
+// ForwardedMedia carries the Bot API file reference and metadata for a
+// forwarded message. The file bytes remain on the Telegram data path.
+type ForwardedMedia struct {
+	BotID    int64
+	FileID   string
+	FileName string
+	FileSize int64
+	MIMEType string
+	Caption  string
+	Date     int64
+	AlbumID  string
+	PeerName string
 }
 
 type DownloadSubmissionSummary struct {

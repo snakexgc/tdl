@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/go-faster/errors"
 
+	"github.com/snakexgc/tdl/interfaces/ports"
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/internal/core/storage"
 )
@@ -33,7 +33,7 @@ func (s *LocalRepository) Save(ctx context.Context, record types.LocalDownloadRe
 	if record.Status == "" {
 		record.Status = types.LocalDownloadStatusQueued
 	}
-	now := time.Now()
+	now := ports.Now(ctx)
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = now
 	}
