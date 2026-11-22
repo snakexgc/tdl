@@ -18,6 +18,8 @@ concurrency:
 jobs:
   goreleaser:
     runs-on: ubuntu-22.04
+    env:
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -28,7 +30,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          # Go 1.27 raises the macOS runtime minimum to 13.
+          go-version: '1.26.11'
           cache: true
       - name: Prepare release metadata
         id: release
@@ -90,7 +93,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: v2.18.0
+          version: v2.20.3
           install-only: true
       - name: Run GoReleaser
         shell: bash
