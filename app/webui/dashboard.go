@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"time"
 
-	hostmem "github.com/shirou/gopsutil/v3/mem"
+	hostmem "github.com/shirou/gopsutil/v4/mem"
 
 	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/pkg/config"

@@ -5,7 +5,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 var proc *process.Process

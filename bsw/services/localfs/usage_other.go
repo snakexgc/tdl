@@ -5,7 +5,7 @@ package localfs
 import (
 	"context"
 
-	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v4/disk"
 )
 
 func volumeUsage(ctx context.Context, path string) (uint64, uint64, error) {

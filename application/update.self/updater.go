@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/process"
 
 	"github.com/snakexgc/tdl/interfaces/types"
 	"github.com/snakexgc/tdl/rte/platform"

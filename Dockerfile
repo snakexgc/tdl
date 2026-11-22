@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1.7
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+# syntax=docker/dockerfile:1.29.0
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 ARG VERSION="dev"
 ARG COMMIT="unknown"
