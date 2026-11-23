@@ -71,13 +71,14 @@ func (f startupProbeFunc) Query(ctx context.Context, host string, timeout time.D
 func TestStartupKeepsWebUIAvailableDuringNetworkFailure(t *testing.T) {
 	const helperEnv = "TDL_TEST_OFFLINE_STARTUP"
 	const successPhase = "success"
+	const helperTimeout = 30 * time.Second
 	phase := os.Getenv(helperEnv)
 	if phase == "" {
 		for _, phase := range []string{successPhase, "failure", "cancel"} {
 			t.Run(phase, func(t *testing.T) {
 				executable, err := os.Executable()
 				require.NoError(t, err)
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
 				defer cancel()
 				child := exec.CommandContext(ctx, executable, "-test.run=^TestStartupKeepsWebUIAvailableDuringNetworkFailure$")
 				child.Env = append(os.Environ(), helperEnv+"="+phase, consts.EnvHome+"="+t.TempDir())
@@ -111,6 +112,9 @@ func TestStartupKeepsWebUIAvailableDuringNetworkFailure(t *testing.T) {
 	rangePort := rangeListener.Addr().(*net.TCPAddr).Port
 	require.NoError(t, rangeListener.Close())
 	require.NoError(t, directory.Patch(ctx, "proxy.range", map[string]any{"address": "127.0.0.1", "port": rangePort}))
+	// The mock NTP round stays pending until the HTTP checks complete, so give
+	// it the same time budget as the test subprocess.
+	require.NoError(t, directory.Patch(ctx, "time.sync", map[string]any{"timeout_seconds": int(helperTimeout / time.Second)}))
 
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once

@@ -89,6 +89,12 @@ func (c *Collection) Mutate(ctx context.Context, id string, fn func([]byte, time
 
 // Merge updates metadata without removing status fields owned by other reports.
 func (c *Collection) Merge(ctx context.Context, id string, data []byte, stamp time.Time) error {
+	return c.MergeMetadata(ctx, id, stamp, func([]byte) ([]byte, error) { return data, nil })
+}
+
+// MergeMetadata prepares a metadata patch against the current record in the
+// same transaction as the write. New records pass nil to prepare.
+func (c *Collection) MergeMetadata(ctx context.Context, id string, stamp time.Time, prepare func([]byte) ([]byte, error)) error {
 	if c.initErr != nil {
 		return c.initErr
 	}
@@ -117,6 +123,10 @@ func (c *Collection) Merge(ctx context.Context, id string, data []byte, stamp ti
 		}
 		if merged == nil {
 			merged = make(map[string]json.RawMessage)
+		}
+		data, err := prepare(old)
+		if err != nil {
+			return err
 		}
 		var updates map[string]json.RawMessage
 		if err := json.Unmarshal(data, &updates); err != nil {

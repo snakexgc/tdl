@@ -16,6 +16,7 @@ func handleForwardedMediaSubmission(ctx *th.Context, msg *telego.Message, watchC
 	if !ok {
 		return false, nil
 	}
+	media.BotID = ctx.Bot().ID()
 	if watchCtrl == nil {
 		return true, sendMessage(ctx, msg.Chat.ID, "无法提交转发文件：监听下载控制器未配置。")
 	}

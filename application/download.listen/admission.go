@@ -163,22 +163,26 @@ func (s *Service) processJob(ctx context.Context, job types.ListenJobRecord, res
 		Account: s.account, Peer: message.Peer, PeerID: message.Peer.ID, MessageID: message.ID,
 		Source: source, ExpectedMediaID: message.MediaID, Link: fmt.Sprintf("%s/%d", reference(message.Peer), message.ID),
 	})
-	if ctx.Err() != nil {
-		return ctx.Err()
-	} // Durable stateSubmitting is reconciled on reconnect.
+	// A disconnect can race the reply. Finish journaling the result even when
+	// the connection that submitted this message is already gone.
+	journalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if result.Queued > 0 {
-		return s.finishJob(ctx, job, stateAccepted, "")
+		return s.finishJob(journalCtx, job, stateAccepted, "")
 	}
 	if result.Uncertain > 0 {
 		job.NextAttemptAt = s.clock().Add(scanInterval)
-		return s.finishJob(ctx, job, stateUncertain, "下载器接收结果待确认")
+		return s.finishJob(journalCtx, job, stateUncertain, "下载器接收结果待确认")
 	}
 	if err == nil && result.Failed == 0 {
-		return s.finishJob(ctx, job, stateFiltered, "")
+		return s.finishJob(journalCtx, job, stateFiltered, "")
+	}
+	if ctx.Err() != nil && result.Failed == 0 && !errors.Is(err, ports.ErrDownloadNotAccepted) {
+		return ctx.Err() // No definite outcome. Reconcile stateSubmitting on reconnect.
 	}
 	job.State = statePending
 	s.mu.Lock()
-	persistErr := s.persistLocked(ctx, types.ListenMutation{Jobs: []types.ListenJobRecord{job}})
+	persistErr := s.persistLocked(journalCtx, types.ListenMutation{Jobs: []types.ListenJobRecord{job}})
 	s.mu.Unlock()
 	if persistErr != nil {
 		return persistErr

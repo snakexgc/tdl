@@ -398,6 +398,69 @@ func TestUncertainAdmissionDoesNotResubmitAndDefiniteFailureRetries(t *testing.T
 	require.Equal(t, stateAccepted, s.state.Jobs[id].State)
 }
 
+type disconnectingDownloads struct {
+	*fakeDownloads
+	disconnect context.CancelFunc
+}
+
+func (d disconnectingDownloads) Submit(ctx context.Context, intent types.DownloadIntent) (types.DownloadSubmissionSummary, error) {
+	result, err := d.fakeDownloads.Submit(ctx, intent)
+	d.disconnect()
+	return result, err
+}
+
+func TestDisconnectPreservesAdmissionOutcomeAcrossRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result types.DownloadSubmissionSummary
+		err    error
+		state  string
+	}{
+		{"accepted", types.DownloadSubmissionSummary{Total: 1, Queued: 1}, nil, stateAccepted},
+		{"filtered", types.DownloadSubmissionSummary{Total: 1, Skipped: 1}, nil, stateFiltered},
+		{"rejected", types.DownloadSubmissionSummary{Total: 1, Failed: 1}, ports.ErrDownloadNotAccepted, statePending},
+		{"reply lost", types.DownloadSubmissionSummary{}, context.Canceled, stateUncertain},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, journal := configtest.NewStore(), newJournal()
+			s, host, clock := testService(t, journal, store)
+			saveRules(t, host, store, testRule("user:1"))
+			message := types.ListenMessage{Peer: types.MessagePeer{Kind: kindUser, ID: 1}, ID: 20, Date: clock.now().Unix(), MediaID: testMedia}
+			require.NoError(t, s.Observe(t.Context(), message))
+			transport := &fakeTransport{messages: map[string]types.ListenMessage{"user:1/20": message}}
+			downloads := &fakeDownloads{result: tc.result, err: tc.err}
+			r := testResources(transport, downloads)
+			ctx, disconnect := context.WithCancel(t.Context())
+			defer disconnect()
+			r.Downloads = disconnectingDownloads{downloads, disconnect}
+			id := jobID(types.DefaultAccount, message)
+			err := s.processJob(ctx, s.state.Jobs[id], r)
+			switch tc.state {
+			case statePending:
+				require.ErrorIs(t, err, ports.ErrDownloadNotAccepted)
+			case stateUncertain:
+				require.ErrorIs(t, err, context.Canceled)
+			default:
+				require.NoError(t, err)
+			}
+
+			reopened, _, _ := testService(t, journal, store)
+			job := reopened.state.Jobs[id]
+			if job.State == stateSubmitting {
+				require.NoError(t, reopened.processJob(t.Context(), job, testResources(transport, downloads)))
+			}
+			require.Equal(t, tc.state, reopened.state.Jobs[id].State)
+			require.Len(t, downloads.requests, 1)
+			if tc.state == statePending {
+				downloads.result, downloads.err = types.DownloadSubmissionSummary{Total: 1, Queued: 1}, nil
+				require.NoError(t, reopened.processJob(t.Context(), job, testResources(transport, downloads)))
+				require.Equal(t, stateAccepted, reopened.state.Jobs[id].State)
+				require.Len(t, downloads.requests, 2)
+			}
+		})
+	}
+}
+
 func TestSharedWorkersBoundConcurrencyAndDrainOnDisconnect(t *testing.T) {
 	store := configtest.NewStore()
 	s, host, _ := testService(t, newJournal(), store)

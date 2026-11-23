@@ -21,6 +21,7 @@ import (
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
+	httpdl "github.com/snakexgc/tdl/app/http"
 	"github.com/snakexgc/tdl/app/login"
 	"github.com/snakexgc/tdl/app/watch"
 	"github.com/snakexgc/tdl/application"
@@ -55,7 +56,7 @@ type Options struct {
 	ComponentStore        *rteconfig.Store
 	SetComponentHost      func(*rte.Runtime)
 	SetComponentRefresh   func(func(context.Context) error)
-	SetBotFileRefresher   func(func(context.Context, string) (string, error))
+	SetBotMedia           func(int64, func(context.Context) (*httpdl.BotMediaConnection, error))
 	Token                 string
 	AllowedUsers          []int64
 	Proxy                 string
@@ -129,18 +130,11 @@ func Run(ctx context.Context, opts Options) (rerr error) {
 		account = types.DefaultAccount
 	}
 	botLogger.logger = botLogger.logger.With("account", account)
-	if opts.SetBotFileRefresher != nil {
-		opts.SetBotFileRefresher(func(ctx context.Context, fileID string) (string, error) {
-			file, err := bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
-			if err != nil {
-				return "", err
-			}
-			if file == nil || file.FileID == "" {
-				return "", errors.New("bot returned an empty file ID")
-			}
-			return file.FileID, nil
-		})
-		defer opts.SetBotFileRefresher(nil)
+	if opts.SetBotMedia != nil {
+		media := newBotMediaSession(ctx, opts, account, botUser.ID)
+		defer media.close()
+		opts.SetBotMedia(botUser.ID, media.pool)
+		defer opts.SetBotMedia(0, nil)
 	}
 	slog.Info("机器人身份验证成功", "component", "console.bot", "account", account, "bot_id", botUser.ID)
 	color.Green("🤖 Bot @%s (ID: %d) started", botUser.Username, botUser.ID)

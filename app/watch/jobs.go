@@ -34,7 +34,7 @@ type fileTask struct {
 	media      *tmedia.Media
 	peer       tg.InputPeerClass
 	peerID     int64
-	botFileID  string
+	forwarded  *types.ForwardedMedia
 }
 
 func (w *Watcher) dispatcher(ctx context.Context) {

@@ -32,7 +32,15 @@ func (s rangeSource) CleanupSources(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.proxy.sources.CleanupIdle(time.Now(), sourceRegistryIdleTTL)
+	now := time.Now()
+	s.proxy.sources.CleanupIdle(now, sourceRegistryIdleTTL)
+	s.proxy.botFileMu.RLock()
+	if bot := s.proxy.botMedia; bot != nil {
+		if conn := bot.active.Load(); conn != nil {
+			conn.sources.CleanupIdle(now, sourceRegistryIdleTTL)
+		}
+	}
+	s.proxy.botFileMu.RUnlock()
 	return nil
 }
 
@@ -58,6 +66,14 @@ func rangeResource(task *downloadTask) types.RangeResource {
 }
 
 func (t rangeTransfer) Ready(ctx context.Context) error {
+	if t.task.isBotFile() {
+		binding, err := t.proxy.botMediaFor(t.task)
+		if err != nil {
+			return err
+		}
+		_, err = binding.connect(ctx)
+		return err
+	}
 	_, err := t.proxy.pools.Wait(ctx)
 	return err
 }
