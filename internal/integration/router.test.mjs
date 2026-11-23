@@ -20,6 +20,7 @@ test("declared pages mount lazily, preserve query and guide disabled features", 
     append(child) { this.children.push(child); }
     replaceChildren() { this.children = []; }
     querySelectorAll() { return []; }
+    setAttribute() {}
     addEventListener() {}
   }
   const host = new Element(), nav = new Element(), head = new Element();
@@ -82,6 +83,8 @@ test("declared pages mount lazily, preserve query and guide disabled features", 
   await router.evaluate();
   await router.namespace.initRouter();
   assert.equal(nav.children.length, 4);
+  assert.deepEqual(nav.children.filter(child => child.className === "nav-group").map(group => group.children[0].textContent), ["系统管理"]);
+  assert.equal(nav.children.find(child => child.className === "nav-group").children[1].href, "/logs");
   assert.deepEqual(fetched, ["/api/components", "/views/example.html"]);
   const link = nav.children.find(child => child.href === "/other");
   assert.equal(link.dataset.appLink, "");

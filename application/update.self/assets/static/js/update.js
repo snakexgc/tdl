@@ -40,7 +40,7 @@ export async function loadUpdateStatus() {
     if (!selectedRelease()) selectedVersion = releases()[0]?.version || "";
     checking = false;
     renderUpdateInfo();
-    notice(data.update.message || "选择版本查看 Release Notes，确认后可下载并切换。", data.update.docker ? "warn" : "");
+    notice(data.update.message || "", data.update.docker ? "warn" : "");
   } catch (error) {
     if (controller !== checkController || controller.signal.aborted) return;
     checking = false;
@@ -107,7 +107,7 @@ function renderChannel(id, versions) {
       if (checking || applying || restarting) return;
       selectedVersion = release.version;
       renderSelection();
-      element("update-notes-shell").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      element("update-notes-shell").scrollIntoView({ block: "nearest" });
     });
     target.append(button);
     releaseButtons.push({ button, release });
@@ -116,7 +116,7 @@ function renderChannel(id, versions) {
 
 function renderSelection() {
   const release = selectedRelease();
-  element("update-notes-title").textContent = release ? `Release Notes · ${release.version}` : "Release Notes";
+  element("update-notes-title").textContent = release ? `发布说明 · ${release.version}` : "发布说明";
   const notes = element("update-notes");
   if (release?.release_notes_html) {
     // Only insert HTML rendered by the server's safe Markdown renderer.
@@ -126,7 +126,7 @@ function renderSelection() {
       link.rel = "noopener noreferrer";
     });
   } else {
-    notes.textContent = release ? (release.release_notes || "此版本未提供 Release Notes。") : "点击上方版本查看发布说明。";
+    notes.textContent = release ? (release.release_notes || "此版本未提供发布说明。") : "选择版本查看发布说明。";
   }
   notes.scrollTop = 0;
   element("update-selection").textContent = release ? `${release.prerelease ? "预览版" : "正式版"} · ${release.name || release.version} · ${formatDate(release.published_at)}` : "";

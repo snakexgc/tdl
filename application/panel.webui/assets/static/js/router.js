@@ -4,6 +4,16 @@ import { mountSettingsTabs } from "./settings-tabs.js";
 import { escapeHTML } from "./utils.js";
 
 const pages = new Map();
+const navGroups = {
+  "/downloads": "任务工作区",
+  "/listen-downloads": "任务工作区",
+  "/forwards": "任务工作区",
+  "/user": "系统管理",
+  "/modules": "系统管理",
+  "/config": "系统管理",
+  "/logs": "系统管理",
+  "/update": "系统管理",
+};
 let current,
   currentURL,
   generation = 0,
@@ -104,6 +114,7 @@ function reconcileNavigation(data) {
     nav = document.querySelector("nav.nav");
   const focusedLink = document.activeElement?.closest("nav.nav .nav-item");
   nav.replaceChildren();
+  const groups = new Map();
   for (const page of pages.values()) page.enabled = false;
   for (const declaration of declarations) {
     const path = localURL(declaration.path).pathname;
@@ -139,7 +150,26 @@ function reconcileNavigation(data) {
     }
     page.enabled = true;
     page.ownerEnabled = declaration.ownerEnabled;
-    if (!page.nav_hidden) nav.append(page.link);
+    if (page.nav_hidden) continue;
+    const label = navGroups[path];
+    if (!label) {
+      nav.append(page.link);
+      continue;
+    }
+    if (!groups.has(label)) {
+      const group = document.createElement("div");
+      group.className = "nav-group";
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", label);
+      const heading = document.createElement("div");
+      heading.className = "nav-label";
+      heading.textContent = label;
+      heading.setAttribute("aria-hidden", "true");
+      group.append(heading);
+      groups.set(label, group);
+      nav.append(group);
+    }
+    groups.get(label).append(page.link);
   }
   if (focusedLink) {
     const target = focusedLink.isConnected
@@ -198,6 +228,8 @@ async function show(url, { focusContent = false } = {}) {
   const title = page?.title || "页面不可用";
   const breadcrumb = document.getElementById("current-page");
   if (breadcrumb) breadcrumb.textContent = title;
+  const section = document.getElementById("current-section");
+  if (section) section.textContent = navGroups[url.pathname] || "管理面板";
   document.title = `${title} · TDL 管理面板`;
   if (focusContent) window.dispatchEvent(new Event("page-selected"));
   let unavailable = document.getElementById("page-unavailable");

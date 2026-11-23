@@ -3,7 +3,7 @@
   container-type: inline-size;
 }
 
-.summary-grid,
+.summary-group,
 .dashboard-diagnostic-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -12,9 +12,15 @@
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.summary-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   overflow: hidden;
-  margin-bottom: 28px;
 }
 
 .summary-card {
@@ -22,9 +28,10 @@
   display: grid;
   align-content: start;
   gap: 4px;
-  padding: 16px 20px;
+  padding: 13px 18px;
   color: var(--text);
   text-decoration: none;
+  transition: background var(--t);
 }
 
 .summary-card + .summary-card,
@@ -72,7 +79,7 @@
 }
 
 .summary-card strong {
-  font-size: 32px;
+  font-size: 29px;
 }
 
 .summary-card small,
@@ -107,14 +114,52 @@
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1.12fr 1fr 1.12fr;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   gap: 12px;
 }
 
 .dashboard-card {
   min-width: 0;
-  padding: 18px 18px 12px;
+  padding: 13px 16px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   box-shadow: none;
+}
+
+.dashboard-speed-card {
+  grid-row: span 2;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dashboard-speed-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px 20px;
+  padding: 18px 20px 16px;
+  background: var(--panel-tint);
+  border-block-end: 1px solid var(--line);
+}
+
+.dashboard-speed-head .dashboard-reading,
+.dashboard-speed-head .dashboard-meta {
+  margin-bottom: 0;
+}
+
+.dashboard-speed-head .dashboard-reading {
+  color: var(--primary-dark);
+  font-size: clamp(28px, 4vw, 40px);
+}
+
+.dashboard-speed-plot {
+  display: flex;
+  flex: 1;
+  padding: 14px 16px 16px;
 }
 
 .dashboard-card h3,
@@ -128,14 +173,19 @@
 
 .dashboard-reading {
   display: block;
-  margin: 4px 0 12px;
-  font-size: 26px;
+  margin: 3px 0 6px;
+  font-size: 22px;
 }
 
 .dashboard-chart {
   display: block;
   width: 100%;
-  height: 136px;
+  height: 94px;
+}
+
+.dashboard-speed-plot .dashboard-chart {
+  height: auto;
+  min-height: 186px;
 }
 
 .dashboard-chart .grid-line {
@@ -233,7 +283,8 @@
 .dashboard-history summary {
   display: list-item;
   width: fit-content;
-  padding: 10px 2px;
+  min-height: 44px;
+  padding: 12px 2px;
   cursor: pointer;
 }
 
@@ -275,6 +326,15 @@
   margin-top: 16px;
 }
 
+.dashboard-tasks {
+  margin-top: 26px;
+}
+
+.dashboard-tasks .dashboard-section-head {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .dashboard-counts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -298,28 +358,22 @@
   overflow-wrap: anywhere;
 }
 
-@container (max-width: 870px) {
+@container (max-width: 760px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .dashboard-speed-card {
     grid-column: 1 / -1;
+    grid-row: auto;
   }
 }
 
 @container (max-width: 640px) {
   .summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-bottom: 20px;
   }
   .summary-card {
     padding: 12px 14px;
-  }
-  .summary-card:nth-child(odd) {
-    border-inline-start: 0;
-  }
-  .summary-card:nth-child(n + 3) {
-    border-block-start: 1px solid var(--line);
   }
   .summary-card strong {
     font-size: 26px;
@@ -327,7 +381,7 @@
   .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .dashboard-card {
+  .dashboard-card:not(.dashboard-speed-card) {
     padding: 14px;
   }
   .dashboard-chart {
@@ -342,6 +396,10 @@
 }
 
 @container (max-width: 400px) {
+  .summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
   .dashboard-counts {
     grid-template-columns: minmax(0, 1fr);
   }

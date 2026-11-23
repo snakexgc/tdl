@@ -108,6 +108,7 @@ function init() {
     if (event.target.closest("[data-clear-filters]")) {
       $("download-search").value = "";
       $("download-state").value = "all";
+      $("download-executor").selectedIndex = 0;
       $("download-search").focus();
       render();
       return;
@@ -147,6 +148,8 @@ async function load(url) {
   snapshots = {};
   errors = {};
   selected.clear();
+  $("download-task-filters").hidden = !executors.length;
+  $("download-list-meta").hidden = !executors.length;
   $("advanced-download").hidden = !executors.includes("aria2");
   $("download-storage").hidden = mode !== "local";
   const filter = $("download-executor");
@@ -270,18 +273,20 @@ function render() {
   const focus = document.activeElement?.closest?.(
     "#download-body :is(a[href], button, input)",
   );
-  $("download-health").innerHTML = executors
+  const health = executors
     .map(
       (executor) =>
         `<span class="${errors[executor] ? "bad-text" : "subtle"}">${executorLabel(executor)}：${errors[executor] ? `连接不可用${snapshots[executor] ? "，保留上次数据" : ""} · ${esc(errors[executor])}` : snapshots[executor] ? `${snapshots[executor].length} 项任务` : "连接中…"}</span>`,
     )
     .join("");
+  if ($("download-health").innerHTML !== health)
+    $("download-health").innerHTML = health;
   const tasks = visible().sort(
     (a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0),
   );
   $("download-body").innerHTML = tasks.length
     ? tasks.map(row).join("")
-    : `<tr><td colspan="8" class="empty">${emptyTasks()}</td></tr>`;
+    : `<tr role="row"><td colspan="7" class="empty" role="cell">${emptyTasks()}</td></tr>`;
   selection();
   restoreListFocus(focus);
 }
@@ -295,27 +300,29 @@ function restoreListFocus(previous) {
     target = body.querySelector("[data-clear-filters]");
   } else {
     const key = previous.dataset.taskKey || previous.dataset.taskCheck;
-    target = [...body.querySelectorAll("[data-task-key], [data-task-check]")].find(
+    const controls = [...body.querySelectorAll("[data-task-key], [data-task-check]")];
+    target = controls.find(
       (node) =>
         !node.disabled &&
         (node.dataset.taskKey || node.dataset.taskCheck) === key &&
         node.dataset.taskAction === previous.dataset.taskAction &&
         node.matches(".text-button") === previous.matches(".text-button"),
     );
+    target ??= controls.find((node) => node.dataset.taskKey === key && node.dataset.taskAction === "details");
   }
   (target || $("download-search")).focus({ preventScroll: true });
 }
 function emptyTasks() {
-  const links = '<a data-app-link href="/downloads?tab=links">查看链接记录</a>';
+  const links = '<a class="btn secondary" data-app-link href="/downloads?tab=links">查看链接记录</a>';
   if (!executors.length)
     return mode === "http"
-      ? `当前使用 HTTP 直链，可在链接记录中查看下载地址。<p>${links}</p>`
-      : '下载执行器未启用。<p><a data-app-link href="/config?tab=download">查看下载设置</a></p>';
+      ? `<strong>当前使用 HTTP 直链</strong><p>从链接记录直接打开文件下载地址。</p>${links}`
+      : '<strong>下载执行器未启用</strong><p><a data-app-link href="/config?tab=download">查看下载设置</a></p>';
   if (executors.some((executor) => !snapshots[executor]))
     return Object.keys(errors).length ? "任务列表暂时无法读取，请刷新重试。" : "正在读取下载任务…";
   if ($("download-search").value.trim() || $("download-state").value !== "all")
     return '没有符合筛选条件的任务。<p><button class="btn secondary compact" type="button" data-clear-filters>清除筛选</button></p>';
-  return `暂无下载任务<p>可从 Telegram 发起下载，或在链接记录中提交任务。</p><p>${links}</p>`;
+  return `<strong>暂无下载任务</strong><p>可从 Telegram 发起下载，或在链接记录中提交任务。</p>${links}`;
 }
 function row(task) {
   const key = escapeAttr(taskKey(task)),
@@ -334,19 +341,22 @@ function row(task) {
         : eligible(task, "resume")
           ? "resume"
           : "";
+  const name = task.file_name || task.id;
   const controls = action
-    ? `<button class="btn secondary compact" data-task-key="${key}" data-task-action="${action}" ${busy || errors[task.executor] ? "disabled" : ""}>${action === "pause" ? "暂停" : "恢复"}</button>`
+    ? `<button class="btn secondary compact" type="button" data-task-key="${key}" data-task-action="${action}" ${busy || errors[task.executor] ? "disabled" : ""}>${action === "pause" ? "暂停" : "恢复"}</button>`
     : "";
-  return `<tr><td class="select-col"><label class="task-check"><input type="checkbox" data-task-check="${key}" aria-label="选择 ${escapeAttr(task.file_name || task.id)}" ${selected.has(taskKey(task)) ? "checked" : ""}></label></td>
-    <td class="task-name"><button class="text-button" data-task-key="${key}" data-task-action="details">${esc(task.file_name || task.id)}</button>${errors[task.executor] ? '<small class="bad-text">数据已过期</small>' : ""}</td>
-    <td class="task-executor">${executorLabel(task.executor)}</td><td><span class="pill ${statusClass(value)}">${esc(statusLabel(value))}</span></td>
-    <td class="task-progress task-wide">${task.total > 0 ? `<div>${formatBytes(task.completed || 0)} / ${formatBytes(task.total)}</div><progress max="100" value="${percent}" aria-label="下载进度"></progress>` : "文件大小未知"}</td>
-    <td class="task-speed task-wide"><span class="task-mobile-label">速度 </span>${task.download_speed != null ? `${formatBytes(task.download_speed)}/s` : "—"}</td><td class="task-created time-cell">${time(task.created_at)}</td>
-    <td class="task-wide"><div class="row-actions">${controls}<button class="btn secondary compact" data-task-key="${key}" data-task-action="details">详情</button><button class="btn danger compact" data-task-key="${key}" data-task-action="delete" ${busy || errors[task.executor] ? "disabled" : ""}>删除</button></div></td></tr>`;
+  return `<tr role="row"><td class="select-col" role="cell"><label class="task-check"><input type="checkbox" data-task-check="${key}" aria-label="选择 ${escapeAttr(name)}" ${selected.has(taskKey(task)) ? "checked" : ""}></label></td>
+    <td class="task-name" role="cell"><button class="text-button" type="button" data-task-key="${key}" data-task-action="details" aria-label="查看任务详情：${escapeAttr(name)}"><span class="download-file-label">${esc(name)}</span></button>${errors[task.executor] ? '<small class="bad-text">数据已过期</small>' : ""}</td>
+    <td class="task-status" role="cell"><span class="pill ${statusClass(value)}">${esc(statusLabel(value))}</span></td>
+    <td class="task-progress" role="cell">${task.total > 0 ? `<div>${formatBytes(task.completed || 0)} / ${formatBytes(task.total)}</div><progress max="100" value="${percent}" aria-label="${escapeAttr(name)}的下载进度"></progress>` : "文件大小未知"}</td>
+    <td class="task-speed" role="cell"><span class="task-mobile-label">速度 </span>${task.download_speed != null ? `${formatBytes(task.download_speed)}/s` : "—"}</td><td class="task-created time-cell" role="cell">${time(task.created_at)}</td>
+    <td class="task-action" role="cell">${controls}</td></tr>`;
 }
 function selection() {
   const tasks = visible(),
     count = selected.size;
+  if (!count && document.activeElement?.closest("#download-bulk"))
+    (tasks.length ? $("download-check-all") : $("download-search")).focus({ preventScroll: true });
   $("download-bulk").hidden = count === 0;
   $("download-selection-count").textContent = `已选 ${count} 项`;
   $("download-check-all").checked =
@@ -367,7 +377,8 @@ function selection() {
     });
 }
 function details(task) {
-  const content = element("dl", null, "detail-list");
+  const content = element("div", null, "download-detail");
+  const values = element("dl", null, "detail-list");
   for (const [label, value] of [
     ["文件", task.file_name],
     ["执行器", executorLabel(task.executor)],
@@ -386,12 +397,19 @@ function details(task) {
     ["预计剩余", task.eta_seconds > 0 ? `${task.eta_seconds} 秒` : null],
     ["错误", task.error],
   ])
-    content.append(element("dt", label), element("dd", value || "—"));
+    values.append(element("dt", label), element("dd", value || "—"));
   if (task.executor === "aria2" && taskState(task) === "error")
-    content.append(
+    values.append(
       element("dt", "重新下载"),
       element("dd", "此 aria2 任务已终止，可在「链接记录」中重新提交下载。"),
     );
+  content.append(values);
+  const remove = element("button", "删除任务", "btn danger");
+  remove.type = "button";
+  remove.disabled = busy || Boolean(errors[task.executor]);
+  const actions = element("div", null, "download-detail-actions");
+  actions.append(remove);
+  content.append(actions);
   const origin = document.activeElement;
   const pageURL = location.href;
   const dialog = openDrawer("下载任务详情", content, () => {
@@ -399,13 +417,18 @@ function details(task) {
     if (!active || location.href !== pageURL) return;
     if (focus === document.body || dialog.contains(focus)) restoreListFocus(origin);
   });
+  remove.addEventListener("click", async () => {
+    remove.disabled = true;
+    if (await control("delete", [task])) dialog.close();
+    else remove.disabled = busy || Boolean(errors[task.executor]);
+  });
 }
 async function control(action, tasks) {
   if (busy) return;
   if (
     action === "delete" &&
     !confirm(
-      `删除选中的 ${tasks.length} 项下载任务？${mode === "local" ? "本地未完成任务的临时文件会清理，已完成文件保留。" : "aria2 移除任务或结果记录，不主动删除下载文件。"}`,
+      `删除选中的 ${tasks.length} 项下载任务？${mode === "local" ? "本地未完成任务的临时文件会清理，已完成文件保留。" : "aria2 会移除任务或结果记录并保留下载文件。"}`,
     )
   )
     return;
@@ -445,6 +468,7 @@ async function control(action, tasks) {
   $("download-message").textContent =
     `已处理 ${changed} 项，跳过 ${skipped} 项${failures.length ? `；${failures.join("；")}` : ""}`;
   selection();
+  return true;
 }
 function stop() {
   active = false;

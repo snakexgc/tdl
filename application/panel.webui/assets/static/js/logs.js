@@ -45,18 +45,19 @@ function endpoint(download = false) {
   return `/api/logs?${params}`;
 }
 function options(select, entries, selected) {
-  select.replaceChildren();
-  for (const [value, label] of entries) {
-    const option = element("option", label);
-    option.value = value;
-    select.append(option);
+  if (selected && !entries.some(([value]) => value === selected))
+    entries.push([selected, selected]);
+  const matches = select.options?.length === entries.length && entries.every(
+    ([value, label], index) => select.options[index].value === value && select.options[index].textContent === label,
+  );
+  if (!matches) {
+    select.replaceChildren(...entries.map(([value, label]) => {
+      const option = element("option", label);
+      option.value = value;
+      return option;
+    }));
   }
-  if (selected && !entries.some(([value]) => value === selected)) {
-    const option = element("option", selected);
-    option.value = selected;
-    select.append(option);
-  }
-  select.value = selected || "";
+  if (select.value !== (selected || "")) select.value = selected || "";
 }
 function filters() {
   const components = data?.components || [],
@@ -111,10 +112,19 @@ function showDetail(item) {
     content.append(
       element("p", `${item.logger || ""} ${item.caller || ""}`, "subtle"),
     );
-  openDrawer("日志详情", content);
+  const origin = document.activeElement;
+  openDrawer("日志详情", content, () => {
+    if (active && !origin?.isConnected) queueMicrotask(() => focusLogDetail(item.id));
+  });
 }
-function renderRows() {
+function focusLogDetail(id) {
+  if (!active || $("logs-runtime").hidden) return;
+  const detail = $(`logs-detail-${id}`) || $("logs-query");
+  detail.focus({ preventScroll: true });
+}
+function renderRows(loading = false) {
   const rows = $("logs-rows");
+  const focused = document.activeElement?.dataset.logId;
   rows.replaceChildren();
   const items = data?.items || [];
   const groups = new Map(
@@ -125,7 +135,8 @@ function renderRows() {
   );
   for (const item of items) {
     const row = element("tr");
-    row.append(element("td", new Date(item.at).toLocaleString()));
+    row.role = "row";
+    const at = element("td", new Date(item.at).toLocaleString());
     const level = element("td");
     level.append(
       element(
@@ -140,31 +151,41 @@ function renderRows() {
     if (item.kind === "diagnostic")
       message.append(element("small", "诊断事件"));
     const action = element("td");
-    action.append(button("详情", () => showDetail(item)));
-    row.append(level, module, message, action);
+    const detail = button("详情", () => showDetail(item));
+    detail.id = `logs-detail-${item.id}`;
+    detail.dataset.logId = String(item.id);
+    action.append(detail);
+    for (const cell of [at, level, module, message, action]) cell.role = "cell";
+    row.append(at, level, module, message, action);
     rows.append(row);
   }
   if (!items.length) {
     const row = element("tr"),
       empty = element(
         "td",
-        failure ? "日志暂时不可用，请重试。" : "当前筛选下暂无日志。",
+        loading ? "正在读取日志…" : failure ? "日志暂时不可用，请重试。" : "当前筛选下暂无日志。",
         "empty",
       );
     empty.colSpan = 5;
+    empty.role = "cell";
+    row.role = "row";
     row.append(empty);
     rows.append(row);
   }
-  $("logs-summary").textContent = data
-    ? `当前筛选共 ${data.total} 条 · 本页 ${items.length} 条${data.debug ? " · 详细日志已开启" : " · 详细日志未开启"}`
+  const summary = data && !loading
+    ? `共 ${data.total} 条 · 本页 ${items.length} 条${data.debug ? " · 详细日志已开启" : ""}`
     : "";
+  if ($("logs-summary").textContent !== summary) $("logs-summary").textContent = summary;
   $("logs-older").disabled = !data?.has_more || !items.length;
-  $("logs-latest").disabled = !currentURL.searchParams.has("before");
-  $("logs-page-note").textContent = currentURL.searchParams.has("before")
+  const historical = currentURL.searchParams.has("before");
+  $("logs-latest").disabled = !historical;
+  $("logs-live").disabled = historical;
+  $("logs-page-note").textContent = historical
     ? "正在查看历史记录，自动刷新暂时停止。"
     : live
       ? "每 5 秒刷新一次"
       : "自动刷新已暂停";
+  if (focused != null) focusLogDetail(focused);
 }
 function renderHealth() {
   renderDiagnostics($("logs-health-content"), {
@@ -270,6 +291,7 @@ async function load(url) {
   activateTabs($("logs-tabs"), tab);
   $("logs-runtime").hidden = tab !== "runtime";
   $("logs-health").hidden = tab !== "health";
+  $("logs-summary").hidden = tab !== "runtime";
   $("logs-export").hidden = tab !== "runtime";
   document
     .querySelectorAll("[data-log-filter]")
@@ -279,9 +301,12 @@ async function load(url) {
     (key) => key !== "feature" && key !== "component",
   ))
     controls(key).value = currentURL.searchParams.get(key) || "";
+  const advancedKeys = tab === "runtime" ? keys.filter((key) => key !== "q") : ["feature", "component"];
+  const count = advancedKeys.filter((key) => currentURL.searchParams.get(key)).length;
+  $("logs-filter-count").textContent = count ? `（${count} 项）` : "";
   $("logs-export").href = endpoint(true);
   data = data ? { ...data, items: [], total: 0, has_more: false } : null;
-  renderRows();
+  renderRows(true);
   await refresh();
   if (active && version === generation)
     timer = setInterval(() => {

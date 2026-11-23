@@ -13,7 +13,7 @@
         target="_blank"
         rel="noopener"
         href="/aria2ng.html"
-        >高级下载控制（AriaNg）</a
+        >打开 AriaNg</a
       >
     </div>
   </header>
@@ -39,6 +39,113 @@
       链接记录
     </button>
   </div>
+  <section
+    id="download-tasks-panel"
+    role="tabpanel"
+    aria-labelledby="download-tab-tasks"
+  >
+    <div class="download-workspace">
+      <div class="task-toolbar" id="download-task-filters">
+        <label class="search-field"
+          ><span class="sr-only">搜索下载文件</span
+          ><input id="download-search" type="search" placeholder="搜索文件名"
+        /></label>
+        <label
+          ><span class="sr-only">执行器</span
+          ><select id="download-executor">
+            <option value="all">全部执行器</option>
+            <option value="local">本地下载</option>
+          </select></label
+        >
+        <label
+          ><span class="sr-only">任务状态</span
+          ><select id="download-state">
+            <option value="all">全部状态</option>
+            <option value="active">下载中</option>
+            <option value="queued">排队中</option>
+            <option value="paused">已暂停</option>
+            <option value="complete">已完成</option>
+            <option value="error">出错</option>
+            <option value="unknown">未知</option>
+            <option value="removed">已移除</option>
+          </select></label
+        >
+        <button class="btn secondary" id="download-refresh" type="button">
+          刷新
+        </button>
+      </div>
+      <div class="download-list-meta" id="download-list-meta">
+        <div id="download-health" class="executor-health" role="status"></div>
+        <label>
+          <span class="sr-only">快速选择</span>
+          <select id="download-select">
+            <option value="">快速选择</option>
+            <option value="all">选中当前列表</option>
+            <option value="complete">选中已完成</option>
+            <option value="unfinished">选中未完成</option>
+            <option value="error">选中出错</option>
+            <option value="clear">清空选择</option>
+          </select>
+        </label>
+      </div>
+      <div id="download-message" class="notice" role="status"></div>
+      <div id="download-bulk" class="bulk-toolbar" hidden>
+        <span id="download-selection-count" role="status"></span>
+        <button
+          class="btn secondary compact"
+          type="button"
+          data-download-bulk="resume"
+        >
+          恢复选中
+        </button>
+        <button
+          class="btn secondary compact"
+          type="button"
+          data-download-bulk="pause"
+        >
+          暂停选中
+        </button>
+        <button
+          class="btn danger compact"
+          type="button"
+          data-download-bulk="delete"
+        >
+          删除选中
+        </button>
+      </div>
+      <div class="table-shell">
+        <table id="download-table" class="task-table" aria-label="下载任务" role="table">
+          <thead role="rowgroup">
+            <tr role="row">
+              <th class="select-col" scope="col" role="columnheader">
+                <label class="task-check">
+                  <input id="download-check-all" type="checkbox" aria-label="选择当前列表" />
+                  <span class="task-mobile-label">全选当前列表</span>
+                </label>
+              </th>
+              <th scope="col" role="columnheader">文件</th>
+              <th scope="col" role="columnheader">状态</th>
+              <th scope="col" role="columnheader">进度</th>
+              <th scope="col" role="columnheader">速度</th>
+              <th scope="col" role="columnheader">创建时间</th>
+              <th scope="col" role="columnheader">操作</th>
+            </tr>
+          </thead>
+          <tbody id="download-body" role="rowgroup">
+            <tr role="row">
+              <td colspan="7" class="empty" role="cell">正在加载任务…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+  <section
+    id="download-links-panel"
+    role="tabpanel"
+    aria-labelledby="download-tab-links"
+    hidden
+  ></section>
   <details id="download-storage" hidden>
     <summary>
       <strong>本地存储</strong>
@@ -49,115 +156,11 @@
       <p id="download-storage-path" class="mono"></p>
       <dl class="storage-metrics">
         <div><dt>磁盘总容量</dt><dd id="download-storage-total">—</dd></div>
-        <div><dt>已下载文件大小</dt><dd id="download-storage-bytes">—</dd></div>
-        <div><dt>已下载文件数量</dt><dd id="download-storage-count">—</dd></div>
+        <div><dt>下载文件大小</dt><dd id="download-storage-bytes">—</dd></div>
+        <div><dt>下载文件数量</dt><dd id="download-storage-count">—</dd></div>
       </dl>
-      <p class="subtle">每 30 秒统计保存目录和子目录中的文件数量与逻辑大小，跳过已知未完成任务和符号链接。</p>
+      <p class="subtle">每 30 秒统计保存目录和子目录，跳过未完成任务和符号链接。</p>
       <p id="download-storage-message" class="subtle" role="status"></p>
     </div>
   </details>
-  <section
-    id="download-tasks-panel"
-    role="tabpanel"
-    aria-labelledby="download-tab-tasks"
-  >
-    <div class="task-toolbar">
-      <label class="search-field"
-        ><span class="sr-only">搜索下载文件</span
-        ><input id="download-search" type="search" placeholder="搜索文件名"
-      /></label>
-      <label
-        ><span class="sr-only">执行器</span
-        ><select id="download-executor">
-          <option value="all">全部执行器</option>
-          <option value="local">本地下载</option>
-        </select></label
-      >
-      <label
-        ><span class="sr-only">任务状态</span
-        ><select id="download-state">
-          <option value="all">全部状态</option>
-          <option value="active">下载中</option>
-          <option value="queued">排队中</option>
-          <option value="paused">已暂停</option>
-          <option value="complete">已完成</option>
-          <option value="error">出错</option>
-          <option value="unknown">未知</option>
-          <option value="removed">已移除</option>
-        </select></label
-      >
-      <label
-        ><span class="sr-only">快速选择</span
-        ><select id="download-select">
-          <option value="">快速选择</option>
-          <option value="all">选中当前列表</option>
-          <option value="complete">选中已完成</option>
-          <option value="unfinished">选中未完成</option>
-          <option value="error">选中出错</option>
-          <option value="clear">清空选择</option>
-        </select></label
-      >
-      <button class="btn secondary" id="download-refresh" type="button">
-        刷新
-      </button>
-    </div>
-    <div id="download-health" class="executor-health" role="status"></div>
-    <div id="download-message" class="notice" role="status"></div>
-    <div id="download-bulk" class="bulk-toolbar" hidden>
-      <span id="download-selection-count"></span>
-      <button
-        class="btn secondary compact"
-        type="button"
-        data-download-bulk="resume"
-      >
-        恢复选中
-      </button>
-      <button
-        class="btn secondary compact"
-        type="button"
-        data-download-bulk="pause"
-      >
-        暂停选中
-      </button>
-      <button
-        class="btn danger compact"
-        type="button"
-        data-download-bulk="delete"
-      >
-        删除选中
-      </button>
-    </div>
-    <div class="table-shell">
-      <table id="download-table" class="task-table" aria-label="下载任务">
-        <thead>
-          <tr>
-            <th class="select-col">
-              <label class="task-check">
-                <input id="download-check-all" type="checkbox" aria-label="选择当前列表" />
-                <span class="task-mobile-label">全选当前列表</span>
-              </label>
-            </th>
-            <th>文件名</th>
-            <th>执行器</th>
-            <th>状态</th>
-            <th>进度</th>
-            <th>速度</th>
-            <th>创建时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="download-body">
-          <tr>
-            <td colspan="8" class="empty">正在加载任务…</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-  <section
-    id="download-links-panel"
-    role="tabpanel"
-    aria-labelledby="download-tab-links"
-    hidden
-  ></section>
 </section>

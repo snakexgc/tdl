@@ -2,43 +2,48 @@
   <header class="page-head">
     <div>
       <h1>账号管理</h1>
-      <p>查看当前 Telegram 账号状态，或直接在面板中完成登录。</p>
+      <p>查看 Telegram 会话，登录或切换本机保存的账号。</p>
     </div>
     <a class="btn secondary" data-app-link href="/config?tab=system#setting-account.telegram-use_builtin">API 凭据设置</a>
   </header>
-  <div class="tabs">
-    <button class="tab-button active" data-user-tab="current" type="button">当前账号</button>
-    <button class="tab-button" data-user-tab="login" type="button">登录账号</button>
+  <div class="page-tabs" id="user-tabs" role="tablist" aria-label="Telegram 账号">
+    <button class="tab-button active" data-user-tab="current" type="button" role="tab" id="user-current-tab" aria-controls="user-tab-current" aria-selected="true">当前账号</button>
+    <button class="tab-button" data-user-tab="login" type="button" role="tab" id="user-login-tab" aria-controls="user-tab-login" aria-selected="false" tabindex="-1">登录账号</button>
   </div>
-  <div class="user-tab active" id="user-tab-current">
-    <section class="user-switch">
-      <label class="field-inline user-switch-field">
-        <span>选择账号</span>
-        <select id="switch-namespace">
-          <option value="">正在读取已登录用户...</option>
-        </select>
-      </label>
-      <div class="user-switch-copy">
-        <h2>切换或删除账号</h2>
-        <p>选择已登录用户，可切换并重启，也可以删除不再需要的登录数据。</p>
-      </div>
-      <div class="user-switch-actions">
-        <button class="btn primary" id="switch-user" type="button">切换并重启</button>
-        <button class="btn danger" id="delete-user" type="button">删除账号</button>
-      </div>
+  <div class="user-tab" id="user-tab-current" role="tabpanel" aria-labelledby="user-current-tab">
+    <section class="user-profile" aria-labelledby="user-profile-title">
+      <header class="user-profile-head">
+        <h2 id="user-profile-title">当前会话</h2>
+        <button class="btn secondary" id="refresh-user" type="button">重新检查</button>
+      </header>
+      <div id="user-info" aria-busy="true"></div>
     </section>
-    <div class="section-actions">
-      <button class="btn secondary" id="refresh-user" type="button">重新检查</button>
-    </div>
-    <div class="notice" id="user-status"></div>
-    <div class="info-grid" id="user-info"></div>
+    <section class="user-switch" aria-labelledby="user-switch-title">
+      <header>
+        <h2 id="user-switch-title">管理本地账号</h2>
+        <p>切换后 TDL 会重启。删除会移除所选账号的本地登录数据。</p>
+      </header>
+      <div class="user-switch-controls">
+        <label class="field-inline user-switch-field">
+          <span>已保存账号</span>
+          <select id="switch-namespace" disabled>
+            <option value="">正在读取已登录用户…</option>
+          </select>
+        </label>
+        <div class="user-switch-actions">
+          <button class="btn secondary" id="switch-user" type="button" disabled>切换并重启</button>
+          <button class="btn secondary user-delete" id="delete-user" type="button" disabled>删除登录数据</button>
+        </div>
+      </div>
+      <div class="notice" id="user-status" role="status"></div>
+    </section>
   </div>
-  <div class="user-tab" id="user-tab-login">
-    <section class="login-flow">
+  <div class="user-tab" id="user-tab-login" role="tabpanel" aria-labelledby="user-login-tab" hidden>
+    <section class="login-flow" aria-labelledby="login-flow-title">
       <div class="login-flow-head">
         <div>
-          <h2>登录用户</h2>
-          <p>用户名会作为本地数据空间，只允许英文字母。</p>
+          <h2 id="login-flow-title">登录 Telegram</h2>
+          <p>本地用户名用于区分登录数据，只能使用英文字母。</p>
         </div>
         <label class="field-inline login-namespace-field">
           <span>用户名</span>
@@ -47,10 +52,10 @@
       </div>
 
       <ol class="login-steps" aria-label="登录步骤">
-        <li data-login-step="method" class="is-current"><span>1</span>填写手机号</li>
-        <li data-login-step="auth"><span>2</span>验证码</li>
-        <li data-login-step="password"><span>3</span>2FA</li>
-        <li data-login-step="finish"><span>4</span>完成</li>
+        <li data-login-step="method" class="is-current" aria-current="step"><span aria-hidden="true">1</span>手机号</li>
+        <li data-login-step="auth"><span aria-hidden="true">2</span>验证码</li>
+        <li data-login-step="password"><span aria-hidden="true">3</span>两步验证</li>
+        <li data-login-step="finish"><span aria-hidden="true">4</span>结果</li>
       </ol>
 
       <div class="login-meta" id="login-meta"></div>
@@ -64,7 +69,7 @@
           <div id="login-phone-start" class="login-form-panel">
             <label class="field-inline">
               <span>手机号</span>
-              <input id="login-phone" type="text" placeholder="+8613800000000" autocomplete="tel">
+              <input id="login-phone" type="tel" placeholder="含国家或地区区号" autocomplete="tel">
             </label>
             <button class="btn primary" id="start-phone-login" type="button">发送验证码</button>
           </div>
@@ -74,7 +79,7 @@
           <div class="login-waiting" role="status" aria-live="polite">
             <span class="login-waiting-indicator" aria-hidden="true"></span>
             <div class="login-step-copy">
-              <h3>正在发送验证码</h3>
+              <h3 id="login-sending-title" tabindex="-1">正在发送验证码</h3>
               <p>正在连接 Telegram 并请求发送验证码，请稍候。网络状况不佳时可能需要一些时间，请不要重复提交。</p>
             </div>
           </div>
@@ -105,9 +110,12 @@
         </section>
 
         <section class="login-step-panel" id="login-step-result" hidden>
-          <div class="login-result-mark" id="login-result-mark">✓</div>
+          <div class="login-result-mark" id="login-result-mark" aria-hidden="true">
+            <svg class="login-result-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+            <svg class="login-result-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v8m0 5h.01"/></svg>
+          </div>
           <div class="login-step-copy">
-            <h3 id="login-result-title">登录成功</h3>
+            <h3 id="login-result-title" tabindex="-1">登录成功</h3>
             <p id="login-result-copy">用户状态已更新。</p>
           </div>
           <div class="login-result-actions">

@@ -27,7 +27,10 @@ export async function fragment(host, name) {
 export function tabKeyboard(host) {
   host.setAttribute("role", "tablist");
   host.addEventListener("keydown", (event) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const vertical = host.getAttribute("aria-orientation") === "vertical";
+    const previous = vertical ? "ArrowUp" : "ArrowLeft";
+    const following = vertical ? "ArrowDown" : "ArrowRight";
+    if (![previous, following, "Home", "End"].includes(event.key)) return;
     const tabs = [...host.querySelectorAll('[role="tab"]')];
     const index = tabs.indexOf(document.activeElement);
     if (index < 0) return;
@@ -37,7 +40,7 @@ export function tabKeyboard(host) {
         ? 0
         : event.key === "End"
           ? tabs.length - 1
-          : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+          : (index + (event.key === following ? 1 : -1) + tabs.length) %
             tabs.length;
     tabs[next].focus();
     tabs[next].click();

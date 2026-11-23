@@ -9,13 +9,14 @@
 </head>
 <body class="auth-page">
   <main class="auth-shell">
+    <div class="auth-brand">
+      <div class="brand-mark" aria-label="TDL">TDL</div>
+      <span>Telegram 下载与转发</span>
+    </div>
     <section class="auth-panel" aria-labelledby="auth-title">
       <header>
-        <div class="auth-brand">
-          <div class="brand-mark">TDL</div>
-          <h1 id="auth-title">登录管理面板</h1>
-        </div>
-        <p>使用此 TDL 实例的 WebUI 用户名和密码。</p>
+        <h1 id="auth-title">登录管理面板</h1>
+        <p>输入此面板的用户名和密码。</p>
       </header>
       <form id="webui-login-form" class="auth-form" method="post" action="/api/auth/login">
         <div class="field-inline">

@@ -2,8 +2,7 @@
   <header class="page-head">
     <div>
       <h1>模块管理</h1>
-      <p id="module-mode">启停选择保存后需重启生效。</p>
-      <a data-app-link href="/config">查看待生效修改并重启</a>
+      <p>按功能查看组件状态和日志。</p>
     </div>
     <div class="actions">
       <button class="btn secondary" id="refresh-modules" type="button">
@@ -12,6 +11,12 @@
     </div>
   </header>
   <div class="notice" id="module-status" role="status"></div>
-  <div class="module-overview" id="module-overview" hidden></div>
-  <div class="module-list" id="module-list"></div>
+  <dl class="module-overview" id="module-overview" aria-label="组件状态概况" hidden></dl>
+  <div class="module-list-head">
+    <h2 id="module-list-title">功能模块</h2>
+    <p id="module-mode">启停设置将在重启后生效。<a data-app-link href="/config">核对设置并重启</a></p>
+  </div>
+  <div class="module-list" id="module-list" role="region" aria-labelledby="module-list-title">
+    <p class="empty" id="module-loading">正在读取模块状态…</p>
+  </div>
 </section>

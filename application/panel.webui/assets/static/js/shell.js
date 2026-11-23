@@ -5,7 +5,7 @@ export function initShell() {
   const backdrop = document.getElementById("sidebar-backdrop");
   const close = document.getElementById("sidebar-close");
   const content = document.querySelector("main.main");
-  const background = document.querySelectorAll(".skip-link, .topbar, main.main, .credential-warning");
+  const background = document.querySelectorAll(".skip-link, .topbar, main.main");
   const mobile = window.matchMedia("(max-width: 900px)");
   let open = false;
 

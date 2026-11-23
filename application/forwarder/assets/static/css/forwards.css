@@ -7,6 +7,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
+  margin-bottom: 12px;
 }
 
 .forward-title-line .pill {
@@ -51,10 +52,6 @@
   gap: 8px;
 }
 
-.forward-table-shell {
-  max-height: calc(100vh - 320px);
-}
-
 #forward-table {
   min-width: 0;
   table-layout: fixed;
@@ -74,7 +71,15 @@
 
 .forward-arrow {
   color: var(--primary-dark);
-  font-weight: 600;
+  height: 14px;
+  width: 14px;
+  flex: none;
+}
+
+.forward-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
 }
 
 .forward-progress-meta {
@@ -106,9 +111,6 @@
   #forward-table th:last-child { width: 13%; }
 }
 @container forward-view (max-width: 762px) {
-  .forward-table-shell {
-    max-height: none;
-  }
   .forward-stat {
     padding: 12px;
   }

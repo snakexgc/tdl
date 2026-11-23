@@ -64,7 +64,6 @@ export function showLoginCredentialWarning() {
     return;
   }
   const dismiss = () => {
-    clearTimeout(timer);
     if (warning.contains(document.activeElement))
       document.getElementById("view-host")?.focus({ preventScroll: true });
     warning.hidden = true;
@@ -75,7 +74,6 @@ export function showLoginCredentialWarning() {
     void openCredentialSettings();
   });
   warning.hidden = false;
-  const timer = setTimeout(dismiss, 8000);
 }
 
 async function openCredentialSettings() {

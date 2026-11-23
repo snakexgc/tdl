@@ -43,6 +43,14 @@ async function init() {
   restarting = false;
   reloadOnEntry = false;
   const tabs = $("settings-tabs");
+  const categoryRail = window.matchMedia("(min-width: 1100px)");
+  const orientTabs = () =>
+    tabs.setAttribute(
+      "aria-orientation",
+      categoryRail.matches ? "vertical" : "horizontal",
+    );
+  orientTabs();
+  categoryRail.addEventListener("change", orientTabs);
   for (const [id, title] of settingsTabs) {
     const tab = button(
       title,
@@ -160,10 +168,12 @@ async function ensureMounted(tab) {
 }
 function updateDraft() {
   const count = (store?.count || 0) + Number(runtimeDraft !== undefined);
-  $("settings-draft-status").textContent = count
-    ? `${count} 项修改尚未保存，可在顶部保存并重启。切换分类会保留输入。`
+  const draftStatus = $("settings-draft-status");
+  const draftMessage = count
+    ? `${count} 项修改尚未保存。切换分类会保留输入。`
     : "";
-  $("settings-draft-status").classList.toggle("has-drafts", count > 0);
+  if (draftStatus.textContent !== draftMessage)
+    draftStatus.textContent = draftMessage;
   $("settings-reload").disabled = busy.size > 0;
   $("settings-reload").textContent = busy.has("reload") ? "正在刷新…" : "刷新";
   for (const [tab, title] of settingsTabs) {
@@ -200,6 +210,9 @@ function renderPending() {
     runtimeDraft,
   );
   $("settings-pending").hidden = !changes.length && !restarting;
+  const details = $("settings-change-details");
+  details.hidden = !changes.length;
+  if (details.hidden) details.open = false;
   const host = $("settings-changes");
   host.replaceChildren();
   for (const change of changes) {
@@ -228,9 +241,11 @@ function renderPending() {
     host.append(row);
   }
   $("settings-changes-table").hidden = !changes.length;
-  $("settings-pending-status").textContent = restarting
-    ? "重启请求已提交。服务恢复后重新打开页面，新配置生效后此清单会清空。"
-    : `${changes.length} 项修改尚未应用。${dirty() ? "点击“保存并重启”将保存全部分类中的修改并重启。" : "修改已写入配置文件，点击“保存并重启”后生效。"}重启会暂时中断连接和任务。${configData?.restart_available ? "" : "当前运行方式不支持通过面板重启，请先保存区块，再手动重启 TDL。"}`;
+  const status = $("settings-pending-status");
+  const summary = restarting
+    ? "重启请求已提交，服务恢复后可重新打开此页面。"
+    : `${changes.length} 项修改待生效。${configData?.restart_available ? "重启会暂时中断连接和任务。" : "请保存各区块后手动重启 TDL。"}`;
+  if (status.textContent !== summary) status.textContent = summary;
   $("settings-restart").disabled =
     !configData?.restart_available ||
     !data?.editable ||

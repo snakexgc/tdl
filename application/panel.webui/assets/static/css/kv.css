@@ -1,42 +1,108 @@
-/* KV view: download-link table, sortable headers, and per-entry status blocks. */
-#kv-table {
-  table-layout: fixed;
-  min-width: 1544px;
-}
-/* A wide set of sortable columns must not push the only message off screen. */
-#kv-table:has(td.empty) {
+#view-kv {
   min-width: 0;
 }
-#kv-table:has(td.empty) :is(colgroup, thead) {
-  display: none;
+#view-kv #kv-search {
+  margin: 0;
+  max-width: none;
 }
-
-.sort-button {
-  border: 0;
-  padding: 0 16px 0 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
+.kv-sort-controls {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
 }
-
-.sort-button::after {
-  content: attr(data-symbol);
-  margin-left: 5px;
-  color: var(--primary-dark);
+.kv-sort-controls label { min-width: 0; }
+.kv-list-meta .text-button {
+  min-height: 32px;
+  flex-shrink: 0;
 }
-
-.sort-button:hover,
-.sort-button.active {
-  color: var(--primary-dark);
+.kv-list-meta .text-button:disabled {
+  cursor: default;
+  color: var(--muted);
+  text-decoration: none;
 }
-
-.aria2-entry + .aria2-entry {
+#kv-table {
+  table-layout: fixed;
+  min-width: 0;
+}
+#kv-table :is(th, td) {
+  padding-inline: 12px;
+  vertical-align: middle;
+}
+#kv-table .kv-select-col { width: 54px; }
+#kv-table .kv-status-col { width: 24%; }
+#kv-table .kv-expiry-col { width: 18%; }
+#kv-table .kv-action-col { width: 140px; }
+#kv-table :is(.kv-file, .kv-state) .subtle {
+  display: block;
+  margin-top: 3px;
+}
+#kv-table .kv-expiry {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+#kv-table:has(td.empty) :is(colgroup, thead) { display: none; }
+.kv-maintenance {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.kv-detail {
+  overflow-wrap: anywhere;
+}
+.kv-detail > h3 {
+  margin: 0 0 16px;
+}
+.kv-detail .detail-list + h3 {
+  margin-top: 24px;
+}
+.kv-detail .aria2-entry + .aria2-entry {
   margin-top: 8px;
 }
 
-.row-expired {
-  background: var(--warning-soft);
+@container task-list (max-width: 760px) {
+  #kv-table colgroup { display: none; }
+  #kv-table thead th:first-child { width: auto; }
+  #kv-table tbody tr {
+    gap: 4px 8px;
+    padding-block: 10px 14px;
+  }
+  #kv-table td {
+    padding: 0;
+    min-width: 0;
+  }
+  #kv-table .empty {
+    padding: 22px 4px;
+  }
+  #kv-table .kv-file .text-button,
+  #kv-table .kv-action .btn {
+    min-height: 44px;
+  }
+  #kv-table .kv-expiry {
+    grid-column: 2;
+    font-size: 13px;
+  }
+  #kv-table .kv-state {
+    text-align: end;
+  }
+  #kv-table .kv-action {
+    grid-column: 3;
+    justify-self: end;
+  }
+  #kv-table tbody tr:hover td { background: transparent; }
+}
+@container task-list (max-width: 420px) {
+  #kv-table .kv-state .subtle {
+    max-width: 100px;
+  }
+  #kv-table .kv-expiry,
+  #kv-table .kv-action {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+@media (max-width: 560px) {
+  .kv-list-meta .text-button { min-height: 44px; }
+  .kv-maintenance .btn { min-height: 44px; }
 }
