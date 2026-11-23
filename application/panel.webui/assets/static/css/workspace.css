@@ -170,11 +170,11 @@
   background: var(--bg-strong);
 }
 .task-progress progress::-webkit-progress-value {
-  background: var(--chart-2);
+  background: var(--progress);
   border-radius: 8px;
 }
 .task-progress progress::-moz-progress-bar {
-  background: var(--chart-2);
+  background: var(--progress);
   border-radius: 8px;
 }
 .task-mobile-label {
@@ -548,7 +548,7 @@
   }
 }
 
-/* Account identity belongs to the topbar; process connectivity to the footer. */
+/* Account identity stays available from the topbar. */
 #current-account.account-profile {
   display: flex;
   align-items: center;
@@ -599,16 +599,6 @@
   flex: 0 0 14px;
   color: var(--muted);
 }
-.sidebar-foot .heartbeat {
-  padding: 0;
-  border: 0;
-  background: none;
-  justify-content: flex-start;
-  font-size: 12px;
-}
-.sidebar-foot #heartbeat-label {
-  max-width: none;
-}
 .rule-editor > .rule-silent-option {
   display: flex;
   align-items: center;
@@ -635,11 +625,12 @@
     display: none;
   }
 }
-@media (max-width: 360px) {
+@media (max-width: 480px) {
   #current-account.account-profile {
-    max-width: 130px;
+    min-width: 44px;
+    justify-content: center;
   }
-  .account-profile-text small {
+  .account-profile-text {
     display: none;
   }
 }

@@ -2,7 +2,7 @@
   <header class="page-head">
     <div>
       <h1>设置</h1>
-      <p>可单独保存区块，也可核对修改后统一保存并重启。</p>
+      <p>按功能调整配置。可单独保存区块，也可一起保存并重启。</p>
     </div>
     <div class="settings-header-actions">
       <button
@@ -15,50 +15,17 @@
       </button>
     </div>
   </header>
-  <section
-    id="settings-pending"
-    class="settings-pending"
-    aria-labelledby="settings-pending-title"
-    hidden
-  >
-    <div class="settings-pending-head">
-      <h2 id="settings-pending-title">尚未保存的修改</h2>
-      <button id="settings-restart" class="btn primary" type="button" disabled>
-        保存并重启
-      </button>
-    </div>
-    <p id="settings-pending-status" class="subtle" role="status"></p>
-    <div id="settings-changes-table" class="settings-changes-table" hidden>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">设置项</th>
-            <th scope="col">当前运行值</th>
-            <th scope="col">修改后的值</th>
-          </tr>
-        </thead>
-        <tbody id="settings-changes"></tbody>
-      </table>
-    </div>
-    <p
-      class="notice"
-      id="settings-restart-message"
-      role="status"
-      aria-live="polite"
-    ></p>
-  </section>
-  <div class="settings-toolbar">
+  <div class="settings-toolbar" role="search" aria-label="搜索设置">
     <label class="search-field settings-search">
       <span class="sr-only">搜索全部设置</span>
       <input
         id="settings-search"
         type="search"
-        placeholder="搜索全部设置"
+        placeholder="搜索目录、端口或配置字段"
         autocomplete="off"
         aria-controls="settings-search-results"
       />
     </label>
-    <a class="btn secondary" href="/modules" data-app-link>管理功能开关</a>
   </div>
   <section
     id="settings-search-results"
@@ -69,11 +36,43 @@
     <p id="settings-search-count" class="subtle" role="status"></p>
     <ul id="settings-search-list"></ul>
   </section>
-  <div
-    class="tabs page-tabs settings-tabs"
-    id="settings-tabs"
-    aria-label="设置分类"
-  ></div>
+  <section
+    id="settings-pending"
+    class="settings-pending"
+    aria-labelledby="settings-pending-title"
+    hidden
+  >
+    <div class="settings-pending-head">
+      <div>
+        <h2 id="settings-pending-title">待生效的修改</h2>
+        <p id="settings-pending-status" role="status"></p>
+      </div>
+      <button id="settings-restart" class="btn primary" type="button" disabled>
+        保存并重启
+      </button>
+    </div>
+    <details id="settings-change-details" class="settings-change-details">
+      <summary>核对修改前后的值</summary>
+      <div id="settings-changes-table" class="settings-changes-table" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">设置项</th>
+              <th scope="col">当前运行值</th>
+              <th scope="col">修改后的值</th>
+            </tr>
+          </thead>
+          <tbody id="settings-changes"></tbody>
+        </table>
+      </div>
+    </details>
+    <p
+      class="notice"
+      id="settings-restart-message"
+      role="status"
+      aria-live="polite"
+    ></p>
+  </section>
   <div
     class="notice"
     id="settings-message"
@@ -81,12 +80,18 @@
     aria-live="polite"
   ></div>
   <div
-    class="settings-draft-status"
+    class="sr-only"
     id="settings-draft-status"
     role="status"
   ></div>
   <p class="notice" id="settings-readonly" hidden>
     当前为只读模式，可以查看设置，暂时无法保存更改。
   </p>
-  <div id="settings-panels"></div>
+  <div class="settings-workspace">
+    <div class="settings-navigation">
+      <div class="settings-tabs" id="settings-tabs" aria-label="设置分类"></div>
+      <a class="settings-modules" href="/modules" data-app-link>管理功能开关</a>
+    </div>
+    <div id="settings-panels"></div>
+  </div>
 </section>

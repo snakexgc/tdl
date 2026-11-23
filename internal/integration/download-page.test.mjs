@@ -78,3 +78,53 @@ test("download page queries only the selected downloader and shows local storage
   page.stop();
   assert.equal(subscriptions.size, 0);
 });
+
+test("link history offers direct links without offering an unavailable downloader", async () => {
+  const nodes = new Map();
+  const node = (id) => {
+    if (!nodes.has(id)) nodes.set(id, { querySelectorAll: () => [], addEventListener() {}, setAttribute() {} });
+    return nodes.get(id);
+  };
+  const item = { id: "record", file_name: "example.zip", url: "https://example.test/file" };
+  const context = vm.createContext({ document: { getElementById: node, querySelectorAll: () => [] } });
+  const shared = new vm.SourceTextModule(await readFile(new URL("../../application/panel.webui/assets/static/js/state.js", import.meta.url), "utf8"), { context });
+  await shared.link(() => { throw new Error("unexpected state import"); });
+  await shared.evaluate();
+  const { state } = shared.namespace;
+  Object.assign(state, {
+    downloader: { mode: "http" }, downloaderMode: "http", kvItems: [],
+    selectedKV: new Set([item.id]), kvSort: { field: "created_at", dir: "desc" },
+  });
+  const definitions = {
+    "./api.js": { api: async () => ({ items: [item] }) },
+    "./utils.js": { collator: new Intl.Collator(), escapeHTML: String, escapeAttr: String, formatBytes: String, formatTime: String },
+    "./download-model.js": { statusClass: String, statusLabel: String },
+    "./status.js": { loadStatus: async () => {} },
+    "./ui.js": { element() {}, openDrawer() {} },
+    "./storage-maintenance.js": { cleanStorage() {} },
+  };
+  const module = new vm.SourceTextModule(await readFile(new URL("../../application/panel.webui/assets/static/js/kv.js", import.meta.url), "utf8"), { context });
+  await module.link(name => name === "./state.js" ? shared : new vm.SyntheticModule(Object.keys(definitions[name]), function () {
+    for (const [key, value] of Object.entries(definitions[name])) this.setExport(key, value);
+  }, { context }));
+  await module.evaluate();
+
+  await module.namespace.page.load();
+  assert.match(node("kv-body").innerHTML, /href="https:\/\/example.test\/file"/);
+  assert.doesNotMatch(node("kv-body").innerHTML, /data-download-link/);
+  assert.equal(node("download-selected").hidden, true);
+  assert.equal(node("delete-selected").hidden, false);
+
+  state.downloader = { mode: "aria2", aria2_enabled: false };
+  state.downloaderMode = "aria2";
+  await module.namespace.page.load();
+  assert.doesNotMatch(node("kv-body").innerHTML, /data-download-link/);
+  assert.equal(node("download-selected").hidden, true);
+
+  state.downloader = { mode: "local" };
+  state.downloaderMode = "local";
+  await module.namespace.page.load();
+  assert.match(node("kv-body").innerHTML, /data-download-link="record"/);
+  assert.match(node("download-selected").textContent, /加入下载队列/);
+  assert.equal(node("download-selected").hidden, false);
+});

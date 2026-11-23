@@ -1,24 +1,132 @@
 @import url("/static/css/kv.css");
 
-/* Downloads view: task controls and local storage statistics. */
-
-.storage-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 12px 24px;
-  margin: 16px 0;
+.download-workspace,
+.kv-workspace {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-width: 0;
 }
-.storage-metrics dt {
+.download-workspace .task-toolbar,
+.kv-workspace .task-toolbar {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 16px;
+}
+.download-workspace .search-field,
+.kv-workspace .search-field {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: none;
+}
+.download-workspace :is(input[type="search"], select, .btn),
+.kv-workspace :is(input[type="search"], select, .btn) {
+  min-height: 40px;
+}
+.download-workspace .table-shell,
+.kv-workspace .table-shell {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: none;
+}
+.download-workspace .notice,
+.kv-workspace .notice {
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+.download-list-meta,
+.kv-list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 0 16px 12px;
+  min-height: 0;
   color: var(--muted);
+  font-size: 13px;
 }
-.storage-metrics dd {
-  margin: 4px 0 0;
-  font-size: 20px;
-  font-variant-numeric: tabular-nums;
+.download-list-meta .executor-health {
+  flex: 1 1 12rem;
+  margin: 0;
+  font-size: inherit;
+}
+.download-list-meta select {
+  max-width: 100%;
+  padding: 4px;
+  border: 0;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.download-workspace .bulk-toolbar,
+.kv-workspace .bulk-toolbar {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  gap: 8px;
+}
+.download-workspace .bulk-toolbar span,
+.kv-workspace .bulk-toolbar span {
+  margin-inline-end: auto;
+  color: var(--text);
+  font-size: 13px;
   font-weight: 600;
 }
+#download-table {
+  table-layout: fixed;
+  min-width: 0;
+}
+#download-table th:first-child { width: 54px; }
+#download-table th:nth-child(3) { width: 88px; }
+#download-table th:nth-child(4) { width: 23%; }
+#download-table th:nth-child(5) { width: 11%; }
+#download-table th:nth-child(6) { width: 17%; }
+#download-table th:last-child { width: 78px; }
+#download-table :is(th, td) {
+  padding-inline: 12px;
+  vertical-align: middle;
+}
+#download-table .task-name,
+#download-table .task-progress {
+  min-width: 0;
+  max-width: none;
+}
+.download-workspace .text-button,
+.kv-workspace .text-button {
+  color: var(--primary-dark);
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+.download-file-label {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+#download-table .empty strong,
+#kv-table .empty strong {
+  color: var(--text);
+  font-size: 16px;
+}
+#download-table .empty p,
+#kv-table .empty p {
+  margin: 6px 0 14px;
+}
+#download-table:has(td.empty) thead {
+  display: none;
+}
+#download-table :is(.task-speed, .task-created) {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 #download-storage {
-  margin-bottom: 20px;
+  margin-top: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -62,189 +170,117 @@
   padding: 12px 16px 16px;
   border-top: 1px solid var(--line);
 }
+.storage-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px 24px;
+  margin: 16px 0;
+}
+.storage-metrics dt { color: var(--muted); }
+.storage-metrics dd {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
 #download-storage-path {
   overflow-wrap: anywhere;
   margin: 0;
 }
-#view-downloads > .page-head {
-  align-items: center;
+.download-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
-@media (max-width: 560px) {
-  #view-downloads > .page-head .actions {
+@container task-list (max-width: 840px) {
+  #view-host #download-table,
+  #download-table :is(thead, tbody) {
+    display: block;
+  }
+  #download-table thead tr {
+    display: flex;
+    background: var(--panel-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  #download-table thead th:first-child {
+    position: static;
     width: auto;
+    padding: 0 12px;
+    border: 0;
   }
-  #download-tasks-panel .task-toolbar {
+  #download-table thead th:not(:first-child) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  #download-table .task-check {
+    min-width: 44px;
+    min-height: 44px;
+    gap: 10px;
+  }
+  #download-table .task-mobile-label {
+    display: inline;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  #download-table tbody tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-    gap: 8px;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 8px;
+    padding: 10px 12px 14px;
+    border-bottom: 1px solid var(--line);
   }
-  #download-tasks-panel .search-field {
-    grid-column: 1 / -1;
-    max-width: none;
-  }
-}
-@container task-list (max-width: 760px) {
-  #download-table .task-name,
-  #download-table .task-progress {
+  #download-table tbody tr:last-child { border: 0; }
+  #download-table td {
+    padding: 0;
+    border: 0;
     min-width: 0;
-    max-width: none;
   }
-  #download-table .task-name .text-button {
+  #download-table .empty {
+    grid-column: 1 / -1;
+    padding: 22px 4px;
+  }
+  #download-table .task-name .text-button,
+  #download-table .task-action .btn {
     min-height: 44px;
   }
-  #download-table .task-executor,
-  #download-table .task-created {
-    display: none;
-  }
-  #download-table .task-progress,
-  #download-table .task-speed {
+  #download-table .task-progress {
+    grid-column: 2 / -1;
     font-size: 13px;
-    font-variant-numeric: tabular-nums;
   }
+  #download-table .task-speed {
+    grid-column: 2;
+    font-size: 13px;
+  }
+  #download-table .task-action { grid-column: 3; }
+  #download-table .task-action:empty,
+  #download-table .task-created { display: none; }
+  #download-table tbody tr:hover td { background: transparent; }
 }
-.frame-wrap {
-  height: calc(100dvh - 260px);
-  min-height: 440px;
-  overflow: hidden;
-}
-
-#aria2-frame {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  background: #ffffff;
-}
-
-.internal-downloads {
-  height: 100%;
-  padding: 24px;
-  overflow: auto;
-  background: #ffffff;
-}
-
-.internal-table-shell {
-  max-height: calc(100% - 94px);
-}
-
-#internal-download-table {
-  min-width: 1160px;
-}
-
-.internal-bulk-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-}
-
-.internal-bulk-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.internal-selection-count {
-  min-width: 72px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-/* ── Aria2 connection guide ── */
-.aria2-guide {
-  height: 100%;
-  padding: 32px;
-  overflow: auto;
-  background: #ffffff;
-}
-
-.aria2-guide h2 {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.aria2-guide h3 {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.aria2-guide ul {
-  margin: 10px 0 0;
-  padding-left: 20px;
-  color: var(--muted);
-  line-height: 1.75;
-}
-
-.aria2-guide ul li {
-  margin-bottom: 4px;
-}
-
-.guide-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 28px;
-  margin-top: 24px;
-}
-
-.guide-actions {
-  justify-content: flex-start;
-  margin-top: 24px;
-}
-
-/* ── Progress cell ── */
-.download-progress {
-  display: grid;
-  min-width: 190px;
-  gap: 5px;
-}
-
-.download-progress-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.download-progress-meta span:first-child {
-  color: var(--primary-dark);
-  font-weight: 700;
-}
-
-.download-progress-bar {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--bg-strong);
-}
-
-.download-progress-bar span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--chart-2);
-  transition: width 240ms ease;
-}
-
-.download-speed {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-@media (max-width: 900px) {
-  .guide-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 560px) {
+  #view-downloads > .page-head .actions { width: auto; }
+  .download-workspace :is(.task-toolbar, .bulk-toolbar, .notice, .download-list-meta),
+  .kv-workspace :is(.task-toolbar, .bulk-toolbar, .notice, .kv-list-meta) {
+    padding-inline: 12px;
+  }
+  .download-workspace .search-field,
+  .kv-workspace .search-field {
+    flex-basis: 100%;
+  }
+  .download-workspace .task-toolbar > label:not(.search-field) {
+    flex: 1 1 100px;
+  }
+  .download-workspace .task-toolbar select { width: 100%; }
+  .download-workspace :is(input[type="search"], select, .btn),
+  .kv-workspace :is(input[type="search"], select, .btn) {
+    min-height: 44px;
   }
 }

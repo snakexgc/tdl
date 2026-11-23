@@ -24,7 +24,6 @@ export function initForwards() {
     }
     renderForwards();
   });
-  document.getElementById("forward-select-all").addEventListener("click", () => selectForwards("all"));
   document.getElementById("forward-select-active").addEventListener("click", () => selectForwards("active"));
   document.getElementById("forward-select-clear").addEventListener("click", () => selectForwards("clear"));
   document.getElementById("forward-resume-selected").addEventListener("click", () => runForwardBulkAction("resume"));
@@ -147,8 +146,8 @@ function setSummaryValue(id, value) {
 function setRunningBadge(running) {
   const badge = document.getElementById("forward-running-badge");
   if (!badge) return;
-  badge.textContent = `进行中 ${running ?? "—"}`;
-  badge.classList.toggle("warn", running > 0);
+  badge.textContent = `未结束 ${running ?? "—"}`;
+  badge.classList.toggle("info", running > 0);
   badge.classList.toggle("muted", !running);
 }
 
@@ -223,7 +222,7 @@ function forwardProgress(item) {
 function renderForwardPath(item) {
   const origin = forwardLabel(item.origin_name, item.source_link, item.source_peer_id, "未知来源");
   const destination = forwardLabel(item.destination_name, item.destination, 0, "收藏夹");
-  return `<span class="forward-peer">${escapeHTML(origin)}</span><span class="forward-arrow">→</span><span class="forward-peer">${escapeHTML(destination)}</span>`;
+  return `<span class="forward-peer">${escapeHTML(origin)}</span><svg class="forward-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 8h12m-5-4 5 4-5 4"/></svg><span class="forward-peer">${escapeHTML(destination)}</span>`;
 }
 
 function forwardLabel(name, fallback, id, empty) {
@@ -246,21 +245,19 @@ function forwardRowActions(status, id) {
   if (status === "queued" || status === "retrying") {
     buttons.push(`<button class="btn secondary compact" data-forward-action="pause" data-forward-id="${escapeAttr(id)}">暂停</button>`);
   }
-  buttons.push(`<button class="btn danger compact" data-forward-action="delete" data-forward-id="${escapeAttr(id)}">删除</button>`);
+  buttons.push(`<button class="btn compact forward-delete" data-forward-action="delete" data-forward-id="${escapeAttr(id)}">删除</button>`);
   return buttons.join("");
 }
 
 function selectForwards(mode) {
   state.selectedForwards.clear();
   if (mode !== "clear") {
-    state.forwardTasks.forEach((item) => {
+    filteredTasks().forEach((item) => {
       const id = forwardID(item);
       const status = item.status || "";
       if (!id) return;
       const active = status === "queued" || status === "running" || status === "paused" || status === "retrying";
-      if (mode === "all" || (mode === "active" && active)) {
-        state.selectedForwards.add(id);
-      }
+      if (active) state.selectedForwards.add(id);
     });
   }
   renderForwards();
@@ -390,7 +387,12 @@ function updateForwardSelectionState() {
   }
 
   const count = state.selectedForwards.size;
-  document.getElementById("forward-bulk-actions").hidden = count === 0;
+  const bulk = document.getElementById("forward-bulk-actions");
+  if (!count && bulk.contains(document.activeElement)) {
+    const fallback = selectVisible?.disabled ? document.getElementById("forward-state-filter") : selectVisible;
+    fallback?.focus({ preventScroll: true });
+  }
+  bulk.hidden = count === 0;
   const countLabel = document.getElementById("forward-selection-count");
   if (countLabel) countLabel.textContent = `已选 ${count} 项`;
   ["forward-resume-selected", "forward-pause-selected", "forward-delete-selected"].forEach((id) => {

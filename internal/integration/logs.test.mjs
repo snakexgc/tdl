@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 test("log navigation cancels stale reads, retains data on failure and stops polling on leave", async () => {
   class Element {
-    constructor(text = "") { this.textContent = text; this.children = []; this.events = {}; this.value = ""; }
+    constructor(text = "") { this.textContent = text; this.children = []; this.events = {}; this.dataset = {}; this.value = ""; }
     append(...items) { this.children.push(...items); }
     replaceChildren(...items) { this.children = items; }
     querySelectorAll() { return []; }
@@ -34,7 +34,7 @@ test("log navigation cancels stale reads, retains data on failure and stops poll
   assert(requests[0].options.signal.aborted);
   requests[0].resolve(snapshot("stale")); await first;
   assert.equal(timers.size, 0, "a superseded load must not start another timer");
-  assert.equal(node("logs-rows").children[0].children[0].textContent, "当前筛选下暂无日志。");
+  assert.equal(node("logs-rows").children[0].children[0].textContent, "正在读取日志…");
   requests[1].resolve(snapshot("current")); await second;
   assert.equal(timers.size, 1);
   assert(requests[1].url.includes("component=forwarder"));

@@ -1,8 +1,9 @@
 // User view: current Telegram account info, account switching, and the login flow.
 import { state } from "./state.js";
 import { api } from "./api.js";
-import { escapeHTML, escapeAttr, infoItem } from "./utils.js";
+import { escapeHTML, escapeAttr } from "./utils.js";
 import { loadStatus } from "./status.js";
+import { activateTabs, tabKeyboard } from "./ui.js";
 
 export function initUser() {
   document.getElementById("refresh-user").addEventListener("click", loadUser);
@@ -15,11 +16,14 @@ export function initUser() {
 }
 
 function bindUserTabs() {
-  document.querySelectorAll("[data-user-tab]").forEach((button) => {
+  const tabs = document.getElementById("user-tabs");
+  tabKeyboard(tabs);
+  tabs.querySelectorAll("[data-user-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       const tab = button.dataset.userTab;
-      document.querySelectorAll("[data-user-tab]").forEach((item) => item.classList.toggle("active", item === button));
-      document.querySelectorAll(".user-tab").forEach((item) => item.classList.toggle("active", item.id === `user-tab-${tab}`));
+      activateTabs(tabs, tab, "userTab");
+      document.getElementById("user-tab-current").hidden = tab !== "current";
+      document.getElementById("user-tab-login").hidden = tab !== "login";
       if (tab === "current") loadUser();
       if (tab === "login") loadLoginStatus();
     });
@@ -54,12 +58,15 @@ function bindLoginActions() {
 
 export async function loadUser() {
   const target = document.getElementById("user-info");
-  target.innerHTML = `<div class="info-item info-item-wide"><div class="info-value">正在检查...</div></div>`;
+  const refresh = document.getElementById("refresh-user");
+  if (refresh.disabled) return;
+  refresh.disabled = true;
+  target.setAttribute("aria-busy", "true");
+  target.innerHTML = `<p class="user-profile-notice" role="status">正在检查 Telegram 会话…</p>`;
   try {
     const data = await api("/api/user");
     window.dispatchEvent(new CustomEvent("current-account-changed", { detail: data }));
-    const user = data.user || {};
-    target.innerHTML = renderUserInfoItems(data, user);
+    target.innerHTML = renderUserProfile(data);
     state.userSessions = data.sessions || [];
     state.currentNamespace = data.namespace || "";
     renderUserSwitch(data.namespace || "", state.userSessions, data.sessions_error || "");
@@ -69,83 +76,51 @@ export async function loadUser() {
       if (spamBtn) spamBtn.addEventListener("click", checkAccountSpam);
     }
   } catch (error) {
-    target.innerHTML = infoItem("检查失败", error.message);
+    target.innerHTML = `<p class="user-profile-notice bad-text" role="alert">检查失败：${escapeHTML(error.message)}</p>`;
+  } finally {
+    target.setAttribute("aria-busy", "false");
+    refresh.disabled = false;
   }
 }
 
-function renderUserInfoItems(data, user) {
-  const items = [];
-
-  // 1. Login status — colored row
-  items.push(infoItemStatus("登录状态", data.valid ? "已授权" : "未登录",
-    data.valid ? "info-item-status-ok" : "info-item-status-danger"));
-
+function renderUserProfile(data) {
   if (!data.valid) {
-    const errMsg = (data.status && data.status !== "authorized") ? data.status : "无有效登录会话";
-    items.push(infoItemWide("状态详情", escapeHTML(errMsg)));
-    return items.join("");
+    const detail = data.status && data.status !== "authorized"
+      ? data.status
+      : "当前没有可用的 Telegram 登录会话。";
+    return `<div class="user-profile-notice" role="status"><strong>未登录</strong><p>${escapeHTML(detail)}</p></div>`;
   }
 
-  // 2. Account spam status — colored row, updated async by checkAccountSpam
-  items.push(infoItemStatusWithBtn("账号状态", "未检测", "info-item-status-muted", "user-spam-row", "user-spam-status", "user-spam-check-btn", "检测"));
+  const user = data.user || {};
+  const username = user.username ? `@${user.username}` : "未设置";
+  const tags = [
+    user.premium && "Premium 会员",
+    user.verified && "官方认证",
+    user.bot && "机器人账号",
+    user.restricted && "账号受限",
+  ].filter(Boolean);
+  const details = [
+    ["Telegram 用户名", username],
+    ["用户 ID", user.id || "—"],
+    ["手机号", user.phone || "—"],
+    ["账号特性", tags.join(" · ") || "普通账号"],
+  ];
 
-  // 3. Account characteristics — colored row, plain text labels
-  const charLabels = [];
-  if (user.premium)    charLabels.push("Premium 会员");
-  if (user.verified)   charLabels.push("官方认证");
-  if (user.bot)        charLabels.push("机器人账号");
-  if (user.restricted) charLabels.push("账号受限");
-  if (!charLabels.length) charLabels.push("普通账号");
-  let charStatus = "info-item-status-muted";
-  if (user.restricted)       charStatus = "info-item-status-danger";
-  else if (user.verified)    charStatus = "info-item-status-info";
-  else if (user.premium)     charStatus = "info-item-status-warning";
-  items.push(infoItemStatus("账号特性", charLabels.join(" · "), charStatus));
-
-  // 4–7. Plain info fields
-  items.push(infoItemWide("姓名", escapeHTML(user.name || "-")));
-  items.push(infoItemWide("用户名", user.username ? escapeHTML(`@${user.username}`) : "未设置"));
-  items.push(infoItemWide("用户 ID", escapeHTML(user.id ? String(user.id) : "-")));
-  items.push(infoItemWide("手机号", escapeHTML(user.phone || "-")));
-
-  return items.join("");
-}
-
-function infoItemStatus(label, text, statusClass) {
   return `
-    <div class="info-item info-item-wide ${statusClass}">
-      <div class="info-label">${escapeHTML(label)}</div>
-      <div class="info-value">${escapeHTML(text)}</div>
+    <div class="user-profile-summary">
+      <h3>${escapeHTML(user.name || (user.username ? username : "Telegram 账号"))}</h3>
+      <span class="user-account-state">已授权</span>
     </div>
-  `;
-}
-
-function infoItemStatusDyn(label, text, statusClass, rowId, valueId) {
-  return `
-    <div class="info-item info-item-wide ${statusClass}" id="${escapeAttr(rowId)}">
-      <div class="info-label">${escapeHTML(label)}</div>
-      <div class="info-value" id="${escapeAttr(valueId)}">${escapeHTML(text)}</div>
-    </div>
-  `;
-}
-
-function infoItemStatusWithBtn(label, text, statusClass, rowId, valueId, btnId, btnText) {
-  return `
-    <div class="info-item info-item-wide ${escapeAttr(statusClass)}" id="${escapeAttr(rowId)}" style="display:flex;align-items:center;gap:12px">
-      <div style="flex:1;min-width:0">
-        <div class="info-label">${escapeHTML(label)}</div>
-        <div class="info-value" id="${escapeAttr(valueId)}">${escapeHTML(text)}</div>
-      </div>
-      <button class="btn secondary" id="${escapeAttr(btnId)}" type="button">${escapeHTML(btnText)}</button>
-    </div>
-  `;
-}
-
-function infoItemWide(label, valueHTML) {
-  return `
-    <div class="info-item info-item-wide">
-      <div class="info-label">${escapeHTML(label)}</div>
-      <div class="info-value">${valueHTML}</div>
+    <dl class="user-profile-details">
+      ${details.map(([label, value]) => `
+        <div>
+          <dt>${escapeHTML(label)}</dt>
+          <dd>${escapeHTML(String(value))}</dd>
+        </div>`).join("")}
+    </dl>
+    <div class="user-account-check" id="user-spam-row">
+      <div><strong>账号状态</strong><p id="user-spam-status" role="status">未检测</p></div>
+      <button class="btn secondary" id="user-spam-check-btn" type="button">检测</button>
     </div>
   `;
 }
@@ -157,18 +132,18 @@ async function checkAccountSpam() {
   if (!row || !el) return;
   if (btn) { btn.disabled = true; btn.textContent = "检测中..."; }
   el.textContent = "检测中...";
-  row.className = "info-item info-item-wide info-item-status-muted";
+  delete row.dataset.status;
   try {
     const data = await api("/api/user/spam-check", { method: "POST", body: "{}" });
     if (data.clean) {
-      row.className = "info-item info-item-wide info-item-status-ok";
+      row.dataset.status = "ok";
       el.textContent = "正常";
     } else {
-      row.className = "info-item info-item-wide info-item-status-danger";
+      row.dataset.status = "error";
       el.textContent = "账号异常";
     }
   } catch (error) {
-    row.className = "info-item info-item-wide info-item-status-muted";
+    row.dataset.status = "error";
     el.textContent = "检查失败";
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "重新检测"; }
@@ -429,12 +404,16 @@ function showLoginPanel(panelID) {
 function focusLoginPanel(panelID) {
   const focusTargets = {
     "login-step-method": "login-phone",
+    "login-step-sending": "login-sending-title",
     "login-step-code": "login-code",
     "login-step-password": "login-password",
+    "login-step-result": "login-result-title",
   };
   const target = document.getElementById(focusTargets[panelID]);
   if (!target) return;
-  window.setTimeout(() => target.focus(), 120);
+  window.requestAnimationFrame(() => {
+    if (!target.closest("[hidden]")) target.focus();
+  });
 }
 
 function renderLoginResult(data) {
@@ -444,10 +423,7 @@ function renderLoginResult(data) {
   const title = document.getElementById("login-result-title");
   const copy = document.getElementById("login-result-copy");
   const finish = document.getElementById("finish-login-flow");
-  if (mark) {
-    mark.textContent = failed ? "!" : "✓";
-    mark.classList.toggle("error", failed);
-  }
+  if (mark) mark.classList.toggle("error", failed);
   if (title) title.textContent = failed ? "登录失败" : "登录成功";
   if (copy) {
     copy.textContent = failed
@@ -489,6 +465,7 @@ function loginUserLabel(user) {
 function resetLoginFlow() {
   state.lastLoginData = {};
   showLoginPanel("login-step-method");
+  focusLoginPanel("login-step-method");
   renderLoginSteps({});
   renderLoginMeta({});
   updateLoginActions({});
@@ -502,7 +479,10 @@ function finishLoginFlow() {
     return;
   }
   const currentTab = document.querySelector('[data-user-tab="current"]');
-  if (currentTab) currentTab.click();
+  if (currentTab) {
+    currentTab.click();
+    currentTab.focus();
+  }
 }
 
 async function switchUser() {

@@ -23,11 +23,14 @@ function report(message, success = false) {
 
 function updateDraft() {
   const changed = dirty();
-  $("listen-draft-state").textContent = changed ? "尚未保存的修改 · 保存后立即生效" : "修改规则后点击保存";
-  $("listen-save").disabled = !editable || busy || !changed;
-  $("listen-save").textContent = busy ? "正在保存…" : "保存";
-  $("listen-discard").disabled = busy || !changed;
+  const draft = $("listen-draft");
   $("listen-add").disabled = busy || !editable;
+  if (!changed && document.activeElement && draft.contains(document.activeElement)) $("listen-add").focus();
+  draft.hidden = !changed;
+  $("listen-draft-state").textContent = changed ? "有未保存的规则修改" : "";
+  $("listen-save").disabled = !editable || busy || !changed;
+  $("listen-save").textContent = busy ? "正在保存…" : "保存规则";
+  $("listen-discard").disabled = busy || !changed;
 }
 
 function renderRules() {
@@ -94,25 +97,34 @@ function editRule(index) {
   comments.setAttribute("aria-label", "下载频道评论中的视频");
   commentsLabel.append(comments, element("span", "下载频道评论中的视频"));
   const commentsHelp = element("p", "仅对频道帖子生效。原帖发布后的 24 小时内，每 5 分钟补查；之后收到可关联的新评论仍会处理。群组回复已属于群消息下载范围。", "muted");
-  function updatePicker() {
+  function updateSelection() {
     selected.replaceChildren();
     draft.sources.forEach(ref => {
-      const remove = button(`${sourceName(ref, dialogs)} ×`, () => { draft.sources = draft.sources.filter(source => source !== ref); updatePicker(); }, "listen-chip");
+      const remove = button(`${sourceName(ref, dialogs)} ×`, () => {
+        draft.sources = draft.sources.filter(source => source !== ref);
+        const option = results.querySelector(`[data-listen-source="${CSS.escape(ref)}"]`);
+        if (option) option.checked = false;
+        updateSelection();
+        (option || search).focus();
+      }, "listen-chip");
       remove.setAttribute("aria-label", `移除 ${sourceName(ref, dialogs)}`); selected.append(remove);
     });
+    comments.disabled = !hasChannel(draft.sources, dialogs);
+    if (comments.disabled) comments.checked = false;
+  }
+  function updatePicker() {
     results.replaceChildren();
     const matches = matchingDialogs(dialogs, search.value, filter.value);
     matches.slice(0, 100).forEach(item => {
       const label = element("label", null, "listen-chat-choice"), check = element("input");
       check.type = "checkbox"; check.checked = draft.sources.includes(item.ref); check.setAttribute("aria-label", `选择 ${item.title || item.ref}`);
-      check.addEventListener("change", () => { draft.sources = check.checked ? [...new Set([...draft.sources, item.ref])] : draft.sources.filter(ref => ref !== item.ref); updatePicker(); });
+      check.dataset.listenSource = item.ref;
+      check.addEventListener("change", () => { draft.sources = check.checked ? [...new Set([...draft.sources, item.ref])] : draft.sources.filter(ref => ref !== item.ref); updateSelection(); });
       const text = element("span"); text.append(element("strong", item.title || item.ref), element("small", `${item.username ? `@${item.username} · ` : ""}${item.ref}`));
       label.append(check, text, element("small", sourceKinds[item.kind] || item.kind)); results.append(label);
     });
     if (!matches.length) results.append(element("p", dialogs.length ? "没有匹配的聊天。" : "聊天列表尚未加载，可关闭后刷新聊天列表。", "empty"));
     if (matches.length > 100) results.append(element("p", `显示前 100 项，共 ${matches.length} 项；输入名称继续筛选。`, "muted"));
-    comments.disabled = !hasChannel(draft.sources, dialogs);
-    if (comments.disabled) comments.checked = false;
   }
   search.addEventListener("input", updatePicker); filter.addEventListener("change", updatePicker);
   const error = element("p", "", "notice error"); error.hidden = true; error.setAttribute("role", "alert");
@@ -129,7 +141,7 @@ function editRule(index) {
     if (index == null) rules.push(draft); else rules[index] = draft;
     closeDrawer(); renderRules(); report("");
   });
-  root.append(form); updatePicker(); openDrawer(index == null ? "添加监听规则" : "编辑监听规则", root);
+  root.append(form); updatePicker(); updateSelection(); openDrawer(index == null ? "添加监听规则" : "编辑监听规则", root);
 }
 
 async function refreshDialogs() {
@@ -160,7 +172,8 @@ function renderStatus(data) {
   if (filters.limit) parts.push(`共享下载上限：${filters.limit} 个文件`);
   if (filters.dc_connections) parts.push(`每个 DC ${filters.dc_connections} 个连接`);
   parts.push("表情触发优先，进行中的下载继续运行");
-  const filterHost = $("listen-filters"); filterHost.replaceChildren(element("span", `当前生效的过滤条件 · ${parts.join(" · ")}`));
+  const filterHost = $("listen-filters"); filterHost.replaceChildren(element("span", parts.join(" · ")));
+  $("listen-filter-details").hidden = false;
   const link = element("a", "调整下载设置"); link.href = "/config?tab=download"; link.dataset.appLink = ""; filterHost.append(link);
   const sources = data.sources || [], counts = { "监听来源": sources.length, "已提交": sources.reduce((sum, source) => sum + (source.queued || 0), 0), "已过滤": sources.reduce((sum, source) => sum + (source.filtered || 0), 0), "待处理": data.pending || 0, "待确认": data.uncertain || 0, "跟踪评论区": data.tracking || 0 };
   $("listen-metrics").replaceChildren();

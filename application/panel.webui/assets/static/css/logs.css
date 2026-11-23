@@ -1,18 +1,14 @@
-#logs-view .page-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
 .log-table-wrap {
   container: log-list / inline-size;
   max-width: 100%;
   overflow: auto;
-  max-height: max(360px, calc(100dvh - 440px));
+  max-height: max(300px, calc(100dvh - 449px));
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
   background: var(--panel);
+}
+.log-table-wrap:focus-visible {
+  outline-offset: -2px;
 }
 .log-table thead th {
   position: sticky;
@@ -20,55 +16,126 @@
   z-index: 1;
   background: var(--panel-soft);
 }
+#logs-tabs {
+  margin-bottom: 16px;
+}
 .log-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px;
-  margin: 20px 0;
+  --search-width: min(520px, calc(100% - 156px));
+
+  position: relative;
+  margin: 0 0 14px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 .log-filters label {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   font-size: 12px;
   color: var(--muted);
 }
 .log-filters select,
 .log-filters input {
-  min-height: 38px;
-  max-width: 100%;
+  min-height: 40px;
+  width: 100%;
   min-width: 0;
   border: 1px solid var(--control-line);
   border-radius: 8px;
   padding: 8px 12px;
   background: var(--panel);
   color: var(--text);
-  font: inherit;
-  font-size: 14px;
-}
-.log-filters select {
-  max-width: 260px;
+  font: 400 14px/1.5 var(--font-sans);
 }
 .log-search {
-  flex: 1 1 220px;
+  display: grid;
+  gap: 4px;
+  max-width: var(--search-width);
+}
+.log-search-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.log-advanced summary {
+  position: absolute;
+  inset-block-start: 32px;
+  inset-inline-start: calc(var(--search-width) + 30px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 40px;
+  padding: 8px 4px;
+  color: var(--primary);
+  font-weight: 550;
+  cursor: pointer;
+  list-style: none;
+}
+.log-advanced summary::-webkit-details-marker {
+  display: none;
+}
+.log-advanced summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+.log-advanced[open] summary::after {
+  transform: translateY(2px) rotate(225deg);
+}
+#logs-filter-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.log-selects {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--line);
+}
+.log-results-head,
+.log-result-actions,
+.log-results-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.log-results-head {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.log-results-meta {
+  gap: 3px 14px;
+}
+.log-results-meta p {
+  margin: 0;
+  font-size: 13px;
 }
 .log-table {
   width: 100%;
-  min-width: 780px;
+  min-width: 0;
   table-layout: fixed;
 }
 .log-table th:nth-child(1) {
-  width: 170px;
+  width: 176px;
 }
 .log-table th:nth-child(2) {
-  width: 80px;
+  width: 76px;
 }
 .log-table th:nth-child(3) {
-  width: 200px;
+  width: clamp(132px, 21cqi, 200px);
 }
 .log-table th:nth-child(5) {
-  width: 80px;
+  width: 92px;
 }
 .log-table td {
   vertical-align: top;
@@ -80,11 +147,15 @@
   color: var(--muted);
   margin-top: 4px;
 }
+.log-table td:first-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .log-table .log-message {
   white-space: pre-wrap;
   line-height: 1.6;
 }
-@container log-list (max-width: 760px) {
+@container log-list (max-width: 700px) {
   .log-table,
   .log-table tbody {
     display: block;
@@ -104,7 +175,7 @@
     gap: 4px 12px;
     align-items: center;
     border-bottom: 1px solid var(--line);
-    padding: 12px 16px;
+    padding: 14px 16px;
   }
   .log-table tbody tr:last-child {
     border: 0;
@@ -116,8 +187,7 @@
   }
   .log-table td:first-child {
     grid-area: time;
-    font-variant-numeric: tabular-nums;
-    color: var(--muted);
+    font-size: 12px;
   }
   .log-table td:nth-child(2) {
     grid-area: level;
@@ -136,6 +206,9 @@
   }
   .log-table td:last-child {
     grid-area: action;
+  }
+  .log-table td:last-child .btn {
+    min-height: 44px;
   }
   .log-table td.empty {
     grid-area: auto / 1 / auto / -1;
@@ -166,9 +239,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 16px 0;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 12px 0;
 }
 .log-retention {
   font-size: 12px;
@@ -182,19 +255,23 @@
   font-size: 12px;
 }
 .log-health-card {
-  margin: 16px 0;
-  padding: 20px;
+  margin: 8px 0;
+  padding: 0 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
 }
 .log-health-card summary {
+  padding: 14px 0;
   cursor: pointer;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 .log-health-card p {
   overflow-wrap: anywhere;
+}
+.log-health-card > p:first-of-type {
+  margin-top: 0;
 }
 .log-health-events {
   border-top: 1px solid var(--line);
@@ -205,14 +282,26 @@
   --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M14 3H5v18h14V8l-5-5Z M14 3v5h5 M8 12h8 M8 16h6'/%3E%3C/svg%3E");
 }
 @media (max-width: 600px) {
-  .log-filters label {
-    flex: 1 1 140px;
-  }
-  .log-filters select {
+  .log-results-meta {
     width: 100%;
-    max-width: none;
   }
   .log-search {
-    flex-basis: 100%;
+    max-width: none;
+  }
+  .log-advanced summary {
+    position: static;
+  }
+  .log-selects {
+    margin-top: 0;
+  }
+  .log-filters input,
+  .log-filters select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .log-advanced summary,
+  .log-results-head .btn,
+  .log-pagination .btn {
+    min-height: 44px;
   }
 }

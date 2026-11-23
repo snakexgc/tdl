@@ -8,23 +8,25 @@
 }
 :root {
   color-scheme: light;
-  --bg: #f7f9f9;
-  --bg-strong: #eaf0ef;
+  --bg: #f5f7f5;
+  --bg-strong: #edf2ee;
   --panel: #ffffff;
-  --panel-soft: #f5f8f7;
-  --text: #192522;
-  --muted: #586862;
-  --line: #dce4e0;
-  --line-strong: #a2b3ab;
-  --control-line: #81928b;
-  --primary: #213c33;
-  --primary-dark: #193329;
-  --primary-light: #304f44;
-  --primary-soft: #e8f1ed;
-  --success: #0f766e;
-  --success-soft: #f0fdfa;
-  --success-line: #99f6e4;
-  --danger: #dc2626;
+  --panel-soft: #f8faf8;
+  --panel-tint: #f0f7f2;
+  --text: #1b2b24;
+  --muted: #53645b;
+  --line: #dde5df;
+  --line-strong: #a5b5a8;
+  --control-line: #7b8d80;
+  --accent: #17634e;
+  --primary: var(--accent);
+  --primary-dark: #104b3b;
+  --primary-light: #26755e;
+  --primary-soft: #e4f2ea;
+  --success: #17634e;
+  --success-soft: #ebf6ed;
+  --success-line: #acd4b8;
+  --danger: #b52529;
   --danger-soft: #fef2f2;
   --danger-line: #fecaca;
   --warning: #92400e;
@@ -33,19 +35,17 @@
   --info: #075985;
   --info-soft: #f0f9ff;
   --info-line: #bae6fd;
-  --chart-1: #f54900;
-  --chart-2: #009689;
-  --chart-3: #104e64;
+  --chart-1: #17634e;
+  --chart-2: #895119;
+  --chart-3: #285d89;
+  --progress: #248065;
   --chart-4: #ffb900;
   --chart-5: #fe9a00;
-  --sidebar: #ffffff;
-  --sidebar-active: #e4efea;
-  --sidebar-text: #44554e;
-  --sidebar-width: 224px;
-  --gutter: 32px;
+  --sidebar-width: 220px;
+  --gutter: clamp(28px, 3vw, 48px);
   --header-height: 64px;
   --shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(15 40 28 / 0.035);
   --focus: 0 0 0 3px rgb(27 104 81 / 0.16);
   --radius: 12px;
   --radius-sm: 8px;
@@ -95,6 +95,10 @@ a {
   color: inherit;
   text-underline-offset: 3px;
 }
+::selection {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -143,9 +147,8 @@ textarea:disabled {
   inset: 0 auto 0 0;
   z-index: 40;
   width: var(--sidebar-width);
-  background: var(--sidebar);
-  color: var(--sidebar-text);
-  border-right: 1px solid var(--line);
+  background: var(--panel);
+  border-inline-end: 1px solid var(--line);
   display: flex;
   flex-direction: column;
 }
@@ -165,8 +168,8 @@ textarea:disabled {
   height: 34px;
   flex: 0 0 34px;
   border-radius: 8px;
-  background: var(--primary);
-  color: white;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
   font-weight: 700;
   font-size: 13px;
   letter-spacing: -0.04em;
@@ -177,22 +180,18 @@ textarea:disabled {
   line-height: 20px;
   font-weight: 600;
 }
-.brand-subtitle {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 14px;
-  letter-spacing: 0.08em;
-}
 .nav-label {
-  padding: 24px 24px 8px;
+  padding: 0 10px 5px;
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+}
+.nav-group {
+  display: grid;
+  gap: 3px;
+  margin-top: 15px;
 }
 .nav {
-  padding: 0 12px 20px;
+  padding: 16px 12px 20px;
   display: grid;
   gap: 4px;
   flex: 1;
@@ -208,7 +207,7 @@ textarea:disabled {
   padding: 8px 12px;
   text-align: left;
   text-decoration: none;
-  color: var(--sidebar-text);
+  color: var(--text);
   background: transparent;
   cursor: pointer;
   display: flex;
@@ -221,12 +220,11 @@ textarea:disabled {
     color var(--t);
 }
 .nav-item:hover {
-  color: var(--text);
-  background: var(--bg-strong);
+  background: var(--panel-tint);
 }
 .nav-item.active {
   color: var(--primary-dark);
-  background: var(--sidebar-active);
+  background: var(--primary-soft);
   font-weight: 600;
 }
 .nav-item::before {
@@ -278,26 +276,20 @@ textarea:disabled {
   border-top: 1px solid var(--line);
   overflow-wrap: anywhere;
 }
-.sidebar-foot-title {
-  margin-bottom: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
 .sidebar-logout {
   width: 100%;
   min-height: 36px;
-  margin-top: 16px;
+  margin-top: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  color: var(--sidebar-text);
-  background: var(--panel);
+  color: var(--text);
+  background: transparent;
   cursor: pointer;
   font-size: 13px;
   transition: background var(--t);
 }
 .sidebar-logout:hover {
-  background: var(--bg-strong);
+  background: var(--panel-tint);
 }
 .topbar {
   position: sticky;
@@ -319,6 +311,12 @@ textarea:disabled {
   align-items: center;
   gap: 16px;
   font-size: 13px;
+}
+.topbar-context {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 16px;
 }
 .topbar-workspace {
   color: var(--muted);
@@ -357,9 +355,15 @@ textarea:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
+  white-space: nowrap;
 }
 .heartbeat-dot {
   width: 7px;
@@ -368,29 +372,14 @@ textarea:disabled {
   border-radius: 50%;
   color: var(--muted);
   background: currentColor;
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, currentColor 12%, transparent),
-    0 0 7px color-mix(in srgb, currentColor 18%, transparent);
 }
 .heartbeat[data-state="online"] .heartbeat-dot,
 .heartbeat[data-state="fallback"] .heartbeat-dot {
   color: var(--success);
-  animation: heartbeat-glow 2.8s ease-in-out infinite;
 }
-.heartbeat[data-state="offline"] {
-  color: var(--danger);
-}
+.heartbeat[data-state="offline"],
 .heartbeat[data-state="offline"] .heartbeat-dot {
   color: var(--danger);
-}
-@keyframes heartbeat-glow {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 
 /* Content and typography */
@@ -402,23 +391,14 @@ textarea:disabled {
 #view-host {
   min-width: 0;
   width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
 }
 .view {
   display: none;
 }
 .view.active {
   display: block;
-  animation: view-fade-in 180ms ease-out both;
-}
-@keyframes view-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 .view-loading {
   min-height: 240px;
@@ -428,7 +408,7 @@ textarea:disabled {
 }
 .page-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 24px;
@@ -438,9 +418,9 @@ textarea:disabled {
 }
 h1 {
   margin: 0;
-  font-size: 26px;
-  line-height: 34px;
-  font-weight: 700;
+  font-size: clamp(26px, 3vw, 34px);
+  line-height: 1.22;
+  font-weight: 650;
   letter-spacing: -0.025em;
 }
 h2,
@@ -469,12 +449,8 @@ p {
   flex-shrink: 0;
 }
 .credential-warning {
-  position: fixed;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 50;
-  width: min(680px, calc(100% - 32px));
+  max-width: 1440px;
+  margin: 0 auto 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -484,7 +460,6 @@ p {
   background: var(--warning-soft);
   border: 1px solid var(--warning-line);
   border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
 }
 .credential-warning div {
   display: grid;
@@ -506,7 +481,7 @@ p {
 .credential-warning .icon-button {
   color: var(--warning);
 }
-.credential-warning .btn.danger {
+.credential-warning .btn {
   flex: 0 0 auto;
   background: var(--panel);
   color: var(--warning);
@@ -543,7 +518,7 @@ p {
 }
 .btn:active:not(:disabled),
 .icon-button:active:not(:disabled) {
-  background: var(--sidebar-active);
+  background: var(--primary-soft);
   border-color: var(--line-strong);
 }
 .btn.primary {
@@ -614,7 +589,6 @@ p {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
 }
 
 /* Tables */
@@ -914,9 +888,6 @@ tr:last-child td {
   .navigation-open {
     overflow: hidden;
   }
-  .navigation-open .credential-warning {
-    visibility: hidden;
-  }
   .navigation-open .sidebar {
     transform: translateX(0);
     visibility: visible;
@@ -938,6 +909,7 @@ tr:last-child td {
   }
   .sidebar-close {
     display: inline-grid;
+    width: 44px;
     height: 44px;
     flex: 0 0 44px;
     margin-left: auto;
@@ -977,8 +949,11 @@ tr:last-child td {
     display: none;
   }
   .heartbeat {
-    font-size: 11px;
-    max-width: 48%;
+    gap: 5px;
+    padding-inline: 7px;
+  }
+  .topbar-context {
+    gap: 8px;
   }
   .page-head {
     gap: 16px;

@@ -1,6 +1,25 @@
 #update-info {
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--line);
+}
+
+#update-info:empty {
+  display: none;
+}
+
+#update-info .info-item {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#update-info .info-item:first-child .info-value {
+  color: var(--primary);
+  font-weight: 650;
 }
 
 .update-channels {
@@ -15,6 +34,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+  background: var(--panel);
 }
 
 .update-channel > header,
@@ -46,7 +66,6 @@
   overflow-wrap: anywhere;
 }
 
-.update-channel > header > span,
 .update-notes-head a,
 .update-release-date,
 .update-release-badge {
@@ -131,7 +150,7 @@
 .update-notes li > ol { margin-top: 4px; margin-bottom: 0; }
 .update-notes a { color: var(--info); text-decoration: underline; text-underline-offset: 3px; }
 .update-notes a:hover { text-decoration-thickness: 2px; }
-.update-notes blockquote { margin: 0 0 16px; padding: 4px 16px; border-left: 3px solid var(--line-strong); color: var(--muted); }
+.update-notes blockquote { margin: 0 0 16px; padding: 4px 16px; border-inline-start: 1px solid var(--line-strong); color: var(--muted); }
 .update-notes blockquote > :last-child { margin-bottom: 0; }
 .update-notes code { padding: 2px 5px; border-radius: 4px; background: var(--bg-strong); font-family: var(--font-mono); font-size: 0.9em; }
 .update-notes pre { margin: 0 0 16px; padding: 16px; border-radius: var(--radius-sm); background: var(--panel-soft); overflow: auto; white-space: pre; overflow-wrap: normal; }
@@ -146,10 +165,13 @@
 
 @media (max-width: 1100px) {
   #update-info { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #update-info .info-item:last-child { grid-column: span 2; }
 }
 
 @media (max-width: 760px) {
   #update-info { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #update-info .info-item:first-child { grid-column: 1 / -1; }
+  #update-info .info-item:last-child { grid-column: auto; }
   .update-channels { grid-template-columns: minmax(0, 1fr); }
   .update-release-title { flex-wrap: wrap; }
   .update-notes-head .actions { width: 100%; justify-content: space-between; }

@@ -240,7 +240,7 @@ test("empty channels and missing notes have clear placeholders and unsafe links 
   const view = await fixture({ update });
   await view.load();
   assert.match(view.el("update-stable").children[0].textContent, /暂无已发布/);
-  assert.match(view.el("update-notes").textContent, /未提供 Release Notes/);
+  assert.match(view.el("update-notes").textContent, /未提供发布说明/);
   assert.equal(view.el("update-release-link").hidden, true);
   assert.equal(view.el("update-release-link").href, undefined);
 });

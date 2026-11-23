@@ -10,10 +10,6 @@ let components = [],
   saving = false,
   active = false;
 const $ = (id) => document.getElementById(id);
-const compactLayout = window.matchMedia("(max-width: 1200px)");
-function relayout() {
-  if (active) render();
-}
 function report(text, kind = "") {
   $("module-status").textContent = text;
   $("module-status").className = `notice ${kind}`;
@@ -34,17 +30,22 @@ async function refresh() {
     };
     const data = await api("/api/components", options);
     if (controller.signal.aborted) return;
-    components = data.components || [];
-    canToggle = Boolean(data.can_toggle && data.editable);
-    render();
+    const nextComponents = data.components || [];
+    const nextCanToggle = Boolean(data.can_toggle && data.editable);
+    const changed = canToggle !== nextCanToggle || JSON.stringify(components) !== JSON.stringify(nextComponents);
+    components = nextComponents;
+    canToggle = nextCanToggle;
+    if (changed || $("module-overview").hidden) render();
     if ($("module-status").dataset.stale) {
       report("");
       delete $("module-status").dataset.stale;
     }
   } catch (error) {
     if (!controller.signal.aborted) {
-      report(`状态读取失败，已保留上次结果：${error.message}`, "error");
+      const retained = $("module-overview").hidden ? "" : "，已保留上次结果";
+      report(`状态读取失败${retained}：${error.message}`, "error");
       $("module-status").dataset.stale = "true";
+      if ($("module-loading")) $("module-loading").hidden = true;
     }
   } finally {
     if (request === controller) {
@@ -62,61 +63,45 @@ function link(title, href) {
 }
 
 function render() {
+  const list = $("module-list");
   const focus = document.activeElement?.getAttribute("data-module-focus");
   const expanded = new Set(
-    [...$("module-list").querySelectorAll("details[open]")].map(
-      (item) => item.id,
-    ),
+    [...list.querySelectorAll("details[open]")].map((item) => item.id),
   );
-  const first = !$("module-list").children.length;
-  const display = components;
-  const groups = featureGroups(display);
   const overview = $("module-overview");
+  const statusByID = new Map(components.map((component) => [component.id, componentStatus(component)]));
+  const counts = { running: 0, waiting: 0, error: 0, off: 0 };
+  for (const status of statusByID.values()) counts[status.kind]++;
+  const groups = featureGroups(components);
   overview.replaceChildren();
-  for (const [label, value] of [
-    ["功能", groups.length],
-    ["细分模块", display.length],
-    [
-      "运行中",
-      display.filter((c) => componentStatus(c).kind === "running").length,
-    ],
-    [
-      "需关注",
-      display.filter((c) =>
-        ["error", "waiting"].includes(componentStatus(c).kind),
-      ).length,
-    ],
+  for (const [label, value, state] of [
+    ["组件总数", components.length, "total"],
+    ["运行中", counts.running, "running"],
+    ["需关注", counts.error + counts.waiting, "attention"],
+    ["已停用", counts.off, "off"],
   ]) {
-    const item = element("div", null, "module-summary");
-    item.append(element("span", label), element("strong", String(value)));
+    const item = element("div", null, "module-overview-item");
+    item.dataset.metric = value ? state : "neutral";
+    item.append(element("dt", label), element("dd", String(value)));
     overview.append(item);
   }
   overview.hidden = false;
-  $("module-list").replaceChildren();
-  // Each column stacks independently; changing one card's height only moves
-  // the cards beneath it. A single column preserves manifest order on mobile.
-  const columns = Array.from({ length: compactLayout.matches ? 1 : 2 }, () =>
-    element("div", null, "module-column"),
-  );
-  if (groups.length) $("module-list").append(...columns);
-  for (const [index, group] of groups.entries()) {
+  list.replaceChildren();
+  for (const group of groups) {
     const card = element("details", null, "feature-card");
     card.id = `feature-${group.id}`;
-    card.open = first || expanded.has(card.id);
     const summary = element("summary", null, "feature-summary");
     summary.dataset.moduleFocus = `summary:${group.id}`;
-    const title = element("div", null, "feature-title");
-    const running = group.components.filter(
-      (c) => componentStatus(c).kind === "running",
-    ).length;
-    const attention = group.components.filter((c) =>
-      ["error", "waiting"].includes(componentStatus(c).kind),
-    ).length;
+    const title = element("span", null, "feature-title");
+    const kinds = group.components.map((component) => statusByID.get(component.id).kind);
+    const running = kinds.filter((kind) => kind === "running").length;
+    const attention = kinds.filter((kind) => kind === "error" || kind === "waiting").length;
+    card.open = expanded.has(card.id);
     title.append(
-      element("h2", group.title),
+      element("strong", group.title),
       element(
         "span",
-        `${group.components.length} 个细分模块 · ${running} 个运行中`,
+        `${group.components.length} 个组件`,
         "subtle",
       ),
     );
@@ -124,14 +109,15 @@ function render() {
       title,
       element(
         "span",
-        attention ? `${attention} 项需关注` : running ? "运行正常" : "已停用",
-        `feature-health ${attention ? "warn-text" : "subtle"}`,
+        attention ? `${attention} 项需关注` : running ? `${running} 个运行中` : "已停用",
+        `feature-health ${attention ? "feature-health-attention" : running ? "feature-health-running" : ""}`,
       ),
     );
     card.append(summary);
-    const body = element("div", null, "feature-components");
+    const body = element("div", null, "feature-body");
+    const rows = element("ul", null, "feature-components");
     for (const component of group.components) {
-      const row = element("div", null, "feature-component");
+      const row = element("li", null, "feature-component");
       row.dataset.component = component.id;
       const name = element("div", null, "component-name");
       name.append(
@@ -140,7 +126,7 @@ function render() {
       );
       if (component.error)
         name.append(element("p", component.error, "bad-text"));
-      const status = componentStatus(component);
+      const status = statusByID.get(component.id);
       const badge = element(
         "span",
         status.text,
@@ -156,38 +142,42 @@ function render() {
         "aria-label",
         `${component.enabled === false ? "启用" : "停用"} ${component.title || component.id}`,
       );
-      control.disabled = saving || !canToggle;
+      control.disabled = !canToggle;
+      if (saving && canToggle) control.setAttribute("aria-disabled", "true");
       if (component.id === "proxy.range") {
         control.disabled = true;
         control.textContent = "始终启用";
         control.setAttribute("aria-label", "HTTP 下载服务始终启用");
       }
-      row.append(control);
       const logs = link(
         "日志",
         `/logs?component=${encodeURIComponent(component.id)}`,
       );
+      logs.dataset.moduleFocus = `logs:${component.id}`;
       logs.setAttribute(
         "aria-label",
         `查看 ${component.title || component.id} 的日志`,
       );
-      row.append(logs);
-      body.append(row);
+      const actions = element("div", null, "feature-actions");
+      actions.append(control, logs);
+      row.append(actions);
+      rows.append(row);
     }
+    body.append(rows);
     if (group.settings_url) {
       const settings = link("相关设置", group.settings_url);
       settings.dataset.moduleFocus = `settings:${group.id}`;
-      body.append(settings);
+      const footer = element("div", null, "feature-settings");
+      footer.append(settings);
+      body.append(footer);
     }
     card.append(body);
-    columns[index % columns.length].append(card);
+    list.append(card);
   }
   if (!groups.length)
-    $("module-list").append(element("p", "暂无已声明的功能模块。", "empty"));
-  $("module-mode").textContent =
-    "启停选择保存到配置文件，重启后生效。前往设置页可核对全部修改并重启。";
+    list.append(element("p", "暂无已声明的功能模块。", "empty"));
   if (focus)
-    [...$("module-list").querySelectorAll("[data-module-focus]")]
+    [...list.querySelectorAll("[data-module-focus]")]
       .find((item) => item.dataset.moduleFocus === focus)
       ?.focus({ preventScroll: true });
 }
@@ -241,8 +231,8 @@ async function toggle(component) {
 
 export async function loadModules(url) {
   active = true;
-  compactLayout.addEventListener("change", relayout);
   if (components.length) render();
+  else if ($("module-loading")) $("module-loading").hidden = false;
   clearInterval(timer);
   await refresh();
   if (!active) return;
@@ -258,7 +248,6 @@ export async function loadModules(url) {
 }
 function stop() {
   active = false;
-  compactLayout.removeEventListener("change", relayout);
   clearInterval(timer);
   request?.abort();
   request = null;

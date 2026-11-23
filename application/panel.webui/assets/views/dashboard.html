@@ -1,30 +1,11 @@
 <section class="view active" id="view-dashboard">
   <header class="page-head">
     <div>
-      <h1>总览</h1>
+      <h1>运行总览</h1>
       <p id="dashboard-updated">正在读取运行数据…</p>
     </div>
-    <button class="btn secondary" id="refresh-dashboard" type="button">刷新</button>
+    <button class="btn primary" id="refresh-dashboard" type="button">刷新总览</button>
   </header>
-
-  <nav class="summary-grid" id="task-overview" aria-label="当前账号任务概况">
-    <a class="summary-card" data-app-link href="/downloads?tab=tasks">
-      <span>下载任务</span><strong id="overview-downloads">—</strong>
-      <small id="overview-downloads-note">正在读取…</small>
-    </a>
-    <a class="summary-card" data-app-link href="/downloads?tab=tasks&state=error">
-      <span>下载异常</span><strong id="overview-download-errors">—</strong>
-      <small id="overview-download-errors-note">正在读取…</small>
-    </a>
-    <a class="summary-card" data-app-link href="/forwards">
-      <span>转发任务</span><strong id="overview-forwards">—</strong>
-      <small id="overview-forwards-note">正在读取…</small>
-    </a>
-    <a class="summary-card" data-app-link href="/forwards?state=error">
-      <span>转发异常</span><strong id="overview-forward-errors">—</strong>
-      <small id="overview-forward-errors-note">正在读取…</small>
-    </a>
-  </nav>
 
   <section aria-labelledby="dashboard-metrics-title">
     <header class="dashboard-section-head">
@@ -34,10 +15,16 @@
     <div class="notice" id="dashboard-status" role="status"></div>
     <div class="dashboard-grid">
       <section class="dashboard-card dashboard-speed-card">
-        <h3>下载速度</h3>
-        <strong class="dashboard-reading" id="dashboard-speed-value">—</strong>
-        <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" role="img" aria-label="最近 30 秒的 gotd 下载速度"></svg>
-        <p class="dashboard-meta" id="dashboard-speed-meta">正在读取…</p>
+        <header class="dashboard-speed-head">
+          <div>
+            <h3>下载速度</h3>
+            <strong class="dashboard-reading" id="dashboard-speed-value">—</strong>
+          </div>
+          <p class="dashboard-meta" id="dashboard-speed-meta">正在读取…</p>
+        </header>
+        <div class="dashboard-speed-plot">
+          <svg class="dashboard-chart" id="dashboard-speed-chart" viewBox="0 0 640 160" role="img" aria-label="最近 30 秒的 gotd 下载速度"></svg>
+        </div>
       </section>
       <section class="dashboard-card">
         <h3>CPU 使用率</h3>
@@ -79,5 +66,33 @@
       </dl>
       <p class="dashboard-schedulers" id="dashboard-dc-schedulers-meta">正在读取 DC 调度器…</p>
     </div>
+  </section>
+  <section class="dashboard-tasks" aria-labelledby="task-overview-title">
+    <header class="dashboard-section-head">
+      <h2 id="task-overview-title">当前账号任务</h2>
+      <a class="btn secondary" data-app-link href="/downloads?tab=links">查看下载链接</a>
+    </header>
+    <nav class="summary-grid" id="task-overview" aria-labelledby="task-overview-title">
+      <div class="summary-group">
+        <a class="summary-card" data-app-link href="/downloads?tab=tasks">
+          <span>下载任务</span><strong id="overview-downloads">—</strong>
+          <small id="overview-downloads-note">正在读取…</small>
+        </a>
+        <a class="summary-card" data-app-link href="/downloads?tab=tasks&state=error">
+          <span>下载异常</span><strong id="overview-download-errors">—</strong>
+          <small id="overview-download-errors-note">正在读取…</small>
+        </a>
+      </div>
+      <div class="summary-group">
+        <a class="summary-card" data-app-link href="/forwards">
+          <span>转发任务</span><strong id="overview-forwards">—</strong>
+          <small id="overview-forwards-note">正在读取…</small>
+        </a>
+        <a class="summary-card" data-app-link href="/forwards?state=error">
+          <span>转发异常</span><strong id="overview-forward-errors">—</strong>
+          <small id="overview-forward-errors-note">正在读取…</small>
+        </a>
+      </div>
+    </nav>
   </section>
 </section>

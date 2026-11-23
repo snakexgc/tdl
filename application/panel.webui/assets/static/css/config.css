@@ -6,32 +6,41 @@
 }
 .settings-pending {
   border: 1px solid var(--warning-line);
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 24px;
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 20px;
   background: var(--warning-soft);
-}
-.settings-pending h2 {
-  font-size: 16px;
-  margin: 0 0 8px;
 }
 .settings-pending-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 16px;
 }
-.settings-pending-head h2 {
-  margin: 0;
+.settings-pending-head p {
+  margin: 2px 0 0;
+  color: var(--warning);
+  font-size: 13px;
 }
-.settings-pending > p {
+.settings-pending > .notice:not(:empty) {
   margin: 8px 0 0;
+}
+.settings-change-details > summary {
+  width: fit-content;
+  margin-top: 2px;
+  padding-block: 8px;
+  color: var(--text);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.settings-change-details > summary:hover {
+  text-decoration: underline;
 }
 .settings-changes-table {
   max-height: 360px;
   overflow: auto;
-  margin-top: 16px;
+  margin-top: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -99,15 +108,11 @@
   }
 }
 .settings-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 .settings-search {
-  flex: 1 1 280px;
-  max-width: 600px;
+  display: block;
+  max-width: 480px;
 }
 .settings-search-results {
   margin-bottom: 24px;
@@ -144,14 +149,45 @@
 .settings-search-results span {
   font-size: 12px;
 }
+.settings-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.settings-navigation {
+  min-width: 0;
+}
 .settings-tabs {
+  display: flex;
   flex-wrap: wrap;
-  width: fit-content;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .settings-tabs .tab-button {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
+  min-height: 40px;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.settings-tabs .tab-button:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+.settings-tabs .tab-button[aria-selected="true"] {
+  color: var(--accent, var(--primary-dark));
+  background: var(--primary-soft);
+  border-color: var(--primary-line, var(--line));
+  font-weight: 600;
 }
 .settings-tab-count {
   border-radius: 4px;
@@ -161,7 +197,33 @@
   font-size: 12px;
 }
 #settings-panels {
-  max-width: 1120px;
+  max-width: 1020px;
+  min-width: 0;
+}
+.settings-modules {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 12px;
+  font-size: 13px;
+  text-underline-offset: 3px;
+}
+@media (min-width: 1100px) {
+  .settings-workspace {
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: 28px;
+    align-items: start;
+  }
+  .settings-navigation {
+    position: sticky;
+    top: calc(var(--header-height) + 16px);
+  }
+  .settings-tabs {
+    flex-direction: column;
+  }
+  .settings-tabs .tab-button {
+    justify-content: space-between;
+  }
 }
 .settings-intro p {
   margin: 0;
@@ -172,10 +234,11 @@
   margin-top: 8px;
   font-size: 13px;
 }
-.settings-draft-status.has-drafts {
-  color: var(--warning);
+#view-config .settings-block {
+  border-radius: var(--radius);
+  box-shadow: none;
 }
-.settings-block.has-drafts {
+#view-config .settings-block.has-drafts {
   border-color: var(--warning-line);
 }
 .settings-block-status {
@@ -204,6 +267,7 @@
 }
 .settings-secret > input {
   flex: 1;
+  min-width: 0;
 }
 .settings-secret > button {
   flex-shrink: 0;
@@ -319,21 +383,33 @@
     grid-row: 1;
   }
   .settings-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
+    margin-bottom: 12px;
   }
   .settings-search input {
     min-height: 44px;
+    font-size: 16px;
   }
   .settings-tabs {
-    width: 100%;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .settings-tabs .tab-button {
     justify-content: center;
-    padding: 8px 4px;
+    gap: 3px;
+    min-height: 44px;
+    padding: 4px 2px;
+  }
+  .settings-tab-count {
+    padding-inline: 3px;
+  }
+  .settings-pending {
+    padding: 12px;
+  }
+  .settings-change-details > summary,
+  .settings-modules,
+  #settings-reload,
+  #settings-restart {
+    min-height: 44px;
   }
   .settings-block-status {
     flex-basis: 100%;
